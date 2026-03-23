@@ -41,6 +41,15 @@ app.*.map.json
 
 # Firebase
 .firebase/
+# Never commit service account keys
+*-sa.json
+*-sa.json.json
+firebase-sa*.json
+firebase-sa.json.json
+**/serviceAccount*.json
+
+# Supabase local tooling (avoid committing node_modules)
+supabase/node_modules/
 
 # Android Studio will place build artifacts here
 /android/app/debug

@@ -4,8 +4,9 @@ const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 3000;
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// Trim — copy/paste in Railway sometimes adds trailing newlines, which breaks Supabase URL.
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
+const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'test-admin@test.com').toLowerCase();
 
@@ -459,6 +460,13 @@ async function handleHealth(req, res) {
     ok: true,
     message: 'Project Tracker backend',
     timestamp: new Date().toISOString(),
+    // Safe diagnostics (no secrets). If supabaseConfigured is false, check Railway Variables on THIS service.
+    firebaseConfigured: !!firebaseAdmin,
+    supabaseConfigured: !!supabase,
+    env: {
+      supabaseUrlSet: SUPABASE_URL.length > 0,
+      supabaseServiceRoleKeySet: SUPABASE_SERVICE_ROLE_KEY.length > 0,
+    },
   });
 }
 
@@ -522,4 +530,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
+  console.log(
+    `Firebase Admin: ${firebaseAdmin ? 'ok' : 'missing FIREBASE_SERVICE_ACCOUNT_JSON'}`,
+  );
+  console.log(
+    `Supabase: ${supabase ? 'ok' : 'missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY'}`,
+  );
 });
