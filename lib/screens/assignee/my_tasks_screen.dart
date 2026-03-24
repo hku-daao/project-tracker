@@ -38,10 +38,23 @@ class _MyTasksScreenState extends State<MyTasksScreen> {
       );
     }
     
+    // Tasks: admin roles — only own staff_app_id; supervisor/general — self ∪ subordinates (AppState).
+    final role = state.userRole?.toLowerCase();
+    final Set<String> taskScope;
+    if (role == 'supervisor' || role == 'general') {
+      taskScope = state.assigneeVisibilityAppIds;
+    } else {
+      taskScope = {userStaffAppId};
+    }
+
     // Filter initiatives and tasks where assigneeIds contains the user's staff_app_id
     final myInitiatives = state.initiatives.where((i) => i.directorIds.contains(userStaffAppId)).toList();
-    final myTasks = state.tasks.where((t) => t.assigneeIds.contains(userStaffAppId)).toList();
-    final deletedForAssignee = state.deletedTasks.where((r) => r.assigneeIds.contains(userStaffAppId)).toList();
+    final myTasks = state.tasks
+        .where((t) => t.assigneeIds.any((id) => taskScope.contains(id)))
+        .toList();
+    final deletedForAssignee = state.deletedTasks
+        .where((r) => r.assigneeIds.any((id) => taskScope.contains(id)))
+        .toList();
     
     // Apply status filter
     List<Initiative> filteredInitiatives = [];

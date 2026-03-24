@@ -39,6 +39,9 @@ class AppState extends ChangeNotifier {
   String? _userStaffAppId;
   List<AssignableStaffEntry> _assignableStaffFromServer = [];
 
+  /// `staff.app_id` values from `subordinate.subordinate_id` where `supervisor_id` = current user.
+  List<String> _subordinateAppIds = [];
+
   /// Revamp step 1: staff + team lookup by login email (Supabase).
   StaffTeamLookupResult? _revampStaffLookup;
 
@@ -53,6 +56,32 @@ class AppState extends ChangeNotifier {
   String? get userStaffAppId => _userStaffAppId;
   List<AssignableStaffEntry> get assignableStaffFromServer =>
       List.unmodifiable(_assignableStaffFromServer);
+
+  List<String> get subordinateAppIds => List.unmodifiable(_subordinateAppIds);
+
+  /// For [supervisor]: own `staff.app_id` plus [subordinateAppIds]. For [general]: self only.
+  Set<String> get assigneeVisibilityAppIds {
+    final mine = _userStaffAppId?.trim();
+    if (mine == null || mine.isEmpty) return {};
+    final r = _userRole?.toLowerCase();
+    if (r == 'supervisor') {
+      return {mine, ..._subordinateAppIds};
+    }
+    if (r == 'general') {
+      return {mine};
+    }
+    return {};
+  }
+
+  bool get _filtersTasksByAssigneeScope {
+    final r = _userRole?.toLowerCase();
+    return r == 'supervisor' || r == 'general';
+  }
+
+  void setSubordinateAppIds(List<String> ids) {
+    _subordinateAppIds = List<String>.from(ids);
+    notifyListeners();
+  }
 
   /// sys_admin and dept_head see High-level View and Low-level View (with segment labels).
   bool get canSeeHighLevelView =>
@@ -294,8 +323,20 @@ class AppState extends ChangeNotifier {
 
   /// Low-level tasks for a team (task.teamId == teamId). Pass null for all.
   /// Singular `task` rows often have no team — those [teamId] is null and still show when filtering by team.
+  /// Supervisors and general users only see tasks where some assignee slot is self or (for supervisors) a subordinate.
   List<Task> tasksForTeam(String? teamId) {
-    final all = tasks;
+    var all = tasks;
+    if (_filtersTasksByAssigneeScope) {
+      final scope = assigneeVisibilityAppIds;
+      if (scope.isEmpty) {
+        all = [];
+      } else {
+        all = all
+            .where((t) =>
+                t.assigneeIds.any((id) => scope.contains(id)))
+            .toList();
+      }
+    }
     if (teamId == null || teamId.isEmpty) return all;
     return all
         .where((t) => t.teamId == null || t.teamId == teamId)

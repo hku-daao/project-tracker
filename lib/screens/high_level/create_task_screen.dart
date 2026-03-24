@@ -92,15 +92,43 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   }
 
   /// Local [teamId] hint from Supabase picker: first selected assignee’s `staff.team_id` (by name order).
-  String _inferTeamIdFromSupabasePick(List<String> directorIds) {
+  Set<String> _supervisorPickerScope(AppState state) {
+    final mine = state.userStaffAppId?.trim();
+    if (mine == null || mine.isEmpty) return {};
+    return {mine, ...state.subordinateAppIds};
+  }
+
+  List<StaffForAssignment> _pickerStaffForRole(AppState state) {
+    final r = state.userRole?.toLowerCase().trim();
+    if (r != 'supervisor') return _pickerStaff;
+    final allowed = _supervisorPickerScope(state);
+    if (allowed.isEmpty) return [];
+    return _pickerStaff.where((s) => allowed.contains(s.assigneeId)).toList();
+  }
+
+  List<TeamOptionRow> _pickerTeamsForRole(AppState state) {
+    final staff = _pickerStaffForRole(state);
+    final teamIds = staff
+        .map((s) => s.teamId)
+        .whereType<String>()
+        .where((t) => t.isNotEmpty)
+        .toSet();
+    if (teamIds.isEmpty) return List<TeamOptionRow>.from(_pickerTeams);
+    return _pickerTeams.where((t) => teamIds.contains(t.teamId)).toList();
+  }
+
+  String _inferTeamIdFromSupabasePick(
+    List<String> directorIds,
+    List<StaffForAssignment> staffPool,
+  ) {
     if (directorIds.isEmpty) return '';
     final sorted = [...directorIds]..sort((a, b) {
-        final na = _pickerStaff
+        final na = staffPool
             .firstWhere((s) => s.assigneeId == a,
                 orElse: () =>
                     StaffForAssignment(assigneeId: a, name: a))
             .name;
-        final nb = _pickerStaff
+        final nb = staffPool
             .firstWhere((s) => s.assigneeId == b,
                 orElse: () =>
                     StaffForAssignment(assigneeId: b, name: b))
@@ -189,25 +217,56 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         teamId = teams.isNotEmpty ? teams.first.id : '';
       }
     } 
-    // Supervisor: can only select subordinates (already filtered by backend)
+    // Supervisor: backend assignable list, or Supabase picker (self ∪ subordinates).
     else if (role == 'supervisor') {
+      final allowed = _supervisorPickerScope(state);
       if (useServer && _selectedAssigneeIds.isNotEmpty) {
         directorIds = _selectedAssigneeIds.toList();
-        // Get team from first selected assignee
+        if (!directorIds.every((id) => allowed.contains(id))) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid assignee selection.')),
+          );
+          return;
+        }
         final firstAssignee = state.assignableStaffFromServer
             .firstWhere((e) => e.staffAppId == directorIds.first,
                 orElse: () => state.assignableStaffFromServer.first);
         teamId = firstAssignee.teamAppId ?? (teams.isNotEmpty ? teams.first.id : '');
+      } else if (SupabaseConfig.isConfigured && _pickerStaffForRole(state).isNotEmpty) {
+        if (_selectedAssigneeIds.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Select at least one assignee (yourself or a subordinate)'),
+            ),
+          );
+          return;
+        }
+        directorIds = _selectedAssigneeIds.toList();
+        if (!directorIds.every((id) => allowed.contains(id))) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid assignee selection.')),
+          );
+          return;
+        }
+        final pool = _pickerStaffForRole(state);
+        teamId = _inferTeamIdFromSupabasePick(directorIds, pool);
+        if (teamId.isEmpty) {
+          teamId = teams.isNotEmpty ? teams.first.id : '';
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Select at least one subordinate')),
+          const SnackBar(
+            content: Text(
+              'No assignees available. Add subordinate rows in Supabase or use backend RBAC.',
+            ),
+          ),
         );
         return;
       }
     }
     // sys_admin and dept_head: can select all teams and team members
     else if (role == 'sys_admin' || role == 'dept_head') {
-      if (_pickerStaff.isNotEmpty) {
+      if (_pickerStaffForRole(state).isNotEmpty) {
         directorIds = _selectedAssigneeIds.toList();
         if (directorIds.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -215,7 +274,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
           );
           return;
         }
-        teamId = _inferTeamIdFromSupabasePick(directorIds);
+        teamId = _inferTeamIdFromSupabasePick(directorIds, _pickerStaffForRole(state));
         if (teamId.isEmpty) {
           teamId = teams.isNotEmpty ? teams.first.id : '';
         }
@@ -428,9 +487,11 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
       debugPrint('CreateTaskScreen: role=$role, useServer=$useServer, teams=${state.teams.length}, assignableStaff=${_serverAssignable.length}');
     }
 
+    final pickerStaffForRole = _pickerStaffForRole(state);
+    final pickerTeamsForRole = _pickerTeamsForRole(state);
     final useSupabasePicker = SupabaseConfig.isConfigured &&
-        (role == 'sys_admin' || role == 'dept_head') &&
-        _pickerStaff.isNotEmpty;
+        (role == 'sys_admin' || role == 'dept_head' || role == 'supervisor') &&
+        pickerStaffForRole.isNotEmpty;
 
     return Stack(
       children: [
@@ -445,7 +506,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            if (role == 'sys_admin' || role == 'dept_head') ...[
+            if (role == 'sys_admin' || role == 'dept_head' || role == 'supervisor') ...[
               if (SupabaseConfig.isConfigured && _pickerLoading) ...[
                 const LinearProgressIndicator(),
                 const SizedBox(height: 8),
@@ -460,8 +521,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 ),
               if (useSupabasePicker)
                 StaffAssigneePickerPanel(
-                  teams: _pickerTeams,
-                  staff: _pickerStaff,
+                  teams: pickerTeamsForRole,
+                  staff: pickerStaffForRole,
                   selectedIds: _selectedAssigneeIds,
                   onSelectionChanged: (s) => setState(() {
                     _selectedAssigneeIds
@@ -469,7 +530,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                       ..addAll(s);
                   }),
                 )
-              else ...[
+              else if (role == 'sys_admin' || role == 'dept_head') ...[
               const Text(
                 'Team (multiple)',
                 style: TextStyle(fontWeight: FontWeight.w500),

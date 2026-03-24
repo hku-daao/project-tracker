@@ -366,6 +366,28 @@ class SupabaseService {
     }
   }
 
+  /// Rows in [subordinate] where [supervisor_id] is the supervisor's `staff.app_id`.
+  static Future<List<String>> fetchSubordinateAppIdsForSupervisor(
+      String supervisorAppId) async {
+    if (!_enabled) return [];
+    final s = supervisorAppId.trim();
+    if (s.isEmpty) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('subordinate')
+          .select('subordinate_id')
+          .eq('supervisor_id', s);
+      final out = <String>[];
+      for (final row in (res as List)) {
+        final id = (row as Map)['subordinate_id']?.toString().trim();
+        if (id != null && id.isNotEmpty) out.add(id);
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
   static Future<InitiativesLoadResult?> fetchInitiativesFromSupabase() async {
     if (!_enabled) return null;
     try {

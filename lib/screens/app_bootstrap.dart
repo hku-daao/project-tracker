@@ -48,6 +48,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
             staffAppId: lookup.appId,
             assignableStaff: const [],
           );
+          final subIds = await SupabaseService.fetchSubordinateAppIdsForSupervisor(
+            lookup.appId ?? '',
+          );
+          if (mounted) state.setSubordinateAppIds(subIds);
         }
       }
     } catch (e) {

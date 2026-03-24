@@ -44,14 +44,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         tasks = tasks.where((t) => t.assigneeIds.contains(_selectedAssigneeId!)).toList();
       }
     } else if (role == 'supervisor') {
-      // Filter by subordinates (from assignableStaffFromServer)
-      final subordinateIds = state.assignableStaffFromServer.map((e) => e.staffAppId).toSet();
-      initiatives = state.initiatives.where((i) => 
-        i.directorIds.any((id) => subordinateIds.contains(id))
-      ).toList();
-      tasks = state.tasks.where((t) =>
-          t.assigneeIds.isEmpty ||
-          t.assigneeIds.any((id) => subordinateIds.contains(id))).toList();
+      // Tasks: self ∪ subordinates (see AppState.tasksForTeam). Initiatives: same team filter as others.
+      initiatives = state.initiativesForTeam(_selectedTeamId);
+      tasks = state.tasksForTeam(_selectedTeamId);
+      if (_selectedAssigneeId != null) {
+        initiatives = initiatives
+            .where((i) => i.directorIds.contains(_selectedAssigneeId!))
+            .toList();
+        tasks = tasks
+            .where((t) => t.assigneeIds.contains(_selectedAssigneeId!))
+            .toList();
+      }
     } else {
       // general, null role, etc. — same sources as admin (Tasks tab may be hidden for some roles)
       initiatives = state.initiativesForTeam(_selectedTeamId);
