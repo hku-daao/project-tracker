@@ -68,6 +68,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       return s == 'delete' || s == 'deleted';
     }
 
+    bool singularCompleted(Task t) {
+      if (!t.isSingularTableRow) return false;
+      final s = t.dbStatus?.trim().toLowerCase() ?? '';
+      return s == 'completed' || s == 'complete';
+    }
+
+    bool singularIncomplete(Task t) {
+      if (!t.isSingularTableRow) return false;
+      final s = t.dbStatus?.trim().toLowerCase() ?? '';
+      if (s.isEmpty) return true;
+      return s == 'incomplete';
+    }
+
     final tasksNonDeleted = tasks.where((t) => !singularDeleted(t)).toList();
     final tasksDeletedSingular = tasks.where(singularDeleted).toList();
     
@@ -82,11 +95,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       filteredDeletedTasks = [];
     } else if (_filterType == 'incomplete') {
       filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) < 100).toList();
-      filteredTasks = tasksNonDeleted.where((t) => t.status != TaskStatus.done).toList();
+      filteredTasks = tasksNonDeleted.where((t) {
+        if (t.isSingularTableRow) return singularIncomplete(t);
+        return t.status != TaskStatus.done;
+      }).toList();
       filteredDeletedTasks = [];
     } else if (_filterType == 'completed') {
       filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) >= 100).toList();
-      filteredTasks = tasksNonDeleted.where((t) => t.status == TaskStatus.done).toList();
+      filteredTasks = tasksNonDeleted.where((t) {
+        if (t.isSingularTableRow) return singularCompleted(t);
+        return t.status == TaskStatus.done;
+      }).toList();
       filteredDeletedTasks = [];
     } else if (_filterType == 'deleted') {
       filteredInitiatives = [];

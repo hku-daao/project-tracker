@@ -6,6 +6,7 @@ import '../models/initiative.dart';
 import '../models/milestone.dart';
 import '../models/sub_task.dart';
 import '../models/deleted_record.dart';
+import '../models/singular_comment.dart';
 import '../models/staff_for_assignment.dart';
 import '../models/task.dart';
 import '../utils/hk_time.dart';
@@ -555,8 +556,9 @@ class SupabaseService {
       for (final t in tasks) {
         byId[t.id] = t;
       }
+      // Singular `task` rows take precedence over legacy `tasks` when ids collide.
       for (final t in singularTasks) {
-        byId.putIfAbsent(t.id, () => t);
+        byId[t.id] = t;
       }
       final merged = byId.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -819,7 +821,7 @@ class SupabaseService {
         'task_id': taskId,
         'description': d,
         'status': status,
-        'create_date': HkTime.todayDateOnlyForDb(),
+        'create_date': HkTime.timestampForDb(),
       };
       final lookup = creatorStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
@@ -832,6 +834,57 @@ class SupabaseService {
       return null;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  /// Loads `public."comment"` for [taskId], ordered by `create_date` ascending.
+  static Future<List<SingularCommentRowDisplay>> fetchSingularCommentsForTask(
+      String taskId) async {
+    if (!_enabled) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('comment')
+          .select()
+          .eq('task_id', taskId)
+          .order('create_date', ascending: true);
+      final rows = <Map<String, dynamic>>[];
+      for (final raw in (res as List)) {
+        rows.add(Map<String, dynamic>.from(raw as Map));
+      }
+      final idSet = <String>{};
+      for (final r in rows) {
+        final cb = r['create_by']?.toString().trim();
+        final ub = r['update_by']?.toString().trim();
+        if (cb != null && cb.isNotEmpty) idSet.add(cb);
+        if (ub != null && ub.isNotEmpty) idSet.add(ub);
+      }
+      final names = <String, String>{};
+      for (final id in idSet) {
+        names[id] = await staffDisplayNameForKey(id);
+      }
+      final out = <SingularCommentRowDisplay>[];
+      for (final r in rows) {
+        final id = r['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final ub = r['update_by']?.toString().trim();
+        final useUpdate = ub != null && ub.isNotEmpty;
+        final staffKey = useUpdate ? ub : r['create_by']?.toString().trim();
+        final name = (staffKey != null && staffKey.isNotEmpty)
+            ? (names[staffKey] ?? staffKey)
+            : '—';
+        final tsRaw = useUpdate ? r['update_date'] : r['create_date'];
+        final ts = _parseDateTimeNullable(tsRaw);
+        out.add(SingularCommentRowDisplay(
+          id: id,
+          description: r['description']?.toString() ?? '',
+          status: r['status']?.toString() ?? '',
+          displayStaffName: name,
+          displayTimestampUtc: ts,
+        ));
+      }
+      return out;
+    } catch (_) {
+      return [];
     }
   }
 

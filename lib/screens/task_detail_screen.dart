@@ -5,6 +5,7 @@ import '../app_state.dart';
 import '../config/supabase_config.dart';
 import '../models/task.dart';
 import '../models/comment.dart';
+import '../models/singular_comment.dart';
 import '../models/staff_for_assignment.dart';
 import '../priority.dart';
 import '../services/supabase_service.dart';
@@ -73,6 +74,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   bool _loadingStaff = true;
   bool _loadedForm = false;
   bool _saving = false;
+  List<SingularCommentRowDisplay> _tableComments = [];
+  bool _loadingTableComments = false;
 
   static const int _maxAssignees = 10;
   static const Color _selGreen = Color(0xFF1B5E20);
@@ -84,7 +87,30 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       if (!mounted) return;
       final state = context.read<AppState>();
       _ensureLoaded(state);
+      _loadTableComments();
     });
+  }
+
+  Future<void> _loadTableComments() async {
+    if (!SupabaseConfig.isConfigured) {
+      if (mounted) setState(() => _tableComments = []);
+      return;
+    }
+    setState(() => _loadingTableComments = true);
+    final list =
+        await SupabaseService.fetchSingularCommentsForTask(widget.taskId);
+    if (!mounted) return;
+    setState(() {
+      _tableComments = list;
+      _loadingTableComments = false;
+    });
+  }
+
+  String _formatCommentTs(DateTime? stored) {
+    if (stored == null) return '—';
+    return DateFormat.yMMMd()
+        .add_Hm()
+        .format(stored.add(const Duration(hours: 8)));
   }
 
   @override
@@ -234,84 +260,90 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       );
       return;
     }
-    final keys = _allStaff.where((s) => _selectedStaffIds.contains(s.id)).toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
-    final keyList = keys.take(_maxAssignees).map((s) => s.id).toList();
-    final slots = await SupabaseService.assigneeSlotsForTask(keyList);
-    final assigneeIdsForState = <String>[];
-    for (final s in keys.take(_maxAssignees)) {
-      assigneeIdsForState.add(await SupabaseService.assigneeListKeyFromStaffUuid(s.id));
-    }
-
-    final priorityLabel = priorityToDisplayName(_localPriority);
-    final statusForDb = _localStatus;
-
+    if (_saving) return;
     setState(() => _saving = true);
-    final err = await SupabaseService.updateSingularTaskRow(
-      taskId: task.id,
-      taskName: _nameController.text.trim(),
-      description: _descController.text.trim(),
-      priority: priorityLabel,
-      assigneeSlots: slots,
-      startDate: _startDate,
-      dueDate: _dueDate,
-      clearStartDate: _startDate == null,
-      clearDueDate: _dueDate == null,
-      status: statusForDb,
-      updateByStaffLookupKey: state.userStaffAppId,
-    );
-    if (!mounted) return;
-    setState(() => _saving = false);
+    try {
+      final keys = _allStaff.where((s) => _selectedStaffIds.contains(s.id)).toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+      final keyList = keys.take(_maxAssignees).map((s) => s.id).toList();
+      final slots = await SupabaseService.assigneeSlotsForTask(keyList);
+      final assigneeIdsForState = <String>[];
+      for (final s in keys.take(_maxAssignees)) {
+        assigneeIdsForState.add(
+            await SupabaseService.assigneeListKeyFromStaffUuid(s.id));
+      }
 
-    if (err != null) {
-      showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
-      return;
-    }
+      final priorityLabel = priorityToDisplayName(_localPriority);
+      final statusForDb = _localStatus;
 
-    final commentBody = _commentController.text.trim();
-    if (commentBody.isNotEmpty) {
-      final cErr = await SupabaseService.insertSingularCommentRow(
+      final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
-        description: commentBody,
-        creatorStaffLookupKey: state.userStaffAppId,
+        taskName: _nameController.text.trim(),
+        description: _descController.text.trim(),
+        priority: priorityLabel,
+        assigneeSlots: slots,
+        startDate: _startDate,
+        dueDate: _dueDate,
+        clearStartDate: _startDate == null,
+        clearDueDate: _dueDate == null,
+        status: statusForDb,
+        updateByStaffLookupKey: state.userStaffAppId,
       );
       if (!mounted) return;
-      if (cErr != null) {
-        showCopyableSnackBar(
-          context,
-          'Task updated, but comment was not saved: $cErr',
-          backgroundColor: Colors.orange,
-        );
-      } else {
-        _commentController.clear();
+
+      if (err != null) {
+        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        return;
       }
-    }
 
-    final lk = state.userStaffAppId?.trim();
-    String? updaterName;
-    if (lk != null && lk.isNotEmpty) {
-      updaterName = state.assigneeById(lk)?.name ??
-          await SupabaseService.staffDisplayNameForKey(lk);
-    }
-    if (!mounted) return;
+      final commentBody = _commentController.text.trim();
+      if (commentBody.isNotEmpty) {
+        final cErr = await SupabaseService.insertSingularCommentRow(
+          taskId: task.id,
+          description: commentBody,
+          creatorStaffLookupKey: state.userStaffAppId,
+        );
+        if (!mounted) return;
+        if (cErr != null) {
+          showCopyableSnackBar(
+            context,
+            'Task updated, but comment was not saved: $cErr',
+            backgroundColor: Colors.orange,
+          );
+        } else {
+          _commentController.clear();
+          await _loadTableComments();
+        }
+      }
 
-    state.replaceTask(
-      task.copyWith(
-        name: _nameController.text.trim(),
-        description: _descController.text.trim(),
-        assigneeIds: assigneeIdsForState,
-        priority: _localPriority,
-        startDate: _startDate,
-        endDate: _dueDate,
-        dbStatus: statusForDb,
-        status: _mapLocalStatusToEnum(statusForDb),
-        updateByStaffName: updaterName,
-        updateDate: DateTime.now(),
-      ),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Task updated'), backgroundColor: Colors.green),
-    );
+      final lk = state.userStaffAppId?.trim();
+      String? updaterName;
+      if (lk != null && lk.isNotEmpty) {
+        updaterName = state.assigneeById(lk)?.name ??
+            await SupabaseService.staffDisplayNameForKey(lk);
+      }
+      if (!mounted) return;
+
+      state.replaceTask(
+        task.copyWith(
+          name: _nameController.text.trim(),
+          description: _descController.text.trim(),
+          assigneeIds: assigneeIdsForState,
+          priority: _localPriority,
+          startDate: _startDate,
+          endDate: _dueDate,
+          dbStatus: statusForDb,
+          status: _mapLocalStatusToEnum(statusForDb),
+          updateByStaffName: updaterName,
+          updateDate: DateTime.now(),
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Task updated'), backgroundColor: Colors.green),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _toggleStaff(String id, bool selected) {
@@ -388,11 +420,17 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         title: Text(task.name),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      body: Stack(
+        children: [
+          AbsorbPointer(
+            absorbing: _saving,
+            child: Opacity(
+              opacity: _saving ? 0.55 : 1,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -401,6 +439,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                   children: [
                     TextField(
                       controller: _nameController,
+                      readOnly: _saving,
                       decoration: const InputDecoration(
                         labelText: 'Task name',
                         border: OutlineInputBorder(),
@@ -409,6 +448,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _descController,
+                      readOnly: _saving,
                       decoration: const InputDecoration(
                         labelText: 'Description',
                         border: OutlineInputBorder(),
@@ -438,7 +478,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           return FilterChip(
                             label: Text(s.name),
                             selected: sel,
-                            onSelected: (v) => _toggleStaff(s.id, v),
+                            onSelected: _saving ? null : (v) => _toggleStaff(s.id, v),
                           );
                         }).toList(),
                       ),
@@ -476,13 +516,15 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           ),
                         ),
                         TextButton.icon(
-                          onPressed: _pickStartDate,
+                          onPressed: _saving ? null : _pickStartDate,
                           icon: const Icon(Icons.calendar_today),
                           label: const Text('Pick'),
                         ),
                         if (_startDate != null)
                           TextButton(
-                            onPressed: () => setState(() => _startDate = null),
+                            onPressed: _saving
+                                ? null
+                                : () => setState(() => _startDate = null),
                             child: const Text('Clear'),
                           ),
                       ],
@@ -498,13 +540,15 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           ),
                         ),
                         TextButton.icon(
-                          onPressed: _pickDueDate,
+                          onPressed: _saving ? null : _pickDueDate,
                           icon: const Icon(Icons.event),
                           label: const Text('Pick'),
                         ),
                         if (_dueDate != null)
                           TextButton(
-                            onPressed: () => setState(() => _dueDate = null),
+                            onPressed: _saving
+                                ? null
+                                : () => setState(() => _dueDate = null),
                             child: const Text('Clear'),
                           ),
                       ],
@@ -576,44 +620,37 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             const SizedBox(height: 8),
             TextField(
               controller: _commentController,
-              decoration: const InputDecoration(
-                labelText: 'Comments',
+              readOnly: _saving,
+              textAlignVertical: TextAlignVertical.top,
+              minLines: 3,
+              maxLines: 6,
+              decoration: InputDecoration(
                 hintText: 'Comments',
-                border: OutlineInputBorder(),
+                hintStyle: TextStyle(color: Colors.grey.shade600),
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.all(12),
+                isDense: true,
               ),
-              maxLines: 3,
             ),
             const SizedBox(height: 12),
-            ...task.comments.map((c) {
-              final canEdit = DateTime.now().difference(c.createdAt) < const Duration(hours: 1);
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  title: Text(c.body),
-                  subtitle: Text(
-                    '${c.authorName} · ${DateFormat.yMMMd().add_Hm().format(c.createdAt)}',
-                    style: Theme.of(context).textTheme.bodySmall,
+            if (_loadingTableComments)
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              ..._tableComments.map((c) {
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    title: Text(c.description),
+                    subtitle: Text(
+                      '${c.displayStaffName} · ${_formatCommentTs(c.displayTimestampUtc)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
-                  trailing: canEdit
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined),
-                              onPressed: () => _editComment(context, state, c),
-                              tooltip: 'Edit',
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => _deleteComment(context, state, c),
-                              tooltip: 'Delete',
-                            ),
-                          ],
-                        )
-                      : null,
-                ),
-              );
-            }),
+                );
+              }),
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : () => _saveTaskFields(state, task),
@@ -622,62 +659,22 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
               ),
               child: Text(_saving ? 'Saving…' : 'Update'),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _editComment(BuildContext context, AppState state, TaskComment c) {
-    final controller = TextEditingController(text: c.body);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit comment'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-          maxLines: 3,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final newBody = controller.text.trim();
-              if (newBody.isNotEmpty) state.updateComment(c.id, newBody);
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _deleteComment(BuildContext context, AppState state, TaskComment c) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete comment'),
-        content: const Text('Remove this comment?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
+                  ],
+                ),
+              ),
             ),
-            onPressed: () {
-              state.deleteComment(c.id);
-              Navigator.pop(ctx);
-            },
-            child: const Text('Delete'),
           ),
+          if (_saving)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Material(
+                  color: Colors.black.withOpacity(0.12),
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

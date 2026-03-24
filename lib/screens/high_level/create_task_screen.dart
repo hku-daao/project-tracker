@@ -36,6 +36,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   bool _pickerLoading = false;
   String? _pickerError;
   final Map<String, String> _staffAssigneeToTeamId = {};
+  bool _submitting = false;
 
   @override
   void initState() {
@@ -158,6 +159,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
     final state = context.read<AppState>();
     final useServer = state.assignableStaffFromServer.isNotEmpty;
     final role = state.userRole?.toLowerCase().trim();
@@ -381,6 +385,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         ),
       );
     }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   /// Assignees from server (RBAC); when non-empty, team/assignee UI uses this.
@@ -425,13 +432,19 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         (role == 'sys_admin' || role == 'dept_head') &&
         _pickerStaff.isNotEmpty;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+    return Stack(
+      children: [
+        AbsorbPointer(
+          absorbing: _submitting,
+          child: Opacity(
+            opacity: _submitting ? 0.55 : 1,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             if (role == 'sys_admin' || role == 'dept_head') ...[
               if (SupabaseConfig.isConfigured && _pickerLoading) ...[
                 const LinearProgressIndicator(),
@@ -659,6 +672,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _nameController,
+              readOnly: _submitting,
               decoration: const InputDecoration(
                 labelText: 'Task name',
                 hintText: 'Task name',
@@ -677,7 +691,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 return FilterChip(
                   label: Text(priorityToDisplayName(p)),
                   selected: selected,
-                  onSelected: (v) => setState(() => _priority = p),
+                  onSelected: _submitting ? null : (v) => setState(() => _priority = p),
                 );
               }).toList(),
             ),
@@ -693,21 +707,26 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 ),
                 const SizedBox(width: 12),
                 TextButton.icon(
-                  onPressed: () async {
-                    final d = await showDatePicker(
-                      context: context,
-                      initialDate: _endDate ?? DateTime.now(),
-                      firstDate: DateTime(2020),
-                      lastDate: _endDate ?? DateTime.now().add(const Duration(days: 365 * 3)),
-                    );
-                    if (d != null) setState(() => _startDate = d);
-                  },
+                  onPressed: _submitting
+                      ? null
+                      : () async {
+                          final d = await showDatePicker(
+                            context: context,
+                            initialDate: _endDate ?? DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: _endDate ??
+                                DateTime.now().add(const Duration(days: 365 * 3)),
+                          );
+                          if (d != null) setState(() => _startDate = d);
+                        },
                   icon: const Icon(Icons.calendar_today),
                   label: const Text('Pick'),
                 ),
                 if (_startDate != null)
                   TextButton(
-                    onPressed: () => setState(() => _startDate = null),
+                    onPressed: _submitting
+                        ? null
+                        : () => setState(() => _startDate = null),
                     child: const Text('Clear'),
                   ),
               ],
@@ -724,21 +743,26 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 ),
                 const SizedBox(width: 12),
                 TextButton.icon(
-                  onPressed: () async {
-                    final d = await showDatePicker(
-                      context: context,
-                      initialDate: _startDate ?? _endDate ?? DateTime.now(),
-                      firstDate: _startDate ?? DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
-                    );
-                    if (d != null) setState(() => _endDate = d);
-                  },
+                  onPressed: _submitting
+                      ? null
+                      : () async {
+                          final d = await showDatePicker(
+                            context: context,
+                            initialDate: _startDate ?? _endDate ?? DateTime.now(),
+                            firstDate: _startDate ?? DateTime.now(),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 365 * 3)),
+                          );
+                          if (d != null) setState(() => _endDate = d);
+                        },
                   icon: const Icon(Icons.calendar_today),
                   label: const Text('Pick'),
                 ),
                 if (_endDate != null)
                   TextButton(
-                    onPressed: () => setState(() => _endDate = null),
+                    onPressed: _submitting
+                        ? null
+                        : () => setState(() => _endDate = null),
                     child: const Text('Clear'),
                   ),
               ],
@@ -746,6 +770,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _descController,
+              readOnly: _submitting,
               decoration: const InputDecoration(
                 labelText: 'Description',
                 border: OutlineInputBorder(),
@@ -756,6 +781,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _commentsController,
+              readOnly: _submitting,
               decoration: const InputDecoration(
                 labelText: 'Comments',
                 hintText: 'Comments',
@@ -766,15 +792,30 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: _submit,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Create task'),
+              onPressed: _submitting ? null : _submit,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(_submitting ? 'Creating…' : 'Create task'),
               ),
             ),
           ],
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
+        if (_submitting)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Material(
+                color: Colors.black.withOpacity(0.12),
+                child: const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
