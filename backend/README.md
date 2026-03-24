@@ -18,6 +18,7 @@ Copy `.env.example` to `.env` and set these three variables:
 | **SUPABASE_URL** | [Supabase](https://supabase.com/dashboard) → your project → **Project Settings** (gear) → **API** → **Project URL** |
 | **SUPABASE_SERVICE_ROLE_KEY** | Same page → **Project API keys** → **service_role** (secret). Use this, not the anon key. |
 | **FIREBASE_SERVICE_ACCOUNT_JSON** | [Firebase Console](https://console.firebase.google.com/) → your project (e.g. daao-a20c6) → **Project settings** (gear) → **Service accounts** → **Generate new private key** → download JSON. Paste the **entire JSON as one line** (no line breaks) as the value. |
+| **CORS_ORIGINS** (optional) | Comma-separated extra **https** origins for the Flutter web app (e.g. a custom domain). Built-in defaults already include `https://project-tracker-test.web.app`, production `*.web.app` URLs, and HKU domains. Set this if you host the web app on another hostname. |
 
 ### Get Firebase service account JSON (step by step)
 
@@ -50,13 +51,20 @@ node server.js
 
 Server runs at `http://localhost:3000` (or `PORT` from env). Test: `curl http://localhost:3000/` and `curl -H "Authorization: Bearer YOUR_FIREBASE_ID_TOKEN" http://localhost:3000/api/me`.
 
-## 4. Railway deployment (production)
+## 4. Railway deployment
 
-Your Flutter app calls the backend at `ApiConfig.baseUrl` (e.g. `https://project-tracker-production-1588.up.railway.app`). Set the same three variables on Railway so `/api/me` and `/api/assignable-staff` work.
+You may have **two** Railway backends (testing vs production). The Flutter app’s `ApiConfig.baseUrl` follows **`DEPLOY_ENV`** — see **`docs/ENVIRONMENTS.md`** in the repo root.
+
+| Environment | Example URL |
+|-------------|-------------|
+| Testing | `https://project-tracker-test-production.up.railway.app` |
+| Production | `https://project-tracker-production-1588.up.railway.app` |
+
+On **each** Railway service, set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`** from the **matching** Supabase project (DAAO Tests vs DAAO Apps). **`FIREBASE_SERVICE_ACCOUNT_JSON`** can be the same for both (Firebase project `daao-a20c6`).
 
 ### Set environment variables on Railway
 
-1. Go to [Railway Dashboard](https://railway.app/dashboard) and open your **Project Tracker** backend project.
+1. Go to [Railway Dashboard](https://railway.app/dashboard) and open the backend service for **testing** or **production**.
 2. Click the **backend service** (the one that runs `node server.js`).
 3. Open the **Variables** tab (or **Settings** → **Variables**).
 4. Add three variables:
