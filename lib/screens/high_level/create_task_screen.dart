@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
@@ -30,7 +29,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   int _priority = 1; // 1 = Standard, 2 = Urgent
   DateTime? _startDate;
   DateTime? _endDate;
-  bool _loadingProfile = false;
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   bool _pickerLoading = false;
@@ -42,7 +40,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndReloadProfile();
       _loadSupabaseAssigneePicker();
     });
   }
@@ -92,16 +89,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   }
 
   /// Local [teamId] hint from Supabase picker: first selected assignee’s `staff.team_id` (by name order).
-  Set<String> _supervisorPickerScope(AppState state) {
-    final mine = state.userStaffAppId?.trim();
-    if (mine == null || mine.isEmpty) return {};
-    return {mine, ...state.subordinateAppIds};
-  }
-
   List<StaffForAssignment> _pickerStaffForRole(AppState state) {
-    final r = state.userRole?.toLowerCase().trim();
-    if (r != 'supervisor') return _pickerStaff;
-    final allowed = _supervisorPickerScope(state);
+    final allowed = state.assigneeVisibilityAppIds;
     if (allowed.isEmpty) return [];
     return _pickerStaff.where((s) => allowed.contains(s.assigneeId)).toList();
   }
@@ -142,36 +131,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     return '';
   }
 
-  Future<void> _checkAndReloadProfile() async {
-    final state = context.read<AppState>();
-    if (state.userRole == null && !_loadingProfile) {
-      _loadingProfile = true;
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        final token = await user?.getIdToken(true);
-        if (token != null) {
-          final profile = await BackendApi().getMe(token);
-          if (mounted && profile != null && profile.role != null) {
-            state.setUserProfile(
-              role: profile.role,
-              staffAppId: profile.staffAppId,
-              assignableStaff: profile.assignableStaff,
-            );
-            if (mounted) {
-              await state.loadTeamsAndStaff(token);
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('CreateTaskScreen: Error reloading profile: $e');
-      } finally {
-        if (mounted) {
-          setState(() => _loadingProfile = false);
-        }
-      }
-    }
-  }
-
   @override
   void dispose() {
     _nameController.dispose();
@@ -192,134 +151,80 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     try {
     final state = context.read<AppState>();
     final useServer = state.assignableStaffFromServer.isNotEmpty;
-    final role = state.userRole?.toLowerCase().trim();
-
-    String teamId;
-    List<String> directorIds;
+    final allowed = state.assigneeVisibilityAppIds;
     final teams = state.teams;
-    
-    // General role: can only assign to themselves
-    if (role == 'general') {
-      if (useServer && state.assignableStaffFromServer.isNotEmpty) {
-        final single = state.assignableStaffFromServer.first;
-        directorIds = [single.staffAppId];
-        teamId = single.teamAppId ?? (teams.isNotEmpty ? teams.first.id : '');
-      } else {
-        // Fallback: use user's own staff_app_id
-        final userStaffAppId = state.userStaffAppId;
-        if (userStaffAppId == null || userStaffAppId.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No staff profile found. Please contact your administrator.')),
-          );
-          return;
-        }
-        directorIds = [userStaffAppId];
-        teamId = teams.isNotEmpty ? teams.first.id : '';
+
+    if (allowed.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No staff profile found. Please contact your administrator.')),
+      );
+      return;
+    }
+
+    late final String teamId;
+    late final List<String> directorIds;
+
+    if (SupabaseConfig.isConfigured && _pickerStaffForRole(state).isNotEmpty) {
+      if (_selectedAssigneeIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select at least one assignee')),
+        );
+        return;
       }
-    } 
-    // Supervisor: backend assignable list, or Supabase picker (self ∪ subordinates).
-    else if (role == 'supervisor') {
-      final allowed = _supervisorPickerScope(state);
-      if (useServer && _selectedAssigneeIds.isNotEmpty) {
-        directorIds = _selectedAssigneeIds.toList();
-        if (!directorIds.every((id) => allowed.contains(id))) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invalid assignee selection.')),
-          );
-          return;
-        }
-        final firstAssignee = state.assignableStaffFromServer
+      directorIds = _selectedAssigneeIds.toList();
+      if (!directorIds.every(allowed.contains)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid assignee selection.')),
+        );
+        return;
+      }
+      final pool = _pickerStaffForRole(state);
+      var tid = _inferTeamIdFromSupabasePick(directorIds, pool);
+      if (tid.isEmpty) tid = teams.isNotEmpty ? teams.first.id : '';
+      teamId = tid;
+    } else if (useServer) {
+      if (_selectedAssigneeIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select at least one assignee')),
+        );
+        return;
+      }
+      directorIds = _selectedAssigneeIds.toList();
+      if (!directorIds.every(allowed.contains)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid assignee selection.')),
+        );
+        return;
+      }
+      if (_selectedTeamIds.isNotEmpty) {
+        teamId = _selectedTeamIds.first;
+      } else {
+        final first = state.assignableStaffFromServer
             .firstWhere((e) => e.staffAppId == directorIds.first,
                 orElse: () => state.assignableStaffFromServer.first);
-        teamId = firstAssignee.teamAppId ?? (teams.isNotEmpty ? teams.first.id : '');
-      } else if (SupabaseConfig.isConfigured && _pickerStaffForRole(state).isNotEmpty) {
-        if (_selectedAssigneeIds.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Select at least one assignee (yourself or a subordinate)'),
-            ),
-          );
-          return;
-        }
-        directorIds = _selectedAssigneeIds.toList();
-        if (!directorIds.every((id) => allowed.contains(id))) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invalid assignee selection.')),
-          );
-          return;
-        }
-        final pool = _pickerStaffForRole(state);
-        teamId = _inferTeamIdFromSupabasePick(directorIds, pool);
-        if (teamId.isEmpty) {
-          teamId = teams.isNotEmpty ? teams.first.id : '';
-        }
-      } else {
+        teamId = first.teamAppId ?? (teams.isNotEmpty ? teams.first.id : '');
+      }
+    } else if (_selectedTeamIds.isNotEmpty && _selectedAssigneeIds.isNotEmpty) {
+      directorIds = _selectedAssigneeIds.toList();
+      if (!directorIds.every(allowed.contains)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid assignee selection.')),
+        );
+        return;
+      }
+      teamId = _selectedTeamIds.first;
+    } else {
+      final self = state.userStaffAppId;
+      if (self == null || self.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'No assignees available. Add subordinate rows in Supabase or use backend RBAC.',
-            ),
+            content: Text('Select team(s) and assignees, or configure Supabase.'),
           ),
         );
         return;
       }
-    }
-    // sys_admin and dept_head: can select all teams and team members
-    else if (role == 'sys_admin' || role == 'dept_head') {
-      if (_pickerStaffForRole(state).isNotEmpty) {
-        directorIds = _selectedAssigneeIds.toList();
-        if (directorIds.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Select at least one assignee')),
-          );
-          return;
-        }
-        teamId = _inferTeamIdFromSupabasePick(directorIds, _pickerStaffForRole(state));
-        if (teamId.isEmpty) {
-          teamId = teams.isNotEmpty ? teams.first.id : '';
-        }
-      } else if (useServer) {
-        // Using server assignable staff
-        directorIds = _selectedAssigneeIds.toList();
-        if (directorIds.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Select at least one assignee')),
-          );
-          return;
-        }
-        // Get team from selected assignee or selected team
-        if (_selectedTeamIds.isNotEmpty) {
-          teamId = _selectedTeamIds.first;
-        } else {
-          // Try to get team from first selected assignee
-          final firstAssignee = state.assignableStaffFromServer
-              .firstWhere((e) => e.staffAppId == directorIds.first,
-                  orElse: () => state.assignableStaffFromServer.first);
-          teamId = firstAssignee.teamAppId ?? (teams.isNotEmpty ? teams.first.id : '');
-        }
-      } else {
-        // Not using server - use database teams and assignees
-        if (_selectedTeamIds.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Select at least one team')),
-          );
-          return;
-        }
-        if (_selectedAssigneeIds.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Select at least one Director or Responsible Officer')),
-          );
-          return;
-        }
-        teamId = _selectedTeamIds.first;
-        directorIds = _selectedAssigneeIds.toList();
-      }
-    } else {
-      // Debug: show what role we got
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unknown role: "$role". Please contact your administrator.')),
-      );
-      return;
+      directorIds = [self];
+      teamId = teams.isNotEmpty ? teams.first.id : '';
     }
     final name = _nameController.text.trim();
     final description = _descController.text.trim();
@@ -457,41 +362,26 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final useServer = _serverAssignable.isNotEmpty;
-    final role = state.userRole?.toLowerCase().trim();
     final assignees = _assigneesForSelectedTeams();
+    final allowed = state.assigneeVisibilityAppIds;
 
-    // Filter assignees based on role and selected teams
     List<AssignableStaffEntry> serverAssigneesFiltered = [];
     if (useServer) {
-      if (role == 'sys_admin' || role == 'dept_head') {
-        // For sys_admin/dept_head: show all assignable staff, optionally filtered by selected teams
-        if (_selectedTeamIds.isEmpty) {
-          // No team filter: show all assignable staff
-          serverAssigneesFiltered = _serverAssignable;
-        } else {
-          // Filter by selected teams
-          serverAssigneesFiltered = _serverAssignable
-              .where((e) => e.teamAppId != null && _selectedTeamIds.contains(e.teamAppId))
-              .toList();
-        }
-      } else {
-        // For supervisor and general: show all assignable staff (already filtered by backend)
-        serverAssigneesFiltered = _serverAssignable;
+      var base =
+          _serverAssignable.where((e) => allowed.contains(e.staffAppId)).toList();
+      if (_selectedTeamIds.isNotEmpty) {
+        base = base
+            .where((e) =>
+                e.teamAppId != null && _selectedTeamIds.contains(e.teamAppId))
+            .toList();
       }
-    }
-    
-    // Debug: Log role and useServer status
-    if (role == null) {
-      debugPrint('WARNING: userRole is null in CreateTaskScreen');
-    } else {
-      debugPrint('CreateTaskScreen: role=$role, useServer=$useServer, teams=${state.teams.length}, assignableStaff=${_serverAssignable.length}');
+      serverAssigneesFiltered = base;
     }
 
     final pickerStaffForRole = _pickerStaffForRole(state);
     final pickerTeamsForRole = _pickerTeamsForRole(state);
-    final useSupabasePicker = SupabaseConfig.isConfigured &&
-        (role == 'sys_admin' || role == 'dept_head' || role == 'supervisor') &&
-        pickerStaffForRole.isNotEmpty;
+    final useSupabasePicker =
+        SupabaseConfig.isConfigured && pickerStaffForRole.isNotEmpty;
 
     return Stack(
       children: [
@@ -506,12 +396,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            if (role == 'sys_admin' || role == 'dept_head' || role == 'supervisor') ...[
-              if (SupabaseConfig.isConfigured && _pickerLoading) ...[
+            if (SupabaseConfig.isConfigured) ...[
+              if (_pickerLoading) ...[
                 const LinearProgressIndicator(),
                 const SizedBox(height: 8),
               ],
-              if (SupabaseConfig.isConfigured && _pickerError != null && !_pickerLoading)
+              if (_pickerError != null && !_pickerLoading)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Text(
@@ -530,54 +420,49 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                       ..addAll(s);
                   }),
                 )
-              else if (role == 'sys_admin' || role == 'dept_head') ...[
-              const Text(
-                'Team (multiple)',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8),
-              Builder(
-                builder: (context) {
-                  final state = context.read<AppState>();
-                  final teams = state.teams;
-                  if (teams.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'No teams found in database.',
-                            style: TextStyle(color: Colors.orange.shade700, fontSize: 12),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Please ensure:\n'
-                            '1. Teams exist in the "teams" table\n'
-                            '2. Backend /api/teams endpoint is working\n'
-                            '3. Check backend server logs for errors',
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: teams.map((Team t) {
-                      final selected = _selectedTeamIds.contains(t.id);
-                      return FilterChip(
-                        label: Text(t.name),
-                        selected: selected,
-                        onSelected: (v) {
-                          setState(() {
-                            if (v) {
-                              _selectedTeamIds.add(t.id);
-                            } else {
-                              _selectedTeamIds.remove(t.id);
-                              // Remove assignees that were only in this team
-                              if (useServer) {
+              else if (useServer) ...[
+                const Text(
+                  'Team (multiple)',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 8),
+                Builder(
+                  builder: (context) {
+                    final state = context.read<AppState>();
+                    final teams = state.teams;
+                    if (teams.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'No teams found in database.',
+                              style: TextStyle(color: Colors.orange.shade700, fontSize: 12),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Please ensure teams exist and the backend /api/teams endpoint is working.',
+                              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: teams.map((Team t) {
+                        final selected = _selectedTeamIds.contains(t.id);
+                        return FilterChip(
+                          label: Text(t.name),
+                          selected: selected,
+                          onSelected: (v) {
+                            setState(() {
+                              if (v) {
+                                _selectedTeamIds.add(t.id);
+                              } else {
+                                _selectedTeamIds.remove(t.id);
                                 _selectedAssigneeIds.removeWhere((id) {
                                   final assignee = _serverAssignable.firstWhere(
                                     (e) => e.staffAppId == id,
@@ -588,7 +473,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                                       teamName: null,
                                     ),
                                   );
-                                  // Remove if this was the only selected team for this assignee
                                   return assignee.teamAppId == t.id &&
                                       !_selectedTeamIds.any((tid) {
                                         final otherAssignee = _serverAssignable.firstWhere(
@@ -603,25 +487,15 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                                         return otherAssignee.teamAppId == tid;
                                       });
                                 });
-                              } else {
-                                // Remove assignees from this team when not using server
-                                for (final id in [...t.directorIds, ...t.officerIds]) {
-                                  final inOther = teams.any((x) =>
-                                      x.id != t.id &&
-                                      _selectedTeamIds.contains(x.id) &&
-                                      (x.directorIds.contains(id) || x.officerIds.contains(id)));
-                                  if (!inOther) _selectedAssigneeIds.remove(id);
-                                }
                               }
-                            }
-                          });
-                        },
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
+                            });
+                          },
+                        );
+                      }).toList(),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
               ],
             ],
             if (!useSupabasePicker) ...[
@@ -631,41 +505,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
             ),
             const SizedBox(height: 8),
             if (useServer) ...[
-              // General role: can only assign to themselves
-              if (role == 'general')
+              if (serverAssigneesFiltered.isEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Chip(
-                    label: Text(serverAssigneesFiltered.isNotEmpty 
-                        ? serverAssigneesFiltered.first.staffName 
-                        : 'Yourself'),
-                    backgroundColor: Colors.blue.shade100,
-                  ),
-                )
-              // Supervisor: can only select subordinates (already filtered by backend)
-              // sys_admin/dept_head: can select all team members
-              else if (serverAssigneesFiltered.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        role == 'supervisor'
-                            ? 'No subordinates found.'
-                            : role == 'dept_head' || role == 'sys_admin'
-                                ? 'No assignable staff found from backend.'
-                                : 'No assignable staff found.',
-                        style: TextStyle(color: Colors.orange.shade700, fontSize: 12),
-                      ),
-                      if (role == 'dept_head' || role == 'sys_admin') ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'For dept_head/sys_admin, you can still select team members from database teams below if teams are available.',
-                          style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                        ),
-                      ],
-                    ],
+                  child: Text(
+                    'No assignable staff found for the selected team(s).',
+                    style: TextStyle(color: Colors.orange.shade700, fontSize: 12),
                   ),
                 )
               else
@@ -681,8 +526,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                         setState(() {
                           if (v) {
                             _selectedAssigneeIds.add(e.staffAppId);
-                            // Auto-select team for sys_admin/dept_head
-                            if ((role == 'sys_admin' || role == 'dept_head') && e.teamAppId != null) {
+                            if (e.teamAppId != null) {
                               _selectedTeamIds.add(e.teamAppId!);
                             }
                           } else {
@@ -694,13 +538,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                   }).toList(),
                 ),
             ] else ...[
-              // Fallback when not using server: show team members
-              if ((role == 'sys_admin' || role == 'dept_head') && _selectedTeamIds.isEmpty)
+              if (_selectedTeamIds.isEmpty)
                 const Text(
                   'Select team(s) first',
                   style: TextStyle(color: Colors.grey),
                 )
-              else if ((role == 'sys_admin' || role == 'dept_head'))
+              else
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -722,11 +565,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                       },
                     );
                   }).toList(),
-                )
-              else
-                const Text(
-                  'Please ensure backend is configured for role-based assignment.',
-                  style: TextStyle(color: Colors.grey),
                 ),
             ],
             ],

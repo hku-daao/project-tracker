@@ -12,7 +12,6 @@ import '../../services/backend_api.dart';
 import 'create_supabase_task_screen.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
-import 'assignee/my_tasks_screen.dart';
 import 'admin/system_admin_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -247,72 +246,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Home Page: Role-based tabs
+/// Home Page: Tasks + Create task
 class _HomePageView extends StatelessWidget {
   const _HomePageView();
 
   @override
   Widget build(BuildContext context) {
-    final role = context.watch<AppState>().userRole;
-    
-    // Determine tabs and default index based on role
-    int defaultIndex = 0;
-    List<Widget> tabs = [];
-    List<Widget> tabViews = [];
-    
-    if (role == 'sys_admin') {
-      // sys_admin
-      defaultIndex = 0;
-      tabs = [
-        const Tab(icon: Icon(Icons.flag), text: 'Tasks'),
-        const Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-        const Tab(icon: Icon(Icons.assignment), text: 'My tasks'),
-      ];
-      tabViews = [
-        const InitiativeListScreen(),
-        const CreateTaskScreen(),
-        const MyTasksScreen(),
-      ];
-    } else if (role == 'dept_head') {
-      // dept_head
-      defaultIndex = 0;
-      tabs = [
-        const Tab(icon: Icon(Icons.flag), text: 'Tasks'),
-        const Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-      ];
-      tabViews = [
-        const InitiativeListScreen(),
-        const CreateTaskScreen(),
-      ];
-    } else if (role == 'supervisor') {
-      // supervisor
-      defaultIndex = 2;
-      tabs = [
-        const Tab(icon: Icon(Icons.flag), text: 'Tasks'),
-        const Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-        const Tab(icon: Icon(Icons.assignment), text: 'My tasks'),
-      ];
-      tabViews = [
-        const InitiativeListScreen(),
-        const CreateTaskScreen(),
-        const MyTasksScreen(),
-      ];
-    } else {
-      // general
-      defaultIndex = 1;
-      tabs = [
-        const Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-        const Tab(icon: Icon(Icons.assignment), text: 'My tasks'),
-      ];
-      tabViews = [
-        const CreateTaskScreen(),
-        const MyTasksScreen(),
-      ];
-    }
-    
+    const tabs = [
+      Tab(icon: Icon(Icons.flag), text: 'Tasks'),
+      Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
+    ];
+    const tabViews = [
+      InitiativeListScreen(),
+      CreateTaskScreen(),
+    ];
+
     return DefaultTabController(
       length: tabs.length,
-      initialIndex: defaultIndex,
+      initialIndex: 0,
       child: Column(
         children: [
           TabBar(

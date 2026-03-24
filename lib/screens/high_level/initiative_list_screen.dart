@@ -7,9 +7,8 @@ import '../../models/task.dart';
 import '../../models/team.dart';
 import '../../models/assignee.dart';
 import '../../priority.dart';
-import '../../services/supabase_service.dart';
+import '../../widgets/task_list_card.dart';
 import 'initiative_detail_screen.dart';
-import '../task_detail_screen.dart';
 
 class InitiativeListScreen extends StatefulWidget {
   const InitiativeListScreen({super.key});
@@ -27,42 +26,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final role = state.userRole;
-    
-    // Get filtered initiatives and tasks based on role
-    List<Initiative> initiatives = [];
-    List<Task> tasks = [];
-    
-    if (role == 'sys_admin' || role == 'dept_head') {
-      // Filter by team and optionally by assignee
-      initiatives = state.initiativesForTeam(_selectedTeamId);
-      tasks = state.tasksForTeam(_selectedTeamId);
-      
-      // If assignee filter is set, filter further
-      if (_selectedAssigneeId != null) {
-        initiatives = initiatives.where((i) => i.directorIds.contains(_selectedAssigneeId!)).toList();
-        tasks = tasks.where((t) => t.assigneeIds.contains(_selectedAssigneeId!)).toList();
-      }
-    } else if (role == 'supervisor') {
-      // Tasks: self ∪ subordinates (see AppState.tasksForTeam). Initiatives: same team filter as others.
-      initiatives = state.initiativesForTeam(_selectedTeamId);
-      tasks = state.tasksForTeam(_selectedTeamId);
-      if (_selectedAssigneeId != null) {
-        initiatives = initiatives
-            .where((i) => i.directorIds.contains(_selectedAssigneeId!))
-            .toList();
-        tasks = tasks
-            .where((t) => t.assigneeIds.contains(_selectedAssigneeId!))
-            .toList();
-      }
-    } else {
-      // general, null role, etc. — same sources as admin (Tasks tab may be hidden for some roles)
-      initiatives = state.initiativesForTeam(_selectedTeamId);
-      tasks = state.tasksForTeam(_selectedTeamId);
-      if (_selectedAssigneeId != null) {
-        initiatives = initiatives.where((i) => i.directorIds.contains(_selectedAssigneeId!)).toList();
-        tasks = tasks.where((t) => t.assigneeIds.contains(_selectedAssigneeId!)).toList();
-      }
+    var initiatives = state.initiativesForTeam(_selectedTeamId);
+    var tasks = state.tasksForTeam(_selectedTeamId);
+
+    if (_selectedAssigneeId != null) {
+      initiatives = initiatives
+          .where((i) => i.directorIds.contains(_selectedAssigneeId!))
+          .toList();
+      tasks = tasks
+          .where((t) => t.assigneeIds.contains(_selectedAssigneeId!))
+          .toList();
     }
 
     bool singularDeleted(Task t) {
@@ -137,9 +110,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               )).toList(),
             ),
           ),
-        // Role-based filters
-        if (role == 'sys_admin' || role == 'dept_head') ...[
-          Padding(
+        Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: DropdownButtonFormField<String?>(
               value: _selectedTeamId,
@@ -191,8 +162,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 onChanged: (v) => setState(() => _selectedAssigneeId = v),
               ),
             ),
-        ],
-        // Status filter
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: SegmentedButton<String>(
@@ -245,7 +214,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   ),
                             ),
                           ),
-                          ...filteredTasks.map((t) => _buildTaskCard(context, state, t)),
+                          ...filteredTasks.map((t) => TaskListCard(task: t)),
                         ],
                         if (filteredDeletedTasks.isNotEmpty) ...[
                           Padding(
@@ -258,7 +227,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   ),
                             ),
                           ),
-                          ...filteredDeletedTasks.map((t) => _buildTaskCard(context, state, t)),
+                          ...filteredDeletedTasks.map((t) => TaskListCard(task: t)),
                         ],
                       ],
                     ),
@@ -281,15 +250,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     } catch (_) {
       return [];
     }
-  }
-
-  /// Singular tasks: show raw `task.status` from DB; legacy rows use enum display names.
-  static String _taskStatusLabel(Task t) {
-    if (t.isSingularTableRow) {
-      final raw = t.dbStatus?.trim();
-      if (raw != null && raw.isNotEmpty) return raw;
-    }
-    return taskStatusDisplayNames[t.status] ?? '';
   }
 
   static Color _progressColor(int percent) {
@@ -358,52 +318,4 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, AppState state, Task t) {
-    return FutureBuilder<Map<String, String>>(
-      future: SupabaseService.staffDisplayNamesForKeys(t.assigneeIds),
-      builder: (context, snapshot) {
-        final officerNames = t.assigneeIds
-            .map((id) => snapshot.data?[id] ?? state.assigneeById(id)?.name ?? id)
-            .toList()
-          ..sort();
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            title: Text(t.name),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (officerNames.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      'Responsible Officer(s): ${officerNames.join(', ')}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w500,
-                          ),
-                    ),
-                  ),
-                Text(
-                  '${priorityToDisplayName(t.priority)} · ${_taskStatusLabel(t)}'
-                      + (t.startDate != null
-                          ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}'
-                          : '')
-                      + (t.endDate != null
-                          ? ' · Due ${DateFormat.yMMMd().format(t.endDate!)}'
-                          : ''),
-                ),
-              ],
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => TaskDetailScreen(taskId: t.id),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 }

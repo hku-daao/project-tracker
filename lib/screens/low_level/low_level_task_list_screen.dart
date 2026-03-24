@@ -4,9 +4,7 @@ import 'package:intl/intl.dart';
 import '../../app_state.dart';
 import '../../models/task.dart';
 import '../../models/team.dart';
-import '../../priority.dart';
-import '../../services/supabase_service.dart';
-import '../task_detail_screen.dart';
+import '../../widgets/task_list_card.dart';
 
 /// Low-level view: list tasks (Planner-style), filter by team.
 class LowLevelTaskListScreen extends StatefulWidget {
@@ -95,7 +93,7 @@ class _LowLevelTaskListScreenState extends State<LowLevelTaskListScreen> {
                               ),
                         ),
                       ),
-                      ...incomplete.map((t) => _buildTaskCard(context, state, t)),
+                      ...incomplete.map((t) => TaskListCard(task: t)),
                     ],
                     if (completed.isNotEmpty) ...[
                       Padding(
@@ -107,7 +105,7 @@ class _LowLevelTaskListScreenState extends State<LowLevelTaskListScreen> {
                               ),
                         ),
                       ),
-                      ...completed.map((t) => _buildTaskCard(context, state, t)),
+                      ...completed.map((t) => TaskListCard(task: t)),
                     ],
                     if (deletedRecords.isNotEmpty) ...[
                       Padding(
@@ -144,52 +142,4 @@ class _LowLevelTaskListScreenState extends State<LowLevelTaskListScreen> {
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, AppState state, Task t) {
-    return FutureBuilder<Map<String, String>>(
-      future: SupabaseService.staffDisplayNamesForKeys(t.assigneeIds),
-      builder: (context, snapshot) {
-        final officerNames = t.assigneeIds
-            .map((id) => snapshot.data?[id] ?? state.assigneeById(id)?.name ?? id)
-            .toList()
-          ..sort();
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            title: Text(t.name),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (officerNames.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      'Responsible Officer(s): ${officerNames.join(', ')}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w500,
-                          ),
-                    ),
-                  ),
-                Text(
-                  '${priorityToDisplayName(t.priority)} · ${taskStatusDisplayNames[t.status]}'
-                      + (t.startDate != null
-                          ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}'
-                          : '')
-                      + (t.endDate != null
-                          ? ' · Due ${DateFormat.yMMMd().format(t.endDate!)}'
-                          : ''),
-                ),
-              ],
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => TaskDetailScreen(taskId: t.id),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 }

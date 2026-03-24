@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../../app_state.dart';
-import '../../models/task.dart';
-import '../../priority.dart';
-import '../task_detail_screen.dart';
+import '../../widgets/task_list_card.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -60,39 +57,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: tasks.length,
                   itemBuilder: (context, i) {
-                    final t = tasks[i];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: ListTile(
-                        title: Text(t.name),
-                        subtitle: Text(
-                          '${priorityToDisplayName(t.priority)} · ${t.progressPercent}% · ${_statusLabel(t.status)}'
-                          + (t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : '')
-                          + (t.endDate != null ? ' · End ${DateFormat.yMMMd().format(t.endDate!)}' : ''),
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => TaskDetailScreen(taskId: t.id),
-                          ),
-                        ),
-                      ),
-                    );
+                    return TaskListCard(task: tasks[i]);
                   },
                 ),
         ),
       ],
     );
-  }
-
-  String _statusLabel(TaskStatus s) {
-    switch (s) {
-      case TaskStatus.todo:
-        return 'To do';
-      case TaskStatus.inProgress:
-        return 'In progress';
-      case TaskStatus.done:
-        return 'Done';
-    }
   }
 }

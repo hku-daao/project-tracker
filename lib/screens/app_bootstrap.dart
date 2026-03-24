@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
-import '../config/dev_role_fallback.dart';
 import '../config/supabase_config.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
@@ -40,11 +39,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
         if (mounted) {
           state.setRevampStaffLookup(lookup);
         }
-        // Keep tabs working: role from DevRoleFallback; staffAppId from lookup
-        final fbRole = DevRoleFallback.roleForEmail(email.toLowerCase());
         if (mounted) {
-          state.setUserProfile(
-            role: fbRole ?? 'general',
+          state.setUserStaffContext(
             staffAppId: lookup.appId,
             assignableStaff: const [],
           );
@@ -67,20 +63,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
         if (token != null) {
           var profile = await BackendApi().getMe(token);
           final email = user?.email?.toLowerCase();
-          debugPrint('AppBootstrap: email=$email, profile=$profile, profile.role=${profile?.role}');
-          final fbRole = DevRoleFallback.roleForEmail(email);
-          if (fbRole != null && (profile == null || profile.role == null)) {
-            profile = UserProfileResult(
-              role: fbRole,
-              staffAppId: profile?.staffAppId,
-              staffName: profile?.staffName,
-              assignableStaff: profile?.assignableStaff ?? [],
-            );
-          }
-          if (profile != null && profile.role != null) {
+          debugPrint('AppBootstrap: email=$email, profile=$profile');
+          if (profile != null && profile.staffAppId != null) {
             if (mounted) {
-              state.setUserProfile(
-                role: profile.role,
+              state.setUserStaffContext(
                 staffAppId: profile.staffAppId,
                 assignableStaff: profile.assignableStaff,
               );

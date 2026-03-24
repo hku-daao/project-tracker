@@ -34,8 +34,7 @@ class AppState extends ChangeNotifier {
   final List<DeletedTaskRecord> _deletedTasks = [];
   final Set<String> _manuallyCompletedInitiatives = {};
 
-  /// RBAC: from backend /api/me (server-enforced).
-  String? _userRole;
+  /// Current user's `staff.app_id` (from Supabase lookup or backend).
   String? _userStaffAppId;
   List<AssignableStaffEntry> _assignableStaffFromServer = [];
 
@@ -52,30 +51,17 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  String? get userRole => _userRole;
   String? get userStaffAppId => _userStaffAppId;
   List<AssignableStaffEntry> get assignableStaffFromServer =>
       List.unmodifiable(_assignableStaffFromServer);
 
   List<String> get subordinateAppIds => List.unmodifiable(_subordinateAppIds);
 
-  /// For [supervisor]: own `staff.app_id` plus [subordinateAppIds]. For [general]: self only.
+  /// Logged-in user plus subordinates from `subordinate` (same `staff.app_id` keys).
   Set<String> get assigneeVisibilityAppIds {
     final mine = _userStaffAppId?.trim();
     if (mine == null || mine.isEmpty) return {};
-    final r = _userRole?.toLowerCase();
-    if (r == 'supervisor') {
-      return {mine, ..._subordinateAppIds};
-    }
-    if (r == 'general') {
-      return {mine};
-    }
-    return {};
-  }
-
-  bool get _filtersTasksByAssigneeScope {
-    final r = _userRole?.toLowerCase();
-    return r == 'supervisor' || r == 'general';
+    return {mine, ..._subordinateAppIds};
   }
 
   void setSubordinateAppIds(List<String> ids) {
@@ -83,19 +69,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// sys_admin and dept_head see High-level View and Low-level View (with segment labels).
-  bool get canSeeHighLevelView =>
-      _userRole == 'sys_admin' || _userRole == 'dept_head';
-
-  /// All roles see Low-level View (Initiatives/ Tasks, Create, My Initiatives/ Tasks).
-  bool get canSeeLowLevelView => true;
-
-  void setUserProfile({
-    String? role,
+  void setUserStaffContext({
     String? staffAppId,
     List<AssignableStaffEntry>? assignableStaff,
   }) {
-    _userRole = role;
     _userStaffAppId = staffAppId;
     _assignableStaffFromServer = assignableStaff ?? [];
     notifyListeners();
@@ -323,19 +300,16 @@ class AppState extends ChangeNotifier {
 
   /// Low-level tasks for a team (task.teamId == teamId). Pass null for all.
   /// Singular `task` rows often have no team — those [teamId] is null and still show when filtering by team.
-  /// Supervisors and general users only see tasks where some assignee slot is self or (for supervisors) a subordinate.
+  /// Tasks visible to the current user: assignee slots must be self or a subordinate (see [subordinate] table).
   List<Task> tasksForTeam(String? teamId) {
     var all = tasks;
-    if (_filtersTasksByAssigneeScope) {
-      final scope = assigneeVisibilityAppIds;
-      if (scope.isEmpty) {
-        all = [];
-      } else {
-        all = all
-            .where((t) =>
-                t.assigneeIds.any((id) => scope.contains(id)))
-            .toList();
-      }
+    final scope = assigneeVisibilityAppIds;
+    if (scope.isEmpty) {
+      all = [];
+    } else {
+      all = all
+          .where((t) => t.assigneeIds.any((id) => scope.contains(id)))
+          .toList();
     }
     if (teamId == null || teamId.isEmpty) return all;
     return all
