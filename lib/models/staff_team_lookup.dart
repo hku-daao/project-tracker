@@ -15,7 +15,7 @@ class StaffTeamLookupResult {
   final String? appId;
   /// `staff.display_name` when the login email matches a staff row.
   final String? staffDisplayName;
-  /// `staff.name` when the login email matches a staff row.
+  /// `staff.name` (fallback if display_name is empty).
   final String? staffName;
   /// Value from `staff.team_id` (may match `team.id` or `team.app_id`).
   final String? staffTeamIdRaw;

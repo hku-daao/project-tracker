@@ -1,4 +1,4 @@
--- Preferred UI label per staff row (welcome banner, etc.). Falls back to name when null.
+-- Preferred UI label for staff (welcome banner). Backfill from name when missing.
 ALTER TABLE staff ADD COLUMN IF NOT EXISTS display_name text;
 
 COMMENT ON COLUMN staff.display_name IS 'Display name for UI; if null, clients may use name.';

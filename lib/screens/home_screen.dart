@@ -79,6 +79,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final revampLookup = context.watch<AppState>().revampStaffLookup;
+    final welcomeName = _welcomeDisplayName(revampLookup);
+    final maxLeading = min(320.0, MediaQuery.sizeOf(context).width * 0.45);
 
     final welcomeName = _welcomeDisplayName(revampLookup);
     final maxLeading = min(320.0, MediaQuery.sizeOf(context).width * 0.45);
