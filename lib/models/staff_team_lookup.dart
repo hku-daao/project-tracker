@@ -3,6 +3,8 @@ class StaffTeamLookupResult {
   const StaffTeamLookupResult({
     required this.loginEmail,
     this.appId,
+    this.staffDisplayName,
+    this.staffName,
     this.staffTeamIdRaw,
     this.teamName,
     this.staffEmailFromDb,
@@ -11,6 +13,10 @@ class StaffTeamLookupResult {
 
   final String loginEmail;
   final String? appId;
+  /// `staff.display_name` when the login email matches a staff row.
+  final String? staffDisplayName;
+  /// `staff.name` when the login email matches a staff row.
+  final String? staffName;
   /// Value from `staff.team_id` (may match `team.id` or `team.app_id`).
   final String? staffTeamIdRaw;
   final String? teamName;
@@ -24,6 +30,8 @@ class StaffTeamLookupResult {
   String get copyableSummary {
     final buf = StringBuffer()
       ..writeln('Login email: $loginEmail')
+      ..writeln('staff.display_name: ${staffDisplayName ?? "(null)"}')
+      ..writeln('staff.name: ${staffName ?? "(null)"}')
       ..writeln('staff.email (DB): ${staffEmailFromDb ?? "(null)"}')
       ..writeln('staff.app_id: ${appId ?? "(null)"}')
       ..writeln('staff.team_id: ${staffTeamIdRaw ?? "(null)"}')

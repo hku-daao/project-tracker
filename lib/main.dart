@@ -40,7 +40,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     if (initError != null) {
       return MaterialApp(
-        title: 'Project/ Task Tracker',
+        title: 'Project Tracker',
         debugShowCheckedModeBanner: false,
         home: Scaffold(
           body: SafeArea(
@@ -68,7 +68,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppState(),
       child: MaterialApp(
-        title: 'Project/ Task Tracker',
+        title: 'Project Tracker',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),

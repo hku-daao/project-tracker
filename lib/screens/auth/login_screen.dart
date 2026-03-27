@@ -110,8 +110,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Center(
+                    child: _LoginLogo(),
+                  ),
+                  const SizedBox(height: 24),
                   Text(
-                    'Project/ Task Tracker',
+                    'Project Tracker',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                         ) ??
@@ -205,6 +209,29 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Fixed layout height; decode size follows [devicePixelRatio] so the bitmap matches physical pixels (sharper on HiDPI / zoomed browser).
+class _LoginLogo extends StatelessWidget {
+  const _LoginLogo();
+
+  static const double _height = 96;
+
+  @override
+  Widget build(BuildContext context) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cacheH = (_height * dpr).round().clamp(1, 4096);
+
+    return Image.asset(
+      'assets/images/logo.png',
+      height: _height,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.high,
+      isAntiAlias: true,
+      cacheHeight: cacheH,
+      semanticLabel: 'Project Tracker logo',
     );
   }
 }

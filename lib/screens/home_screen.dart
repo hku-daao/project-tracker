@@ -1,9 +1,11 @@
+import 'dart:math' show min;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
+import '../../models/staff_team_lookup.dart';
 import '../../config/admin_config.dart';
 import '../../config/api_config.dart';
 import '../../config/environment_config.dart';
@@ -12,6 +14,22 @@ import '../../services/backend_api.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
+
+String _welcomeDisplayName(StaffTeamLookupResult? lookup) {
+  final display = lookup?.staffDisplayName?.trim();
+  if (display != null && display.isNotEmpty) return display;
+  final n = lookup?.staffName?.trim();
+  if (n != null && n.isNotEmpty) return n;
+  final u = FirebaseAuth.instance.currentUser;
+  final dn = u?.displayName?.trim();
+  if (dn != null && dn.isNotEmpty) return dn;
+  final e = u?.email;
+  if (e != null && e.isNotEmpty) {
+    final at = e.split('@').first.trim();
+    if (at.isNotEmpty) return at;
+  }
+  return 'User';
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -62,15 +80,34 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final revampLookup = context.watch<AppState>().revampStaffLookup;
 
+    final welcomeName = _welcomeDisplayName(revampLookup);
+    final maxLeading = min(320.0, MediaQuery.sizeOf(context).width * 0.45);
+
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
+        leadingWidth: maxLeading,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Welcome, $welcomeName',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ) ??
+                  const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
         title: LayoutBuilder(
           builder: (context, constraints) {
             return FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                'Project/ Task Tracker',
+                'Project Tracker',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 22,
@@ -148,56 +185,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (revampLookup != null)
-            Card(
-              margin: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-              color: Colors.teal.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Revamp test — staff / team (by login email)',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    // One block so web/desktop can drag-select or double-click to copy all lines.
-                    SelectionArea(
-                      child: SelectableText(
-                        revampLookup.copyableSummary,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.4,
-                          color: revampLookup.errorMessage != null
-                              ? Colors.red.shade900
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton.icon(
-                      icon: const Icon(Icons.copy, size: 18),
-                      label: const Text('Copy all'),
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(text: revampLookup.copyableSummary),
-                        );
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Copied to clipboard'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
           if (!SupabaseConfig.isConfigured)
             Card(
               margin: const EdgeInsets.all(8),
