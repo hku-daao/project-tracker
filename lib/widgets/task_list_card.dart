@@ -26,13 +26,22 @@ class TaskListCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
     final t = task;
+    final picKey = t.pic?.trim();
+    final nameLookupKeys = <String>{
+      ...t.assigneeIds,
+      if (picKey != null && picKey.isNotEmpty) picKey,
+    }.toList();
     return FutureBuilder<Map<String, String>>(
-      future: SupabaseService.staffDisplayNamesForKeys(t.assigneeIds),
+      future: SupabaseService.staffDisplayNamesForKeys(nameLookupKeys),
       builder: (context, snapshot) {
         final officerNames = t.assigneeIds
             .map((id) => snapshot.data?[id] ?? state.assigneeById(id)?.name ?? id)
             .toList()
           ..sort();
+        final showPicLine = t.assigneeIds.length > 1 &&
+            picKey != null &&
+            picKey.isNotEmpty;
+        final pk = picKey;
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
@@ -46,6 +55,16 @@ class TaskListCard extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Text(
                       'Assignee(s): ${officerNames.join(', ')}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                    ),
+                  ),
+                if (showPicLine && pk != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'PIC: ${snapshot.data?[pk] ?? state.assigneeById(pk)?.name ?? pk}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w500,
                           ),

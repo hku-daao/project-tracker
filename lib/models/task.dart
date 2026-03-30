@@ -43,6 +43,12 @@ class Task {
   /// Creator display name (singular `task.create_by` → `staff.name`).
   final String? createByStaffName;
 
+  /// Creator as assignee key (`staff.app_id` when known), for "My tasks" filter.
+  final String? createByAssigneeKey;
+
+  /// Person in charge (`staff.app_id` when known); mirrors singular `task.pic` (staff id in DB).
+  final String? pic;
+
   /// Last update time from singular `task.update_date`.
   final DateTime? updateDate;
 
@@ -64,6 +70,8 @@ class Task {
     this.dbStatus,
     this.updateByStaffName,
     this.createByStaffName,
+    this.createByAssigneeKey,
+    this.pic,
     this.updateDate,
   });
 
@@ -85,6 +93,8 @@ class Task {
     String? dbStatus,
     String? updateByStaffName,
     String? createByStaffName,
+    String? createByAssigneeKey,
+    String? pic,
     DateTime? updateDate,
   }) {
     return Task(
@@ -105,6 +115,8 @@ class Task {
       dbStatus: dbStatus ?? this.dbStatus,
       updateByStaffName: updateByStaffName ?? this.updateByStaffName,
       createByStaffName: createByStaffName ?? this.createByStaffName,
+      createByAssigneeKey: createByAssigneeKey ?? this.createByAssigneeKey,
+      pic: pic ?? this.pic,
       updateDate: updateDate ?? this.updateDate,
     );
   }

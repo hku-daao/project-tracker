@@ -95,6 +95,26 @@ class SupabaseService {
     return staffUuidToName[raw] ?? raw;
   }
 
+  /// Same key space as [Task.assigneeIds] (`staff.app_id` when known).
+  static String? _createByAssigneeKey(
+    Map<String, dynamic> row,
+    Map<String, String> staffUuidToAppId,
+  ) {
+    final raw = row['create_by']?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    return staffUuidToAppId[raw] ?? raw;
+  }
+
+  /// Singular `task.pic` → assignee key (`staff.app_id` when known).
+  static String? _picAssigneeKey(
+    Map<String, dynamic> row,
+    Map<String, String> staffUuidToAppId,
+  ) {
+    final raw = row['pic']?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    return staffUuidToAppId[raw] ?? raw;
+  }
+
   /// `task.create_by` is usually `staff.id` (uuid); may be `staff.app_id` text.
   static String? _createByDisplayName(
     Map<String, dynamic> row,
@@ -274,6 +294,8 @@ class SupabaseService {
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
       createByStaffName:
           _createByDisplayName(row, staffUuidToName, staffUuidToAppId),
+      createByAssigneeKey: _createByAssigneeKey(row, staffUuidToAppId),
+      pic: _picAssigneeKey(row, staffUuidToAppId),
       updateDate: _parseDateTimeNullable(row['update_date']),
     );
   }
@@ -880,6 +902,8 @@ class SupabaseService {
     String? description,
     String status = 'Incomplete',
     String? creatorStaffLookupKey,
+    /// `staff.app_id` or uuid; stored as `task.pic` (staff id).
+    String? picStaffLookupKey,
   }) async {
     if (!_enabled) return (error: 'Supabase not configured', taskId: null);
     final name = taskName.trim();
@@ -918,6 +942,13 @@ class SupabaseService {
         final raw = padded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
+        }
+      }
+      final picLookup = picStaffLookupKey?.trim();
+      if (picLookup != null && picLookup.isNotEmpty) {
+        final picStaffId = await _staffRowIdForAssigneeKey(picLookup);
+        if (picStaffId != null && picStaffId.isNotEmpty) {
+          map['pic'] = picStaffId;
         }
       }
       final res = await Supabase.instance.client

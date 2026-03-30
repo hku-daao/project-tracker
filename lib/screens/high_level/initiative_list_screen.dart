@@ -21,8 +21,28 @@ class InitiativeListScreen extends StatefulWidget {
 class _InitiativeListScreenState extends State<InitiativeListScreen> {
   String? _selectedTeamId;
   String? _selectedAssigneeId;
-  String _filterType = 'all'; // 'all', 'incomplete', 'completed', 'deleted'
+  String _filterType = 'all'; // 'all','assigned','created','incomplete','completed','deleted'
   bool _remindersExpanded = false;
+
+  /// On my plate as assignee — dark blue chip when selected.
+  Widget _assignedToMeFilterIcon() {
+    final selected = _filterType == 'assigned';
+    return Icon(
+      Icons.assignment_ind,
+      size: 18,
+      color: selected ? Colors.white : const Color(0xFF0D47A1),
+    );
+  }
+
+  /// Tasks I created — task icon on "My created tasks".
+  Widget _myCreatedTasksFilterIcon() {
+    final selected = _filterType == 'created';
+    return Icon(
+      Icons.task_alt,
+      size: 18,
+      color: selected ? Colors.black87 : Colors.lightBlue.shade800,
+    );
+  }
 
   /// Half-filled circle (yellow) — contrast on amber when this filter is selected.
   Widget _incompleteFilterIcon() {
@@ -57,6 +77,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_filterType == 'my') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _filterType = 'all');
+      });
+    }
     final state = context.watch<AppState>();
     var initiatives = state.initiativesForTeam(_selectedTeamId);
     var tasks = state.tasksForTeam(_selectedTeamId);
@@ -91,31 +116,48 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     final tasksNonDeleted = tasks.where((t) => !singularDeleted(t)).toList();
     final tasksDeletedSingular = tasks.where(singularDeleted).toList();
-    
+    final mine = state.userStaffAppId?.trim();
+    bool hasMine() => mine != null && mine.isNotEmpty;
+    bool isAssignedToMe(Task t) =>
+        hasMine() && t.assigneeIds.contains(mine!);
+    bool isCreatedByMe(Task t) =>
+        hasMine() && t.createByAssigneeKey == mine;
+
+    final filterKey = _filterType == 'my' ? 'all' : _filterType;
+
     // Apply status filter
     List<Initiative> filteredInitiatives = [];
     List<Task> filteredTasks = [];
     List<Task> filteredDeletedTasks = [];
     
-    if (_filterType == 'all') {
+    if (filterKey == 'all') {
       filteredInitiatives = initiatives;
       filteredTasks = tasksNonDeleted;
       filteredDeletedTasks = [];
-    } else if (_filterType == 'incomplete') {
+    } else if (filterKey == 'assigned') {
+      filteredInitiatives = [];
+      filteredTasks =
+          tasksNonDeleted.where((t) => isAssignedToMe(t)).toList();
+      filteredDeletedTasks = [];
+    } else if (filterKey == 'created') {
+      filteredInitiatives = [];
+      filteredTasks = tasksNonDeleted.where((t) => isCreatedByMe(t)).toList();
+      filteredDeletedTasks = [];
+    } else if (filterKey == 'incomplete') {
       filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) < 100).toList();
       filteredTasks = tasksNonDeleted.where((t) {
         if (t.isSingularTableRow) return singularIncomplete(t);
         return t.status != TaskStatus.done;
       }).toList();
       filteredDeletedTasks = [];
-    } else if (_filterType == 'completed') {
+    } else if (filterKey == 'completed') {
       filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) >= 100).toList();
       filteredTasks = tasksNonDeleted.where((t) {
         if (t.isSingularTableRow) return singularCompleted(t);
         return t.status == TaskStatus.done;
       }).toList();
       filteredDeletedTasks = [];
-    } else if (_filterType == 'deleted') {
+    } else if (filterKey == 'deleted') {
       filteredInitiatives = [];
       filteredTasks = [];
       filteredDeletedTasks = tasksDeletedSingular;
@@ -201,6 +243,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             segments: [
               const ButtonSegment<String>(value: 'all', label: Text('All')),
               ButtonSegment<String>(
+                value: 'assigned',
+                label: const Text('Assigned to me'),
+                icon: _assignedToMeFilterIcon(),
+              ),
+              ButtonSegment<String>(
+                value: 'created',
+                label: const Text('My created tasks'),
+                icon: _myCreatedTasksFilterIcon(),
+              ),
+              ButtonSegment<String>(
                 value: 'incomplete',
                 label: const Text('Incomplete'),
                 icon: _incompleteFilterIcon(),
@@ -216,14 +268,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 icon: _deletedFilterIcon(),
               ),
             ],
-            selected: {_filterType},
+            selected: {filterKey},
             onSelectionChanged: (Set<String> selected) {
               setState(() => _filterType = selected.first);
             },
             style: ButtonStyle(
               backgroundColor: WidgetStateProperty.resolveWith((states) {
                 if (!states.contains(WidgetState.selected)) return null;
-                switch (_filterType) {
+                switch (filterKey) {
+                  case 'assigned':
+                    return const Color(0xFF0D47A1);
+                  case 'created':
+                    return Colors.lightBlue.shade200;
                   case 'incomplete':
                     return Colors.amber.shade300;
                   case 'completed':
@@ -237,7 +293,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               }),
               foregroundColor: WidgetStateProperty.resolveWith((states) {
                 if (!states.contains(WidgetState.selected)) return null;
-                switch (_filterType) {
+                switch (filterKey) {
+                  case 'assigned':
+                    return Colors.white;
+                  case 'created':
+                    return Colors.black87;
                   case 'incomplete':
                     return Colors.black87;
                   case 'completed':

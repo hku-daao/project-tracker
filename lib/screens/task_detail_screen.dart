@@ -176,6 +176,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             child: Text(
               label,
               style: TextStyle(
+                fontSize: 16,
                 color: selected ? Colors.white : Colors.black87,
                 fontWeight: FontWeight.w600,
               ),
@@ -499,7 +500,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         ),
                         const SizedBox(width: 12),
                         _toggleButton(
-                          label: 'Urgent',
+                          label: 'URGENT',
                           selected: _localPriority == 2,
                           onTap: () => setState(() => _localPriority = 2),
                         ),

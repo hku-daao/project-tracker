@@ -43,4 +43,31 @@ class HkTime {
       hk.microsecond,
     );
   }
+
+  /// Today’s date in Hong Kong as a date-only [DateTime] (time 00:00 local components).
+  static DateTime todayDateOnlyHk() {
+    final hk = wallClockNow;
+    return DateTime(hk.year, hk.month, hk.day);
+  }
+
+  static bool _isWeekend(DateTime d) {
+    final wd = d.weekday;
+    return wd == DateTime.saturday || wd == DateTime.sunday;
+  }
+
+  /// Moves forward from [start] (use date-only fields). Each step is the next calendar day;
+  /// only Mon–Fri count toward [workingDays]. The start date itself is **not** counted.
+  /// E.g. Monday + 3 → Thursday; Friday + 1 → Monday.
+  static DateTime addWorkingDaysAfter(DateTime start, int workingDays) {
+    if (workingDays <= 0) {
+      return DateTime(start.year, start.month, start.day);
+    }
+    var d = DateTime(start.year, start.month, start.day);
+    for (var i = 0; i < workingDays; i++) {
+      do {
+        d = d.add(const Duration(days: 1));
+      } while (_isWeekend(d));
+    }
+    return d;
+  }
 }

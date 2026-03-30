@@ -10,6 +10,7 @@ import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
+import '../../utils/hk_time.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
 
 class CreateTaskScreen extends StatefulWidget {
@@ -19,14 +20,19 @@ class CreateTaskScreen extends StatefulWidget {
   State<CreateTaskScreen> createState() => _CreateTaskScreenState();
 }
 
-class _CreateTaskScreenState extends State<CreateTaskScreen> {
+class _CreateTaskScreenState extends State<CreateTaskScreen>
+    with AutomaticKeepAliveClientMixin {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentsController = TextEditingController();
   final Set<String> _selectedTeamIds = {};
   final Set<String> _selectedAssigneeIds = {};
+  /// Person in charge — same key as [assigneeIds]; with one assignee, always that id.
+  String? _picAssigneeId;
   int _priority = 1; // 1 = Standard, 2 = Urgent
+  /// HK calendar date when the form was opened / reset (task “create date” for defaults).
+  late DateTime _anchorCreateDate;
   DateTime? _startDate;
   DateTime? _endDate;
   List<TeamOptionRow> _pickerTeams = [];
@@ -37,11 +43,44 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   bool _submitting = false;
 
   @override
+  bool get wantKeepAlive => true;
+
+  @override
   void initState() {
     super.initState();
+    _anchorCreateDate = HkTime.todayDateOnlyHk();
+    _startDate = _anchorCreateDate;
+    _endDate = _defaultDueForPriority(_priority);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _loadSupabaseAssigneePicker();
+      context.read<AppState>().setCreateTaskDraftChecker(_hasUnsavedDraft);
     });
+  }
+
+  /// True if the user has started a task (text, teams, assignees, or non-default options).
+  bool _hasUnsavedDraft() {
+    if (_submitting) return false;
+    if (_nameController.text.trim().isNotEmpty) return true;
+    if (_descController.text.trim().isNotEmpty) return true;
+    if (_commentsController.text.trim().isNotEmpty) return true;
+    if (_selectedTeamIds.isNotEmpty) return true;
+    if (_selectedAssigneeIds.isNotEmpty) return true;
+    if (_priority != 1) return true;
+    if (_startDate != null &&
+        _dateOnlyCompare(_startDate!, _anchorCreateDate) != 0) {
+      return true;
+    }
+    final defaultEnd = _defaultDueForPriority(_priority);
+    if (_endDate != null && _dateOnlyCompare(_endDate!, defaultEnd) != 0) {
+      return true;
+    }
+    return false;
+  }
+
+  DateTime _defaultDueForPriority(int priority) {
+    final workingDaysAfter = priority == priorityUrgent ? 1 : 3;
+    return HkTime.addWorkingDaysAfter(_anchorCreateDate, workingDaysAfter);
   }
 
   static int _dateOnlyCompare(DateTime a, DateTime b) {
@@ -131,8 +170,76 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     return '';
   }
 
+  void _syncPicAfterAssigneesChange() {
+    if (_selectedAssigneeIds.isEmpty) {
+      _picAssigneeId = null;
+      return;
+    }
+    if (_selectedAssigneeIds.length == 1) {
+      _picAssigneeId = _selectedAssigneeIds.first;
+      return;
+    }
+    if (_picAssigneeId == null ||
+        !_selectedAssigneeIds.contains(_picAssigneeId)) {
+      _picAssigneeId = null;
+    }
+  }
+
+  String _labelForAssigneeId(String id, AppState state) {
+    for (final s in _pickerStaffForRole(state)) {
+      if (s.assigneeId == id) return s.name;
+    }
+    for (final e in _serverAssignable) {
+      if (e.staffAppId == id) return e.staffName;
+    }
+    return state.assigneeById(id)?.name ?? id;
+  }
+
+  /// Shown only when there are multiple assignees; single assignee implies PIC without UI.
+  Widget _buildPicSection(BuildContext context, AppState state) {
+    final ids = _selectedAssigneeIds.toList()
+      ..sort((a, b) =>
+          _labelForAssigneeId(a, state).compareTo(_labelForAssigneeId(b, state)));
+    if (ids.length < 2) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'PIC (person in charge)',
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _picAssigneeId != null && ids.contains(_picAssigneeId)
+              ? _picAssigneeId
+              : null,
+          decoration: const InputDecoration(
+            labelText: 'PIC',
+            border: OutlineInputBorder(),
+          ),
+          hint: const Text('Choose person in charge'),
+          items: ids
+              .map(
+                (id) => DropdownMenuItem<String>(
+                  value: id,
+                  child: Text(_labelForAssigneeId(id, state)),
+                ),
+              )
+              .toList(),
+          onChanged: _submitting
+              ? null
+              : (v) => setState(() => _picAssigneeId = v),
+          validator: (v) => v == null || v.isEmpty
+              ? 'Choose a PIC from the assignees'
+              : null,
+        ),
+      ],
+    );
+  }
+
   @override
   void dispose() {
+    context.read<AppState>().setCreateTaskDraftChecker(null);
     _nameController.dispose();
     _descController.dispose();
     _commentsController.dispose();
@@ -146,6 +253,15 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_endDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Due date is required.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
     if (_submitting) return;
     setState(() => _submitting = true);
     try {
@@ -229,13 +345,11 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     final name = _nameController.text.trim();
     final description = _descController.text.trim();
     final priority = _priority;
-    final capturedStart = _startDate;
-    final capturedEnd = _endDate;
+    final capturedStart = _startDate ?? _anchorCreateDate;
+    final capturedEnd = _endDate!;
     final commentText = _commentsController.text.trim();
 
-    if (capturedStart != null &&
-        capturedEnd != null &&
-        _dateOnlyCompare(capturedStart, capturedEnd) > 0) {
+    if (_dateOnlyCompare(capturedStart, capturedEnd) > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Start date cannot be after due date.'),
@@ -243,6 +357,24 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         ),
       );
       return;
+    }
+
+    final String picKey;
+    if (directorIds.length == 1) {
+      picKey = directorIds.first;
+    } else {
+      if (_picAssigneeId == null || !directorIds.contains(_picAssigneeId)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Select a PIC (person in charge) from the assignees.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      picKey = _picAssigneeId!;
     }
 
     final localId = state.addTask(
@@ -254,6 +386,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
       status: TaskStatus.todo,
       startDate: capturedStart,
       endDate: capturedEnd,
+      createByAssigneeKey: state.userStaffAppId,
+      pic: picKey,
     );
 
     String? cloudErr;
@@ -269,6 +403,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
         description: description.isEmpty ? null : description,
         status: 'Incomplete',
         creatorStaffLookupKey: state.userStaffAppId,
+        picStaffLookupKey: picKey,
       );
       cloudErr = ins.error;
       insertedTaskId = ins.taskId;
@@ -319,9 +454,11 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     setState(() {
       _selectedTeamIds.clear();
       _selectedAssigneeIds.clear();
+      _picAssigneeId = null;
       _priority = 1;
-      _startDate = null;
-      _endDate = null;
+      _anchorCreateDate = HkTime.todayDateOnlyHk();
+      _startDate = _anchorCreateDate;
+      _endDate = _defaultDueForPriority(_priority);
     });
 
     if (!mounted) return;
@@ -383,6 +520,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     final useSupabasePicker =
         SupabaseConfig.isConfigured && pickerStaffForRole.isNotEmpty;
 
+    super.build(context);
+
     return Stack(
       children: [
         AbsorbPointer(
@@ -418,6 +557,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                     _selectedAssigneeIds
                       ..clear()
                       ..addAll(s);
+                    _syncPicAfterAssigneesChange();
                   }),
                 )
               else if (useServer) ...[
@@ -488,6 +628,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                                       });
                                 });
                               }
+                              _syncPicAfterAssigneesChange();
                             });
                           },
                         );
@@ -532,6 +673,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                           } else {
                             _selectedAssigneeIds.remove(e.staffAppId);
                           }
+                          _syncPicAfterAssigneesChange();
                         });
                       },
                     );
@@ -561,12 +703,17 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                           } else {
                             _selectedAssigneeIds.remove(a.id);
                           }
+                          _syncPicAfterAssigneesChange();
                         });
                       },
                     );
                   }).toList(),
                 ),
             ],
+            ],
+            if (_selectedAssigneeIds.length > 1) ...[
+              const SizedBox(height: 16),
+              _buildPicSection(context, state),
             ],
             const SizedBox(height: 16),
             TextFormField(
@@ -588,32 +735,48 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
               children: priorityOptions.map((p) {
                 final selected = _priority == p;
                 return FilterChip(
-                  label: Text(priorityToDisplayName(p)),
+                  label: Text(
+                    priorityToDisplayName(p),
+                    style: const TextStyle(fontSize: 16),
+                  ),
                   selected: selected,
-                  onSelected: _submitting ? null : (v) => setState(() => _priority = p),
+                  onSelected: _submitting
+                      ? null
+                      : (v) {
+                          if (!v) return;
+                          setState(() {
+                            _priority = p;
+                            _endDate = _defaultDueForPriority(p);
+                          });
+                        },
                 );
               }).toList(),
             ),
             const SizedBox(height: 16),
-            const Text('Start Date', style: TextStyle(fontWeight: FontWeight.w500)),
+            const Text(
+              'Start date',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
             const SizedBox(height: 4),
             Row(
               children: [
                 Text(
                   _startDate != null
                       ? '${_startDate!.year}-${_startDate!.month.toString().padLeft(2, '0')}-${_startDate!.day.toString().padLeft(2, '0')}'
-                      : 'Not set',
+                      : '${_anchorCreateDate.year}-${_anchorCreateDate.month.toString().padLeft(2, '0')}-${_anchorCreateDate.day.toString().padLeft(2, '0')}',
                 ),
                 const SizedBox(width: 12),
                 TextButton.icon(
                   onPressed: _submitting
                       ? null
                       : () async {
+                          final initial = _startDate ?? _anchorCreateDate;
+                          final cap = _endDate;
                           final d = await showDatePicker(
                             context: context,
-                            initialDate: _endDate ?? DateTime.now(),
+                            initialDate: initial,
                             firstDate: DateTime(2020),
-                            lastDate: _endDate ??
+                            lastDate: cap ??
                                 DateTime.now().add(const Duration(days: 365 * 3)),
                           );
                           if (d != null) setState(() => _startDate = d);
@@ -621,34 +784,47 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                   icon: const Icon(Icons.calendar_today),
                   label: const Text('Pick'),
                 ),
-                if (_startDate != null)
-                  TextButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => setState(() => _startDate = null),
-                    child: const Text('Clear'),
-                  ),
               ],
             ),
             const SizedBox(height: 12),
-            const Text('Due Date', style: TextStyle(fontWeight: FontWeight.w500)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                const Text(
+                  'Due Date',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                Text(
+                  '*',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 4),
             Row(
               children: [
                 Text(
                   _endDate != null
                       ? '${_endDate!.year}-${_endDate!.month.toString().padLeft(2, '0')}-${_endDate!.day.toString().padLeft(2, '0')}'
-                      : 'Not set',
+                      : 'Not set — pick a date',
+                  style: TextStyle(
+                    color: _endDate == null ? Colors.orange.shade800 : null,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 TextButton.icon(
                   onPressed: _submitting
                       ? null
                       : () async {
+                          final start = _startDate ?? _anchorCreateDate;
                           final d = await showDatePicker(
                             context: context,
-                            initialDate: _startDate ?? _endDate ?? DateTime.now(),
-                            firstDate: _startDate ?? DateTime.now(),
+                            initialDate: _endDate ?? HkTime.addWorkingDaysAfter(start, 1),
+                            firstDate: start,
                             lastDate:
                                 DateTime.now().add(const Duration(days: 365 * 3)),
                           );
@@ -657,13 +833,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                   icon: const Icon(Icons.calendar_today),
                   label: const Text('Pick'),
                 ),
-                if (_endDate != null)
-                  TextButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => setState(() => _endDate = null),
-                    child: const Text('Clear'),
-                  ),
               ],
             ),
             const SizedBox(height: 16),

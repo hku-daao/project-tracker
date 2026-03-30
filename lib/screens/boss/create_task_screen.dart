@@ -45,13 +45,15 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     final start = _startDate;
     final end = _endDate;
 
-    final id = context.read<AppState>().addTask(
+    final appState = context.read<AppState>();
+    final id = appState.addTask(
           name: name,
           description: description,
           assigneeIds: assigneeIds,
           priority: priority,
           startDate: start,
           endDate: end,
+          createByAssigneeKey: appState.userStaffAppId,
         );
     _nameController.clear();
     _descController.clear();

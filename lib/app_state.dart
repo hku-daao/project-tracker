@@ -81,6 +81,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Set by [CreateTaskScreen] while mounted; used to warn before leaving the tab or signing out.
+  bool Function()? _createTaskHasUnsavedDraft;
+
+  void setCreateTaskDraftChecker(bool Function()? checker) {
+    _createTaskHasUnsavedDraft = checker;
+  }
+
+  bool get hasCreateTaskUnsavedDraft =>
+      _createTaskHasUnsavedDraft?.call() ?? false;
+
   /// Replace teams used for filters (ids must match [Task.teamId] from Supabase singular `task`).
   void setTeamsForFilter(List<Team> teams) {
     _teams = List<Team>.from(teams);
@@ -496,6 +506,8 @@ class AppState extends ChangeNotifier {
     TaskStatus status = TaskStatus.todo,
     DateTime? startDate,
     DateTime? endDate,
+    String? createByAssigneeKey,
+    String? pic,
   }) {
     final id = const Uuid().v4();
     final task = Task(
@@ -509,6 +521,8 @@ class AppState extends ChangeNotifier {
       startDate: startDate,
       endDate: endDate,
       createdAt: HkTime.localCreatedAtForTask(),
+      createByAssigneeKey: createByAssigneeKey,
+      pic: pic,
     );
     _tasks.add(task);
     notifyListeners();

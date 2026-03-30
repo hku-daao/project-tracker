@@ -15,6 +15,30 @@ import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
 
+/// Warn before leaving the create flow while a draft exists (Tasks tab / Sign out).
+Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
+  final r = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Unsaved task'),
+      content: const Text(
+        'Click Create task button to save your task. If you leave now, nothing will be saved.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Stay'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Leave anyway'),
+        ),
+      ],
+    ),
+  );
+  return r == true;
+}
+
 String _welcomeDisplayName(StaffTeamLookupResult? lookup) {
   final display = lookup?.staffDisplayName?.trim();
   if (display != null && display.isNotEmpty) return display;
@@ -137,6 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               icon: const Icon(Icons.logout),
               onPressed: () async {
+                final appState = context.read<AppState>();
+                if (appState.hasCreateTaskUnsavedDraft) {
+                  final leave = await _confirmLeaveCreateTaskDraft(context);
+                  if (!context.mounted || !leave) return;
+                }
                 await FirebaseAuth.instance.signOut();
               },
               tooltip: 'Sign out',
@@ -220,36 +249,93 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 /// Home Page: Tasks + Create task
-class _HomePageView extends StatelessWidget {
+class _HomePageView extends StatefulWidget {
   const _HomePageView();
 
   @override
-  Widget build(BuildContext context) {
-    const tabs = [
-      Tab(icon: Icon(Icons.flag), text: 'Tasks'),
-      Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-    ];
-    const tabViews = [
-      InitiativeListScreen(),
-      CreateTaskScreen(),
-    ];
+  State<_HomePageView> createState() => _HomePageViewState();
+}
 
-    return DefaultTabController(
-      length: tabs.length,
-      initialIndex: 0,
-      child: Column(
-        children: [
-          TabBar(
-            tabs: tabs,
-            isScrollable: tabs.length > 3,
+class _HomePageViewState extends State<_HomePageView>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  int _lastStableTabIndex = 0;
+  bool _leaveDraftDialogOpen = false;
+
+  static const _tabs = [
+    Tab(icon: Icon(Icons.flag), text: 'Tasks'),
+    Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
+  ];
+
+  static const _tabViews = [
+    InitiativeListScreen(),
+    CreateTaskScreen(key: PageStorageKey<String>('home_create_task')),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _lastStableTabIndex = _tabController.index;
+    _tabController.addListener(_onTabControllerChanged);
+  }
+
+  void _onTabControllerChanged() {
+    if (_tabController.indexIsChanging || _leaveDraftDialogOpen) return;
+    final now = _tabController.index;
+    final appState = context.read<AppState>();
+    if (_lastStableTabIndex == 1 &&
+        now == 0 &&
+        appState.hasCreateTaskUnsavedDraft) {
+      _leaveDraftDialogOpen = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) {
+          _leaveDraftDialogOpen = false;
+          return;
+        }
+        final leave = await _confirmLeaveCreateTaskDraft(context);
+        _leaveDraftDialogOpen = false;
+        if (!mounted) return;
+        if (leave) {
+          setState(() => _lastStableTabIndex = 0);
+        } else {
+          _tabController.animateTo(1);
+        }
+      });
+      return;
+    }
+    _lastStableTabIndex = now;
+  }
+
+  @override
+  void dispose() {
+    _tabController.removeListener(_onTabControllerChanged);
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          tabs: _tabs,
+          isScrollable: _tabs.length > 3,
+        ),
+        Expanded(
+          child: AnimatedBuilder(
+            animation: _tabController,
+            builder: (context, _) {
+              return IndexedStack(
+                index: _tabController.index,
+                sizing: StackFit.expand,
+                children: _tabViews,
+              );
+            },
           ),
-          Expanded(
-            child: TabBarView(
-              children: tabViews,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

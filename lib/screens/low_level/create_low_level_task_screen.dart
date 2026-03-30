@@ -74,7 +74,8 @@ class _CreateLowLevelTaskScreenState extends State<CreateLowLevelTaskScreen> {
     final start = _startDate;
     final end = _endDate;
 
-    final id = context.read<AppState>().addTask(
+    final appState = context.read<AppState>();
+    final id = appState.addTask(
           name: name,
           description: description,
           assigneeIds: assigneeIds,
@@ -83,6 +84,7 @@ class _CreateLowLevelTaskScreenState extends State<CreateLowLevelTaskScreen> {
           status: status,
           startDate: start,
           endDate: end,
+          createByAssigneeKey: appState.userStaffAppId,
         );
     _nameController.clear();
     _descController.clear();
