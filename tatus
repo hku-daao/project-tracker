@@ -1,0 +1,115 @@
+[33mcommit 84cb3344fb29d1dc76569a411f87f8c62936f81c[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Mon Mar 30 16:08:53 2026 +0800
+
+    Update filter in landing page, added PIC, pop-up window reminder
+
+[33mcommit 7e0d138b1d0f815eeac653e0c05f1ba07ac2f236[m[33m ([m[1;31mtest/main[m[33m, [m[1;31mtest/HEAD[m[33m)[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Mon Mar 30 12:28:58 2026 +0800
+
+    add colour on the filter in the landing page, add creator in the landing page
+
+[33mcommit a7bafd6a4a222a2a355e3ee3955d55d7df7ea986[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Fri Mar 27 15:24:33 2026 +0800
+
+    removed revamp test area, adding Welcome messeage, rename heading
+
+[33mcommit 5f7f1e2c676fdade2bddb1cc807c351002825065[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Fri Mar 27 14:53:15 2026 +0800
+
+    Branding and welcome: Project Tracker title, login logo, staff display_name
+    
+    Rename app title to Project Tracker. Add login page logo asset with HiDPI-friendly rendering. Welcome line uses staff.display_name from Supabase with fallbacks. Add migration for staff.display_name column. Remove revamp debug card from home.
+    
+    Made-with: Cursor
+
+[33mcommit d559c687842895aae5edd48c04ef28268c19a718[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Fri Mar 27 14:09:18 2026 +0800
+
+    Fixed filter function
+
+[33mcommit e0a350656abd382f7d429b876ef8b7ef14e65e14[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 16:38:35 2026 +0800
+
+    Your message describing the changes
+
+[33mcommit 3d21fa7cda91248c7e7740a304a073b8e93e7d46[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 16:26:32 2026 +0800
+
+    Your message describing the changes
+
+[33mcommit d872c26d01593bfa7f9eb9ac15483674cbbda573[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 16:01:35 2026 +0800
+
+    Your message describing the changes
+
+[33mcommit 7122976dd7f2b8a8a37c93efe7ee2c39b37d41a3[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 15:40:49 2026 +0800
+
+    Your message describing the changes
+
+[33mcommit a26e8d1712360efa19987cd1d8d00bfb2b110d91[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 14:03:59 2026 +0800
+
+    Your message describing the changes
+
+[33mcommit e2bc75021592e7733e4ae325d6087ea28ed2de6f[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 24 10:33:23 2026 +0800
+
+    fix(backend): CORS for Flutter web (preflight + Firebase Hosting origins)
+
+[33mcommit 9fc91767731fbbf58ba4a907d2c0dd1b528673f2[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Mon Mar 23 12:14:16 2026 +0800
+
+    Fix /api/teams: director/officer roles + team_members.role migration
+
+[33mcommit b6603037e00ac9019bba66652f466da17fcebb03[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Mon Mar 23 12:00:37 2026 +0800
+
+    Backend: health diagnostics + ignore service account files
+
+[33mcommit 87e6ed5cf57d5830d5ff21473743da7ba4d671c9[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Mon Mar 23 10:11:36 2026 +0800
+
+    Railway: add Dockerfile for backend deploy
+
+[33mcommit ce884fa58cbc8379b3344d7d04cc65def30be377[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 17 17:28:46 2026 +0800
+
+    Trigger Railway redeploy for CORS update
+
+[33mcommit 47e41f1c63a42177c6f15bcb0fa14942ebd1d31c[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 17 17:11:43 2026 +0800
+
+    Fix CORS for Flutter web
+
+[33mcommit f199f9382e1f2f3f52710f462cc97851cc1ba78b[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 17 16:47:24 2026 +0800
+
+    Add backend and Supabase schema
+    
+    Made-with: Cursor
+
+[33mcommit 6b0d784839ca5933e5e6054b16f75e0d39cd64e1[m
+Author: Calvin Lee <calvin@daao.hku.hk>
+Date:   Tue Mar 17 16:11:55 2026 +0800
+
+    Initial commit: Project Tracker Flutter app
+    
+    Made-with: Cursor

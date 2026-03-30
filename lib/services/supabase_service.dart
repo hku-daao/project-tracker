@@ -201,6 +201,8 @@ class SupabaseService {
     bool clearDueDate = false,
     String? status,
     String? updateByStaffLookupKey,
+    /// Sets `task.pic` (staff id); omit to leave column unchanged.
+    String? picStaffLookupKey,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -232,6 +234,13 @@ class SupabaseService {
         if (staffId != null && staffId.isNotEmpty) {
           map['update_by'] = staffId;
           map['update_date'] = HkTime.timestampForDb();
+        }
+      }
+      final picLookup = picStaffLookupKey?.trim();
+      if (picLookup != null && picLookup.isNotEmpty) {
+        final picStaffId = await _staffRowIdForAssigneeKey(picLookup);
+        if (picStaffId != null && picStaffId.isNotEmpty) {
+          map['pic'] = picStaffId;
         }
       }
       if (map.isEmpty) return null;

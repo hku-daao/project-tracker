@@ -127,15 +127,13 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     }
   }
 
-  /// Local [teamId] hint from Supabase picker: first selected assignee’s `staff.team_id` (by name order).
-  List<StaffForAssignment> _pickerStaffForRole(AppState state) {
-    final allowed = state.assigneeVisibilityAppIds;
-    if (allowed.isEmpty) return [];
-    return _pickerStaff.where((s) => allowed.contains(s.assigneeId)).toList();
+  /// Staff shown in the Supabase picker (full list; not restricted by subordinate relationships).
+  List<StaffForAssignment> _pickerStaffForRole() {
+    return List<StaffForAssignment>.from(_pickerStaff);
   }
 
-  List<TeamOptionRow> _pickerTeamsForRole(AppState state) {
-    final staff = _pickerStaffForRole(state);
+  List<TeamOptionRow> _pickerTeamsForRole() {
+    final staff = _pickerStaffForRole();
     final teamIds = staff
         .map((s) => s.teamId)
         .whereType<String>()
@@ -186,7 +184,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
   }
 
   String _labelForAssigneeId(String id, AppState state) {
-    for (final s in _pickerStaffForRole(state)) {
+    for (final s in _pickerStaffForRole()) {
       if (s.assigneeId == id) return s.name;
     }
     for (final e in _serverAssignable) {
@@ -267,20 +265,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     try {
     final state = context.read<AppState>();
     final useServer = state.assignableStaffFromServer.isNotEmpty;
-    final allowed = state.assigneeVisibilityAppIds;
     final teams = state.teams;
-
-    if (allowed.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No staff profile found. Please contact your administrator.')),
-      );
-      return;
-    }
 
     late final String teamId;
     late final List<String> directorIds;
 
-    if (SupabaseConfig.isConfigured && _pickerStaffForRole(state).isNotEmpty) {
+    if (SupabaseConfig.isConfigured && _pickerStaffForRole().isNotEmpty) {
       if (_selectedAssigneeIds.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Select at least one assignee')),
@@ -288,13 +278,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         return;
       }
       directorIds = _selectedAssigneeIds.toList();
-      if (!directorIds.every(allowed.contains)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid assignee selection.')),
-        );
-        return;
-      }
-      final pool = _pickerStaffForRole(state);
+      final pool = _pickerStaffForRole();
       var tid = _inferTeamIdFromSupabasePick(directorIds, pool);
       if (tid.isEmpty) tid = teams.isNotEmpty ? teams.first.id : '';
       teamId = tid;
@@ -306,12 +290,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         return;
       }
       directorIds = _selectedAssigneeIds.toList();
-      if (!directorIds.every(allowed.contains)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid assignee selection.')),
-        );
-        return;
-      }
       if (_selectedTeamIds.isNotEmpty) {
         teamId = _selectedTeamIds.first;
       } else {
@@ -322,12 +300,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       }
     } else if (_selectedTeamIds.isNotEmpty && _selectedAssigneeIds.isNotEmpty) {
       directorIds = _selectedAssigneeIds.toList();
-      if (!directorIds.every(allowed.contains)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid assignee selection.')),
-        );
-        return;
-      }
       teamId = _selectedTeamIds.first;
     } else {
       final self = state.userStaffAppId;
@@ -500,12 +472,10 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     final state = context.watch<AppState>();
     final useServer = _serverAssignable.isNotEmpty;
     final assignees = _assigneesForSelectedTeams();
-    final allowed = state.assigneeVisibilityAppIds;
 
     List<AssignableStaffEntry> serverAssigneesFiltered = [];
     if (useServer) {
-      var base =
-          _serverAssignable.where((e) => allowed.contains(e.staffAppId)).toList();
+      var base = List<AssignableStaffEntry>.from(_serverAssignable);
       if (_selectedTeamIds.isNotEmpty) {
         base = base
             .where((e) =>
@@ -515,8 +485,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       serverAssigneesFiltered = base;
     }
 
-    final pickerStaffForRole = _pickerStaffForRole(state);
-    final pickerTeamsForRole = _pickerTeamsForRole(state);
+    final pickerStaffForRole = _pickerStaffForRole();
+    final pickerTeamsForRole = _pickerTeamsForRole();
     final useSupabasePicker =
         SupabaseConfig.isConfigured && pickerStaffForRole.isNotEmpty;
 

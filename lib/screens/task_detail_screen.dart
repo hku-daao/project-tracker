@@ -3,13 +3,17 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../app_state.dart';
 import '../config/supabase_config.dart';
+import '../models/assignee.dart';
 import '../models/task.dart';
 import '../models/comment.dart';
 import '../models/singular_comment.dart';
 import '../models/staff_for_assignment.dart';
+import '../models/team.dart';
 import '../priority.dart';
+import '../services/backend_api.dart';
 import '../services/supabase_service.dart';
 import '../utils/copyable_snackbar.dart';
+import '../widgets/staff_assignee_picker_panel.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
@@ -61,6 +65,7 @@ class SingularTaskDetailView extends StatefulWidget {
 }
 
 class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
+  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
@@ -69,8 +74,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   DateTime? _dueDate;
   int _localPriority = 1;
   String _localStatus = 'Incomplete';
-  final Set<String> _selectedStaffIds = {};
-  List<StaffListRow> _allStaff = [];
+  final Set<String> _selectedTeamIds = {};
+  final Set<String> _selectedAssigneeIds = {};
+  String? _picAssigneeId;
+  List<TeamOptionRow> _pickerTeams = [];
+  List<StaffForAssignment> _pickerStaff = [];
+  final Map<String, String> _staffAssigneeToTeamId = {};
+  bool _pickerLoading = false;
+  String? _pickerError;
   bool _loadingStaff = true;
   bool _loadedForm = false;
   bool _saving = false;
@@ -83,11 +94,11 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final state = context.read<AppState>();
-      _ensureLoaded(state);
-      _loadTableComments();
+      await _ensureLoaded(state);
+      if (mounted) await _loadTableComments();
     });
   }
 
@@ -187,6 +198,94 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     );
   }
 
+  List<AssignableStaffEntry> get _serverAssignable =>
+      context.read<AppState>().assignableStaffFromServer;
+
+  /// Full Supabase picker staff list (not restricted by subordinate relationships).
+  List<StaffForAssignment> _pickerStaffForRole() {
+    return List<StaffForAssignment>.from(_pickerStaff);
+  }
+
+  List<TeamOptionRow> _pickerTeamsForRole() {
+    final staff = _pickerStaffForRole();
+    final teamIds = staff
+        .map((s) => s.teamId)
+        .whereType<String>()
+        .where((t) => t.isNotEmpty)
+        .toSet();
+    if (teamIds.isEmpty) return List<TeamOptionRow>.from(_pickerTeams);
+    return _pickerTeams.where((t) => teamIds.contains(t.teamId)).toList();
+  }
+
+  List<Assignee> _assigneesForSelectedTeams() {
+    if (_selectedTeamIds.isEmpty) return [];
+    return context.read<AppState>().getAssigneesForTeams(_selectedTeamIds.toList());
+  }
+
+  void _syncPicAfterAssigneesChange() {
+    if (_selectedAssigneeIds.isEmpty) {
+      _picAssigneeId = null;
+      return;
+    }
+    if (_selectedAssigneeIds.length == 1) {
+      _picAssigneeId = _selectedAssigneeIds.first;
+      return;
+    }
+    if (_picAssigneeId == null ||
+        !_selectedAssigneeIds.contains(_picAssigneeId)) {
+      _picAssigneeId = null;
+    }
+  }
+
+  String _labelForAssigneeId(String id, AppState state) {
+    for (final s in _pickerStaffForRole()) {
+      if (s.assigneeId == id) return s.name;
+    }
+    for (final e in _serverAssignable) {
+      if (e.staffAppId == id) return e.staffName;
+    }
+    return state.assigneeById(id)?.name ?? id;
+  }
+
+  Widget _buildPicSection(BuildContext context, AppState state) {
+    final ids = _selectedAssigneeIds.toList()
+      ..sort((a, b) =>
+          _labelForAssigneeId(a, state).compareTo(_labelForAssigneeId(b, state)));
+    if (ids.length < 2) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'PIC (person in charge)',
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _picAssigneeId != null && ids.contains(_picAssigneeId)
+              ? _picAssigneeId
+              : null,
+          decoration: const InputDecoration(
+            labelText: 'PIC',
+            border: OutlineInputBorder(),
+          ),
+          hint: const Text('Choose person in charge'),
+          items: ids
+              .map(
+                (id) => DropdownMenuItem<String>(
+                  value: id,
+                  child: Text(_labelForAssigneeId(id, state)),
+                ),
+              )
+              .toList(),
+          onChanged: _saving ? null : (v) => setState(() => _picAssigneeId = v),
+          validator: (v) => v == null || v.isEmpty
+              ? 'Choose a PIC from the assignees'
+              : null,
+        ),
+      ],
+    );
+  }
+
   Future<void> _ensureLoaded(AppState state) async {
     final task = state.taskById(widget.taskId);
     if (task == null) return;
@@ -212,42 +311,94 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
     if (_loadedForm) return;
 
-    final staff = await SupabaseService.fetchStaffListForTaskPicker();
-    final row = await SupabaseService.fetchSingularTaskById(widget.taskId);
-    final selected = <String>{};
-    if (row != null) {
-      for (var i = 1; i <= 10; i++) {
-        final key = 'assignee_${i.toString().padLeft(2, '0')}';
-        final raw = row[key];
-        if (raw != null && raw.toString().trim().isNotEmpty) {
-          selected.add(raw.toString().trim());
-        }
-      }
-    } else {
-      for (final id in task.assigneeIds) {
-        final slots = await SupabaseService.assigneeSlotsForTask([id]);
-        final first = slots.isNotEmpty ? slots[0] : null;
-        if (first != null && first.isNotEmpty) selected.add(first);
-      }
-    }
-
-    if (!mounted) return;
     setState(() {
-      _allStaff = staff;
-      _selectedStaffIds.clear();
-      _selectedStaffIds.addAll(selected);
-      if (row != null) {
-        _localPriority = _priorityFromRow(row['priority']);
-        _localStatus = _normalizeLocalStatus(row['status']?.toString());
-      }
-      _loadingStaff = false;
-      _loadedForm = true;
+      _pickerLoading = true;
+      _pickerError = null;
     });
+
+    try {
+      final data = await SupabaseService.fetchStaffAssigneePickerData();
+      final row = await SupabaseService.fetchSingularTaskById(widget.taskId);
+      final selectedAppIds = <String>{};
+      if (row != null) {
+        for (var i = 1; i <= 10; i++) {
+          final key = 'assignee_${i.toString().padLeft(2, '0')}';
+          final raw = row[key];
+          if (raw != null && raw.toString().trim().isNotEmpty) {
+            final uuid = raw.toString().trim();
+            final appKey =
+                await SupabaseService.assigneeListKeyFromStaffUuid(uuid);
+            selectedAppIds.add(appKey);
+          }
+        }
+      } else {
+        selectedAppIds.addAll(task.assigneeIds);
+      }
+
+      final teamIds = <String>{};
+      if (data != null) {
+        _pickerTeams = data.teams;
+        _pickerStaff = data.staff;
+        _staffAssigneeToTeamId.clear();
+        for (final s in data.staff) {
+          if (s.teamId != null && s.teamId!.isNotEmpty) {
+            _staffAssigneeToTeamId[s.assigneeId] = s.teamId!;
+          }
+        }
+        for (final id in selectedAppIds) {
+          final tid = _staffAssigneeToTeamId[id];
+          if (tid != null && tid.isNotEmpty) teamIds.add(tid);
+        }
+      } else {
+        _pickerTeams = [];
+        _pickerStaff = [];
+        _staffAssigneeToTeamId.clear();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _selectedAssigneeIds
+          ..clear()
+          ..addAll(selectedAppIds);
+        _selectedTeamIds
+          ..clear()
+          ..addAll(teamIds);
+        _picAssigneeId = task.pic;
+        if (_selectedAssigneeIds.length == 1) {
+          _picAssigneeId = _selectedAssigneeIds.first;
+        } else if (_selectedAssigneeIds.length > 1) {
+          if (_picAssigneeId == null ||
+              !_selectedAssigneeIds.contains(_picAssigneeId)) {
+            _picAssigneeId = null;
+          }
+        } else {
+          _picAssigneeId = null;
+        }
+        if (row != null) {
+          _localPriority = _priorityFromRow(row['priority']);
+          _localStatus = _normalizeLocalStatus(row['status']?.toString());
+        }
+        _pickerLoading = false;
+        _loadingStaff = false;
+        _loadedForm = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pickerError = e.toString();
+        _pickerLoading = false;
+        _loadingStaff = false;
+        _loadedForm = true;
+      });
+    }
   }
 
   Future<void> _saveTaskFields(AppState state, Task task) async {
     if (!SupabaseConfig.isConfigured) {
       showCopyableSnackBar(context, 'Supabase not configured.');
+      return;
+    }
+    if (_formKey.currentState != null && !_formKey.currentState!.validate()) {
       return;
     }
     if (_startDate != null &&
@@ -262,17 +413,76 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       return;
     }
     if (_saving) return;
+
+    final useServer = state.assignableStaffFromServer.isNotEmpty;
+    final pickerStaffForRole = _pickerStaffForRole();
+    final useSupabasePicker =
+        SupabaseConfig.isConfigured && pickerStaffForRole.isNotEmpty;
+
+    late final List<String> directorIds;
+    if (SupabaseConfig.isConfigured && useSupabasePicker) {
+      if (_selectedAssigneeIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select at least one assignee')),
+        );
+        return;
+      }
+      directorIds = _selectedAssigneeIds.toList();
+    } else if (useServer) {
+      if (_selectedAssigneeIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select at least one assignee')),
+        );
+        return;
+      }
+      directorIds = _selectedAssigneeIds.toList();
+    } else if (_selectedTeamIds.isNotEmpty && _selectedAssigneeIds.isNotEmpty) {
+      directorIds = _selectedAssigneeIds.toList();
+    } else {
+      final self = state.userStaffAppId;
+      if (self == null || self.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Select team(s) and assignees, or configure Supabase.'),
+          ),
+        );
+        return;
+      }
+      directorIds = [self];
+    }
+
+    if (directorIds.length > _maxAssignees) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('At most $_maxAssignees assignees.')),
+      );
+      return;
+    }
+
+    final String picKey;
+    if (directorIds.length == 1) {
+      picKey = directorIds.first;
+    } else {
+      if (_picAssigneeId == null || !directorIds.contains(_picAssigneeId)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Select a PIC (person in charge) from the assignees.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      picKey = _picAssigneeId!;
+    }
+
     setState(() => _saving = true);
     try {
-      final keys = _allStaff.where((s) => _selectedStaffIds.contains(s.id)).toList()
-        ..sort((a, b) => a.name.compareTo(b.name));
-      final keyList = keys.take(_maxAssignees).map((s) => s.id).toList();
-      final slots = await SupabaseService.assigneeSlotsForTask(keyList);
-      final assigneeIdsForState = <String>[];
-      for (final s in keys.take(_maxAssignees)) {
-        assigneeIdsForState.add(
-            await SupabaseService.assigneeListKeyFromStaffUuid(s.id));
-      }
+      final sorted = [...directorIds]..sort((a, b) =>
+          _labelForAssigneeId(a, state).compareTo(_labelForAssigneeId(b, state)));
+      final take = sorted.take(_maxAssignees).toList();
+      final slots = await SupabaseService.assigneeSlotsForTask(take);
+      final assigneeIdsForState = List<String>.from(take);
 
       final priorityLabel = priorityToDisplayName(_localPriority);
       final statusForDb = _localStatus;
@@ -289,6 +499,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         clearDueDate: _dueDate == null,
         status: statusForDb,
         updateByStaffLookupKey: state.userStaffAppId,
+        picStaffLookupKey: picKey,
       );
       if (!mounted) return;
 
@@ -337,6 +548,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           status: _mapLocalStatusToEnum(statusForDb),
           updateByStaffName: updaterName,
           updateDate: DateTime.now(),
+          pic: picKey,
         ),
       );
       ScaffoldMessenger.of(context).showSnackBar(
@@ -345,24 +557,6 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
-  }
-
-  void _toggleStaff(String id, bool selected) {
-    if (selected &&
-        _selectedStaffIds.length >= _maxAssignees &&
-        !_selectedStaffIds.contains(id)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('At most $_maxAssignees assignees.')),
-      );
-      return;
-    }
-    setState(() {
-      if (selected) {
-        _selectedStaffIds.add(id);
-      } else {
-        _selectedStaffIds.remove(id);
-      }
-    });
   }
 
   Future<void> _pickStartDate() async {
@@ -416,6 +610,25 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       );
     }
 
+    final useServer = state.assignableStaffFromServer.isNotEmpty;
+    List<AssignableStaffEntry> serverAssigneesFiltered = [];
+    if (useServer) {
+      var base =
+          List<AssignableStaffEntry>.from(state.assignableStaffFromServer);
+      if (_selectedTeamIds.isNotEmpty) {
+        base = base
+            .where((e) =>
+                e.teamAppId != null && _selectedTeamIds.contains(e.teamAppId))
+            .toList();
+      }
+      serverAssigneesFiltered = base;
+    }
+    final assignees = _assigneesForSelectedTeams();
+    final pickerStaffForRole = _pickerStaffForRole();
+    final pickerTeamsForRole = _pickerTeamsForRole();
+    final useSupabasePicker =
+        SupabaseConfig.isConfigured && pickerStaffForRole.isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(task.name),
@@ -429,7 +642,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
               opacity: _saving ? 0.55 : 1,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                child: Column(
+                child: Form(
+                  key: _formKey,
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
             Card(
@@ -458,30 +673,232 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       maxLines: 4,
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      'Assignees (up to $_maxAssignees)',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
+                    if (!SupabaseConfig.isConfigured) ...[
+                      Text(
+                        'Assignees',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        task.assigneeIds.isEmpty
+                            ? '—'
+                            : task.assigneeIds
+                                .map((id) => state.assigneeById(id)?.name ?? id)
+                                .join(', '),
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 16),
+                    ] else ...[
+                      if (_pickerLoading) ...[
+                        const LinearProgressIndicator(),
+                        const SizedBox(height: 8),
+                      ],
+                      if (_pickerError != null && !_pickerLoading)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            _pickerError!,
+                            style: TextStyle(
+                              color: Colors.orange.shade800,
+                              fontSize: 12,
+                            ),
                           ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_loadingStaff)
-                      const Center(child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: CircularProgressIndicator(),
-                      ))
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        children: _allStaff.map((s) {
-                          final sel = _selectedStaffIds.contains(s.id);
-                          return FilterChip(
-                            label: Text(s.name),
-                            selected: sel,
-                            onSelected: _saving ? null : (v) => _toggleStaff(s.id, v),
-                          );
-                        }).toList(),
+                        ),
+                      if (useSupabasePicker)
+                        StaffAssigneePickerPanel(
+                          teams: pickerTeamsForRole,
+                          staff: pickerStaffForRole,
+                          selectedIds: _selectedAssigneeIds,
+                          onSelectionChanged: (s) => setState(() {
+                            _selectedAssigneeIds
+                              ..clear()
+                              ..addAll(s);
+                            _syncPicAfterAssigneesChange();
+                          }),
+                        )
+                      else if (useServer) ...[
+                        const Text(
+                          'Team (multiple)',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 8),
+                        Builder(
+                          builder: (context) {
+                            final teams = state.teams;
+                            if (teams.isEmpty) {
+                              return Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Text(
+                                  'No teams found in database.',
+                                  style: TextStyle(
+                                    color: Colors.orange.shade700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              );
+                            }
+                            return Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: teams.map((Team t) {
+                                final selected = _selectedTeamIds.contains(t.id);
+                                return FilterChip(
+                                  label: Text(t.name),
+                                  selected: selected,
+                                  onSelected: _saving
+                                      ? null
+                                      : (v) {
+                                          setState(() {
+                                            if (v) {
+                                              _selectedTeamIds.add(t.id);
+                                            } else {
+                                              _selectedTeamIds.remove(t.id);
+                                              _selectedAssigneeIds
+                                                  .removeWhere((id) {
+                                                final assignee = _serverAssignable
+                                                    .firstWhere(
+                                                  (e) => e.staffAppId == id,
+                                                  orElse: () =>
+                                                      const AssignableStaffEntry(
+                                                    staffAppId: '',
+                                                    staffName: '',
+                                                    teamAppId: null,
+                                                    teamName: null,
+                                                  ),
+                                                );
+                                                return assignee.teamAppId ==
+                                                        t.id &&
+                                                    !_selectedTeamIds.any(
+                                                        (tid) {
+                                                  final other =
+                                                      _serverAssignable
+                                                          .firstWhere(
+                                                    (e) => e.staffAppId == id,
+                                                    orElse: () =>
+                                                        const AssignableStaffEntry(
+                                                      staffAppId: '',
+                                                      staffName: '',
+                                                      teamAppId: null,
+                                                      teamName: null,
+                                                    ),
+                                                  );
+                                                  return other.teamAppId ==
+                                                      tid;
+                                                });
+                                              });
+                                            }
+                                            _syncPicAfterAssigneesChange();
+                                          });
+                                        },
+                                );
+                              }).toList(),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                    ],
+                    if (SupabaseConfig.isConfigured && !useSupabasePicker) ...[
+                      Text(
+                        useServer
+                            ? 'Assignees (multiple)'
+                            : 'Directors & Responsible Officers (multiple)',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      if (useServer) ...[
+                        if (serverAssigneesFiltered.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              'No assignable staff found for the selected team(s).',
+                              style: TextStyle(
+                                color: Colors.orange.shade700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children:
+                                serverAssigneesFiltered.map((e) {
+                              final selected = _selectedAssigneeIds
+                                  .contains(e.staffAppId);
+                              return FilterChip(
+                                label: Text(e.staffName),
+                                selected: selected,
+                                onSelected: _saving
+                                    ? null
+                                    : (v) {
+                                        setState(() {
+                                          if (v) {
+                                            _selectedAssigneeIds
+                                                .add(e.staffAppId);
+                                            if (e.teamAppId != null) {
+                                              _selectedTeamIds.add(e.teamAppId!);
+                                            }
+                                          } else {
+                                            _selectedAssigneeIds
+                                                .remove(e.staffAppId);
+                                          }
+                                          _syncPicAfterAssigneesChange();
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                      ] else ...[
+                        if (_selectedTeamIds.isEmpty)
+                          const Text(
+                            'Select team(s) first',
+                            style: TextStyle(color: Colors.grey),
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: assignees.map((a) {
+                              final selected =
+                                  _selectedAssigneeIds.contains(a.id);
+                              final isDirector = state.isDirector(a.id);
+                              return FilterChip(
+                                label: Text(a.name),
+                                selected: selected,
+                                backgroundColor: isDirector
+                                    ? Colors.lightBlue.shade100
+                                    : Colors.purple.shade100,
+                                onSelected: _saving
+                                    ? null
+                                    : (v) {
+                                        setState(() {
+                                          if (v) {
+                                            _selectedAssigneeIds.add(a.id);
+                                          } else {
+                                            _selectedAssigneeIds.remove(a.id);
+                                          }
+                                          _syncPicAfterAssigneesChange();
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                      ],
+                    ],
+                    if (SupabaseConfig.isConfigured &&
+                        _selectedAssigneeIds.length > 1) ...[
+                      const SizedBox(height: 16),
+                      _buildPicSection(context, state),
+                    ],
+                    if (_loadingStaff && SupabaseConfig.isConfigured)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator(),
+                        ),
                       ),
                     const SizedBox(height: 16),
                     Text(
@@ -664,6 +1081,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                 ),
               ),
             ),
+          ),
           ),
           if (_saving)
             Positioned.fill(
