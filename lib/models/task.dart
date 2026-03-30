@@ -40,6 +40,9 @@ class Task {
   /// Last updater display name (singular `task.update_by` → `staff.name`).
   final String? updateByStaffName;
 
+  /// Creator display name (singular `task.create_by` → `staff.name`).
+  final String? createByStaffName;
+
   /// Last update time from singular `task.update_date`.
   final DateTime? updateDate;
 
@@ -60,6 +63,7 @@ class Task {
     this.isSingularTableRow = false,
     this.dbStatus,
     this.updateByStaffName,
+    this.createByStaffName,
     this.updateDate,
   });
 
@@ -80,6 +84,7 @@ class Task {
     bool? isSingularTableRow,
     String? dbStatus,
     String? updateByStaffName,
+    String? createByStaffName,
     DateTime? updateDate,
   }) {
     return Task(
@@ -99,6 +104,7 @@ class Task {
       isSingularTableRow: isSingularTableRow ?? this.isSingularTableRow,
       dbStatus: dbStatus ?? this.dbStatus,
       updateByStaffName: updateByStaffName ?? this.updateByStaffName,
+      createByStaffName: createByStaffName ?? this.createByStaffName,
       updateDate: updateDate ?? this.updateDate,
     );
   }

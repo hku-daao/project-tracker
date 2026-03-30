@@ -51,6 +51,17 @@ class TaskListCard extends StatelessWidget {
                           ),
                     ),
                   ),
+                if (t.createByStaffName != null &&
+                    t.createByStaffName!.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'Creator: ${t.createByStaffName!.trim()}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ),
                 Text(
                   '${priorityToDisplayName(t.priority)} · ${statusLabel(t)}'
                   '${t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : ''}'

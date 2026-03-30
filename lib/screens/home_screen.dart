@@ -82,9 +82,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final welcomeName = _welcomeDisplayName(revampLookup);
     final maxLeading = min(320.0, MediaQuery.sizeOf(context).width * 0.45);
 
-    final welcomeName = _welcomeDisplayName(revampLookup);
-    final maxLeading = min(320.0, MediaQuery.sizeOf(context).width * 0.45);
-
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,

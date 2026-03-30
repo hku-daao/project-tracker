@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -22,6 +23,37 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   String? _selectedAssigneeId;
   String _filterType = 'all'; // 'all', 'incomplete', 'completed', 'deleted'
   bool _remindersExpanded = false;
+
+  /// Half-filled circle (yellow) — contrast on amber when this filter is selected.
+  Widget _incompleteFilterIcon() {
+    return Icon(
+      CupertinoIcons.circle_lefthalf_fill,
+      size: 18,
+      color: _filterType == 'incomplete'
+          ? Colors.amber.shade900
+          : Colors.amber.shade800,
+    );
+  }
+
+  /// Filled circle — white on dark green when selected.
+  Widget _completedFilterIcon() {
+    final selected = _filterType == 'completed';
+    return Icon(
+      Icons.circle,
+      size: 18,
+      color: selected ? Colors.white : const Color(0xFF1B5E20),
+    );
+  }
+
+  /// Trash — white on grey when selected.
+  Widget _deletedFilterIcon() {
+    final selected = _filterType == 'deleted';
+    return Icon(
+      Icons.delete_outline,
+      size: 18,
+      color: selected ? Colors.white : Colors.grey.shade700,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -165,16 +197,59 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'all', label: Text('All')),
-              ButtonSegment(value: 'incomplete', label: Text('Incomplete')),
-              ButtonSegment(value: 'completed', label: Text('Completed')),
-              ButtonSegment(value: 'deleted', label: Text('Deleted')),
+            showSelectedIcon: false,
+            segments: [
+              const ButtonSegment<String>(value: 'all', label: Text('All')),
+              ButtonSegment<String>(
+                value: 'incomplete',
+                label: const Text('Incomplete'),
+                icon: _incompleteFilterIcon(),
+              ),
+              ButtonSegment<String>(
+                value: 'completed',
+                label: const Text('Completed'),
+                icon: _completedFilterIcon(),
+              ),
+              ButtonSegment<String>(
+                value: 'deleted',
+                label: const Text('Deleted'),
+                icon: _deletedFilterIcon(),
+              ),
             ],
             selected: {_filterType},
             onSelectionChanged: (Set<String> selected) {
               setState(() => _filterType = selected.first);
             },
+            style: ButtonStyle(
+              backgroundColor: WidgetStateProperty.resolveWith((states) {
+                if (!states.contains(WidgetState.selected)) return null;
+                switch (_filterType) {
+                  case 'incomplete':
+                    return Colors.amber.shade300;
+                  case 'completed':
+                    return const Color(0xFF1B5E20);
+                  case 'deleted':
+                    return Colors.grey.shade500;
+                  case 'all':
+                  default:
+                    return null;
+                }
+              }),
+              foregroundColor: WidgetStateProperty.resolveWith((states) {
+                if (!states.contains(WidgetState.selected)) return null;
+                switch (_filterType) {
+                  case 'incomplete':
+                    return Colors.black87;
+                  case 'completed':
+                    return Colors.white;
+                  case 'deleted':
+                    return Colors.white;
+                  case 'all':
+                  default:
+                    return null;
+                }
+              }),
+            ),
           ),
         ),
         Expanded(

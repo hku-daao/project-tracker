@@ -95,6 +95,22 @@ class SupabaseService {
     return staffUuidToName[raw] ?? raw;
   }
 
+  /// `task.create_by` is usually `staff.id` (uuid); may be `staff.app_id` text.
+  static String? _createByDisplayName(
+    Map<String, dynamic> row,
+    Map<String, String> staffUuidToName,
+    Map<String, String> staffUuidToAppId,
+  ) {
+    final raw = row['create_by']?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    final byUuid = staffUuidToName[raw];
+    if (byUuid != null) return byUuid;
+    for (final e in staffUuidToAppId.entries) {
+      if (e.value == raw) return staffUuidToName[e.key];
+    }
+    return raw;
+  }
+
   static final Map<String, String> _staffNameCache = {};
 
   /// Resolves [staff.id] or [staff.app_id] to display name (cached).
@@ -256,6 +272,8 @@ class SupabaseService {
       isSingularTableRow: true,
       dbStatus: statusRaw.isEmpty ? null : statusRaw,
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
+      createByStaffName:
+          _createByDisplayName(row, staffUuidToName, staffUuidToAppId),
       updateDate: _parseDateTimeNullable(row['update_date']),
     );
   }
