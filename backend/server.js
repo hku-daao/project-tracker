@@ -6,6 +6,8 @@ const MAILGUN_API_KEY = (process.env.MAILGUN_API_KEY || '').trim();
 const MAILGUN_DOMAIN = (process.env.MAILGUN_DOMAIN || '').trim();
 const MAILGUN_BASE_URL = (process.env.MAILGUN_BASE_URL || 'https://api.mailgun.net').trim().replace(/\/$/, '');
 const MAILGUN_FROM = (process.env.MAILGUN_FROM || '').trim();
+/** Public web app origin for task links in emails (no trailing slash). */
+const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
 
 const PORT = process.env.PORT || 3000;
 
@@ -519,23 +521,32 @@ async function handleHealth(req, res) {
 
 /**
  * Send via Mailgun HTTP API (application/x-www-form-urlencoded).
+ * @param [opts.html] HTML body (optional; plain [text] fallback for clients)
+ * @param [opts.from] Full From header (must be allowed on the Mailgun domain)
+ * @param [opts.replyTo] Sets h:Reply-To
  * @returns {{ ok: true, id: string } | { ok: false, error: string, detail?: string }}
  */
-async function sendMailgun({ to, subject, text }) {
+async function sendMailgun({ to, subject, text, html, from: fromOverride, replyTo }) {
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
     return { ok: false, error: 'Mailgun not configured (MAILGUN_API_KEY / MAILGUN_DOMAIN)' };
   }
   const from =
+    fromOverride ||
     MAILGUN_FROM ||
     `postmaster@${MAILGUN_DOMAIN}`;
   const url = `${MAILGUN_BASE_URL}/v3/${encodeURIComponent(MAILGUN_DOMAIN)}/messages`;
   const auth = Buffer.from(`api:${MAILGUN_API_KEY}`).toString('base64');
-  const body = new URLSearchParams({
-    from,
-    to,
-    subject,
-    text: text || '',
-  });
+  const body = new URLSearchParams({ from, to, subject });
+  if (html) {
+    body.append('html', html);
+    body.append('text', text || '');
+  } else {
+    body.append('text', text || '');
+  }
+  const rt = (replyTo || '').trim();
+  if (rt) {
+    body.append('h:Reply-To', rt);
+  }
   try {
     const r = await fetch(url, {
       method: 'POST',
@@ -586,6 +597,152 @@ async function handleAdminTestMailgun(req, res) {
       sendJson(req, res, 502, { ok: false, error: result.error, detail: result.detail });
     }
   } catch (e) {
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatTaskDueDate(raw) {
+  if (raw == null || raw === '') return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return String(raw);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * POST { taskId } — creator only; emails each assignee (assignee_01..10) with Mailgun.
+ */
+async function handleNotifyTaskAssigned(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const taskId = (body.taskId || '').trim();
+    if (!taskId) {
+      sendJson(req, res, 400, { error: 'taskId required' });
+      return;
+    }
+    const { data: taskRow, error: tErr } = await supabase
+      .from('task')
+      .select('*')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (tErr || !taskRow) {
+      sendJson(req, res, 404, { error: 'Task not found' });
+      return;
+    }
+    const creatorId = taskRow.create_by?.toString().trim();
+    if (!creatorId) {
+      sendJson(req, res, 400, { error: 'Task has no create_by' });
+      return;
+    }
+    const { data: creatorStaff, error: cErr } = await supabase
+      .from('staff')
+      .select('id, name, email')
+      .eq('id', creatorId)
+      .maybeSingle();
+    if (cErr || !creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    if (!creatorEmail || creatorEmail !== sessionEmail) {
+      sendJson(req, res, 403, {
+        error: 'Only the task creator (staff email must match signed-in user) can send assignment emails',
+      });
+      return;
+    }
+    const creatorName = (creatorStaff.name || '').trim() || creatorEmail;
+    const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
+    const dueLine = formatTaskDueDate(taskRow.due_date);
+    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const fromMailbox =
+      MAILGUN_FROM ||
+      `postmaster@${MAILGUN_DOMAIN}`;
+    const safeFromName = String(creatorName).replace(/[\r\n"<>]/g, ' ').trim().slice(0, 200) || 'Project Tracker';
+    const fromHeader = `"${safeFromName}" <${fromMailbox}>`;
+
+    const assigneeIds = [];
+    const seen = new Set();
+    for (let i = 1; i <= 10; i++) {
+      const key = `assignee_${String(i).padStart(2, '0')}`;
+      const v = taskRow[key];
+      if (v == null) continue;
+      const u = String(v).trim();
+      if (!u || seen.has(u)) continue;
+      seen.add(u);
+      assigneeIds.push(u);
+    }
+
+    const subject = "You've been assigned a task";
+    const results = [];
+
+    for (const staffUuid of assigneeIds) {
+      const { data: s } = await supabase
+        .from('staff')
+        .select('email, name')
+        .eq('id', staffUuid)
+        .maybeSingle();
+      const to = (s?.email || '').trim();
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      const safeName = escapeHtml(creatorName);
+      const safeTitle = escapeHtml(taskName);
+      const html = `<p>${safeName} assigned you a task.</p>
+<p><a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p>
+<p>${escapeHtml(dueLine)}</p>
+<p>Project Tracker</p>`;
+      const text = `${creatorName} assigned you a task.\n${taskUrl}\n${dueLine}\n\nProject Tracker`;
+      const r = await sendMailgun({
+        to,
+        subject,
+        text,
+        html,
+        from: fromHeader,
+        replyTo: creatorEmail,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        mailgunId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      recipients: results.length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifyTaskAssigned:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
   }
 }
@@ -642,6 +799,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/admin/test-mailgun' && req.method === 'POST') {
     await handleAdminTestMailgun(req, res);
+    return;
+  }
+  if (path === '/api/notify/task-assigned' && req.method === 'POST') {
+    await handleNotifyTaskAssigned(req, res);
     return;
   }
   if (path === '/health' || path === '/') {

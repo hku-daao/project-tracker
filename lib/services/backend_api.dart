@@ -337,4 +337,33 @@ class BackendApi {
       return false;
     }
   }
+
+  /// Emails each assignee (assignee_01..10) after task creation. Requires Mailgun on Railway.
+  /// Returns `null` on success, or an error message (caller may log and ignore).
+  Future<String?> notifyTaskAssigned({
+    required String idToken,
+    required String taskId,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            url('/api/notify/task-assigned'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'taskId': taskId}),
+          )
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
+      } catch (_) {
+        return 'HTTP ${response.statusCode}';
+      }
+    } catch (e) {
+      return e.toString();
+    }
+  }
 }

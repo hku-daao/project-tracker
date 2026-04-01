@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
@@ -379,6 +380,22 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       );
       cloudErr = ins.error;
       insertedTaskId = ins.taskId;
+      if (cloudErr == null && insertedTaskId != null) {
+        try {
+          final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+          if (token != null) {
+            final notifyErr = await BackendApi().notifyTaskAssigned(
+              idToken: token,
+              taskId: insertedTaskId,
+            );
+            if (notifyErr != null) {
+              debugPrint('notifyTaskAssigned: $notifyErr');
+            }
+          }
+        } catch (e) {
+          debugPrint('notifyTaskAssigned: $e');
+        }
+      }
     }
 
     if (commentText.isNotEmpty) {

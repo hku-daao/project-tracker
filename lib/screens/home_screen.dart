@@ -14,6 +14,7 @@ import '../../services/backend_api.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
+import 'task_detail_screen.dart';
 
 /// Warn before leaving the create flow while a draft exists (Tasks tab / Sign out).
 Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
@@ -278,6 +279,21 @@ class _HomePageViewState extends State<_HomePageView>
     _tabController = TabController(length: 2, vsync: this);
     _lastStableTabIndex = _tabController.index;
     _tabController.addListener(_onTabControllerChanged);
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openTaskFromUrlQuery());
+    }
+  }
+
+  /// Opens [TaskDetailScreen] when the app is loaded with `?task=<task_uuid>` (e.g. from email links).
+  void _openTaskFromUrlQuery() {
+    final q = Uri.base.queryParameters['task']?.trim();
+    if (q == null || q.isEmpty) return;
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TaskDetailScreen(taskId: q),
+      ),
+    );
   }
 
   void _onTabControllerChanged() {
