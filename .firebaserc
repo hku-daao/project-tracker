@@ -6,7 +6,7 @@
     "daao-a20c6": {
       "hosting": {
         "production": [
-          "projecttrackerdaao"
+          "project-tracker-production"
         ],
         "testing": [
           "project-tracker-test"

@@ -24,13 +24,13 @@ Use the Google account that can access **daao-a20c6**.
 
 ### 3. Hosting targets (if deploy says target is missing)
 
-Use **site ID only** (no `projectId:` prefix) in `.firebaserc` — e.g. `projecttrackerdaao`, not `daao-a20c6:projecttrackerdaao` (wrong format causes HTTP 404 on deploy).
+Use **site ID only** (no `projectId:` prefix) in `.firebaserc` — e.g. `project-tracker-production`, not `daao-a20c6:project-tracker-production` (wrong format causes HTTP 404 on deploy).
 
 ```powershell
 firebase target:clear hosting production
 firebase target:clear hosting testing
 firebase target:apply hosting testing project-tracker-test
-firebase target:apply hosting production projecttrackerdaao
+firebase target:apply hosting production project-tracker-production
 ```
 
 ### 4. Hosting sites must exist (404 on deploy)
@@ -39,7 +39,7 @@ If deploy fails with **`Requested entity was not found`** / **404** on `.../site
 
 1. Open [Firebase Console](https://console.firebase.google.com/) → project **daao-a20c6** → **Hosting**.
 2. **Testing:** ensure a site with ID **`project-tracker-test`** exists (default URL **https://project-tracker-test.web.app/**). If not → **Add another site** → site ID **`project-tracker-test`**.
-3. **Production:** ensure **`projecttrackerdaao`** exists. If not → **Add another site** → **`projecttrackerdaao`**.
+3. **Production:** ensure **`project-tracker-production`** exists. If not → **Add another site** → **`project-tracker-production`**.
 4. Run `firebase deploy` again for that target.
 
 ### 5. Custom domains (HKU)
@@ -49,7 +49,7 @@ If deploy fails with **`Requested entity was not found`** / **404** on `.../site
 | Testing | **https://projecttrackertest.hku-ia.ai/** |
 | Production | **https://projecttracker.hku-ia.ai/** |
 
-Add each domain under the **matching** site (`project-tracker-test` vs `projecttrackerdaao`) → **Domains → Add custom domain**, then add the DNS records at **hku-ia.ai**. In **Authentication → Settings → Authorized domains**, add both hostnames so sign-in works.
+Add each domain under the **matching** site (`project-tracker-test` vs `project-tracker-production`) → **Domains → Add custom domain**, then add the DNS records at **hku-ia.ai**. In **Authentication → Settings → Authorized domains**, add both hostnames so sign-in works.
 
 Deploying **does not change** when you use custom domains; the same `firebase deploy` updates all URLs for that site (default + custom).
 
@@ -82,7 +82,7 @@ flutter build web --release --no-wasm-dry-run --dart-define=DEPLOY_ENV=productio
 firebase deploy --only hosting:production
 ```
 
-**URLs:** https://projecttracker.hku-ia.ai/ (custom) · https://projecttrackerdaao.web.app/
+**URLs:** https://projecttracker.hku-ia.ai/ (custom) · https://project-tracker-production.web.app/
 
 ---
 

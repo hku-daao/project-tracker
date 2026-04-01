@@ -383,17 +383,51 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       if (cloudErr == null && insertedTaskId != null) {
         try {
           final token = await FirebaseAuth.instance.currentUser?.getIdToken();
-          if (token != null) {
+          if (token == null) {
+            debugPrint('notifyTaskAssigned: skipped — Firebase ID token is null');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Task saved. Assignment email was not sent (sign-in token missing).',
+                  ),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: 6),
+                ),
+              );
+            }
+          } else {
             final notifyErr = await BackendApi().notifyTaskAssigned(
               idToken: token,
               taskId: insertedTaskId,
             );
             if (notifyErr != null) {
               debugPrint('notifyTaskAssigned: $notifyErr');
+              if (mounted) {
+                final short = notifyErr.length > 160
+                    ? '${notifyErr.substring(0, 160)}…'
+                    : notifyErr;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Assignment email: $short'),
+                    backgroundColor: Colors.orange,
+                    duration: const Duration(seconds: 8),
+                  ),
+                );
+              }
             }
           }
         } catch (e) {
           debugPrint('notifyTaskAssigned: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Assignment email failed: $e'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 8),
+              ),
+            );
+          }
         }
       }
     }

@@ -9,8 +9,8 @@ Single Firebase project (**DAAO** / `daao-a20c6`) hosts **two** sites. Supabase 
 | Layer | Testing | Production |
 |--------|---------|------------|
 | **Firebase project** | DAAO (`daao-a20c6`) | Same |
-| **Firebase Hosting site ID** | `project-tracker-test` | `projecttrackerdaao` |
-| **Default Firebase URLs** | https://project-tracker-test.web.app/ · https://project-tracker-test.firebaseapp.com/ | https://projecttrackerdaao.web.app/ |
+| **Firebase Hosting site ID** | `project-tracker-test` | `project-tracker-production` |
+| **Default Firebase URLs** | https://project-tracker-test.web.app/ · https://project-tracker-test.firebaseapp.com/ | https://project-tracker-production.web.app/ · https://project-tracker-production.firebaseapp.com/ |
 | **Custom domain (HKU)** | https://projecttrackertest.hku-ia.ai/ (optional) | https://projecttracker.hku-ia.ai/ (optional) |
 | **Supabase project** | **DAAO Tests** — `kxrimbbeyirmcjtszsvm` — https://kxrimbbeyirmcjtszsvm.supabase.co | **DAAO Apps** — `cjeyowmqhluiilrhkvmj` — https://cjeyowmqhluiilrhkvmj.supabase.co |
 | **Railway** | Calvin's Test Space — `project-tracker-test-production.up.railway.app` | DAAO Apps — `project-tracker-production-1588.up.railway.app` |
@@ -58,7 +58,7 @@ Targets are defined in **`.firebaserc`** (maps to Hosting site IDs). If deploy f
 
 ```powershell
 firebase target:apply hosting testing project-tracker-test
-firebase target:apply hosting production projecttrackerdaao
+firebase target:apply hosting production project-tracker-production
 ```
 
 Use **site ID only** (no `projectId:` prefix).
@@ -69,7 +69,7 @@ Custom domains are **not** set in the Flutter repo. Configure them in Firebase a
 
 1. [Firebase Console](https://console.firebase.google.com/) → **daao-a20c6** → **Hosting**.
 2. Click the **testing** site (`project-tracker-test`) → **Domains** → **Add custom domain** → enter **`projecttrackertest.hku-ia.ai`** → follow the wizard (TXT verification, then **A/CNAME** records Firebase shows).
-3. **Production** site (`projecttrackerdaao`) → **Add custom domain** → **`projecttracker.hku-ia.ai`** → same process.
+3. **Production** site (`project-tracker-production`) → **Add custom domain** → **`projecttracker.hku-ia.ai`** → same process.
 4. **HTTPS** is provisioned automatically after DNS propagates (can take up to 24–48 hours).
 
 **Firebase Authentication → Authorized domains** (Settings → Authorized domains): add:
@@ -79,7 +79,7 @@ Custom domains are **not** set in the Flutter repo. Configure them in Firebase a
 
 (Also keep `localhost` and the default `*.firebaseapp.com` / `*.web.app` entries as needed.)
 
-If **`projecttrackerdaao`** does not exist yet: Hosting → **Add another site** → site ID **`projecttrackerdaao`**, then add domains as above.
+If **`project-tracker-production`** does not exist yet: Hosting → **Add another site** → site ID **`project-tracker-production`**, then add domains as above.
 
 ## Railway (backend)
 

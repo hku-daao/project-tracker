@@ -6,6 +6,10 @@ const MAILGUN_API_KEY = (process.env.MAILGUN_API_KEY || '').trim();
 const MAILGUN_DOMAIN = (process.env.MAILGUN_DOMAIN || '').trim();
 const MAILGUN_BASE_URL = (process.env.MAILGUN_BASE_URL || 'https://api.mailgun.net').trim().replace(/\/$/, '');
 const MAILGUN_FROM = (process.env.MAILGUN_FROM || '').trim();
+/** Verified From for task-assignment emails. Override with MAILGUN_NOTIFICATION_FROM for production domains. */
+const MAILGUN_NOTIFICATION_FROM =
+  (process.env.MAILGUN_NOTIFICATION_FROM || '').trim() ||
+  'no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org';
 /** Public web app origin for task links in emails (no trailing slash). */
 const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
 
@@ -609,11 +613,18 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function formatTaskDueDate(raw) {
+/** Formats task.due_date as YYYY-MM-DD for emails (avoids timezone shift on date-only strings). */
+function formatTaskDueDateYYYYMMDD(raw) {
   if (raw == null || raw === '') return '—';
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return String(raw);
-  return d.toISOString().slice(0, 10);
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '—';
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
 }
 
 /**
@@ -660,7 +671,7 @@ async function handleNotifyTaskAssigned(req, res) {
     }
     const { data: creatorStaff, error: cErr } = await supabase
       .from('staff')
-      .select('id, name, email')
+      .select('id, name, email, display_name')
       .eq('id', creatorId)
       .maybeSingle();
     if (cErr || !creatorStaff) {
@@ -675,15 +686,13 @@ async function handleNotifyTaskAssigned(req, res) {
       });
       return;
     }
-    const creatorName = (creatorStaff.name || '').trim() || creatorEmail;
+    const staffDisplayName =
+      (creatorStaff.display_name || '').trim() ||
+      (creatorStaff.name || '').trim() ||
+      creatorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
-    const dueLine = formatTaskDueDate(taskRow.due_date);
+    const dueLine = formatTaskDueDateYYYYMMDD(taskRow.due_date);
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
-    const fromMailbox =
-      MAILGUN_FROM ||
-      `postmaster@${MAILGUN_DOMAIN}`;
-    const safeFromName = String(creatorName).replace(/[\r\n"<>]/g, ' ').trim().slice(0, 200) || 'Project Tracker';
-    const fromHeader = `"${safeFromName}" <${fromMailbox}>`;
 
     const assigneeIds = [];
     const seen = new Set();
@@ -711,19 +720,19 @@ async function handleNotifyTaskAssigned(req, res) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;
       }
-      const safeName = escapeHtml(creatorName);
+      const safeCreator = escapeHtml(staffDisplayName);
       const safeTitle = escapeHtml(taskName);
-      const html = `<p>${safeName} assigned you a task.</p>
-<p><a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p>
-<p>${escapeHtml(dueLine)}</p>
+      const html = `<p>${safeCreator} assigned you a task.</p>
+<p>Task: <a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p>
+<p>Due Date: ${escapeHtml(dueLine)}</p>
 <p>Project Tracker</p>`;
-      const text = `${creatorName} assigned you a task.\n${taskUrl}\n${dueLine}\n\nProject Tracker`;
+      const text = `${staffDisplayName} assigned you a task.\nTask: ${taskName}\n${taskUrl}\nDue Date: ${dueLine}\nProject Tracker`;
       const r = await sendMailgun({
         to,
         subject,
         text,
         html,
-        from: fromHeader,
+        from: MAILGUN_NOTIFICATION_FROM,
         replyTo: creatorEmail,
       });
       results.push({

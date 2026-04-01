@@ -22,7 +22,8 @@ Copy `.env.example` to `.env` and set these three variables:
 | **MAILGUN_API_KEY** (optional) | Mailgun **Private API key** (`key-…`). |
 | **MAILGUN_DOMAIN** (optional) | Sending domain in Mailgun (e.g. sandbox `sandbox….mailgun.org`). |
 | **MAILGUN_BASE_URL** (optional) | Default `https://api.mailgun.net` (US). Use `https://api.eu.mailgun.net` for EU domains. |
-| **MAILGUN_FROM** (optional) | Verified sender **email** on the Mailgun domain, e.g. `postmaster@sandbox….mailgun.org`. Display name for assignment emails is taken from `staff.name` of the task creator. If omitted, the server uses `postmaster@<MAILGUN_DOMAIN>`. |
+| **MAILGUN_FROM** (optional) | Default **From** when Mailgun is called without an override (e.g. admin test email). If omitted, the server uses `postmaster@<MAILGUN_DOMAIN>`. |
+| **MAILGUN_NOTIFICATION_FROM** (optional) | Verified **From** for **task-assignment** emails (`POST /api/notify/task-assigned`). Defaults to `no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org` for the sandbox domain; set this when you use a production Mailgun domain. **Reply-To** is still the creator’s `staff.email`. |
 | **PUBLIC_WEB_APP_URL** (optional) | Public HTTPS origin for **task links in emails** (no trailing slash), e.g. `https://projecttracker.hku-ia.ai` (production) or `https://project-tracker-test.web.app` (testing). Default: `https://projecttracker.hku-ia.ai`. |
 
 Assignment emails (`POST /api/notify/task-assigned`) require the signed-in user’s Firebase **email** to match **`staff.email`** for `task.create_by`, or the API returns 403.
