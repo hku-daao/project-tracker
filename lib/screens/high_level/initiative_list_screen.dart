@@ -25,8 +25,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   bool _remindersExpanded = false;
 
   /// On my plate as assignee — dark blue chip when selected.
-  Widget _assignedToMeFilterIcon() {
-    final selected = _filterType == 'assigned';
+  Widget _assignedToMeFilterIcon(bool selected) {
     return Icon(
       Icons.assignment_ind,
       size: 18,
@@ -35,8 +34,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   /// Tasks I created — task icon on "My created tasks".
-  Widget _myCreatedTasksFilterIcon() {
-    final selected = _filterType == 'created';
+  Widget _myCreatedTasksFilterIcon(bool selected) {
     return Icon(
       Icons.task_alt,
       size: 18,
@@ -45,19 +43,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   /// Half-filled circle (yellow) — contrast on amber when this filter is selected.
-  Widget _incompleteFilterIcon() {
+  Widget _incompleteFilterIcon(bool selected) {
     return Icon(
       CupertinoIcons.circle_lefthalf_fill,
       size: 18,
-      color: _filterType == 'incomplete'
-          ? Colors.amber.shade900
-          : Colors.amber.shade800,
+      color: selected ? Colors.amber.shade900 : Colors.amber.shade800,
     );
   }
 
   /// Filled circle — white on dark green when selected.
-  Widget _completedFilterIcon() {
-    final selected = _filterType == 'completed';
+  Widget _completedFilterIcon(bool selected) {
     return Icon(
       Icons.circle,
       size: 18,
@@ -66,12 +61,53 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   /// Trash — white on grey when selected.
-  Widget _deletedFilterIcon() {
-    final selected = _filterType == 'deleted';
+  Widget _deletedFilterIcon(bool selected) {
     return Icon(
       Icons.delete_outline,
       size: 18,
       color: selected ? Colors.white : Colors.grey.shade700,
+    );
+  }
+
+  /// Scrollable chips so labels stay on one line on narrow / mobile screens.
+  Widget _buildTaskFilterChip({
+    required String value,
+    required String label,
+    required bool selected,
+    Color? selectedBg,
+    Color? selectedLabelColor,
+    Widget? leading,
+  }) {
+    final theme = Theme.of(context);
+    final Color onLabel;
+    if (!selected) {
+      onLabel = theme.colorScheme.onSurface;
+    } else if (selectedLabelColor != null) {
+      onLabel = selectedLabelColor!;
+    } else if (selectedBg == null) {
+      onLabel = theme.colorScheme.onPrimary;
+    } else {
+      onLabel = theme.colorScheme.onSecondaryContainer;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        showCheckmark: false,
+        avatar: leading,
+        label: Text(
+          label,
+          maxLines: 1,
+          softWrap: false,
+        ),
+        selected: selected,
+        onSelected: (_) => setState(() => _filterType = value),
+        selectedColor: selectedBg,
+        labelStyle: TextStyle(
+          color: onLabel,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      ),
     );
   }
 
@@ -237,78 +273,62 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               ),
             ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            segments: [
-              const ButtonSegment<String>(value: 'all', label: Text('All')),
-              ButtonSegment<String>(
-                value: 'assigned',
-                label: const Text('Assigned to me'),
-                icon: _assignedToMeFilterIcon(),
-              ),
-              ButtonSegment<String>(
-                value: 'created',
-                label: const Text('My created tasks'),
-                icon: _myCreatedTasksFilterIcon(),
-              ),
-              ButtonSegment<String>(
-                value: 'incomplete',
-                label: const Text('Incomplete'),
-                icon: _incompleteFilterIcon(),
-              ),
-              ButtonSegment<String>(
-                value: 'completed',
-                label: const Text('Completed'),
-                icon: _completedFilterIcon(),
-              ),
-              ButtonSegment<String>(
-                value: 'deleted',
-                label: const Text('Deleted'),
-                icon: _deletedFilterIcon(),
-              ),
-            ],
-            selected: {filterKey},
-            onSelectionChanged: (Set<String> selected) {
-              setState(() => _filterType = selected.first);
-            },
-            style: ButtonStyle(
-              backgroundColor: WidgetStateProperty.resolveWith((states) {
-                if (!states.contains(WidgetState.selected)) return null;
-                switch (filterKey) {
-                  case 'assigned':
-                    return const Color(0xFF0D47A1);
-                  case 'created':
-                    return Colors.lightBlue.shade200;
-                  case 'incomplete':
-                    return Colors.amber.shade300;
-                  case 'completed':
-                    return const Color(0xFF1B5E20);
-                  case 'deleted':
-                    return Colors.grey.shade500;
-                  case 'all':
-                  default:
-                    return null;
-                }
-              }),
-              foregroundColor: WidgetStateProperty.resolveWith((states) {
-                if (!states.contains(WidgetState.selected)) return null;
-                switch (filterKey) {
-                  case 'assigned':
-                    return Colors.white;
-                  case 'created':
-                    return Colors.black87;
-                  case 'incomplete':
-                    return Colors.black87;
-                  case 'completed':
-                    return Colors.white;
-                  case 'deleted':
-                    return Colors.white;
-                  case 'all':
-                  default:
-                    return null;
-                }
-              }),
+          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _buildTaskFilterChip(
+                  value: 'all',
+                  label: 'All',
+                  selected: filterKey == 'all',
+                  selectedBg: null,
+                  selectedLabelColor: null,
+                  leading: null,
+                ),
+                _buildTaskFilterChip(
+                  value: 'assigned',
+                  label: 'Assigned to me',
+                  selected: filterKey == 'assigned',
+                  selectedBg: const Color(0xFF0D47A1),
+                  selectedLabelColor: Colors.white,
+                  leading: _assignedToMeFilterIcon(filterKey == 'assigned'),
+                ),
+                _buildTaskFilterChip(
+                  value: 'created',
+                  label: 'My created tasks',
+                  selected: filterKey == 'created',
+                  selectedBg: Colors.lightBlue.shade200,
+                  selectedLabelColor: Colors.black87,
+                  leading: _myCreatedTasksFilterIcon(filterKey == 'created'),
+                ),
+                _buildTaskFilterChip(
+                  value: 'incomplete',
+                  label: 'Incomplete',
+                  selected: filterKey == 'incomplete',
+                  selectedBg: Colors.amber.shade300,
+                  selectedLabelColor: Colors.black87,
+                  leading: _incompleteFilterIcon(filterKey == 'incomplete'),
+                ),
+                _buildTaskFilterChip(
+                  value: 'completed',
+                  label: 'Completed',
+                  selected: filterKey == 'completed',
+                  selectedBg: const Color(0xFF1B5E20),
+                  selectedLabelColor: Colors.white,
+                  leading: _completedFilterIcon(filterKey == 'completed'),
+                ),
+                _buildTaskFilterChip(
+                  value: 'deleted',
+                  label: 'Deleted',
+                  selected: filterKey == 'deleted',
+                  selectedBg: Colors.grey.shade500,
+                  selectedLabelColor: Colors.white,
+                  leading: _deletedFilterIcon(filterKey == 'deleted'),
+                ),
+              ],
             ),
           ),
         ),
