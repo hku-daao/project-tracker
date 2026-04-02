@@ -28,7 +28,7 @@ Copy `.env.example` to `.env` and set these three variables:
 | **CRON_SECRET** (optional) | Shared secret for **`POST /api/cron/urgent-task-reminders`** (header `X-Cron-Secret` or `Authorization: Bearer …`). Use if you trigger the urgent-task job from an external scheduler; required for that HTTP route to return 200. |
 | **DISABLE_INTERNAL_URGENT_CRON** (optional) | Set to `true` to disable the in-process **daily 09:00 Asia/Hong_Kong** run that sends **80% window** urgent task emails. |
 
-Apply Supabase migration **`028_task_urgent_reminder_sent.sql`** so `task.urgent_reminder_sent` exists.
+Apply Supabase migrations **`028`**–**`030`** (`urgent_reminder_sent`, `urgent_reminder_last_sent_on`, `due_today_reminder_sent_on`). **Urgent (80%)** emails run only on HK calendar days **before** the due date; **due-today** emails run when HK **today** equals `due_date`. **`POST /api/cron/urgent-task-reminders`** returns JSON `{ ok, urgent, dueToday }`. After the due date (HK), past-due cleanup clears the reminder columns.
 
 Assignment emails (`POST /api/notify/task-assigned`) require the signed-in user’s Firebase **email** to match **`staff.email`** for `task.create_by`, or the API returns 403.
 

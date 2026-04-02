@@ -682,9 +682,21 @@ function formatTaskDueDateYYYYMMDD(raw) {
   return `${y}-${mo}-${day}`;
 }
 
+function cronSecretFromRequest(req) {
+  const headers = req.headers || {};
+  const h =
+    headers['x-cron-secret'] ||
+    headers['X-Cron-Secret'] ||
+    (() => {
+      const k = Object.keys(headers).find((n) => n.toLowerCase() === 'x-cron-secret');
+      return k ? headers[k] : '';
+    })();
+  return String(h || '').trim();
+}
+
 function verifyCronSecret(req) {
   if (!CRON_SECRET) return false;
-  const h = String(req.headers['x-cron-secret'] || '').trim();
+  const h = cronSecretFromRequest(req);
   const auth = String(req.headers.authorization || '');
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   return h === CRON_SECRET || bearer === CRON_SECRET;
@@ -735,6 +747,88 @@ function taskStatusBlocksUrgentReminder(statusRaw) {
   return s === 'completed' || s === 'deleted';
 }
 
+/** Today's calendar date (YYYY-MM-DD) in Asia/Hong_Kong. */
+function hkTodayYyyyMmDd() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Hong_Kong',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** Due date as YYYY-MM-DD for calendar comparison, or null. */
+function dueDateYyyyMmDdOnly(raw) {
+  if (raw == null || raw === '') return null;
+  const s = formatTaskDueDateYYYYMMDD(raw);
+  if (!s || s === '—') return null;
+  return s;
+}
+
+function isCalendarOnOrBeforeDue(todayYmd, dueRaw) {
+  const d = dueDateYyyyMmDdOnly(dueRaw);
+  if (!d) return false;
+  return todayYmd <= d;
+}
+
+/** Urgent 80% emails run only before the due calendar day (not on due date). */
+function isCalendarStrictlyBeforeDue(todayYmd, dueRaw) {
+  const d = dueDateYyyyMmDdOnly(dueRaw);
+  if (!d) return false;
+  return todayYmd < d;
+}
+
+function isCalendarDueToday(todayYmd, dueRaw) {
+  const d = dueDateYyyyMmDdOnly(dueRaw);
+  if (!d) return false;
+  return todayYmd === d;
+}
+
+function isCalendarPastDue(todayYmd, dueRaw) {
+  const d = dueDateYyyyMmDdOnly(dueRaw);
+  if (!d) return false;
+  return todayYmd > d;
+}
+
+/**
+ * After the due calendar date (HK), reset reminder flags so rows are clean.
+ */
+async function resetUrgentReminderForPastDueTasks(supabaseClient, todayYmd, summary) {
+  const { data: rows, error } = await supabaseClient
+    .from('task')
+    .select(
+      'id, due_date, urgent_reminder_sent, urgent_reminder_last_sent_on, due_today_reminder_sent_on',
+    )
+    .not('due_date', 'is', null);
+  if (error) {
+    summary.errors.push(`past-due cleanup: ${error.message}`);
+    return;
+  }
+  for (const row of rows || []) {
+    if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
+    const sent = row.urgent_reminder_sent === true;
+    const hasLast = row.urgent_reminder_last_sent_on != null && row.urgent_reminder_last_sent_on !== '';
+    const hasDueToday =
+      row.due_today_reminder_sent_on != null && row.due_today_reminder_sent_on !== '';
+    if (!sent && !hasLast && !hasDueToday) continue;
+    const id = String(row.id || '').trim();
+    if (!id) continue;
+    const { error: uErr } = await supabaseClient
+      .from('task')
+      .update({
+        urgent_reminder_sent: false,
+        urgent_reminder_last_sent_on: null,
+        due_today_reminder_sent_on: null,
+      })
+      .eq('id', id);
+    if (uErr) {
+      summary.errors.push(`past-due reset ${id}: ${uErr.message}`);
+    } else {
+      summary.tasksResetPastDue += 1;
+    }
+  }
+}
+
 function buildUrgentTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
   const safeName = escapeHtml(displayName);
   const safeTitle = escapeHtml(taskName);
@@ -758,18 +852,49 @@ Project Tracker`;
   return { html, text };
 }
 
+function buildDueTodayTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
+  const safeName = escapeHtml(displayName);
+  const safeTitle = escapeHtml(taskName);
+  const safeUrl = escapeHtml(taskUrl);
+  const safeDue = escapeHtml(dueYmd);
+  const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+  const safeLanding = escapeHtml(landing);
+  const html = `<p>Hi ${safeName}. You have a task due.</p>
+<p>You have a task <b>due today</b></p>
+<p><b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b></p>
+<p>Due Date: ${safeDue}</p>
+<p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
+  const text = `Hi ${displayName}. You have a task due.
+
+You have a task due today
+
+${taskName}
+${taskUrl}
+
+Due Date: ${dueYmd}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
 /**
- * Sends urgent task emails (80% window) to assignees; sets urgent_reminder_sent when done without Mailgun failures.
- * Called by daily cron (09:00 Asia/Hong_Kong) and POST /api/cron/urgent-task-reminders.
+ * Daily urgent emails (09:00 Asia/Hong_Kong + manual POST): send each HK day while
+ * 80%–due window applies; [urgent_reminder_last_sent_on] prevents duplicate sends same day.
+ * Does not run on the due calendar day (that day uses due-today emails only).
+ * Past-due tasks: reset [urgent_reminder_sent] false and clear last_sent_on.
  */
 async function runUrgentTaskReminderJob() {
   const nowMs = Date.now();
+  const todayYmd = hkTodayYyyyMmDd();
   const summary = {
+    todayHk: todayYmd,
     scanned: 0,
     eligible: 0,
     emailsAttempted: 0,
     emailsOk: 0,
-    tasksFlagged: 0,
+    tasksUpdatedAfterSend: 0,
+    tasksResetPastDue: 0,
     errors: [],
   };
   if (!supabase) {
@@ -781,10 +906,13 @@ async function runUrgentTaskReminderJob() {
     return summary;
   }
 
+  await resetUrgentReminderForPastDueTasks(supabase, todayYmd, summary);
+
   const { data: tasks, error: qErr } = await supabase
     .from('task')
     .select('*')
-    .eq('urgent_reminder_sent', false);
+    .not('start_date', 'is', null)
+    .not('due_date', 'is', null);
 
   if (qErr) {
     summary.errors.push(qErr.message || String(qErr));
@@ -796,8 +924,17 @@ async function runUrgentTaskReminderJob() {
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
-    if (taskRow.start_date == null || taskRow.due_date == null) continue;
+    if (!isCalendarStrictlyBeforeDue(todayYmd, taskRow.due_date)) continue;
     if (!hasReachedEightyPercentWindow(taskRow.start_date, taskRow.due_date, nowMs)) {
+      continue;
+    }
+
+    const lastSent = taskRow.urgent_reminder_last_sent_on;
+    const lastSentStr =
+      lastSent == null || lastSent === ''
+        ? null
+        : String(lastSent).trim().slice(0, 10);
+    if (lastSentStr === todayYmd) {
       continue;
     }
 
@@ -846,12 +983,123 @@ async function runUrgentTaskReminderJob() {
     if (!failedMailgun) {
       const { error: uErr } = await supabase
         .from('task')
-        .update({ urgent_reminder_sent: true })
+        .update({
+          urgent_reminder_sent: true,
+          urgent_reminder_last_sent_on: todayYmd,
+        })
         .eq('id', taskId);
       if (uErr) {
         summary.errors.push(`Update ${taskId}: ${uErr.message}`);
       } else {
-        summary.tasksFlagged += 1;
+        summary.tasksUpdatedAfterSend += 1;
+      }
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * Due-date = today (HK calendar): one batch per task per day to assignees.
+ * Runs at 09:00 Asia/Hong_Kong with urgent job; not sent on days covered by urgent-only window.
+ */
+async function runDueTodayTaskReminderJob() {
+  const todayYmd = hkTodayYyyyMmDd();
+  const summary = {
+    todayHk: todayYmd,
+    scanned: 0,
+    eligible: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    tasksUpdatedAfterSend: 0,
+    errors: [],
+  };
+  if (!supabase) {
+    summary.errors.push('Supabase not configured');
+    return summary;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    summary.errors.push('Mailgun not configured');
+    return summary;
+  }
+
+  const { data: tasks, error: qErr } = await supabase
+    .from('task')
+    .select('*')
+    .not('due_date', 'is', null);
+
+  if (qErr) {
+    summary.errors.push(qErr.message || String(qErr));
+    return summary;
+  }
+
+  const list = tasks || [];
+  summary.scanned = list.length;
+
+  for (const taskRow of list) {
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (!isCalendarDueToday(todayYmd, taskRow.due_date)) continue;
+
+    const lastDue = taskRow.due_today_reminder_sent_on;
+    const lastDueStr =
+      lastDue == null || lastDue === ''
+        ? null
+        : String(lastDue).trim().slice(0, 10);
+    if (lastDueStr === todayYmd) {
+      continue;
+    }
+
+    summary.eligible += 1;
+    const taskId = String(taskRow.id || '').trim();
+    const taskName = String(taskRow.task_name || '').trim() || '(no title)';
+    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
+    const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
+
+    const sendResults = [];
+    for (const staffId of assigneeIds) {
+      const { data: staffRow } = await supabase
+        .from('staff')
+        .select('email, name, display_name')
+        .eq('id', staffId)
+        .maybeSingle();
+      const to = (staffRow?.email || '').trim();
+      if (!to) {
+        sendResults.push({ staffId, ok: false, skipped: 'no email' });
+        continue;
+      }
+      const displayName =
+        (staffRow.display_name || '').trim() ||
+        (staffRow.name || '').trim() ||
+        to;
+      const { html, text } = buildDueTodayTaskReminderEmail(
+        displayName,
+        taskName,
+        taskUrl,
+        dueYmd,
+      );
+      const r = await sendMailgun({
+        to,
+        subject: 'You have tasks due today',
+        text,
+        html,
+        from: MAILGUN_NOTIFICATION_FROM,
+      });
+      summary.emailsAttempted += 1;
+      if (r.ok) summary.emailsOk += 1;
+      sendResults.push({ to, ok: r.ok, error: r.ok ? null : r.error });
+    }
+
+    const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
+    if (!failedMailgun) {
+      const { error: uErr } = await supabase
+        .from('task')
+        .update({ due_today_reminder_sent_on: todayYmd })
+        .eq('id', taskId);
+      if (uErr) {
+        summary.errors.push(`due-today update ${taskId}: ${uErr.message}`);
+      } else {
+        summary.tasksUpdatedAfterSend += 1;
       }
     }
   }
@@ -864,13 +1112,24 @@ async function handleCronUrgentTaskReminders(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
+  if (!CRON_SECRET) {
+    sendJson(req, res, 503, {
+      error:
+        'CRON_SECRET is not set on this server. In Railway → your service → Variables, add CRON_SECRET (any long random string), redeploy, then send the same value in the X-Cron-Secret header.',
+    });
+    return;
+  }
   if (!verifyCronSecret(req)) {
-    sendJson(req, res, 401, { error: 'Unauthorized (set CRON_SECRET and X-Cron-Secret header)' });
+    sendJson(req, res, 401, {
+      error:
+        'X-Cron-Secret does not match CRON_SECRET on the server. Fix the header value or Railway Variables.',
+    });
     return;
   }
   try {
-    const summary = await runUrgentTaskReminderJob();
-    sendJson(req, res, 200, { ok: true, ...summary });
+    const urgent = await runUrgentTaskReminderJob();
+    const dueToday = await runDueTodayTaskReminderJob();
+    sendJson(req, res, 200, { ok: true, urgent, dueToday });
   } catch (e) {
     console.error('handleCronUrgentTaskReminders:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -1215,14 +1474,14 @@ server.listen(PORT, () => {
     cron.schedule(
       '0 9 * * *',
       () => {
-        runUrgentTaskReminderJob().catch((e) =>
-          console.error('urgent-task-reminders cron:', e),
-        );
+        runUrgentTaskReminderJob()
+          .then(() => runDueTodayTaskReminderJob())
+          .catch((e) => console.error('daily task-reminder cron:', e));
       },
       { timezone: 'Asia/Hong_Kong' },
     );
     console.log(
-      'Urgent task reminders: scheduled daily at 09:00 Asia/Hong_Kong (DISABLE_INTERNAL_URGENT_CRON=true to turn off)',
+      'Task reminders: urgent (80%) + due-today daily at 09:00 Asia/Hong_Kong (DISABLE_INTERNAL_URGENT_CRON=true to turn off)',
     );
   }
 });
