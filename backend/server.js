@@ -642,13 +642,19 @@ function collectTaskAssigneeStaffIds(taskRow) {
 
 function buildTaskCommentNotificationBodies(description, taskUrl) {
   const raw = String(description || '').trim();
-  const linkLabel = raw.length ? escapeHtml(raw) : '(no text)';
+  const safeDesc = raw.length ? escapeHtml(raw) : '(no text)';
   const safeTaskUrl = escapeHtml(taskUrl);
   const landingHref = escapeHtml(`${PROJECT_TRACKER_LANDING_URL}/`);
-  const html = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;"><a href="${safeTaskUrl}" style="color:#1565C0;">${linkLabel}</a></p>
-<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;">
-<tr><td style="border-radius:6px;background-color:#1565C0;">
-<a href="${safeTaskUrl}" style="display:inline-block;padding:12px 24px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;">Reply in Project Tracker</a>
+  const html = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#333333;white-space:pre-wrap;">${safeDesc}</p>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;">
+<tr><td align="center" style="text-align:center;">
+<table role="presentation" cellspacing="0" cellpadding="0" border="0">
+<tr>
+<td align="center" valign="middle" bgcolor="#1565C0" style="border-radius:6px;background-color:#1565C0;text-align:center;vertical-align:middle;">
+<a href="${safeTaskUrl}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;text-align:center;line-height:20px;vertical-align:middle;">Reply in Project Tracker</a>
+</td>
+</tr>
+</table>
 </td></tr>
 </table>
 <p style="font-size:12px;color:#666666;line-height:1.4;margin:0;">This task is in the <a href="${landingHref}" style="color:#1565C0;">Project Tracker</a>.</p>`;
