@@ -1248,11 +1248,8 @@ async function handleNotifyTaskAssigned(req, res) {
       const safeTitle = escapeHtml(taskName);
       const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
       const safeLanding = escapeHtml(landing);
-      const html = `<p>${safeCreator} assigned you a task.</p>
-<p>Task: <a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p>
-<p>Due Date: ${escapeHtml(dueLine)}</p>
-<p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
-      const text = `${staffDisplayName} assigned you a task.\nTask: ${taskName}\n${taskUrl}\nDue Date: ${dueLine}\nProject Tracker\n${landing}`;
+      const html = `<p>${safeCreator} assigned you a task.</p><p><a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p><p>Due Date: ${escapeHtml(dueLine)}</p><p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
+      const text = `${staffDisplayName} assigned you a task.\n${taskName}\n${taskUrl}\nDue Date: ${dueLine}\nProject Tracker\n${landing}`;
       const r = await sendMailgun({
         to,
         subject,
