@@ -12,6 +12,10 @@ const MAILGUN_NOTIFICATION_FROM =
   'no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org';
 /** Public web app origin for task links in emails (no trailing slash). */
 const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
+/** Marketing / landing URL for “Project Tracker” link in comment emails (no trailing slash). */
+const PROJECT_TRACKER_LANDING_URL = (
+  process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai'
+).trim().replace(/\/$/, '');
 
 const PORT = process.env.PORT || 3000;
 
@@ -613,6 +617,45 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function mailSubjectSingleLine(s) {
+  return String(s)
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Deduped staff UUIDs from task.assignee_01 … assignee_10. */
+function collectTaskAssigneeStaffIds(taskRow) {
+  const assigneeIds = [];
+  const seen = new Set();
+  for (let i = 1; i <= 10; i++) {
+    const key = `assignee_${String(i).padStart(2, '0')}`;
+    const v = taskRow[key];
+    if (v == null) continue;
+    const u = String(v).trim();
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    assigneeIds.push(u);
+  }
+  return assigneeIds;
+}
+
+function buildTaskCommentNotificationBodies(description, taskUrl) {
+  const raw = String(description || '').trim();
+  const linkLabel = raw.length ? escapeHtml(raw) : '(no text)';
+  const safeTaskUrl = escapeHtml(taskUrl);
+  const landingHref = escapeHtml(`${PROJECT_TRACKER_LANDING_URL}/`);
+  const html = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;"><a href="${safeTaskUrl}" style="color:#1565C0;">${linkLabel}</a></p>
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;">
+<tr><td style="border-radius:6px;background-color:#1565C0;">
+<a href="${safeTaskUrl}" style="display:inline-block;padding:12px 24px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;">Reply in Project Tracker</a>
+</td></tr>
+</table>
+<p style="font-size:12px;color:#666666;line-height:1.4;margin:0;">This task is in the <a href="${landingHref}" style="color:#1565C0;">Project Tracker</a>.</p>`;
+  const text = `${raw || '(no text)'}\n\nReply in Project Tracker:\n${taskUrl}\n\nThis task is in the Project Tracker.\n${PROJECT_TRACKER_LANDING_URL}/`;
+  return { html, text };
+}
+
 /** Formats task.due_date as YYYY-MM-DD for emails (avoids timezone shift on date-only strings). */
 function formatTaskDueDateYYYYMMDD(raw) {
   if (raw == null || raw === '') return '—';
@@ -694,17 +737,7 @@ async function handleNotifyTaskAssigned(req, res) {
     const dueLine = formatTaskDueDateYYYYMMDD(taskRow.due_date);
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
 
-    const assigneeIds = [];
-    const seen = new Set();
-    for (let i = 1; i <= 10; i++) {
-      const key = `assignee_${String(i).padStart(2, '0')}`;
-      const v = taskRow[key];
-      if (v == null) continue;
-      const u = String(v).trim();
-      if (!u || seen.has(u)) continue;
-      seen.add(u);
-      assigneeIds.push(u);
-    }
+    const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
 
     const subject = "You've been assigned a task";
     const results = [];
@@ -752,6 +785,135 @@ async function handleNotifyTaskAssigned(req, res) {
     });
   } catch (e) {
     console.error('handleNotifyTaskAssigned:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/**
+ * POST { commentId } — comment author only; emails other assignees (assignee_01..10), not create_by.
+ */
+async function handleNotifyTaskComment(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const commentId = (body.commentId || '').trim();
+    if (!commentId) {
+      sendJson(req, res, 400, { error: 'commentId required' });
+      return;
+    }
+    const { data: commentRow, error: cErr } = await supabase
+      .from('comment')
+      .select('id, task_id, description, create_by')
+      .eq('id', commentId)
+      .maybeSingle();
+    if (cErr || !commentRow) {
+      sendJson(req, res, 404, { error: 'Comment not found' });
+      return;
+    }
+    const authorStaffId = (commentRow.create_by || '').toString().trim();
+    if (!authorStaffId) {
+      sendJson(req, res, 400, { error: 'Comment has no create_by' });
+      return;
+    }
+    const { data: authorStaff, error: aErr } = await supabase
+      .from('staff')
+      .select('id, name, email, display_name')
+      .eq('id', authorStaffId)
+      .maybeSingle();
+    if (aErr || !authorStaff) {
+      sendJson(req, res, 400, { error: 'Comment author staff not found' });
+      return;
+    }
+    const authorEmail = (authorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    if (!authorEmail || authorEmail !== sessionEmail) {
+      sendJson(req, res, 403, {
+        error: 'Only the comment author (staff email must match signed-in user) can send comment emails',
+      });
+      return;
+    }
+    const taskId = (commentRow.task_id || '').toString().trim();
+    if (!taskId) {
+      sendJson(req, res, 400, { error: 'Comment has no task_id' });
+      return;
+    }
+    const { data: taskRow, error: tErr } = await supabase
+      .from('task')
+      .select('*')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (tErr || !taskRow) {
+      sendJson(req, res, 404, { error: 'Task not found' });
+      return;
+    }
+    const authorDisplay =
+      (authorStaff.display_name || '').trim() ||
+      (authorStaff.name || '').trim() ||
+      authorEmail;
+    const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
+    const subject = `${mailSubjectSingleLine(authorDisplay)} comments on task ${mailSubjectSingleLine(taskName)}`;
+    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const { html, text } = buildTaskCommentNotificationBodies(commentRow.description, taskUrl);
+
+    const authorNorm = authorStaffId.toLowerCase();
+    const assigneeIds = collectTaskAssigneeStaffIds(taskRow).filter(
+      (id) => String(id).trim().toLowerCase() !== authorNorm,
+    );
+    const results = [];
+
+    for (const staffUuid of assigneeIds) {
+      const { data: s } = await supabase
+        .from('staff')
+        .select('email, name')
+        .eq('id', staffUuid)
+        .maybeSingle();
+      const to = (s?.email || '').trim();
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      const r = await sendMailgun({
+        to,
+        subject,
+        text,
+        html,
+        from: MAILGUN_NOTIFICATION_FROM,
+        replyTo: authorEmail,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        mailgunId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+
+    sendJson(req, res, 200, {
+      ok: true,
+      commentId,
+      taskId,
+      recipients: results.length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifyTaskComment:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
   }
 }
@@ -812,6 +974,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/task-assigned' && req.method === 'POST') {
     await handleNotifyTaskAssigned(req, res);
+    return;
+  }
+  if (path === '/api/notify/task-comment' && req.method === 'POST') {
+    await handleNotifyTaskComment(req, res);
     return;
   }
   if (path === '/health' || path === '/') {

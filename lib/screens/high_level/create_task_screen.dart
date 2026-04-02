@@ -434,17 +434,17 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
 
     if (commentText.isNotEmpty) {
       if (SupabaseConfig.isConfigured && cloudErr == null && insertedTaskId != null) {
-        final cErr = await SupabaseService.insertSingularCommentRow(
+        final cResult = await SupabaseService.insertSingularCommentRow(
           taskId: insertedTaskId,
           description: commentText,
           status: 'Active',
           creatorStaffLookupKey: state.userStaffAppId,
         );
         if (!mounted) return;
-        if (cErr != null) {
+        if (cResult.error != null) {
           showCopyableSnackBar(
             context,
-            'Task created, but comment was not saved: $cErr',
+            'Task created, but comment was not saved: ${cResult.error}',
             backgroundColor: Colors.orange,
             duration: const Duration(seconds: 10),
           );

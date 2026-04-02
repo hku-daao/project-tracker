@@ -366,4 +366,32 @@ class BackendApi {
       return e.toString();
     }
   }
+
+  /// Emails other assignees after a task comment is saved (not the author). Requires Mailgun.
+  Future<String?> notifyTaskCommentAdded({
+    required String idToken,
+    required String commentId,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            url('/api/notify/task-comment'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'commentId': commentId}),
+          )
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
+      } catch (_) {
+        return 'HTTP ${response.statusCode}';
+      }
+    } catch (e) {
+      return e.toString();
+    }
+  }
 }

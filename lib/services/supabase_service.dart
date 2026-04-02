@@ -977,15 +977,15 @@ class SupabaseService {
   }
 
   /// Inserts into `public."comment"` (singular table name in Postgres).
-  static Future<String?> insertSingularCommentRow({
+  static Future<({String? error, String? commentId})> insertSingularCommentRow({
     required String taskId,
     required String description,
     String status = 'Active',
     String? creatorStaffLookupKey,
   }) async {
-    if (!_enabled) return 'Supabase not configured';
+    if (!_enabled) return (error: 'Supabase not configured', commentId: null);
     final d = description.trim();
-    if (d.isEmpty) return null;
+    if (d.isEmpty) return (error: null, commentId: null);
     try {
       final st = status.trim();
       final map = <String, dynamic>{
@@ -1001,10 +1001,15 @@ class SupabaseService {
           map['create_by'] = staffId;
         }
       }
-      await Supabase.instance.client.from('comment').insert(map);
-      return null;
+      final res = await Supabase.instance.client
+          .from('comment')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      final id = res?['id']?.toString();
+      return (error: null, commentId: id);
     } catch (e) {
-      return e.toString();
+      return (error: e.toString(), commentId: null);
     }
   }
 

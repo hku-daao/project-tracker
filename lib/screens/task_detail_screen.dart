@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -679,22 +680,66 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
       final commentBody = _commentController.text.trim();
       if (commentBody.isNotEmpty) {
-        final cErr = await SupabaseService.insertSingularCommentRow(
+        final cResult = await SupabaseService.insertSingularCommentRow(
           taskId: task.id,
           description: commentBody,
           status: 'Active',
           creatorStaffLookupKey: state.userStaffAppId,
         );
         if (!mounted) return;
-        if (cErr != null) {
+        if (cResult.error != null) {
           showCopyableSnackBar(
             context,
-            'Task updated, but comment was not saved: $cErr',
+            'Task updated, but comment was not saved: ${cResult.error}',
             backgroundColor: Colors.orange,
           );
         } else {
           _commentController.clear();
           await _loadTableComments();
+          final newCommentId = cResult.commentId?.trim();
+          if (newCommentId != null && newCommentId.isNotEmpty) {
+            try {
+              final token =
+                  await FirebaseAuth.instance.currentUser?.getIdToken();
+              if (token != null) {
+                final notifyErr = await BackendApi().notifyTaskCommentAdded(
+                  idToken: token,
+                  commentId: newCommentId,
+                );
+                if (notifyErr != null && mounted) {
+                  final short = notifyErr.length > 120
+                      ? '${notifyErr.substring(0, 120)}…'
+                      : notifyErr;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Comment email: $short'),
+                      backgroundColor: Colors.orange,
+                      duration: const Duration(seconds: 8),
+                    ),
+                  );
+                }
+              } else if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Comment saved; notify email skipped (no sign-in token).',
+                    ),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              }
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Comment email failed: $e'),
+                    backgroundColor: Colors.orange,
+                    duration: const Duration(seconds: 8),
+                  ),
+                );
+              }
+            }
+          }
         }
       }
 
