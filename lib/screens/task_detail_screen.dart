@@ -232,6 +232,63 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     await _loadTableComments();
   }
 
+  /// Divider between active comments and soft-deleted comments at the bottom.
+  Widget _deletedCommentsSectionLabel(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Divider(height: 1, color: theme.dividerColor),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              'Deleted comments',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Divider(height: 1, color: theme.dividerColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _singularCommentTiles(BuildContext context) {
+    final active =
+        _tableComments.where((c) => !c.isDeleted).toList(growable: false);
+    final deleted =
+        _tableComments.where((c) => c.isDeleted).toList(growable: false);
+    final tiles = <Widget>[
+      ...active.map((c) => _buildSingularCommentTile(context, c)),
+    ];
+    if (deleted.isEmpty) return tiles;
+    if (active.isNotEmpty) {
+      tiles.add(_deletedCommentsSectionLabel(context));
+    } else {
+      tiles.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Deleted comments',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+        ),
+      );
+    }
+    tiles.addAll(deleted.map((c) => _buildSingularCommentTile(context, c)));
+    return tiles;
+  }
+
   Widget _buildSingularCommentTile(BuildContext context, SingularCommentRowDisplay c) {
     final theme = Theme.of(context);
     final isDeleted = c.isDeleted;
@@ -1272,7 +1329,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else
-              ..._tableComments.map((c) => _buildSingularCommentTile(context, c)),
+              ..._singularCommentTiles(context),
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : () => _saveTaskFields(state, task),

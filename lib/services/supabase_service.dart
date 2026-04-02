@@ -1065,8 +1065,8 @@ class SupabaseService {
     }
   }
 
-  /// Loads `public."comment"` for [taskId]. Non-deleted rows first (by `create_date`),
-  /// then deleted rows (by `create_date`), so soft-deleted items appear at the bottom.
+  /// Loads `public."comment"` for [taskId]. Active rows first, then deleted; within each
+  /// group, descending by `create_date` only (newest first). [update_date] is ignored for order.
   static Future<List<SingularCommentRowDisplay>> fetchSingularCommentsForTask(
       String taskId) async {
     if (!_enabled) return [];
@@ -1074,8 +1074,7 @@ class SupabaseService {
       final res = await Supabase.instance.client
           .from('comment')
           .select()
-          .eq('task_id', taskId)
-          .order('create_date', ascending: true);
+          .eq('task_id', taskId);
       final rows = <Map<String, dynamic>>[];
       for (final raw in (res as List)) {
         rows.add(Map<String, dynamic>.from(raw as Map));
@@ -1111,9 +1110,11 @@ class SupabaseService {
         if (a.isDeleted != b.isDeleted) {
           return a.isDeleted ? 1 : -1;
         }
-        final ac = a.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bc = b.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return ac.compareTo(bc);
+        final ac =
+            a.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bc =
+            b.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bc.compareTo(ac);
       });
       return out;
     } catch (_) {
