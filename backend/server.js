@@ -646,12 +646,12 @@ function buildTaskCommentNotificationBodies(description, taskUrl) {
   const safeTaskUrl = escapeHtml(taskUrl);
   const landingHref = escapeHtml(`${PROJECT_TRACKER_LANDING_URL}/`);
   const html = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#333333;white-space:pre-wrap;">${safeDesc}</p>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;">
-<tr><td align="center" style="text-align:center;">
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;">
+<tr><td align="left" style="text-align:left;">
 <table role="presentation" cellspacing="0" cellpadding="0" border="0">
 <tr>
-<td align="center" valign="middle" bgcolor="#1565C0" style="border-radius:6px;background-color:#1565C0;text-align:center;vertical-align:middle;">
-<a href="${safeTaskUrl}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;text-align:center;line-height:20px;vertical-align:middle;">Reply in Project Tracker</a>
+<td align="left" valign="middle" bgcolor="#1565C0" style="border-radius:6px;background-color:#1565C0;text-align:left;vertical-align:middle;">
+<a href="${safeTaskUrl}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;text-align:left;line-height:20px;vertical-align:middle;">Reply in Project Tracker</a>
 </td>
 </tr>
 </table>
@@ -873,7 +873,8 @@ async function handleNotifyTaskComment(req, res) {
       (authorStaff.name || '').trim() ||
       authorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
-    const subject = `${mailSubjectSingleLine(authorDisplay)} comments on task ${mailSubjectSingleLine(taskName)}`;
+    const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
+    const subject = `${mailSubjectSingleLine(authorDisplay)} comments on task "${taskTitleForSubject}"`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const { html, text } = buildTaskCommentNotificationBodies(commentRow.description, taskUrl);
 
