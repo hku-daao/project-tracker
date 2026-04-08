@@ -61,7 +61,7 @@ class PicTeamColorLegend extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Task card background colour reflects the PIC’s team.',
+          'Task background colour reflects the PIC’s team.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
