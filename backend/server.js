@@ -18,6 +18,10 @@ const PROJECT_TRACKER_LANDING_URL = (
   process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai'
 ).trim().replace(/\/$/, '');
 
+/** When unset/false, task-comment emails are off. Set `TASK_COMMENT_EMAIL_ENABLED=true` to re-enable. */
+const TASK_COMMENT_EMAIL_ENABLED =
+  (process.env.TASK_COMMENT_EMAIL_ENABLED || '').trim().toLowerCase() === 'true';
+
 /** POST /api/cron/* — optional shared secret (Railway / external scheduler). */
 const CRON_SECRET = (process.env.CRON_SECRET || '').trim();
 
@@ -676,6 +680,28 @@ function formatUpdateDateYYYYMMDD(raw) {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
 }
 
+/** Formats task.update_date as `yyyy-mm-dd hh:mm UTC+8` (wall clock in Asia/Hong_Kong). */
+function formatUpdateDateTimeUTC8(raw) {
+  if (raw == null || raw === '') return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '—';
+  const datePart = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
+  const timeParts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Hong_Kong',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  let hh = '';
+  let mm = '';
+  for (const p of timeParts) {
+    if (p.type === 'hour') hh = p.value.padStart(2, '0');
+    if (p.type === 'minute') mm = p.value.padStart(2, '0');
+  }
+  const hm = hh && mm ? `${hh}:${mm}` : '—';
+  return `${datePart} ${hm} UTC+8`;
+}
+
 /** Formats task.due_date as YYYY-MM-DD for emails (avoids timezone shift on date-only strings). */
 function formatTaskDueDateYYYYMMDD(raw) {
   if (raw == null || raw === '') return '—';
@@ -1300,6 +1326,14 @@ async function handleNotifyTaskComment(req, res) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
+  if (!TASK_COMMENT_EMAIL_ENABLED) {
+    sendJson(req, res, 200, {
+      ok: true,
+      skipped: true,
+      message: 'Task comment email notifications are disabled.',
+    });
+    return;
+  }
   if (!supabase) {
     sendJson(req, res, 503, { error: 'Supabase not configured' });
     return;
@@ -1484,13 +1518,13 @@ async function handleNotifyTaskUpdated(req, res) {
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `Task updated - ${taskTitleForSubject}`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
-    const updateYmd = formatUpdateDateYYYYMMDD(taskRow.update_date);
+    const updatedAtLine = formatUpdateDateTimeUTC8(taskRow.update_date);
     const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
     const safeLandingHref = escapeHtml(landing);
     const safeTaskUrlAttr = escapeHtml(taskUrl);
     const safeTitle = escapeHtml(taskName);
     const safeUpdaterName = escapeHtml(updaterNameForBody);
-    const safeUpdateYmd = escapeHtml(updateYmd);
+    const safeUpdatedAt = escapeHtml(updatedAtLine);
 
     /** @type {Map<string, string>} normalized staff id -> canonical id string */
     const recipientByNorm = new Map();
@@ -1520,31 +1554,23 @@ async function handleNotifyTaskUpdated(req, res) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;
       }
-      const recipientGreeting =
+      const displayNameForHi =
         (s.display_name || '').trim() ||
         (s.name || '').trim() ||
         to;
-      const safeHi = escapeHtml(recipientGreeting);
-      const html = `<p>Hi ${safeHi},</p>
-<p><br></p>
-<p>The task has been updated.</p>
-<p><br></p>
-<p><a href="${safeTaskUrlAttr}" style="font-weight:bold;text-decoration:underline;">${safeTitle}</a></p>
-<p><br></p>
-<p>Updated by: ${safeUpdaterName}</p>
-<p>Update time: ${safeUpdateYmd}</p>
-<p><br></p>
-<p><a href="${safeLandingHref}">Project Tracker</a></p>`;
-      const text = `Hi ${recipientGreeting},
-
+      const safeDisplayName = escapeHtml(displayNameForHi);
+      const html = `<p style="margin:0;font-size:14px;line-height:1.6;">Hi ${safeDisplayName},<br>
+The task has been updated.<br>
+<a href="${safeTaskUrlAttr}" style="font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br>
+Updated by: ${safeUpdaterName}<br>
+Updated at: ${safeUpdatedAt}<br>
+<a href="${safeLandingHref}">Project Tracker</a></p>`;
+      const text = `Hi ${displayNameForHi},
 The task has been updated.
-
 ${taskName}
 ${taskUrl}
-
 Updated by: ${updaterNameForBody}
-Update time: ${updateYmd}
-
+Updated at: ${updatedAtLine}
 Project Tracker
 ${landing}`;
       const r = await sendMailgun({
