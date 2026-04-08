@@ -1,11 +1,9 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../app_state.dart';
 import '../../models/initiative.dart';
 import '../../models/task.dart';
-import '../../models/team.dart';
 import '../../models/assignee.dart';
 import '../../priority.dart';
 import '../../widgets/task_list_card.dart';
@@ -19,10 +17,21 @@ class InitiativeListScreen extends StatefulWidget {
 }
 
 class _InitiativeListScreenState extends State<InitiativeListScreen> {
-  String? _selectedTeamId;
+  /// Max width for team / status filter fields (readable on wide layouts).
+  static const double _filterFieldMaxWidth = 420;
+
+  /// Selected `Team.id` values. Empty = all teams (default).
+  final Set<String> _selectedTeamIds = {};
   String? _selectedAssigneeId;
-  String _filterType = 'all'; // 'all','assigned','created','incomplete','completed','deleted'
+  /// Scope: `all` | `assigned` | `created` (chips: All, Assigned to me, My created tasks).
+  String _filterType = 'all';
+  /// Subset of `incomplete` | `completed` | `deleted`. Empty = all statuses (label "All status").
+  final Set<String> _selectedTaskStatuses = {};
   bool _remindersExpanded = false;
+
+  static const _statusIncomplete = 'incomplete';
+  static const _statusCompleted = 'completed';
+  static const _statusDeleted = 'deleted';
 
   /// On my plate as assignee — dark blue chip when selected.
   Widget _assignedToMeFilterIcon(bool selected) {
@@ -42,33 +51,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
-  /// Half-filled circle (yellow) — contrast on amber when this filter is selected.
-  Widget _incompleteFilterIcon(bool selected) {
-    return Icon(
-      CupertinoIcons.circle_lefthalf_fill,
-      size: 18,
-      color: selected ? Colors.amber.shade900 : Colors.amber.shade800,
-    );
-  }
-
-  /// Filled circle — white on dark green when selected.
-  Widget _completedFilterIcon(bool selected) {
-    return Icon(
-      Icons.circle,
-      size: 18,
-      color: selected ? Colors.white : const Color(0xFF1B5E20),
-    );
-  }
-
-  /// Trash — white on grey when selected.
-  Widget _deletedFilterIcon(bool selected) {
-    return Icon(
-      Icons.delete_outline,
-      size: 18,
-      color: selected ? Colors.white : Colors.grey.shade700,
-    );
-  }
-
   /// Scrollable chips so labels stay on one line on narrow / mobile screens.
   Widget _buildTaskFilterChip({
     required String value,
@@ -83,7 +65,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (!selected) {
       onLabel = theme.colorScheme.onSurface;
     } else if (selectedLabelColor != null) {
-      onLabel = selectedLabelColor!;
+      onLabel = selectedLabelColor;
     } else if (selectedBg == null) {
       onLabel = theme.colorScheme.onPrimary;
     } else {
@@ -111,6 +93,46 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
+  /// Closed field preview: "Team" until user picks one or more teams from the menu.
+  String _teamFilterDisplayText(AppState state) {
+    if (_selectedTeamIds.isEmpty) return 'Team';
+    final names = <String>[];
+    for (final team in state.teams) {
+      if (_selectedTeamIds.contains(team.id)) names.add(team.name);
+    }
+    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names.join(', ');
+  }
+
+  /// Closed field preview: "Status" until user picks one or more statuses from the menu.
+  String _statusFilterDisplayText() {
+    if (_selectedTaskStatuses.isEmpty) return 'Status';
+    const labels = {
+      _statusIncomplete: 'Incomplete',
+      _statusCompleted: 'Completed',
+      _statusDeleted: 'Deleted',
+    };
+    const order = [_statusIncomplete, _statusCompleted, _statusDeleted];
+    return order
+        .where(_selectedTaskStatuses.contains)
+        .map((k) => labels[k]!)
+        .join(', ');
+  }
+
+  /// True when team/status filters (or optional assignee) are not at default (all).
+  bool get _hasTeamOrStatusFilterSelections =>
+      _selectedTeamIds.isNotEmpty ||
+      _selectedTaskStatuses.isNotEmpty ||
+      _selectedAssigneeId != null;
+
+  void _clearTeamAndStatusFilters() {
+    setState(() {
+      _selectedTeamIds.clear();
+      _selectedTaskStatuses.clear();
+      _selectedAssigneeId = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_filterType == 'my') {
@@ -119,8 +141,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       });
     }
     final state = context.watch<AppState>();
-    var initiatives = state.initiativesForTeam(_selectedTeamId);
-    var tasks = state.tasksForTeam(_selectedTeamId);
+    final teamsSorted = [...state.teams]
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    var initiatives = state.initiativesForTeams(_selectedTeamIds);
+    var tasks = state.tasksForTeams(_selectedTeamIds);
 
     if (_selectedAssigneeId != null) {
       initiatives = initiatives
@@ -161,45 +185,92 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     final filterKey = _filterType == 'my' ? 'all' : _filterType;
 
-    // Apply status filter
+    bool nonDeletedMatchesTaskStatus(Task t) {
+      if (_selectedTaskStatuses.isEmpty) return true;
+      if (singularDeleted(t)) return false;
+      if (t.isSingularTableRow) {
+        if (_selectedTaskStatuses.contains(_statusIncomplete) &&
+            singularIncomplete(t)) {
+          return true;
+        }
+        if (_selectedTaskStatuses.contains(_statusCompleted) &&
+            singularCompleted(t)) {
+          return true;
+        }
+        return false;
+      }
+      if (_selectedTaskStatuses.contains(_statusIncomplete) &&
+          t.status != TaskStatus.done) {
+        return true;
+      }
+      if (_selectedTaskStatuses.contains(_statusCompleted) &&
+          t.status == TaskStatus.done) {
+        return true;
+      }
+      return false;
+    }
+
+    bool deletedMatchesTaskStatus(Task t) {
+      if (!singularDeleted(t)) return false;
+      if (_selectedTaskStatuses.isEmpty) return false;
+      return _selectedTaskStatuses.contains(_statusDeleted);
+    }
+
+    bool shouldShowDeletedSection() {
+      if (_selectedTaskStatuses.isEmpty) return false;
+      return _selectedTaskStatuses.contains(_statusDeleted);
+    }
+
+    List<Task> filterTasksWithScopeAndStatus(
+      List<Task> source,
+      bool Function(Task) statusMatch,
+    ) {
+      Iterable<Task> it = source;
+      if (filterKey == 'assigned') {
+        it = it.where(isAssignedToMe);
+      } else if (filterKey == 'created') {
+        it = it.where(isCreatedByMe);
+      }
+      return it.where(statusMatch).toList();
+    }
+
     List<Initiative> filteredInitiatives = [];
     List<Task> filteredTasks = [];
     List<Task> filteredDeletedTasks = [];
-    
+
     if (filterKey == 'all') {
       filteredInitiatives = initiatives;
-      filteredTasks = tasksNonDeleted;
-      filteredDeletedTasks = [];
+      filteredTasks =
+          filterTasksWithScopeAndStatus(tasksNonDeleted, nonDeletedMatchesTaskStatus);
+      filteredDeletedTasks = shouldShowDeletedSection()
+          ? filterTasksWithScopeAndStatus(
+              tasksDeletedSingular,
+              deletedMatchesTaskStatus,
+            )
+          : [];
     } else if (filterKey == 'assigned') {
       filteredInitiatives = [];
       filteredTasks =
-          tasksNonDeleted.where((t) => isAssignedToMe(t)).toList();
-      filteredDeletedTasks = [];
+          filterTasksWithScopeAndStatus(tasksNonDeleted, nonDeletedMatchesTaskStatus);
+      filteredDeletedTasks = shouldShowDeletedSection()
+          ? filterTasksWithScopeAndStatus(
+              tasksDeletedSingular,
+              deletedMatchesTaskStatus,
+            )
+          : [];
     } else if (filterKey == 'created') {
       filteredInitiatives = [];
-      filteredTasks = tasksNonDeleted.where((t) => isCreatedByMe(t)).toList();
-      filteredDeletedTasks = [];
-    } else if (filterKey == 'incomplete') {
-      filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) < 100).toList();
-      filteredTasks = tasksNonDeleted.where((t) {
-        if (t.isSingularTableRow) return singularIncomplete(t);
-        return t.status != TaskStatus.done;
-      }).toList();
-      filteredDeletedTasks = [];
-    } else if (filterKey == 'completed') {
-      filteredInitiatives = initiatives.where((i) => state.initiativeProgressPercent(i.id) >= 100).toList();
-      filteredTasks = tasksNonDeleted.where((t) {
-        if (t.isSingularTableRow) return singularCompleted(t);
-        return t.status == TaskStatus.done;
-      }).toList();
-      filteredDeletedTasks = [];
-    } else if (filterKey == 'deleted') {
-      filteredInitiatives = [];
-      filteredTasks = [];
-      filteredDeletedTasks = tasksDeletedSingular;
+      filteredTasks =
+          filterTasksWithScopeAndStatus(tasksNonDeleted, nonDeletedMatchesTaskStatus);
+      filteredDeletedTasks = shouldShowDeletedSection()
+          ? filterTasksWithScopeAndStatus(
+              tasksDeletedSingular,
+              deletedMatchesTaskStatus,
+            )
+          : [];
     }
     
-    final reminders = state.getPendingReminders(_selectedTeamId);
+    final reminders = state.getPendingRemindersForTeams(_selectedTeamIds);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -222,56 +293,193 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           ),
         Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: DropdownButtonFormField<String?>(
-              value: _selectedTeamId,
-              decoration: const InputDecoration(
-                labelText: 'Filter by team',
-                border: OutlineInputBorder(),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: _filterFieldMaxWidth),
+                child: MenuAnchor(
+                  menuChildren: [
+                    for (final team in teamsSorted)
+                      CheckboxMenuButton(
+                        closeOnActivate: false,
+                        value: _selectedTeamIds.contains(team.id),
+                        onChanged: (bool? v) {
+                          if (v == null) return;
+                          setState(() {
+                            if (v) {
+                              _selectedTeamIds.add(team.id);
+                            } else {
+                              _selectedTeamIds.remove(team.id);
+                            }
+                            if (_selectedTeamIds.length != 1) {
+                              _selectedAssigneeId = null;
+                            }
+                          });
+                        },
+                        child: Text(team.name),
+                      ),
+                  ],
+                  builder: (context, controller, child) {
+                    return InkWell(
+                      onTap: () {
+                        if (controller.isOpen) {
+                          controller.close();
+                        } else {
+                          controller.open();
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Filter by team',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.arrow_drop_down),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 16,
+                          ),
+                        ),
+                        child: Text(
+                          _teamFilterDisplayText(state),
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('All teams'),
-                ),
-                ...state.teams.map(
-                  (Team team) => DropdownMenuItem<String?>(
-                    value: team.id,
-                    child: Text(team.name),
-                  ),
-                ),
-              ],
-              onChanged: (v) {
-                setState(() {
-                  _selectedTeamId = v;
-                  _selectedAssigneeId = null; // Reset assignee when team changes
-                });
-              },
             ),
           ),
-          if (_selectedTeamId != null)
+          if (_selectedTeamIds.length == 1)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: DropdownButtonFormField<String?>(
-                value: _selectedAssigneeId,
-                decoration: const InputDecoration(
-                  labelText: 'Filter by team member (optional)',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('All team members'),
-                  ),
-                  ..._getTeamMembers(state, _selectedTeamId!).map(
-                    (Assignee assignee) => DropdownMenuItem<String?>(
-                      value: assignee.id,
-                      child: Text(assignee.name),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: _filterFieldMaxWidth),
+                  child: DropdownButtonFormField<String?>(
+                    key: ValueKey<Object?>(
+                      'assignee_${_selectedTeamIds.first}_$_selectedAssigneeId',
                     ),
+                    initialValue: _selectedAssigneeId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Filter by team member (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All team members'),
+                      ),
+                      ..._getTeamMembers(state, _selectedTeamIds.first).map(
+                        (Assignee assignee) => DropdownMenuItem<String?>(
+                          value: assignee.id,
+                          child: Text(assignee.name),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => _selectedAssigneeId = v),
                   ),
-                ],
-                onChanged: (v) => setState(() => _selectedAssigneeId = v),
+                ),
               ),
             ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _filterFieldMaxWidth),
+              child: MenuAnchor(
+              menuChildren: [
+                CheckboxMenuButton(
+                  closeOnActivate: false,
+                  value: _selectedTaskStatuses.contains(_statusIncomplete),
+                  onChanged: (bool? v) {
+                    if (v == null) return;
+                    setState(() {
+                      if (v) {
+                        _selectedTaskStatuses.add(_statusIncomplete);
+                      } else {
+                        _selectedTaskStatuses.remove(_statusIncomplete);
+                      }
+                    });
+                  },
+                  child: const Text('Incomplete'),
+                ),
+                CheckboxMenuButton(
+                  closeOnActivate: false,
+                  value: _selectedTaskStatuses.contains(_statusCompleted),
+                  onChanged: (bool? v) {
+                    if (v == null) return;
+                    setState(() {
+                      if (v) {
+                        _selectedTaskStatuses.add(_statusCompleted);
+                      } else {
+                        _selectedTaskStatuses.remove(_statusCompleted);
+                      }
+                    });
+                  },
+                  child: const Text('Completed'),
+                ),
+                CheckboxMenuButton(
+                  closeOnActivate: false,
+                  value: _selectedTaskStatuses.contains(_statusDeleted),
+                  onChanged: (bool? v) {
+                    if (v == null) return;
+                    setState(() {
+                      if (v) {
+                        _selectedTaskStatuses.add(_statusDeleted);
+                      } else {
+                        _selectedTaskStatuses.remove(_statusDeleted);
+                      }
+                    });
+                  },
+                  child: const Text('Deleted'),
+                ),
+              ],
+              builder: (context, controller, child) {
+                return InkWell(
+                  onTap: () {
+                    if (controller.isOpen) {
+                      controller.close();
+                    } else {
+                      controller.open();
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(4),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Filter by Status',
+                      border: OutlineInputBorder(),
+                      suffixIcon: Icon(Icons.arrow_drop_down),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 16,
+                      ),
+                    ),
+                    child: Text(
+                      _statusFilterDisplayText(),
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  ),
+                );
+              },
+            ),
+            ),
+          ),
+        ),
+        if (_hasTeamOrStatusFilterSelections)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Center(
+              child: TextButton(
+                onPressed: _clearTeamAndStatusFilters,
+                child: const Text('Clear all'),
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
           child: SingleChildScrollView(
@@ -304,30 +512,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   selectedLabelColor: Colors.black87,
                   leading: _myCreatedTasksFilterIcon(filterKey == 'created'),
                 ),
-                _buildTaskFilterChip(
-                  value: 'incomplete',
-                  label: 'Incomplete',
-                  selected: filterKey == 'incomplete',
-                  selectedBg: Colors.amber.shade300,
-                  selectedLabelColor: Colors.black87,
-                  leading: _incompleteFilterIcon(filterKey == 'incomplete'),
-                ),
-                _buildTaskFilterChip(
-                  value: 'completed',
-                  label: 'Completed',
-                  selected: filterKey == 'completed',
-                  selectedBg: const Color(0xFF1B5E20),
-                  selectedLabelColor: Colors.white,
-                  leading: _completedFilterIcon(filterKey == 'completed'),
-                ),
-                _buildTaskFilterChip(
-                  value: 'deleted',
-                  label: 'Deleted',
-                  selected: filterKey == 'deleted',
-                  selectedBg: Colors.grey.shade500,
-                  selectedLabelColor: Colors.white,
-                  leading: _deletedFilterIcon(filterKey == 'deleted'),
-                ),
               ],
             ),
           ),
@@ -336,7 +520,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           child: filteredInitiatives.isEmpty && filteredTasks.isEmpty && filteredDeletedTasks.isEmpty
               ? Center(
                   child: Text(
-                    _selectedTeamId == null
+                    _selectedTeamIds.isEmpty
                         ? 'No tasks yet. Create one in the "Create task" tab.'
                         : 'No tasks for this filter.',
                   ),
@@ -434,12 +618,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           children: [
             Text(
               '${priorityToDisplayName(init.priority)} · $progress%'
-              + (init.startDate != null
-                  ? ' · Start ${DateFormat.yMMMd().format(init.startDate!)}'
-                  : '')
-              + (init.endDate != null
-                  ? ' · Due ${DateFormat.yMMMd().format(init.endDate!)}'
-                  : ''),
+              '${init.startDate != null ? ' · Start ${DateFormat.yMMMd().format(init.startDate!)}' : ''}'
+              '${init.endDate != null ? ' · Due ${DateFormat.yMMMd().format(init.endDate!)}' : ''}',
             ),
             const SizedBox(height: 6),
             LinearProgressIndicator(

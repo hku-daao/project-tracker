@@ -380,6 +380,39 @@ class AppState extends ChangeNotifier {
     return initiatives.where((i) => i.teamId == teamId).toList();
   }
 
+  /// Empty [teamIds] = all teams (same as `null` for [tasksForTeam] / [initiativesForTeam]).
+  List<Task> tasksForTeams(Set<String> teamIds) {
+    if (teamIds.isEmpty) return tasksForTeam(null);
+    final byId = <String, Task>{};
+    for (final tid in teamIds) {
+      for (final t in tasksForTeam(tid)) {
+        byId[t.id] = t;
+      }
+    }
+    return byId.values.toList();
+  }
+
+  /// Empty [teamIds] = all teams.
+  List<Initiative> initiativesForTeams(Set<String> teamIds) {
+    if (teamIds.isEmpty) return initiatives;
+    return initiatives.where((i) => teamIds.contains(i.teamId)).toList();
+  }
+
+  /// Union of [getPendingReminders] per team, deduped. Empty [teamIds] = all teams.
+  List<PendingReminder> getPendingRemindersForTeams(Set<String> teamIds) {
+    if (teamIds.isEmpty) return getPendingReminders(null);
+    final out = <PendingReminder>[];
+    final keys = <String>{};
+    for (final tid in teamIds) {
+      for (final r in getPendingReminders(tid)) {
+        final k =
+            '${r.itemName}|${r.reminderType}|${r.isInitiative}|${r.recipientNames.join(',')}';
+        if (keys.add(k)) out.add(r);
+      }
+    }
+    return out;
+  }
+
   /// Reminders: Urgent = daily to Directors; Standard = 2 days before due to Directors.
   List<PendingReminder> getPendingReminders(String? teamId) {
     final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
