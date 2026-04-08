@@ -369,6 +369,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   ),
                             ),
                           ),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: PicTeamColorLegend(),
+                          ),
                           ...filteredTasks.map((t) => TaskListCard(task: t)),
                         ],
                         if (filteredDeletedTasks.isNotEmpty) ...[
@@ -382,6 +386,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   ),
                             ),
                           ),
+                          if (filteredTasks.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 12),
+                              child: PicTeamColorLegend(),
+                            ),
                           ...filteredDeletedTasks.map((t) => TaskListCard(task: t)),
                         ],
                       ],

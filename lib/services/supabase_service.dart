@@ -173,6 +173,37 @@ class SupabaseService {
     return out;
   }
 
+  /// Resolves [assigneeKey] (`staff.app_id` or `staff.id`) to the business team key
+  /// (`team.team_id`, same as [StaffForAssignment.teamId]) for the PIC row.
+  static Future<String?> fetchStaffTeamBusinessIdForAssigneeKey(
+      String? assigneeKey) async {
+    if (!_enabled) return null;
+    final k = assigneeKey?.trim() ?? '';
+    if (k.isEmpty) return null;
+    try {
+      final supabase = Supabase.instance.client;
+      Map<String, dynamic>? row =
+          await supabase.from('staff').select('team_id').eq('app_id', k).maybeSingle();
+      row ??=
+          await supabase.from('staff').select('team_id').eq('id', k).maybeSingle();
+      var tid = row?['team_id']?.toString().trim();
+      if (tid == null || tid.isEmpty) return null;
+      if (_looksLikeUuid(tid)) {
+        final trow = await supabase
+            .from('team')
+            .select('team_id')
+            .eq('id', tid)
+            .maybeSingle();
+        final biz = trow?['team_id']?.toString().trim();
+        if (biz != null && biz.isNotEmpty) return biz;
+      }
+      return tid;
+    } catch (e, st) {
+      debugPrint('fetchStaffTeamBusinessIdForAssigneeKey: $e\n$st');
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> fetchSingularTaskById(String taskId) async {
     if (!_enabled) return null;
     try {
