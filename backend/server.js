@@ -145,6 +145,28 @@ async function fetchProfileByEmail(email) {
   };
 }
 
+/**
+ * `task.create_by` may be `staff.id` (uuid) or `staff.app_id` (matches Flutter insert resolution).
+ */
+async function fetchStaffRowForCreateBy(supabaseClient, createByRaw) {
+  const key = String(createByRaw || '').trim();
+  if (!key) return { data: null, error: null };
+  const byId = await supabaseClient
+    .from('staff')
+    .select('id, email, name, display_name')
+    .eq('id', key)
+    .maybeSingle();
+  if (byId.error) return { data: null, error: byId.error };
+  if (byId.data) return { data: byId.data, error: null };
+  const byApp = await supabaseClient
+    .from('staff')
+    .select('id, email, name, display_name')
+    .eq('app_id', key)
+    .maybeSingle();
+  if (byApp.error) return { data: null, error: byApp.error };
+  return { data: byApp.data || null, error: null };
+}
+
 async function handleApiMe(req, res) {
   const session = await verifyFirebaseToken(req.headers.authorization);
   if (!session) {
@@ -1100,6 +1122,7 @@ async function runUrgentTaskReminderJob() {
 /**
  * Same 80% window as assignee urgent reminders: email task.create_by once per HK day while
  * [isCalendarStrictlyBeforeDue] and [hasReachedEightyPercentWindow]. Uses [creator_urgent_reminder_last_sent_on].
+ * Does not run when HK today is the due date (that day uses creator due-today + [creator_due_today_reminder_sent_on]).
  * Skips if create_by === assignee_01.
  */
 async function runCreatorUrgentTaskReminderJob() {
@@ -1139,6 +1162,8 @@ async function runCreatorUrgentTaskReminderJob() {
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    // On the due calendar day (HK), do not run creator urgent — use creator due-today only.
+    if (isCalendarDueToday(todayYmd, taskRow.due_date)) continue;
     if (!isCalendarStrictlyBeforeDue(todayYmd, taskRow.due_date)) continue;
     if (!hasReachedEightyPercentWindow(taskRow.start_date, taskRow.due_date, nowMs)) {
       continue;
@@ -1153,40 +1178,44 @@ async function runCreatorUrgentTaskReminderJob() {
       continue;
     }
 
+    const taskId = String(taskRow.id || '').trim();
     const creatorId = (taskRow.create_by || '').toString().trim();
     if (!creatorId) {
       continue;
     }
+
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
+      supabase,
+      creatorId,
+    );
+    if (staffErr) {
+      summary.errors.push(`creator urgent staff lookup ${taskId}: ${staffErr.message}`);
+      continue;
+    }
+    if (!staffRow) {
+      summary.errors.push(
+        `creator staff not found for task ${taskId} (create_by=${creatorId}; try staff.id or staff.app_id)`,
+      );
+      continue;
+    }
+    const resolvedCreatorStaffId = String(staffRow.id || '').trim();
     const assignee01 = (taskRow.assignee_01 || '').toString().trim();
     if (
       assignee01 &&
-      creatorId.toLowerCase() === assignee01.toLowerCase()
+      resolvedCreatorStaffId.toLowerCase() === assignee01.toLowerCase()
     ) {
       continue;
     }
 
     summary.eligible += 1;
-    const taskId = String(taskRow.id || '').trim();
     const taskName = String(taskRow.task_name || '').trim() || '(no title)';
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-
-    const { data: staffRow, error: staffErr } = await supabase
-      .from('staff')
-      .select('email, name, display_name')
-      .eq('id', creatorId)
-      .maybeSingle();
-    if (staffErr) {
-      summary.errors.push(`creator urgent staff ${taskId}: ${staffErr.message}`);
-      continue;
-    }
-    if (!staffRow) {
-      summary.errors.push(`creator staff not found for task ${taskId} (create_by=${creatorId})`);
-      continue;
-    }
     const to = (staffRow.email || '').trim();
     if (!to) {
-      summary.errors.push(`creator has no email (task ${taskId}, staff ${creatorId})`);
+      summary.errors.push(
+        `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId})`,
+      );
       continue;
     }
     const displayName =
@@ -1388,40 +1417,44 @@ async function runCreatorDueTodayReminderJob() {
       continue;
     }
 
+    const taskId = String(taskRow.id || '').trim();
     const creatorId = (taskRow.create_by || '').toString().trim();
     if (!creatorId) {
       continue;
     }
+
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
+      supabase,
+      creatorId,
+    );
+    if (staffErr) {
+      summary.errors.push(`creator due-today staff lookup ${taskId}: ${staffErr.message}`);
+      continue;
+    }
+    if (!staffRow) {
+      summary.errors.push(
+        `creator staff not found for task ${taskId} (create_by=${creatorId}; try staff.id or staff.app_id)`,
+      );
+      continue;
+    }
+    const resolvedCreatorStaffId = String(staffRow.id || '').trim();
     const assignee01 = (taskRow.assignee_01 || '').toString().trim();
     if (
       assignee01 &&
-      creatorId.toLowerCase() === assignee01.toLowerCase()
+      resolvedCreatorStaffId.toLowerCase() === assignee01.toLowerCase()
     ) {
       continue;
     }
 
     summary.eligible += 1;
-    const taskId = String(taskRow.id || '').trim();
     const taskName = String(taskRow.task_name || '').trim() || '(no title)';
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-
-    const { data: staffRow, error: staffErr } = await supabase
-      .from('staff')
-      .select('email, name, display_name')
-      .eq('id', creatorId)
-      .maybeSingle();
-    if (staffErr) {
-      summary.errors.push(`creator staff ${taskId}: ${staffErr.message}`);
-      continue;
-    }
-    if (!staffRow) {
-      summary.errors.push(`creator staff not found for task ${taskId} (create_by=${creatorId})`);
-      continue;
-    }
     const to = (staffRow.email || '').trim();
     if (!to) {
-      summary.errors.push(`creator has no email (task ${taskId}, staff ${creatorId})`);
+      summary.errors.push(
+        `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId})`,
+      );
       continue;
     }
     const displayName =
