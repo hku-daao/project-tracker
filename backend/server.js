@@ -581,6 +581,25 @@ async function handleHealth(req, res) {
 }
 
 /**
+ * Single recipient for Mailgun: trim, lowercase, first address if comma/semicolon-separated.
+ */
+function normalizeRecipientEmail(raw) {
+  let s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (/[,;]/.test(s)) {
+    s = s.split(/[,;]/)[0].trim();
+  }
+  const firstToken = (s.split(/\s+/)[0] || '').trim();
+  return firstToken.toLowerCase();
+}
+
+function formatMailgunFailure(r) {
+  const base = r.error || 'failed';
+  const d = r.detail ? ` — ${String(r.detail).slice(0, 450)}` : '';
+  return `${base}${d}`;
+}
+
+/**
  * Send via Mailgun HTTP API (application/x-www-form-urlencoded).
  * @param [opts.html] HTML body (optional; plain [text] fallback for clients)
  * @param [opts.from] Full From header (must be allowed on the Mailgun domain)
@@ -591,13 +610,21 @@ async function sendMailgun({ to, subject, text, html, from: fromOverride, replyT
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
     return { ok: false, error: 'Mailgun not configured (MAILGUN_API_KEY / MAILGUN_DOMAIN)' };
   }
+  const toAddr = normalizeRecipientEmail(to);
+  if (!toAddr || !toAddr.includes('@')) {
+    return {
+      ok: false,
+      error: 'Missing or invalid recipient email (to)',
+      resolvedTo: toAddr || '',
+    };
+  }
   const from =
     fromOverride ||
     MAILGUN_FROM ||
     `postmaster@${MAILGUN_DOMAIN}`;
   const url = `${MAILGUN_BASE_URL}/v3/${encodeURIComponent(MAILGUN_DOMAIN)}/messages`;
   const auth = Buffer.from(`api:${MAILGUN_API_KEY}`).toString('base64');
-  const body = new URLSearchParams({ from, to, subject });
+  const body = new URLSearchParams({ from, to: toAddr, subject });
   if (html) {
     body.append('html', html);
     body.append('text', text || '');
@@ -619,16 +646,21 @@ async function sendMailgun({ to, subject, text, html, from: fromOverride, replyT
     });
     const raw = await r.text();
     if (!r.ok) {
-      return { ok: false, error: `Mailgun HTTP ${r.status}`, detail: raw.slice(0, 500) };
+      return {
+        ok: false,
+        error: `Mailgun HTTP ${r.status}`,
+        detail: raw.slice(0, 500),
+        resolvedTo: toAddr,
+      };
     }
     let id = '';
     try {
       const j = JSON.parse(raw);
       id = (j && j.id) || '';
     } catch (_) {}
-    return { ok: true, id };
+    return { ok: true, id, resolvedTo: toAddr };
   } catch (e) {
-    return { ok: false, error: e.message || String(e) };
+    return { ok: false, error: e.message || String(e), resolvedTo: toAddr };
   }
 }
 
@@ -1260,7 +1292,9 @@ async function runCreatorUrgentTaskReminderJob() {
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
-      summary.errors.push(`Mailgun creator urgent ${taskId}: ${r.error || 'failed'}`);
+      summary.errors.push(
+        `Mailgun creator urgent task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+      );
       continue;
     }
 
@@ -1499,7 +1533,9 @@ async function runCreatorDueTodayReminderJob() {
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
-      summary.errors.push(`Mailgun creator due-today ${taskId}: ${r.error || 'failed'}`);
+      summary.errors.push(
+        `Mailgun creator due-today task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+      );
       continue;
     }
 

@@ -41,6 +41,7 @@ After the variables above are set, redeploy Railway. `GET /health` includes `mai
 `POST /api/admin/test-mailgun` with header `Authorization: Bearer <Firebase ID token>` and JSON body `{ "to": "recipient@example.com" }`.
 
 - **Sandbox domain:** In [Mailgun](https://app.mailgun.com/) → *Sending* → *Domains* → your sandbox → **Authorized recipients** — add the inbox you use in `"to"`. Sandbox cannot send to arbitrary addresses.
+- **Cron emails:** If assignees receive notifications but **creators** do not, the creator’s **`staff.email`** is often a different address — add that address to **Authorized recipients** too (or use a production domain). Mailgun rejects with HTTP 403/402; the cron JSON **`creatorDueToday.errors`** / **`creatorUrgent.errors`** now include the full Mailgun response body for debugging.
 
 ### Get Firebase service account JSON (step by step)
 
