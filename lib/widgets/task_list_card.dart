@@ -129,6 +129,37 @@ class TaskListCard extends StatelessWidget {
     return s == 'submitted';
   }
 
+  static bool _isSubmissionAccepted(Task t) {
+    final s = t.submission?.trim().toLowerCase() ?? '';
+    return s == 'accepted';
+  }
+
+  static bool _isSubmissionReturned(Task t) {
+    final s = t.submission?.trim().toLowerCase() ?? '';
+    return s == 'returned';
+  }
+
+  static const Color _kAcceptedTagColor = Color(0xFF298A00);
+  static const Color _kReturnedTagColor = Color(0xFF0B0094);
+
+  static Widget _submissionBadge(String label, Color backgroundColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
@@ -173,24 +204,15 @@ class TaskListCard extends StatelessWidget {
                 ),
                 if (_isSubmissionSubmitted(t)) ...[
                   const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text(
-                      'Submitted',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+                  _submissionBadge('Submitted', Colors.red),
+                ],
+                if (_isSubmissionAccepted(t)) ...[
+                  const SizedBox(width: 8),
+                  _submissionBadge('Accepted', _kAcceptedTagColor),
+                ],
+                if (_isSubmissionReturned(t)) ...[
+                  const SizedBox(width: 8),
+                  _submissionBadge('Returned', _kReturnedTagColor),
                 ],
               ],
             ),

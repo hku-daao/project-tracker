@@ -1989,7 +1989,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 14,
                                   ),
-                                  backgroundColor: Colors.green.shade700,
+                                  backgroundColor: const Color(0xFF298A00),
                                   foregroundColor: Colors.white,
                                 ),
                                 child: const Text('Accept'),
@@ -2005,7 +2005,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 14,
                                   ),
-                                  backgroundColor: Colors.orange.shade800,
+                                  backgroundColor: const Color(0xFF0B0094),
                                   foregroundColor: Colors.white,
                                 ),
                                 child: const Text('Return'),
