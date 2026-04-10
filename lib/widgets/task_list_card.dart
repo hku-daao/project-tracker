@@ -25,27 +25,27 @@ class PicTeamColorEntry {
 const List<PicTeamColorEntry> kPicTeamColorEntries = [
   PicTeamColorEntry(
     teamKey: 'advancement_intel',
-    color: Color(0xFFF0E68C),
+    color: Color(0xFFFFFBE8),
     legendLabel: 'Advancement Intelligence',
   ),
   PicTeamColorEntry(
     teamKey: 'president_office',
-    color: Color(0xFFDDA0DD),
+    color: Color(0xFFFEE8FF),
     legendLabel: 'President Office',
   ),
   PicTeamColorEntry(
     teamKey: 'fundraising',
-    color: Color(0xFF00FFFF),
+    color: Color(0xFFE8FDFF),
     legendLabel: 'Fundraising',
   ),
   PicTeamColorEntry(
     teamKey: 'alumni',
-    color: Color(0xFF7CFC00),
+    color: Color(0xFFEEFFD4),
     legendLabel: 'Alumni',
   ),
   PicTeamColorEntry(
     teamKey: 'admin_team',
-    color: Color(0xFFFA8072),
+    color: Color(0xFFFFE9E3),
     legendLabel: 'Admin',
   ),
 ];

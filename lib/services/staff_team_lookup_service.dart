@@ -30,7 +30,7 @@ class StaffTeamLookupService {
       final supabase = Supabase.instance.client;
       final staffRes = await supabase
           .from('staff')
-          .select('app_id, team_id, email, name, display_name')
+          .select('id, app_id, team_id, email, name, display_name')
           .ilike('email', normalized)
           .limit(1)
           .maybeSingle();
@@ -42,6 +42,7 @@ class StaffTeamLookupService {
         );
       }
 
+      final staffId = staffRes['id']?.toString().trim();
       final appId = staffRes['app_id'] as String?;
       final teamIdRaw = staffRes['team_id'];
       final staffEmailFromDb = staffRes['email'] as String?;
@@ -70,6 +71,7 @@ class StaffTeamLookupService {
 
       return StaffTeamLookupResult(
         loginEmail: normalized,
+        staffId: staffId?.isNotEmpty == true ? staffId : null,
         appId: appId,
         staffDisplayName: staffDisplayName,
         staffName: staffName,

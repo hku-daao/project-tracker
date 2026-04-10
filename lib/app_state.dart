@@ -39,6 +39,8 @@ class AppState extends ChangeNotifier {
 
   /// Current user's `staff.app_id` (from Supabase lookup or backend).
   String? _userStaffAppId;
+  /// Current user's `staff.id` (uuid), when revamp email lookup returned it.
+  String? _userStaffId;
   List<AssignableStaffEntry> _assignableStaffFromServer = [];
 
   /// `staff.app_id` values from `subordinate.subordinate_id` where `supervisor_id` = current user.
@@ -55,6 +57,7 @@ class AppState extends ChangeNotifier {
   }
 
   String? get userStaffAppId => _userStaffAppId;
+  String? get userStaffId => _userStaffId;
   List<AssignableStaffEntry> get assignableStaffFromServer =>
       List.unmodifiable(_assignableStaffFromServer);
 
@@ -74,11 +77,26 @@ class AppState extends ChangeNotifier {
 
   void setUserStaffContext({
     String? staffAppId,
+    String? staffUuid,
     List<AssignableStaffEntry>? assignableStaff,
   }) {
     _userStaffAppId = staffAppId;
+    _userStaffId = staffUuid;
     _assignableStaffFromServer = assignableStaff ?? [];
     notifyListeners();
+  }
+
+  /// Matches singular `task.create_by` resolved to [Task.createByAssigneeKey] (`staff.app_id` or uuid).
+  bool taskIsCreatedByCurrentUser(Task t) {
+    final mine = _userStaffAppId?.trim();
+    final sid = _userStaffId?.trim();
+    final cb = t.createByAssigneeKey?.trim();
+    if (cb == null || cb.isEmpty) return false;
+    if (mine != null && mine.isNotEmpty && cb == mine) return true;
+    if (sid != null && sid.isNotEmpty && cb.toLowerCase() == sid.toLowerCase()) {
+      return true;
+    }
+    return false;
   }
 
   /// Set by [CreateTaskScreen] while mounted; used to warn before leaving the tab or signing out.
@@ -367,8 +385,13 @@ class AppState extends ChangeNotifier {
     if (scope.isEmpty) {
       all = [];
     } else {
+      // Show tasks assigned to self/subordinates, OR tasks this user created (assignee may be outside that scope).
       all = all
-          .where((t) => t.assigneeIds.any((id) => scope.contains(id)))
+          .where(
+            (t) =>
+                t.assigneeIds.any((id) => scope.contains(id)) ||
+                taskIsCreatedByCurrentUser(t),
+          )
           .toList();
     }
     if (teamId == null || teamId.isEmpty) return all;

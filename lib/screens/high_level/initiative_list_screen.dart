@@ -180,8 +180,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     bool hasMine() => mine != null && mine.isNotEmpty;
     bool isAssignedToMe(Task t) =>
         hasMine() && t.assigneeIds.contains(mine!);
-    bool isCreatedByMe(Task t) =>
-        hasMine() && t.createByAssigneeKey == mine;
+    bool isCreatedByMe(Task t) => state.taskIsCreatedByCurrentUser(t);
 
     final filterKey = _filterType == 'my' ? 'all' : _filterType;
 

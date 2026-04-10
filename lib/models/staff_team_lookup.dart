@@ -2,6 +2,7 @@
 class StaffTeamLookupResult {
   const StaffTeamLookupResult({
     required this.loginEmail,
+    this.staffId,
     this.appId,
     this.staffDisplayName,
     this.staffName,
@@ -12,6 +13,8 @@ class StaffTeamLookupResult {
   });
 
   final String loginEmail;
+  /// `staff.id` (uuid) when the login email matched a row.
+  final String? staffId;
   final String? appId;
   /// `staff.display_name` when the login email matches a staff row.
   final String? staffDisplayName;
@@ -33,6 +36,7 @@ class StaffTeamLookupResult {
       ..writeln('staff.display_name: ${staffDisplayName ?? "(null)"}')
       ..writeln('staff.name: ${staffName ?? "(null)"}')
       ..writeln('staff.email (DB): ${staffEmailFromDb ?? "(null)"}')
+      ..writeln('staff.id: ${staffId ?? "(null)"}')
       ..writeln('staff.app_id: ${appId ?? "(null)"}')
       ..writeln('staff.team_id: ${staffTeamIdRaw ?? "(null)"}')
       ..writeln('team name: ${teamName ?? "(null)"}');

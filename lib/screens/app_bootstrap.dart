@@ -42,6 +42,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
         if (mounted) {
           state.setUserStaffContext(
             staffAppId: lookup.appId,
+            staffUuid: lookup.staffId,
             assignableStaff: const [],
           );
           final subIds = await SupabaseService.fetchSubordinateAppIdsForSupervisor(
