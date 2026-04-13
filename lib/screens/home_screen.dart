@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../app_state.dart';
 import '../../models/staff_team_lookup.dart';
 import '../../config/admin_config.dart';
@@ -36,6 +37,23 @@ Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
     ),
   );
   return r == true;
+}
+
+/// Microsoft Forms — feedback (AppBar).
+const String _kFeedbackFormUrl =
+    'https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=TrX5QnckukG_CXoNKoP_CXmxjjVqONdDujd4tWBFFN9UMk1ZS0EzMFZSSlFSMkhXTjI5UE82QThKTC4u';
+
+Future<void> _openFeedbackForm(BuildContext context) async {
+  final uri = Uri.parse(_kFeedbackFormUrl);
+  final ok = await canLaunchUrl(uri);
+  if (!context.mounted) return;
+  if (!ok) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open feedback form.')),
+    );
+    return;
+  }
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
 String _welcomeDisplayName(StaffTeamLookupResult? lookup) {
@@ -181,6 +199,11 @@ class _HomeScreenState extends State<HomeScreen> {
                               );
                             },
                           ),
+                        IconButton(
+                          icon: const Icon(Icons.feedback_outlined),
+                          tooltip: 'Feedback',
+                          onPressed: () => _openFeedbackForm(context),
+                        ),
                         if (kIsWeb)
                           IconButton(
                             icon: const Icon(Icons.logout),
