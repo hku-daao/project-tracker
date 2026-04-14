@@ -297,6 +297,32 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     return _uuidEquals(_myStaffUuid, _taskCreateByStaffUuid);
   }
 
+  /// `task.assignee_XX` / [Task.assigneeIds] includes the current user.
+  bool _isTaskAssignee(AppState state, Task task) {
+    final mine = state.userStaffAppId?.trim();
+    if (mine != null && mine.isNotEmpty && task.assigneeIds.contains(mine)) {
+      return true;
+    }
+    final uid = _myStaffUuid?.trim();
+    if (uid == null || uid.isEmpty) return false;
+    for (final id in task.assigneeIds) {
+      if (_uuidEquals(id, uid)) return true;
+    }
+    return false;
+  }
+
+  /// Assignee who is not [task.create_by] — may add comments only (not task fields).
+  bool _isAssigneeOnlyNotCreator(AppState state, Task task) =>
+      _isTaskAssignee(state, task) && !_isCreator(state, task);
+
+  /// Name, description, assignees, PIC, priority, start/due — creator only.
+  bool _canEditSingularTaskMetadata(AppState state, Task task) =>
+      _isCreator(state, task);
+
+  /// May use the comment box (creator or any assignee).
+  bool _canWriteComments(AppState state, Task task) =>
+      _isCreator(state, task) || _isTaskAssignee(state, task);
+
   /// PIC may submit until status is [Submitted]; [Returned] allows resubmit.
   static bool _canPicSubmit(Task task) {
     final s = task.submission?.trim() ?? '';
@@ -931,9 +957,63 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     return true;
   }
 
+  /// Assignees who are not the creator post comments without using **Update**.
+  Future<void> _postCommentOnly(AppState state, Task task) async {
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured.');
+      return;
+    }
+    if (_saving) return;
+    if (!_canWriteComments(state, task)) return;
+    if (_isCreator(state, task)) {
+      showCopyableSnackBar(
+        context,
+        'Use Update to save your comment with the task.',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    if (_commentController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a comment to post.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final ok = await _insertPendingCommentFromController(
+        state,
+        task,
+        commentSaveErrorPrefix: 'Comment was not saved:',
+      );
+      if (!mounted) return;
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Comment posted.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _saveTaskFields(AppState state, Task task) async {
     if (!SupabaseConfig.isConfigured) {
       showCopyableSnackBar(context, 'Supabase not configured.');
+      return;
+    }
+    if (!_isCreator(state, task)) {
+      showCopyableSnackBar(
+        context,
+        'Only the task creator can update assignees, PIC, dates, and other task details.',
+        backgroundColor: Colors.orange,
+      );
       return;
     }
     if (_formKey.currentState != null && !_formKey.currentState!.validate()) {
@@ -1051,7 +1131,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         return;
       }
 
-      if (_isPicEffective(state, task)) {
+      if (_isCreator(state, task)) {
         final errAttach = await SupabaseService.upsertAttachmentContentForTask(
           taskId: task.id,
           content: _submissionLinkController.text,
@@ -1518,31 +1598,63 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              TextField(
-                                controller: _nameController,
-                                readOnly: _saving,
-                                decoration: const InputDecoration(
-                                  labelText: 'Task name',
-                                  border: OutlineInputBorder(),
-                                ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  TextField(
+                                    controller: _nameController,
+                                    readOnly: _saving ||
+                                        !_canEditSingularTaskMetadata(
+                                          state,
+                                          task,
+                                        ),
+                                    enableInteractiveSelection:
+                                        _isCreator(state, task) ||
+                                            _isTaskAssignee(state, task),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Task name',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextField(
+                                    controller: _descController,
+                                    readOnly: _saving ||
+                                        !_canEditSingularTaskMetadata(
+                                          state,
+                                          task,
+                                        ),
+                                    enableInteractiveSelection:
+                                        _isCreator(state, task) ||
+                                            _isTaskAssignee(state, task),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Description',
+                                      border: OutlineInputBorder(),
+                                      alignLabelWithHint: true,
+                                    ),
+                                    maxLines: 4,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _descController,
-                                readOnly: _saving,
-                                decoration: const InputDecoration(
-                                  labelText: 'Description',
-                                  border: OutlineInputBorder(),
-                                  alignLabelWithHint: true,
+                            ),
+                            AbsorbPointer(
+                              absorbing:
+                                  !_canEditSingularTaskMetadata(state, task),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  16,
+                                  16,
+                                  16,
                                 ),
-                                maxLines: 4,
-                              ),
-                              const SizedBox(height: 16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
                               if (!SupabaseConfig.isConfigured) ...[
                                 Text(
                                   'Assignees',
@@ -1819,6 +1931,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   _toggleButton(
                                     label: 'Standard',
                                     selected: _localPriority == 1,
+                                    enabled: _canEditSingularTaskMetadata(
+                                      state,
+                                      task,
+                                    ),
                                     onTap: () =>
                                         setState(() => _localPriority = 1),
                                   ),
@@ -1826,6 +1942,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   _toggleButton(
                                     label: 'URGENT',
                                     selected: _localPriority == 2,
+                                    enabled: _canEditSingularTaskMetadata(
+                                      state,
+                                      task,
+                                    ),
                                     onTap: () =>
                                         setState(() => _localPriority = 2),
                                   ),
@@ -1842,17 +1962,29 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     ),
                                   ),
                                   TextButton.icon(
-                                    onPressed: _saving ? null : _pickStartDate,
+                                    onPressed:
+                                        (_saving ||
+                                                !_canEditSingularTaskMetadata(
+                                                  state,
+                                                  task,
+                                                ))
+                                            ? null
+                                            : _pickStartDate,
                                     icon: const Icon(Icons.calendar_today),
                                     label: const Text('Pick'),
                                   ),
                                   if (_startDate != null)
                                     TextButton(
-                                      onPressed: _saving
-                                          ? null
-                                          : () => setState(
-                                              () => _startDate = null,
-                                            ),
+                                      onPressed:
+                                        (_saving ||
+                                                !_canEditSingularTaskMetadata(
+                                                  state,
+                                                  task,
+                                                ))
+                                            ? null
+                                            : () => setState(
+                                                () => _startDate = null,
+                                              ),
                                       child: const Text('Clear'),
                                     ),
                                 ],
@@ -1868,15 +2000,27 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     ),
                                   ),
                                   TextButton.icon(
-                                    onPressed: _saving ? null : _pickDueDate,
+                                    onPressed:
+                                        (_saving ||
+                                                !_canEditSingularTaskMetadata(
+                                                  state,
+                                                  task,
+                                                ))
+                                            ? null
+                                            : _pickDueDate,
                                     icon: const Icon(Icons.event),
                                     label: const Text('Pick'),
                                   ),
                                   if (_dueDate != null)
                                     TextButton(
-                                      onPressed: _saving
-                                          ? null
-                                          : () =>
+                                      onPressed:
+                                        (_saving ||
+                                                !_canEditSingularTaskMetadata(
+                                                  state,
+                                                  task,
+                                                ))
+                                            ? null
+                                            : () =>
                                                 setState(() => _dueDate = null),
                                       child: const Text('Clear'),
                                     ),
@@ -1903,6 +2047,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           ),
                         ),
                       ),
+                    ],
+                  ),
+                ),
                       const SizedBox(height: 16),
                       Card(
                         child: Padding(
@@ -1928,9 +2075,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                               const SizedBox(height: 12),
                               TextField(
                                 controller: _submissionLinkController,
-                                readOnly:
-                                    _saving ||
-                                    !_isPicEffective(state, task),
+                                readOnly: _saving ||
+                                    !(_isCreator(state, task) ||
+                                        _isPicEffective(state, task)),
                                 decoration: const InputDecoration(
                                   labelText: 'Attachment (hyperlink)',
                                   hintText: 'https://…',
@@ -1951,12 +2098,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       const SizedBox(height: 8),
                       TextField(
                         controller: _commentController,
-                        readOnly: _saving,
+                        readOnly: _saving || !_canWriteComments(state, task),
                         textAlignVertical: TextAlignVertical.top,
                         minLines: 3,
                         maxLines: 6,
                         decoration: InputDecoration(
-                          hintText: 'Comments',
+                          hintText: _canWriteComments(state, task)
+                              ? 'Comments'
+                              : 'Only task assignees can add comments',
                           hintStyle: TextStyle(color: Colors.grey.shade600),
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.all(12),
@@ -1972,15 +2121,28 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       else
                         ..._singularCommentTiles(context, state),
                       const SizedBox(height: 24),
-                      FilledButton(
-                        onPressed: _saving
-                            ? null
-                            : () => _saveTaskFields(state, task),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
+                      if (_canEditSingularTaskMetadata(state, task))
+                        FilledButton(
+                          onPressed: _saving
+                              ? null
+                              : () => _saveTaskFields(state, task),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: Text(_saving ? 'Saving…' : 'Update'),
                         ),
-                        child: Text(_saving ? 'Saving…' : 'Update'),
-                      ),
+                      if (_isAssigneeOnlyNotCreator(state, task)) ...[
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: _saving
+                              ? null
+                              : () => _postCommentOnly(state, task),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: Text(_saving ? 'Saving…' : 'Update'),
+                        ),
+                      ],
                       if (_isPicEffective(state, task) &&
                           _canPicSubmit(task)) ...[
                         const SizedBox(height: 12),
@@ -2259,7 +2421,7 @@ class _LegacyTaskDetailViewState extends State<_LegacyTaskDetailView> {
             const SizedBox(height: 8),
             FilledButton(
               onPressed: () => _addComment(context, state, task),
-              child: const Text('Post comment'),
+              child: const Text('Update'),
             ),
             const SizedBox(height: 16),
             ...task.comments.map((c) {
