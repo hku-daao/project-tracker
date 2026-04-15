@@ -1,0 +1,107 @@
+/// Row from `public.subtask` (child of singular `task`).
+class SingularSubtask {
+  const SingularSubtask({
+    required this.id,
+    required this.taskId,
+    this.createByStaffId,
+    required this.subtaskName,
+    required this.description,
+    required this.priority,
+    this.startDate,
+    this.dueDate,
+    required this.status,
+    this.submission,
+    required this.assigneeIds,
+    this.pic,
+    this.createDate,
+    this.updateDate,
+    this.updateByStaffName,
+  });
+
+  final String id;
+  final String taskId;
+
+  /// `staff.id` uuid
+  final String? createByStaffId;
+  final String subtaskName;
+  final String description;
+
+  /// 1 = Standard, 2 = URGENT
+  final int priority;
+  final DateTime? startDate;
+  final DateTime? dueDate;
+  final String status;
+  final String? submission;
+
+  /// Resolved to `staff.app_id` where possible (same as [Task.assigneeIds]).
+  final List<String> assigneeIds;
+
+  /// PIC as `staff.app_id` or uuid string.
+  final String? pic;
+  final DateTime? createDate;
+  final DateTime? updateDate;
+
+  /// Resolved from `subtask.update_by` → `staff.name`.
+  final String? updateByStaffName;
+
+  bool get isDeleted => status.trim().toLowerCase() == 'deleted';
+
+  SingularSubtask copyWith({
+    String? id,
+    String? taskId,
+    String? createByStaffId,
+    String? subtaskName,
+    String? description,
+    int? priority,
+    DateTime? startDate,
+    DateTime? dueDate,
+    String? status,
+    String? submission,
+    List<String>? assigneeIds,
+    String? pic,
+    DateTime? createDate,
+    DateTime? updateDate,
+    String? updateByStaffName,
+  }) {
+    return SingularSubtask(
+      id: id ?? this.id,
+      taskId: taskId ?? this.taskId,
+      createByStaffId: createByStaffId ?? this.createByStaffId,
+      subtaskName: subtaskName ?? this.subtaskName,
+      description: description ?? this.description,
+      priority: priority ?? this.priority,
+      startDate: startDate ?? this.startDate,
+      dueDate: dueDate ?? this.dueDate,
+      status: status ?? this.status,
+      submission: submission ?? this.submission,
+      assigneeIds: assigneeIds ?? this.assigneeIds,
+      pic: pic ?? this.pic,
+      createDate: createDate ?? this.createDate,
+      updateDate: updateDate ?? this.updateDate,
+      updateByStaffName: updateByStaffName ?? this.updateByStaffName,
+    );
+  }
+}
+
+/// Display row for `subtask_comment` (mirrors [SingularCommentRowDisplay]).
+class SubtaskCommentRowDisplay {
+  const SubtaskCommentRowDisplay({
+    required this.id,
+    required this.description,
+    required this.status,
+    this.createByStaffId,
+    required this.displayStaffName,
+    this.createTimestampUtc,
+    this.updateTimestampUtc,
+  });
+
+  final String id;
+  final String description;
+  final String status;
+  final String? createByStaffId;
+  final String displayStaffName;
+  final DateTime? createTimestampUtc;
+  final DateTime? updateTimestampUtc;
+
+  bool get isDeleted => status.trim().toLowerCase() == 'deleted';
+}

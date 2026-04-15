@@ -729,6 +729,11 @@ function collectTaskAssigneeStaffIds(taskRow) {
   return assigneeIds;
 }
 
+/** Same slot layout as [collectTaskAssigneeStaffIds] for `public.subtask`. */
+function collectSubtaskAssigneeStaffIds(subtaskRow) {
+  return collectTaskAssigneeStaffIds(subtaskRow);
+}
+
 function buildTaskCommentNotificationBodies(description, taskUrl) {
   const raw = String(description || '').trim();
   const safeDesc = raw.length ? escapeHtml(raw) : '(no text)';
@@ -1736,6 +1741,130 @@ async function handleNotifyTaskAssigned(req, res) {
 }
 
 /**
+ * POST { subtaskId } — creator only; emails each subtask assignee (assignee_01..10) with Mailgun.
+ * Creator receives mail only if they appear in assignee slots. Reply-To: creator email.
+ */
+async function handleNotifySubtaskAssigned(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: tErr } = await supabase
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (tErr || !row) {
+      sendJson(req, res, 404, { error: 'Sub-task not found' });
+      return;
+    }
+    const creatorId = row.create_by?.toString().trim();
+    if (!creatorId) {
+      sendJson(req, res, 400, { error: 'Sub-task has no create_by' });
+      return;
+    }
+    const { data: creatorStaff, error: cErr } = await supabase
+      .from('staff')
+      .select('id, name, email, display_name')
+      .eq('id', creatorId)
+      .maybeSingle();
+    if (cErr || !creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    if (!creatorEmail || creatorEmail !== sessionEmail) {
+      sendJson(req, res, 403, {
+        error:
+          'Only the sub-task creator (staff email must match signed-in user) can send assignment emails',
+      });
+      return;
+    }
+    const staffDisplayName =
+      (creatorStaff.display_name || '').trim() ||
+      (creatorStaff.name || '').trim() ||
+      creatorEmail;
+    const subtaskName =
+      (row.subtask_name || '').toString().trim() || '(no title)';
+    const dueLine = formatTaskDueDateYYYYMMDD(row.due_date);
+    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+    const assigneeUuids = collectSubtaskAssigneeStaffIds(row);
+    const subject = "You've been assigned a sub-task";
+    const results = [];
+    const seenEmails = new Set();
+
+    for (const staffUuid of assigneeUuids) {
+      const { data: s } = await supabase
+        .from('staff')
+        .select('email, name')
+        .eq('id', staffUuid)
+        .maybeSingle();
+      const to = (s?.email || '').trim().toLowerCase();
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      if (seenEmails.has(to)) continue;
+      seenEmails.add(to);
+      const safeCreator = escapeHtml(staffDisplayName);
+      const safeName = escapeHtml(subtaskName);
+      const safeUrl = escapeHtml(subtaskUrl);
+      const safeDue = escapeHtml(dueLine);
+      const safeLanding = escapeHtml(landing);
+      const html = `<div style="font-family: Aptos, Arial, Helvetica, sans-serif; font-size: 12pt;">${safeCreator} assigned you a sub-task.<br><br><a href="${safeUrl}"><strong><u>${safeName}</u></strong></a><br><br>Due Date: ${safeDue}<br><br><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></div>`;
+      const text = `${staffDisplayName} assigned you a sub-task.\n\n${subtaskName}\n${subtaskUrl}\n\nDue Date: ${dueLine}\n\nProject Tracker\n${landing}`;
+      const r = await sendMailgun({
+        to,
+        subject,
+        text,
+        html,
+        from: MAILGUN_NOTIFICATION_FROM,
+        replyTo: creatorEmail,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        mailgunId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      recipients: results.length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifySubtaskAssigned:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/**
  * POST { commentId } — comment author only; emails other assignees (assignee_01..10), not create_by.
  */
 async function handleNotifyTaskComment(req, res) {
@@ -2423,6 +2552,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/task-assigned' && req.method === 'POST') {
     await handleNotifyTaskAssigned(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-assigned' && req.method === 'POST') {
+    await handleNotifySubtaskAssigned(req, res);
     return;
   }
   if (path === '/api/notify/task-comment' && req.method === 'POST') {

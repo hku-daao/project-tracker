@@ -160,6 +160,27 @@ class TaskListCard extends StatelessWidget {
     );
   }
 
+  /// Same colours as the submission chips on the home task list ([_submissionBadge]).
+  /// Returns `null` if [submission] is empty.
+  static Widget? buildSubmissionTag(String? submission) {
+    final raw = submission?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    final lower = raw.toLowerCase();
+    if (lower == 'submitted') {
+      return _submissionBadge('Submitted', Colors.red);
+    }
+    if (lower == 'accepted') {
+      return _submissionBadge('Accepted', _kAcceptedTagColor);
+    }
+    if (lower == 'returned') {
+      return _submissionBadge('Returned', _kReturnedTagColor);
+    }
+    if (lower == 'pending') {
+      return _submissionBadge('Pending', Colors.grey.shade700);
+    }
+    return _submissionBadge(raw, Colors.grey.shade600);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();

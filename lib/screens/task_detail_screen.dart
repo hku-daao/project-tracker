@@ -8,6 +8,9 @@ import '../models/assignee.dart';
 import '../models/task.dart';
 import '../models/comment.dart';
 import '../models/singular_comment.dart';
+import '../models/singular_subtask.dart';
+import 'high_level/create_subtask_screen.dart';
+import 'high_level/subtask_detail_screen.dart';
 import '../models/staff_for_assignment.dart';
 import '../models/team.dart';
 import '../priority.dart';
@@ -15,6 +18,7 @@ import '../services/backend_api.dart';
 import '../services/supabase_service.dart';
 import '../utils/copyable_snackbar.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
+import '../widgets/task_list_card.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
@@ -93,6 +97,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   bool _saving = false;
   List<SingularCommentRowDisplay> _tableComments = [];
   bool _loadingTableComments = false;
+  List<SingularSubtask> _subtasks = [];
+  bool _loadingSubtasks = false;
   String? _myStaffUuid;
   bool _myStaffUuidRequested = false;
 
@@ -161,6 +167,21 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       await _ensureLoaded(state);
       if (mounted) await _refreshResolvedPic(state);
       if (mounted) await _loadTableComments();
+      if (mounted) await _loadSubtasks();
+    });
+  }
+
+  Future<void> _loadSubtasks() async {
+    if (!SupabaseConfig.isConfigured) {
+      if (mounted) setState(() => _subtasks = []);
+      return;
+    }
+    setState(() => _loadingSubtasks = true);
+    final list = await SupabaseService.fetchSubtasksForTask(widget.taskId);
+    if (!mounted) return;
+    setState(() {
+      _subtasks = list;
+      _loadingSubtasks = false;
     });
   }
 
@@ -2091,6 +2112,141 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       ),
                       const SizedBox(height: 16),
                       Text(
+                        'Sub-tasks',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_isCreator(state, task)) ...[
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed: _saving
+                                ? null
+                                : () async {
+                                    final created = await Navigator.of(
+                                      context,
+                                    ).push<bool>(
+                                      MaterialPageRoute<bool>(
+                                        builder: (_) => CreateSubtaskScreen(
+                                          taskId: widget.taskId,
+                                        ),
+                                      ),
+                                    );
+                                    if (created == true && mounted) {
+                                      await _loadSubtasks();
+                                    }
+                                  },
+                            icon: const Icon(Icons.add_task_outlined),
+                            label: const Text('Create sub-task'),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (_loadingSubtasks)
+                        const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else
+                        ..._subtasks.map(
+                          (s) {
+                            final assigneeNames = s.assigneeIds
+                                .map(
+                                  (id) =>
+                                      state.assigneeById(id)?.name ?? id,
+                                )
+                                .join(', ');
+                            final picLine = s.pic != null &&
+                                    s.pic!.trim().isNotEmpty
+                                ? (state.assigneeById(s.pic!)?.name ??
+                                    s.pic!.trim())
+                                : '—';
+                            final subTag =
+                                TaskListCard.buildSubmissionTag(s.submission);
+                            final metaLine =
+                                '${priorityToDisplayName(s.priority)} · ${s.status}'
+                                '${s.startDate != null ? ' · Start ${DateFormat.yMMMd().format(s.startDate!)}' : ''}'
+                                '${s.dueDate != null ? ' · Due ${DateFormat.yMMMd().format(s.dueDate!)}' : ''}';
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              child: ListTile(
+                                title: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        s.subtaskName,
+                                        maxLines: 3,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (subTag != null) ...[
+                                      const SizedBox(width: 8),
+                                      subTag,
+                                    ],
+                                  ],
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 4,
+                                        bottom: 4,
+                                      ),
+                                      child: Text(
+                                        'Assignee(s): ${assigneeNames.isNotEmpty ? assigneeNames : "—"}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                      ),
+                                    ),
+                                    if (s.assigneeIds.length != 1)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 4,
+                                        ),
+                                        child: Text(
+                                          'PIC: $picLine',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                        ),
+                                      ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(metaLine),
+                                    ),
+                                  ],
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () async {
+                                  final changed =
+                                      await Navigator.of(context).push<bool>(
+                                    MaterialPageRoute<bool>(
+                                      builder: (_) => SubtaskDetailScreen(
+                                        subtaskId: s.id,
+                                      ),
+                                    ),
+                                  );
+                                  if (changed == true && mounted) {
+                                    await _loadSubtasks();
+                                  }
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 16),
+                      Text(
                         'Comments',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
@@ -2217,6 +2373,18 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             foregroundColor: Colors.red.shade800,
                           ),
                         ),
+                      const SizedBox(height: 24),
+                      TextButton.icon(
+                        onPressed: _saving
+                            ? null
+                            : () {
+                                Navigator.of(context).popUntil(
+                                  (route) => route.isFirst,
+                                );
+                              },
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Back to home'),
+                      ),
                     ],
                   ),
                 ),

@@ -9,6 +9,7 @@ import '../models/milestone.dart';
 import '../models/sub_task.dart';
 import '../models/deleted_record.dart';
 import '../models/singular_comment.dart';
+import '../models/singular_subtask.dart';
 import '../models/staff_for_assignment.dart';
 import '../models/task.dart';
 import '../models/team.dart';
@@ -231,6 +232,32 @@ class SupabaseService {
           .maybeSingle();
       if (r == null) return null;
       return Map<String, dynamic>.from(r);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Singular [`task`] row as [Task] with assignee keys resolved (fresh from DB).
+  static Future<Task?> fetchSingularTaskModelById(String taskId) async {
+    if (!_enabled) return null;
+    try {
+      final row = await fetchSingularTaskById(taskId);
+      if (row == null) return null;
+      var teamUuidToAppId = <String, String>{};
+      var staffUuidToAppId = <String, String>{};
+      var staffUuidToName = <String, String>{};
+      final maps = await _loadMaps();
+      if (maps != null) {
+        teamUuidToAppId = maps.teamUuidToAppId;
+        staffUuidToAppId = maps.staffUuidToAppId;
+        staffUuidToName = maps.staffUuidToName;
+      }
+      return _taskFromSingularTaskRow(
+        row,
+        staffUuidToAppId,
+        teamUuidToAppId,
+        staffUuidToName,
+      );
     } catch (_) {
       return null;
     }
@@ -1540,5 +1567,447 @@ class SupabaseService {
           .eq('entity_id', taskId);
       await supabase.from('tasks').delete().eq('id', taskId);
     } catch (_) {}
+  }
+
+  static Future<Map<String, String>> _staffUuidToAppIdMapAll() async {
+    final m = <String, String>{};
+    if (!_enabled) return m;
+    try {
+      final res =
+          await Supabase.instance.client.from('staff').select('id, app_id');
+      for (final raw in (res as List)) {
+        final r = Map<String, dynamic>.from(raw as Map);
+        final id = r['id']?.toString().trim() ?? '';
+        if (id.isEmpty) continue;
+        final app = r['app_id']?.toString().trim() ?? '';
+        m[id] = app.isNotEmpty ? app : id;
+      }
+    } catch (_) {}
+    return m;
+  }
+
+  static SingularSubtask? _singularSubtaskFromRow(
+    Map<String, dynamic> row,
+    Map<String, String> staffUuidToAppId,
+    Map<String, String> staffUuidToName,
+  ) {
+    final id = row['id']?.toString() ?? '';
+    final taskId = row['task_id']?.toString() ?? '';
+    if (id.isEmpty || taskId.isEmpty) return null;
+    final assigneeIds = <String>[];
+    for (var i = 1; i <= 10; i++) {
+      final key = 'assignee_${i.toString().padLeft(2, '0')}';
+      final v = row[key];
+      if (v == null) continue;
+      final sid = v.toString().trim();
+      if (sid.isEmpty) continue;
+      assigneeIds.add(staffUuidToAppId[sid] ?? sid);
+    }
+    final picRaw = row['pic']?.toString().trim();
+    String? picKey;
+    if (picRaw != null && picRaw.isNotEmpty) {
+      picKey = staffUuidToAppId[picRaw] ?? picRaw;
+    }
+    final cb = row['create_by']?.toString().trim();
+    return SingularSubtask(
+      id: id,
+      taskId: taskId,
+      createByStaffId: cb?.isNotEmpty == true ? cb : null,
+      subtaskName: row['subtask_name'] as String? ?? '',
+      description: row['description'] as String? ?? '',
+      priority: _priorityFromFlexible(row['priority']),
+      startDate: _parseDate(row['start_date']),
+      dueDate: _parseDate(row['due_date']),
+      status: row['status'] as String? ?? 'Incomplete',
+      submission: row['submission'] as String?,
+      assigneeIds: assigneeIds,
+      pic: picKey,
+      createDate: _parseDateTime(row['create_date']),
+      updateDate: _parseDateTimeNullable(row['update_date']),
+      updateByStaffName: _updateByDisplayName(row, staffUuidToName),
+    );
+  }
+
+  /// Non-deleted subtasks for a parent [taskId], newest first.
+  static Future<List<SingularSubtask>> fetchSubtasksForTask(
+    String taskId,
+  ) async {
+    if (!_enabled) return [];
+    try {
+      final maps = await _loadMaps();
+      final staffMap = maps?.staffUuidToAppId ?? await _staffUuidToAppIdMapAll();
+      final staffNames = maps?.staffUuidToName ?? <String, String>{};
+      final res = await Supabase.instance.client
+          .from('subtask')
+          .select()
+          .eq('task_id', taskId)
+          .order('create_date', ascending: false);
+      final out = <SingularSubtask>[];
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final st = _singularSubtaskFromRow(row, staffMap, staffNames);
+        if (st != null && !st.isDeleted) out.add(st);
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<SingularSubtask?> fetchSubtaskById(String subtaskId) async {
+    if (!_enabled) return null;
+    try {
+      final maps = await _loadMaps();
+      final staffMap = maps?.staffUuidToAppId ?? await _staffUuidToAppIdMapAll();
+      final staffNames = maps?.staffUuidToName ?? <String, String>{};
+      final res = await Supabase.instance.client
+          .from('subtask')
+          .select()
+          .eq('id', subtaskId)
+          .maybeSingle();
+      if (res == null) return null;
+      return _singularSubtaskFromRow(
+        Map<String, dynamic>.from(res as Map),
+        staffMap,
+        staffNames,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<({String? error, String? subtaskId})> insertSubtaskRow({
+    required String taskId,
+    required String subtaskName,
+    required String description,
+    required String priorityDisplay,
+    DateTime? startDate,
+    DateTime? dueDate,
+    required List<String?> assigneeStaffUuids,
+    required String picStaffUuid,
+    String? creatorStaffLookupKey,
+    String? initialComment,
+  }) async {
+    if (!_enabled) return (error: 'Supabase not configured', subtaskId: null);
+    final name = subtaskName.trim();
+    if (name.isEmpty) return (error: 'subtask_name is required', subtaskId: null);
+    try {
+      var padded = List<String?>.from(assigneeStaffUuids);
+      while (padded.length < 10) {
+        padded.add(null);
+      }
+      if (padded.length > 10) padded = padded.sublist(0, 10);
+      final map = <String, dynamic>{
+        'task_id': taskId,
+        'subtask_name': name,
+        'description': description.trim(),
+        'priority': priorityDisplay,
+        'status': 'Incomplete',
+        'submission': 'Pending',
+      };
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['create_by'] = staffId;
+          map['create_date'] = HkTime.timestampForDb();
+        }
+      }
+      if (startDate != null) {
+        map['start_date'] = HkTime.dateOnlyHkMidnightForDb(startDate);
+      }
+      if (dueDate != null) {
+        map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
+      }
+      for (var i = 0; i < 10; i++) {
+        final raw = padded[i]?.trim();
+        if (raw != null && raw.isNotEmpty) {
+          map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
+        }
+      }
+      final pic = picStaffUuid.trim();
+      if (pic.isNotEmpty) {
+        map['pic'] = pic;
+      }
+      final ins = await Supabase.instance.client
+          .from('subtask')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      final sid = ins?['id']?.toString();
+      if (sid == null || sid.isEmpty) {
+        return (error: 'Insert returned no id', subtaskId: null);
+      }
+      if (initialComment != null && initialComment.trim().isNotEmpty) {
+        await insertSubtaskCommentRow(
+          subtaskId: sid,
+          description: initialComment.trim(),
+          creatorStaffLookupKey: creatorStaffLookupKey,
+        );
+      }
+      return (error: null, subtaskId: sid);
+    } catch (e) {
+      return (error: e.toString(), subtaskId: null);
+    }
+  }
+
+  static Future<String?> updateSubtaskRow({
+    required String subtaskId,
+    String? subtaskName,
+    String? description,
+    String? priorityDisplay,
+    DateTime? startDate,
+    bool clearStartDate = false,
+    DateTime? dueDate,
+    bool clearDueDate = false,
+    String? status,
+    String? submission,
+
+    /// Sets `subtask.pic` (staff id); omit to leave column unchanged.
+    String? picStaffLookupKey,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    try {
+      final map = <String, dynamic>{
+        'update_date': HkTime.timestampForDb(),
+      };
+      if (subtaskName != null) map['subtask_name'] = subtaskName.trim();
+      if (description != null) map['description'] = description.trim();
+      if (priorityDisplay != null) map['priority'] = priorityDisplay;
+      if (clearStartDate) {
+        map['start_date'] = null;
+      } else if (startDate != null) {
+        map['start_date'] = HkTime.dateOnlyHkMidnightForDb(startDate);
+      }
+      if (clearDueDate) {
+        map['due_date'] = null;
+      } else if (dueDate != null) {
+        map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
+      }
+      if (status != null) map['status'] = status;
+      if (submission != null) map['submission'] = submission;
+      final picLookup = picStaffLookupKey?.trim();
+      if (picLookup != null && picLookup.isNotEmpty) {
+        final picStaffId = await _staffRowIdForAssigneeKey(picLookup);
+        if (picStaffId != null && picStaffId.isNotEmpty) {
+          map['pic'] = picStaffId;
+        }
+      }
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client.from('subtask').update(map).eq('id', subtaskId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> markSubtaskDeleted({
+    required String subtaskId,
+    String? updaterStaffLookupKey,
+  }) async {
+    return updateSubtaskRow(
+      subtaskId: subtaskId,
+      status: 'Deleted',
+      updaterStaffLookupKey: updaterStaffLookupKey,
+    );
+  }
+
+  static Future<String?> upsertSubtaskAttachmentContent({
+    required String subtaskId,
+    required String content,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    try {
+      final supabase = Supabase.instance.client;
+      final c = content.trim();
+      final existing = await supabase
+          .from('subtask_attachment')
+          .select('id')
+          .eq('subtask_id', subtaskId)
+          .maybeSingle();
+      if (existing != null) {
+        await supabase
+            .from('subtask_attachment')
+            .update({'content': c})
+            .eq('subtask_id', subtaskId);
+      } else {
+        await supabase.from('subtask_attachment').insert({
+          'subtask_id': subtaskId,
+          'content': c,
+        });
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> fetchSubtaskAttachmentContent(String subtaskId) async {
+    if (!_enabled) return null;
+    try {
+      final r = await Supabase.instance.client
+          .from('subtask_attachment')
+          .select('content')
+          .eq('subtask_id', subtaskId)
+          .maybeSingle();
+      return r?['content']?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<({String? error, String? commentId})> insertSubtaskCommentRow({
+    required String subtaskId,
+    required String description,
+    String status = 'Active',
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return (error: 'Supabase not configured', commentId: null);
+    final d = description.trim();
+    if (d.isEmpty) return (error: null, commentId: null);
+    try {
+      final map = <String, dynamic>{
+        'subtask_id': subtaskId,
+        'description': d,
+        'status': status.trim().isEmpty ? 'Active' : status.trim(),
+        'create_date': HkTime.timestampForDb(),
+      };
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['create_by'] = staffId;
+        }
+      }
+      final res = await Supabase.instance.client
+          .from('subtask_comment')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      return (error: null, commentId: res?['id']?.toString());
+    } catch (e) {
+      return (error: e.toString(), commentId: null);
+    }
+  }
+
+  static Future<String?> updateSubtaskCommentRow({
+    required String commentId,
+    required String description,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final d = description.trim();
+    if (d.isEmpty) return 'Comment is empty';
+    try {
+      final map = <String, dynamic>{
+        'description': d,
+        'update_date': HkTime.timestampForDb(),
+      };
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client
+          .from('subtask_comment')
+          .update(map)
+          .eq('id', commentId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> softDeleteSubtaskCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    try {
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      };
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client
+          .from('subtask_comment')
+          .update(map)
+          .eq('id', commentId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<List<SubtaskCommentRowDisplay>> fetchSubtaskComments(
+    String subtaskId,
+  ) async {
+    if (!_enabled) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('subtask_comment')
+          .select()
+          .eq('subtask_id', subtaskId);
+      final rows = <Map<String, dynamic>>[];
+      for (final raw in (res as List)) {
+        rows.add(Map<String, dynamic>.from(raw as Map));
+      }
+      final idSet = <String>{};
+      for (final r in rows) {
+        final cb = r['create_by']?.toString().trim();
+        if (cb != null && cb.isNotEmpty) idSet.add(cb);
+      }
+      final names = <String, String>{};
+      for (final id in idSet) {
+        names[id] = await staffDisplayNameForKey(id);
+      }
+      final out = <SubtaskCommentRowDisplay>[];
+      for (final r in rows) {
+        final id = r['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final cb = r['create_by']?.toString().trim();
+        final name = (cb != null && cb.isNotEmpty) ? (names[cb] ?? cb) : '—';
+        final statusStr = r['status']?.toString() ?? '';
+        out.add(
+          SubtaskCommentRowDisplay(
+            id: id,
+            description: r['description']?.toString() ?? '',
+            status: statusStr,
+            createByStaffId: cb,
+            displayStaffName: name,
+            createTimestampUtc: _parseDateTimeNullable(r['create_date']),
+            updateTimestampUtc: _parseDateTimeNullable(r['update_date']),
+          ),
+        );
+      }
+      out.sort((a, b) {
+        if (a.isDeleted != b.isDeleted) {
+          return a.isDeleted ? 1 : -1;
+        }
+        final ac =
+            a.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bc =
+            b.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bc.compareTo(ac);
+      });
+      return out;
+    } catch (_) {
+      return [];
+    }
   }
 }

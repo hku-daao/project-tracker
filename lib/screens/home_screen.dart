@@ -12,6 +12,7 @@ import '../../config/supabase_config.dart';
 import '../../services/backend_api.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
+import 'high_level/subtask_detail_screen.dart';
 import 'admin/system_admin_screen.dart';
 import 'task_detail_screen.dart';
 
@@ -347,8 +348,18 @@ class _HomePageViewState extends State<_HomePageView>
     }
   }
 
-  /// Opens [TaskDetailScreen] when the app is loaded with `?task=<task_uuid>` (e.g. from email links).
+  /// Opens [SubtaskDetailScreen] or [TaskDetailScreen] from `?subtask=` / `?task=` query params.
   void _openTaskFromUrlQuery() {
+    final sub = Uri.base.queryParameters['subtask']?.trim();
+    if (sub != null && sub.isNotEmpty) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SubtaskDetailScreen(subtaskId: sub),
+        ),
+      );
+      return;
+    }
     final q = Uri.base.queryParameters['task']?.trim();
     if (q == null || q.isEmpty) return;
     if (!mounted) return;
