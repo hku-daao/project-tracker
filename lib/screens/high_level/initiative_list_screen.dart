@@ -14,6 +14,44 @@ import '../../services/landing_task_filters_storage.dart';
 import '../../widgets/task_list_card.dart';
 import 'initiative_detail_screen.dart';
 
+/// Landing task list sort column (persisted as [storageKey]).
+enum TaskListSortColumn {
+  creator('creator'),
+  assignee('assignee'),
+  startDate('startDate'),
+  dueDate('dueDate'),
+  status('status'),
+  submission('submission');
+
+  const TaskListSortColumn(this.storageKey);
+  final String storageKey;
+
+  static TaskListSortColumn? fromStorage(String? s) {
+    if (s == null || s.isEmpty) return null;
+    for (final v in TaskListSortColumn.values) {
+      if (v.storageKey == s) return v;
+    }
+    return null;
+  }
+
+  String get label {
+    switch (this) {
+      case TaskListSortColumn.creator:
+        return 'Creator';
+      case TaskListSortColumn.assignee:
+        return 'Assignee';
+      case TaskListSortColumn.startDate:
+        return 'Start date';
+      case TaskListSortColumn.dueDate:
+        return 'Due date';
+      case TaskListSortColumn.status:
+        return 'Status';
+      case TaskListSortColumn.submission:
+        return 'Submission';
+    }
+  }
+}
+
 class InitiativeListScreen extends StatefulWidget {
   const InitiativeListScreen({super.key});
 
@@ -40,6 +78,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   final TextEditingController _taskSearchController = TextEditingController();
   final MenuController _filterMenuController = MenuController();
   bool _remindersExpanded = false;
+
+  /// Single-column sort for task lists on the landing page (null = default order).
+  TaskListSortColumn? _taskSortColumn;
+  bool _taskSortAscending = true;
 
   /// Per-user prefs: do not persist until first load finished (avoids clobbering saved teams).
   bool _landingFiltersPrefsReady = false;
@@ -193,6 +235,74 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return tasks.where((t) => t.name.toLowerCase().contains(q)).toList();
   }
 
+  String _assigneeSortKey(Task t, AppState state) {
+    final names =
+        t.assigneeIds
+            .map((id) => state.assigneeById(id)?.name ?? id)
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names.join(', ');
+  }
+
+  static int _cmpStrNullable(String? a, String? b, bool ascending) {
+    final sa = a?.trim().toLowerCase() ?? '';
+    final sb = b?.trim().toLowerCase() ?? '';
+    if (sa.isEmpty && sb.isEmpty) return 0;
+    if (sa.isEmpty) return 1;
+    if (sb.isEmpty) return -1;
+    final c = sa.compareTo(sb);
+    return ascending ? c : -c;
+  }
+
+  static int _cmpDateForSort(DateTime? a, DateTime? b, bool ascending) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    final c = a.compareTo(b);
+    return ascending ? c : -c;
+  }
+
+  List<Task> _sortTasks(List<Task> tasks, AppState state) {
+    if (_taskSortColumn == null) return tasks;
+    final col = _taskSortColumn!;
+    final asc = _taskSortAscending;
+    final out = List<Task>.from(tasks);
+    out.sort((a, b) {
+      int c;
+      switch (col) {
+        case TaskListSortColumn.creator:
+          c = _cmpStrNullable(a.createByStaffName, b.createByStaffName, asc);
+          break;
+        case TaskListSortColumn.assignee:
+          c = _cmpStrNullable(
+            _assigneeSortKey(a, state),
+            _assigneeSortKey(b, state),
+            asc,
+          );
+          break;
+        case TaskListSortColumn.startDate:
+          c = _cmpDateForSort(a.startDate, b.startDate, asc);
+          break;
+        case TaskListSortColumn.dueDate:
+          c = _cmpDateForSort(a.endDate, b.endDate, asc);
+          break;
+        case TaskListSortColumn.status:
+          c = _cmpStrNullable(
+            TaskListCard.statusLabel(a),
+            TaskListCard.statusLabel(b),
+            asc,
+          );
+          break;
+        case TaskListSortColumn.submission:
+          c = _cmpStrNullable(a.submission, b.submission, asc);
+          break;
+      }
+      if (c != 0) return c;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return out;
+  }
+
   List<Initiative> _applyInitiativeNameSearch(List<Initiative> list) {
     final q = _taskSearchController.text.trim().toLowerCase();
     if (q.isEmpty) return list;
@@ -290,6 +400,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     } finally {
       _suppressFilterPersist = false;
     }
+    _taskSortColumn = TaskListSortColumn.fromStorage(data.sortColumn);
+    _taskSortAscending = data.sortAscending;
   }
 
   void _applyTeamsAndAssigneesFromSaved(LandingTaskFilters data, AppState state) {
@@ -326,6 +438,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         assigneeIds: _selectedAssigneeIds.toList(),
         statuses: _selectedTaskStatuses.toList(),
         search: _taskSearchController.text,
+        sortColumn: _taskSortColumn?.storageKey,
+        sortAscending: _taskSortAscending,
       ),
     );
   }
@@ -337,6 +451,69 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _appStateListenerRef?.removeListener(_onAppStateForDeferredTeamRestore);
     _taskSearchController.dispose();
     super.dispose();
+  }
+
+  Widget _buildSortColumnControl(TaskListSortColumn column) {
+    final active = _taskSortColumn == column;
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: PopupMenuButton<String>(
+        tooltip: 'Sort by ${column.label}',
+        onSelected: (v) {
+          setState(() {
+            if (v == 'clear') {
+              if (_taskSortColumn == column) {
+                _taskSortColumn = null;
+                _taskSortAscending = true;
+              }
+            } else if (v == 'asc') {
+              _taskSortColumn = column;
+              _taskSortAscending = true;
+            } else if (v == 'desc') {
+              _taskSortColumn = column;
+              _taskSortAscending = false;
+            }
+          });
+          _persistLandingFilters();
+        },
+        itemBuilder: (context) => [
+          const PopupMenuItem(value: 'asc', child: Text('Ascending')),
+          const PopupMenuItem(value: 'desc', child: Text('Descending')),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'clear',
+            enabled: active,
+            child: const Text('Clear sort'),
+          ),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: active
+                ? theme.colorScheme.secondaryContainer
+                : theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(column.label),
+              if (active) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  _taskSortAscending
+                      ? Icons.arrow_upward
+                      : Icons.arrow_downward,
+                  size: 16,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -485,7 +662,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     filteredInitiatives = _applyInitiativeNameSearch(filteredInitiatives);
     filteredTasks = _applyTaskNameSearch(filteredTasks);
+    filteredTasks = _sortTasks(filteredTasks, state);
     filteredDeletedTasks = _applyTaskNameSearch(filteredDeletedTasks);
+    filteredDeletedTasks = _sortTasks(filteredDeletedTasks, state);
 
     final reminders = state.getPendingRemindersForTeams(_selectedTeamIds);
 
@@ -518,16 +697,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             builder: (context, constraints) {
               final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
 
-              /// Matches [ListView] column: `Center` + `maxWidth: 700` + horizontal padding 16.
-              final screenW = constraints.maxWidth + 32;
-              final listColumnLeftInset = (screenW - min(700.0, screenW)) / 2;
-              final searchMaxWidth = min(
-                560.0,
-                (constraints.maxWidth - listColumnLeftInset).clamp(
-                  0.0,
-                  double.infinity,
-                ),
-              );
+              /// Same max width as [ListView] / [TaskListCard] column below (`maxWidth: 700`).
+              final listColumnMaxWidth = min(700.0, constraints.maxWidth);
               final wideFilterWidth = min(
                 280.0,
                 constraints.maxWidth * 0.38,
@@ -779,6 +950,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   ? min(_filterFieldMaxWidth, constraints.maxWidth)
                   : wideFilterWidth;
 
+              /// Filters stay left; search is centered and matches the list column below.
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -790,12 +962,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Padding(
-                    padding: EdgeInsets.only(left: listColumnLeftInset),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: searchMaxWidth),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: listColumnMaxWidth),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: searchField,
                       ),
                     ),
@@ -850,6 +1021,28 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     selectedLabelColor: Colors.black87,
                     leading: _myCreatedTasksFilterIcon(filterKey == 'created'),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: SizedBox(
+                      height: 32,
+                      child: VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Text(
+                      'Sort',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  for (final col in TaskListSortColumn.values)
+                    _buildSortColumnControl(col),
                 ],
               ),
             ),

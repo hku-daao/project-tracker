@@ -10,6 +10,8 @@ class LandingTaskFilters {
     required this.assigneeIds,
     required this.statuses,
     required this.search,
+    this.sortColumn,
+    this.sortAscending = true,
   });
 
   final String filterType;
@@ -18,12 +20,19 @@ class LandingTaskFilters {
   final List<String> statuses;
   final String search;
 
+  /// `creator` | `assignee` | `startDate` | `dueDate` | `status` | `submission`, or null.
+  final String? sortColumn;
+  final bool sortAscending;
+
   Map<String, dynamic> toJson() => {
         'filterType': filterType,
         'teamIds': teamIds,
         'assigneeIds': assigneeIds,
         'statuses': statuses,
         'search': search,
+        // Persist explicit null so clearing sort overwrites any previous column in storage.
+        'sortColumn': sortColumn,
+        'sortAscending': sortAscending,
       };
 
   static LandingTaskFilters? fromJson(Map<String, dynamic>? j) {
@@ -34,6 +43,8 @@ class LandingTaskFilters {
       assigneeIds: List<String>.from(j['assigneeIds'] as List? ?? const []),
       statuses: List<String>.from(j['statuses'] as List? ?? const []),
       search: j['search'] as String? ?? '',
+      sortColumn: j['sortColumn'] as String?,
+      sortAscending: j['sortAscending'] as bool? ?? true,
     );
   }
 }
