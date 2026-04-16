@@ -8,11 +8,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_state.dart';
 import 'config/supabase_config.dart';
 import 'firebase_options.dart';
+import 'navigator_keys.dart';
 import 'screens/auth/auth_gate.dart';
 import 'screens/app_bootstrap.dart';
+import 'web_startup.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) {
+    configureWebStartup();
+  }
   await initializeDateFormatting('en');
   String? initError;
   try {
@@ -84,6 +89,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppState(),
       child: MaterialApp(
+        navigatorKey: rootNavigatorKey,
         title: 'Project Tracker',
         debugShowCheckedModeBanner: false,
         theme: _appTheme(),

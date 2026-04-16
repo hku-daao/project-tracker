@@ -18,6 +18,16 @@ const PROJECT_TRACKER_LANDING_URL = (
   process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai'
 ).trim().replace(/\/$/, '');
 
+/**
+ * Flutter web deep link: hash query survives many email clients better than `?subtask=` alone.
+ * Must match `lib/web_deep_link_web.dart` parsing of `location.hash` / fragment.
+ */
+function subtaskWebAppUrl(subtaskId) {
+  const id = String(subtaskId || '').trim();
+  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
+  return `${base}/#/?subtask=${encodeURIComponent(id)}`;
+}
+
 /** When unset/false, task-comment emails are off. Set `TASK_COMMENT_EMAIL_ENABLED=true` to re-enable. */
 const TASK_COMMENT_EMAIL_ENABLED =
   (process.env.TASK_COMMENT_EMAIL_ENABLED || '').trim().toLowerCase() === 'true';
@@ -1304,7 +1314,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
 
     const subtaskId = String(row.id || '').trim();
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
 
     summary.eligible += 1;
@@ -1454,7 +1464,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
 
     summary.eligible += 1;
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
     const to = await resolveStaffEmailForNotifications(supabase, staffRow);
     if (!to) {
@@ -1932,7 +1942,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
 
     const subtaskId = String(row.id || '').trim();
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
 
     summary.eligible += 1;
@@ -2203,7 +2213,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
 
     summary.eligible += 1;
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
     const to = await resolveStaffEmailForNotifications(supabase, staffRow);
     if (!to) {
@@ -2515,7 +2525,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     const subtaskName =
       (row.subtask_name || '').toString().trim() || '(no title)';
     const dueLine = formatTaskDueDateYYYYMMDD(row.due_date);
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
     const assigneeUuids = collectSubtaskAssigneeStaffIds(row);
     const subject = "You've been assigned a sub-task";
@@ -2935,7 +2945,7 @@ async function handleNotifySubtaskUpdated(req, res) {
       '',
     );
     const subject = `Sub-task updated - ${taskTitleForSubject}`;
-    const subtaskUrl = `${PUBLIC_WEB_APP_URL}/?subtask=${encodeURIComponent(subtaskId)}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const updatedAtLine = formatUpdateDateTimeYmdHm(row.update_date);
     const landing = 'https://projecttracker.hku-ia.ai/';
     const safeLandingHref = escapeHtml(landing);

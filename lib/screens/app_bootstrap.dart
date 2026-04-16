@@ -1,11 +1,16 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../config/supabase_config.dart';
+import '../navigator_keys.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
+import '../web_deep_link.dart';
+import 'high_level/subtask_detail_screen.dart';
 import 'home_screen.dart';
+import 'task_detail_screen.dart';
 
 /// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from Supabase.
 class AppBootstrap extends StatefulWidget {
@@ -87,7 +92,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
     // Load low-level tasks from Supabase (plural `tasks` + singular `task`) and deleted-task audit.
     // Initiatives remain unloaded here unless you restore fetchInitiativesFromSupabase.
     if (!SupabaseConfig.isConfigured) {
-      if (mounted) setState(() => _ready = true);
+      if (mounted) {
+        setState(() => _ready = true);
+        _scheduleWebDeepLink();
+      }
       return;
     }
     try {
@@ -113,7 +121,42 @@ class _AppBootstrapState extends State<AppBootstrap> {
     } catch (e) {
       debugPrint('AppBootstrap: load tasks/deleted from Supabase: $e');
     }
-    if (mounted) setState(() => _ready = true);
+    if (mounted) {
+      setState(() => _ready = true);
+      _scheduleWebDeepLink();
+    }
+  }
+
+  void _scheduleWebDeepLink() {
+    if (!kIsWeb) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openWebDeepLinkIfPending();
+    });
+  }
+
+  void _openWebDeepLinkIfPending() {
+    final sub = readSubtaskIdFromUrlOrSession();
+    if (sub != null && sub.isNotEmpty) {
+      consumeSubtaskDeepLink();
+      clearDeepLinkQueryFromAddressBar();
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => SubtaskDetailScreen(subtaskId: sub),
+        ),
+      );
+      return;
+    }
+    final taskId = readTaskIdFromUrlOrSession();
+    if (taskId != null && taskId.isNotEmpty) {
+      consumeTaskDeepLink();
+      clearDeepLinkQueryFromAddressBar();
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => TaskDetailScreen(taskId: taskId),
+        ),
+      );
+    }
   }
 
   @override
