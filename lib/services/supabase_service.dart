@@ -15,6 +15,30 @@ import '../models/task.dart';
 import '../models/team.dart';
 import '../utils/hk_time.dart';
 
+/// Row from `public.attachment` (singular task).
+class TaskAttachmentRow {
+  const TaskAttachmentRow({
+    required this.id,
+    this.content,
+    this.description,
+  });
+  final String id;
+  final String? content;
+  final String? description;
+}
+
+/// Row from `public.subtask_attachment`.
+class SubtaskAttachmentRow {
+  const SubtaskAttachmentRow({
+    required this.id,
+    this.content,
+    this.description,
+  });
+  final String id;
+  final String? content;
+  final String? description;
+}
+
 class InitiativesLoadResult {
   final List<Initiative> initiatives;
   final List<SubTask> subTasks;
@@ -350,50 +374,88 @@ class SupabaseService {
     }
   }
 
-  /// Reads `attachment.content` for the task (submission hyperlink), if any.
-  static Future<String?> fetchAttachmentContentForTask(String taskId) async {
-    if (!_enabled) return null;
+  /// All attachment rows for a singular task (ordered by `created_at`).
+  static Future<List<TaskAttachmentRow>> fetchAttachmentsForTask(
+    String taskId,
+  ) async {
+    if (!_enabled) return [];
     final id = taskId.trim();
-    if (id.isEmpty) return null;
+    if (id.isEmpty) return [];
     try {
-      final r = await Supabase.instance.client
+      final res = await Supabase.instance.client
           .from('attachment')
-          .select('content')
+          .select('id, content, description, created_at')
           .eq('task_id', id)
-          .maybeSingle();
-      if (r == null) return null;
-      final c = r['content']?.toString().trim();
-      return (c == null || c.isEmpty) ? null : c;
+          .order('created_at', ascending: true);
+      final out = <TaskAttachmentRow>[];
+      for (final raw in (res as List)) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final rowId = m['id']?.toString() ?? '';
+        if (rowId.isEmpty) continue;
+        out.add(
+          TaskAttachmentRow(
+            id: rowId,
+            content: m['content']?.toString(),
+            description: m['description']?.toString(),
+          ),
+        );
+      }
+      return out;
     } catch (_) {
-      return null;
+      return [];
     }
   }
 
-  /// Upserts the single attachment row for [taskId]. Pass empty [content] to delete the row.
-  static Future<String?> upsertAttachmentContentForTask({
+  /// First hyperlink only (legacy callers).
+  static Future<String?> fetchAttachmentContentForTask(String taskId) async {
+    final rows = await fetchAttachmentsForTask(taskId);
+    for (final r in rows) {
+      final c = r.content?.trim();
+      if (c != null && c.isNotEmpty) return c;
+    }
+    return null;
+  }
+
+  /// Replaces all `attachment` rows for [taskId] with [rows] (skips rows where both fields are empty).
+  static Future<String?> replaceAttachmentsForTask({
     required String taskId,
-    required String content,
+    required List<({String? content, String? description})> rows,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     final id = taskId.trim();
     if (id.isEmpty) return 'Missing task id';
     try {
-      final trimmed = content.trim();
-      await Supabase.instance.client
-          .from('attachment')
-          .delete()
-          .eq('task_id', id);
-      if (trimmed.isEmpty) {
-        return null;
+      final supabase = Supabase.instance.client;
+      await supabase.from('attachment').delete().eq('task_id', id);
+      for (final r in rows) {
+        final c = r.content?.trim() ?? '';
+        final d = r.description?.trim() ?? '';
+        if (c.isEmpty && d.isEmpty) continue;
+        final map = <String, dynamic>{
+          'task_id': id,
+          'content': c.isEmpty ? null : c,
+          'description': d.isEmpty ? null : d,
+        };
+        await supabase.from('attachment').insert(map);
       }
-      await Supabase.instance.client.from('attachment').insert({
-        'task_id': id,
-        'content': trimmed,
-      });
       return null;
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// Upserts the single attachment row for [taskId]. Pass empty [content] to delete all rows.
+  @Deprecated('Use replaceAttachmentsForTask')
+  static Future<String?> upsertAttachmentContentForTask({
+    required String taskId,
+    required String content,
+  }) async {
+    return replaceAttachmentsForTask(
+      taskId: taskId,
+      rows: [
+        (content: content, description: null),
+      ],
+    );
   }
 
   static int _priorityFromFlexible(dynamic p) {
@@ -1819,29 +1881,59 @@ class SupabaseService {
     );
   }
 
-  static Future<String?> upsertSubtaskAttachmentContent({
+  /// All `subtask_attachment` rows for [subtaskId].
+  static Future<List<SubtaskAttachmentRow>> fetchSubtaskAttachments(
+    String subtaskId,
+  ) async {
+    if (!_enabled) return [];
+    final sid = subtaskId.trim();
+    if (sid.isEmpty) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('subtask_attachment')
+          .select('id, content, description, created_at')
+          .eq('subtask_id', sid)
+          .order('created_at', ascending: true);
+      final out = <SubtaskAttachmentRow>[];
+      for (final raw in (res as List)) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final rowId = m['id']?.toString() ?? '';
+        if (rowId.isEmpty) continue;
+        out.add(
+          SubtaskAttachmentRow(
+            id: rowId,
+            content: m['content']?.toString(),
+            description: m['description']?.toString(),
+          ),
+        );
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Replaces all `subtask_attachment` rows (skips rows where both fields are empty).
+  static Future<String?> replaceSubtaskAttachments({
     required String subtaskId,
-    required String content,
+    required List<({String? content, String? description})> rows,
   }) async {
     if (!_enabled) return 'Supabase not configured';
+    final sid = subtaskId.trim();
+    if (sid.isEmpty) return 'Missing sub-task id';
     try {
       final supabase = Supabase.instance.client;
-      final c = content.trim();
-      final existing = await supabase
-          .from('subtask_attachment')
-          .select('id')
-          .eq('subtask_id', subtaskId)
-          .maybeSingle();
-      if (existing != null) {
-        await supabase
-            .from('subtask_attachment')
-            .update({'content': c})
-            .eq('subtask_id', subtaskId);
-      } else {
-        await supabase.from('subtask_attachment').insert({
-          'subtask_id': subtaskId,
-          'content': c,
-        });
+      await supabase.from('subtask_attachment').delete().eq('subtask_id', sid);
+      for (final r in rows) {
+        final c = r.content?.trim() ?? '';
+        final d = r.description?.trim() ?? '';
+        if (c.isEmpty && d.isEmpty) continue;
+        final map = <String, dynamic>{
+          'subtask_id': sid,
+          'content': c.isEmpty ? null : c,
+          'description': d.isEmpty ? null : d,
+        };
+        await supabase.from('subtask_attachment').insert(map);
       }
       return null;
     } catch (e) {
@@ -1849,18 +1941,25 @@ class SupabaseService {
     }
   }
 
+  @Deprecated('Use replaceSubtaskAttachments')
+  static Future<String?> upsertSubtaskAttachmentContent({
+    required String subtaskId,
+    required String content,
+  }) async {
+    return replaceSubtaskAttachments(
+      subtaskId: subtaskId,
+      rows: [(content: content, description: null)],
+    );
+  }
+
+  /// First hyperlink only (legacy).
   static Future<String?> fetchSubtaskAttachmentContent(String subtaskId) async {
-    if (!_enabled) return null;
-    try {
-      final r = await Supabase.instance.client
-          .from('subtask_attachment')
-          .select('content')
-          .eq('subtask_id', subtaskId)
-          .maybeSingle();
-      return r?['content']?.toString();
-    } catch (_) {
-      return null;
+    final rows = await fetchSubtaskAttachments(subtaskId);
+    for (final r in rows) {
+      final c = r.content?.trim();
+      if (c != null && c.isNotEmpty) return c;
     }
+    return null;
   }
 
   static Future<({String? error, String? commentId})> insertSubtaskCommentRow({

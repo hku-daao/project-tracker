@@ -11,6 +11,30 @@ import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
 
+/// Warn before leaving [CreateSubtaskScreen] while a draft exists (back button / system back).
+Future<bool> _confirmLeaveCreateSubtaskDraft(BuildContext context) async {
+  final r = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Unsaved sub-task'),
+      content: const Text(
+        'Click Create sub-task to save. If you leave now, nothing will be saved.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Stay'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Leave anyway'),
+        ),
+      ],
+    ),
+  );
+  return r == true;
+}
+
 /// Create a sub-task under a singular [task] (creator only). Layout mirrors [CreateTaskScreen].
 class CreateSubtaskScreen extends StatefulWidget {
   const CreateSubtaskScreen({super.key, required this.taskId});
@@ -28,6 +52,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
   final _commentController = TextEditingController();
 
   int _priority = priorityStandard;
+  late DateTime _anchorStartDate;
   late DateTime _startDate;
   DateTime? _endDate;
   String? _selectedAssigneeKey;
@@ -37,10 +62,12 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
   @override
   void initState() {
     super.initState();
-    _startDate = HkTime.todayDateOnlyHk();
+    _anchorStartDate = HkTime.todayDateOnlyHk();
+    _startDate = _anchorStartDate;
     _endDate = _defaultDueForPriority(_priority);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      context.read<AppState>().setCreateSubtaskDraftChecker(_hasUnsavedDraft);
       final task = context.read<AppState>().taskById(widget.taskId);
       if (task == null) return;
       final ids = task.assigneeIds;
@@ -55,10 +82,35 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
 
   @override
   void dispose() {
+    context.read<AppState>().setCreateSubtaskDraftChecker(null);
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
     super.dispose();
+  }
+
+  /// True if the user changed anything from the empty defaults (mirrors [CreateTaskScreen._hasUnsavedDraft]).
+  bool _hasUnsavedDraft() {
+    if (_submitting) return false;
+    if (_nameController.text.trim().isNotEmpty) return true;
+    if (_descController.text.trim().isNotEmpty) return true;
+    if (_commentController.text.trim().isNotEmpty) return true;
+    if (_priority != priorityStandard) return true;
+    if (_dateOnlyCompare(_startDate, _anchorStartDate) != 0) return true;
+    final expectedDue = _defaultDueForPriority(_priority);
+    if (_endDate != null && _dateOnlyCompare(_endDate!, expectedDue) != 0) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _handlePopRequest() async {
+    if (!_hasUnsavedDraft()) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    final leave = await _confirmLeaveCreateSubtaskDraft(context);
+    if (mounted && leave) Navigator.of(context).pop();
   }
 
   DateTime _defaultDueForPriority(int priority) {
@@ -205,7 +257,13 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         .map((id) => _labelForKey(id, state))
         .join(', ');
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _handlePopRequest();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Create sub-task'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -420,9 +478,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextButton.icon(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
+                        onPressed:
+                            _submitting ? null : () => _handlePopRequest(),
                         icon: const Icon(Icons.arrow_back),
                         label: const Text('Back to task'),
                       ),
@@ -442,6 +499,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
               ),
             ),
         ],
+      ),
       ),
     );
   }

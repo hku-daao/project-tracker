@@ -10,6 +10,20 @@ import '../../priority.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 
+class _SubtaskAttachmentEntry {
+  _SubtaskAttachmentEntry({this.id, String? url, String? desc})
+      : urlController = TextEditingController(text: url ?? ''),
+        descController = TextEditingController(text: desc ?? '');
+  final String? id;
+  final TextEditingController urlController;
+  final TextEditingController descController;
+
+  void dispose() {
+    urlController.dispose();
+    descController.dispose();
+  }
+}
+
 /// Detail view for a row in `public.subtask`.
 class SubtaskDetailScreen extends StatefulWidget {
   const SubtaskDetailScreen({super.key, required this.subtaskId});
@@ -32,7 +46,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
-  final _attachController = TextEditingController();
+  final List<_SubtaskAttachmentEntry> _subtaskAttachments = [];
   final _commentController = TextEditingController();
 
   List<SubtaskCommentRowDisplay> _comments = [];
@@ -57,10 +71,50 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
-    _attachController.dispose();
+    _clearSubtaskAttachments();
     _commentController.dispose();
     super.dispose();
   }
+
+  void _clearSubtaskAttachments() {
+    for (final e in _subtaskAttachments) {
+      e.dispose();
+    }
+    _subtaskAttachments.clear();
+  }
+
+  void _addSubtaskAttachmentRow() {
+    setState(() => _subtaskAttachments.add(_SubtaskAttachmentEntry()));
+  }
+
+  void _removeSubtaskAttachmentRow(int index) {
+    setState(() {
+      _subtaskAttachments[index].dispose();
+      _subtaskAttachments.removeAt(index);
+    });
+  }
+
+  List<({String? content, String? description})> _subtaskAttachmentPayload() {
+    return _subtaskAttachments
+        .map(
+          (e) => (
+            content: e.urlController.text,
+            description: e.descController.text,
+          ),
+        )
+        .toList();
+  }
+
+  String? _firstSubtaskAttachmentUrl() {
+    for (final e in _subtaskAttachments) {
+      final u = e.urlController.text.trim();
+      if (u.isNotEmpty) return u;
+    }
+    return null;
+  }
+
+  bool _canEditSubtaskAttachments(AppState state, SingularSubtask st) =>
+      _isCreator(state, st) || _isPic(state, st);
 
   Future<void> _load() async {
     if (!SupabaseConfig.isConfigured) {
@@ -83,9 +137,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         if (mounted) setState(() => _director = dir);
       }
     }
-    String? att;
+    List<SubtaskAttachmentRow> attRows = [];
     if (st != null) {
-      att = await SupabaseService.fetchSubtaskAttachmentContent(st.id);
+      attRows = await SupabaseService.fetchSubtaskAttachments(st.id);
       final cm = await SupabaseService.fetchSubtaskComments(st.id);
       if (mounted) {
         setState(() {
@@ -121,6 +175,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       }
     }
     if (!mounted) return;
+    _clearSubtaskAttachments();
     setState(() {
       _sub = st;
       _parentTask = parent;
@@ -132,7 +187,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       if (st != null) {
         _nameController.text = st.subtaskName;
         _descController.text = st.description;
-        _attachController.text = att ?? '';
+        for (final r in attRows) {
+          _subtaskAttachments.add(
+            _SubtaskAttachmentEntry(
+              id: r.id,
+              url: r.content,
+              desc: r.description,
+            ),
+          );
+        }
         _editPriority = st.priority;
         _editStart = st.startDate;
         _editDue = st.dueDate;
@@ -166,9 +229,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   bool _canEditSubtaskPic(AppState state, SingularSubtask st, Task parent) =>
       _isCreator(state, st) || _isParentTaskCreator(state, parent);
 
-  String _parentTaskAssigneeLine(AppState state, Task parent) {
-    if (parent.assigneeIds.isEmpty) return '—';
-    return parent.assigneeIds
+  String _subtaskAssigneeLine(AppState state, SingularSubtask st) {
+    if (st.assigneeIds.isEmpty) return '—';
+    return st.assigneeIds
         .map((id) => state.assigneeById(id)?.name ?? id)
         .join(', ');
   }
@@ -308,47 +371,83 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     final picDirty =
         canPic && multiTaskAssignees && _picEditIsDirty(parent);
     if (!creator) {
-      if (!picDirty || !canPic || !multiTaskAssignees) {
-        if (canPic && multiTaskAssignees && !picDirty) {
+      if (canPic && multiTaskAssignees && picDirty) {
+        final key = _picEditKey?.trim();
+        if (key == null ||
+            key.isEmpty ||
+            !parent.assigneeIds.contains(key)) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No changes to save'),
+              content: Text('Choose a valid Sub-task PIC'),
               backgroundColor: Colors.orange,
             ),
           );
+          return;
+        }
+        setState(() => _saving = true);
+        try {
+          final err = await SupabaseService.updateSubtaskRow(
+            subtaskId: st.id,
+            picStaffLookupKey: key,
+            updaterStaffLookupKey: state.userStaffAppId,
+          );
+          if (!mounted) return;
+          if (err != null) {
+            showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+            return;
+          }
+          final errA = await SupabaseService.replaceSubtaskAttachments(
+            subtaskId: st.id,
+            rows: _subtaskAttachmentPayload(),
+          );
+          if (!mounted) return;
+          if (errA != null) {
+            showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+            return;
+          }
+          await _load();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Saved'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } finally {
+          if (mounted) setState(() => _saving = false);
         }
         return;
       }
-      final key = _picEditKey?.trim();
-      if (key == null ||
-          key.isEmpty ||
-          !parent.assigneeIds.contains(key)) {
+      if (_isPic(state, st)) {
+        setState(() => _saving = true);
+        try {
+          final errA = await SupabaseService.replaceSubtaskAttachments(
+            subtaskId: st.id,
+            rows: _subtaskAttachmentPayload(),
+          );
+          if (!mounted) return;
+          if (errA != null) {
+            showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+            return;
+          }
+          await _load();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Saved'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } finally {
+          if (mounted) setState(() => _saving = false);
+        }
+        return;
+      }
+      if (canPic && multiTaskAssignees && !picDirty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Choose a valid Sub-task PIC'),
+            content: Text('No changes to save'),
             backgroundColor: Colors.orange,
           ),
         );
-        return;
-      }
-      setState(() => _saving = true);
-      try {
-        final err = await SupabaseService.updateSubtaskRow(
-          subtaskId: st.id,
-          picStaffLookupKey: key,
-          updaterStaffLookupKey: state.userStaffAppId,
-        );
-        if (!mounted) return;
-        if (err != null) {
-          showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
-          return;
-        }
-        await _load();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved'), backgroundColor: Colors.green),
-        );
-      } finally {
-        if (mounted) setState(() => _saving = false);
       }
       return;
     }
@@ -387,6 +486,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      final errA = await SupabaseService.replaceSubtaskAttachments(
+        subtaskId: st.id,
+        rows: _subtaskAttachmentPayload(),
+      );
+      if (!mounted) return;
+      if (errA != null) {
+        showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+        return;
+      }
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Saved'), backgroundColor: Colors.green),
@@ -397,7 +505,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   }
 
   Future<void> _submit(AppState state, SingularSubtask st) async {
-    final link = _attachController.text.trim();
+    final link = _firstSubtaskAttachmentUrl()?.trim() ?? '';
     final c = _commentController.text.trim();
     if (link.isEmpty && c.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -412,15 +520,13 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     }
     setState(() => _saving = true);
     try {
-      if (link.isNotEmpty) {
-        final e = await SupabaseService.upsertSubtaskAttachmentContent(
-          subtaskId: st.id,
-          content: link,
-        );
-        if (e != null && mounted) {
-          showCopyableSnackBar(context, e, backgroundColor: Colors.orange);
-          return;
-        }
+      final e = await SupabaseService.replaceSubtaskAttachments(
+        subtaskId: st.id,
+        rows: _subtaskAttachmentPayload(),
+      );
+      if (e != null && mounted) {
+        showCopyableSnackBar(context, e, backgroundColor: Colors.orange);
+        return;
       }
       if (c.isNotEmpty) {
         final ins = await SupabaseService.insertSubtaskCommentRow(
@@ -621,200 +727,202 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Parent: ${parent.name}',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Assignee(s): ${_parentTaskAssigneeLine(state, parent)}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                if (showPicDropdown) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: picDropdownValue,
-                    decoration: const InputDecoration(
-                      labelText: 'Sub-task PIC',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: parent.assigneeIds
-                        .map(
-                          (id) => DropdownMenuItem(
-                            value: id,
-                            child: Text(
-                              state.assigneeById(id)?.name ?? id,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: _saving
-                        ? null
-                        : (v) {
-                            if (v != null) {
-                              setState(() => _picEditKey = v);
-                            }
-                          },
-                  ),
-                ] else ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'PIC: ${_picDisplayName(state, st)}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-                if (canSetPic && parent.assigneeIds.isEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Add assignees on the parent task to choose a PIC.',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _nameController,
-                  readOnly: _saving || !creator,
-                  decoration: const InputDecoration(
-                    labelText: 'Sub-task name',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _descController,
-                  readOnly: _saving || !creator,
-                  decoration: const InputDecoration(
-                    labelText: 'Description',
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLines: 4,
-                ),
-                const SizedBox(height: 12),
-                if (creator) ...[
-                  Text(
-                    'Priority',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      _priorityToggleButton(
-                        label: 'Standard',
-                        selected: _editPriority == priorityStandard,
-                        enabled: !_saving,
-                        onTap: () =>
-                            setState(() => _editPriority = priorityStandard),
-                      ),
-                      const SizedBox(width: 12),
-                      _priorityToggleButton(
-                        label: 'URGENT',
-                        selected: _editPriority == priorityUrgent,
-                        enabled: !_saving,
-                        onTap: () =>
-                            setState(() => _editPriority = priorityUrgent),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ] else
-                  Text(
-                    'Priority: ${priorityToDisplayName(st.priority)}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                if (creator) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Start: ${_editStart != null ? ymd.format(_editStart!) : "—"}',
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _saving
-                            ? null
-                            : () async {
-                                final d = await showDatePicker(
-                                  context: context,
-                                  initialDate: _editStart ?? DateTime.now(),
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365 * 10),
-                                  ),
-                                );
-                                if (d != null) setState(() => _editStart = d);
-                              },
-                        child: const Text('Pick'),
-                      ),
-                      if (_editStart != null)
-                        TextButton(
-                          onPressed: _saving
-                              ? null
-                              : () => setState(() => _editStart = null),
-                          child: const Text('Clear'),
-                        ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Due: ${_editDue != null ? ymd.format(_editDue!) : "—"}',
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _saving
-                            ? null
-                            : () async {
-                                final start = _editStart;
-                                final d = await showDatePicker(
-                                  context: context,
-                                  initialDate: _editDue ?? DateTime.now(),
-                                  firstDate: start ?? DateTime(2020),
-                                  lastDate: DateTime.now().add(
-                                    const Duration(days: 365 * 10),
-                                  ),
-                                );
-                                if (d != null) setState(() => _editDue = d);
-                              },
-                        child: const Text('Pick'),
-                      ),
-                      if (_editDue != null)
-                        TextButton(
-                          onPressed: _saving
-                              ? null
-                              : () => setState(() => _editDue = null),
-                          child: const Text('Clear'),
-                        ),
-                    ],
-                  ),
-                ] else ...[
-                  if (st.startDate != null)
-                    Text('Start: ${ymd.format(st.startDate!)}'),
-                  if (st.dueDate != null) Text('Due: ${ymd.format(st.dueDate!)}'),
-                ],
-                const SizedBox(height: 16),
-                Text(
-                  'Last update by: ${st.updateByStaffName ?? '—'}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _subtaskLastUpdatedLine(st.updateDate),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-                const SizedBox(height: 16),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        Text(
+                          'Parent: ${parent.name}',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Sub-task assignee(s): ${_subtaskAssigneeLine(state, st)}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        if (showPicDropdown) ...[
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: picDropdownValue,
+                            decoration: const InputDecoration(
+                              labelText: 'Sub-task PIC',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: parent.assigneeIds
+                                .map(
+                                  (id) => DropdownMenuItem(
+                                    value: id,
+                                    child: Text(
+                                      state.assigneeById(id)?.name ?? id,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: _saving
+                                ? null
+                                : (v) {
+                                    if (v != null) {
+                                      setState(() => _picEditKey = v);
+                                    }
+                                  },
+                          ),
+                        ] else if (st.assigneeIds.length > 1) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'PIC: ${_picDisplayName(state, st)}',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
+                        if (canSetPic && parent.assigneeIds.isEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Add assignees on the parent task to choose a PIC.',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _nameController,
+                          readOnly: _saving || !creator,
+                          decoration: const InputDecoration(
+                            labelText: 'Sub-task name',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _descController,
+                          readOnly: _saving || !creator,
+                          textAlignVertical: TextAlignVertical.top,
+                          decoration: const InputDecoration(
+                            labelText: 'Description',
+                            alignLabelWithHint: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          minLines: 4,
+                          maxLines: 8,
+                        ),
+                        const SizedBox(height: 12),
+                        if (creator) ...[
+                          Text(
+                            'Priority',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              _priorityToggleButton(
+                                label: 'Standard',
+                                selected: _editPriority == priorityStandard,
+                                enabled: !_saving,
+                                onTap: () => setState(
+                                  () => _editPriority = priorityStandard,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              _priorityToggleButton(
+                                label: 'URGENT',
+                                selected: _editPriority == priorityUrgent,
+                                enabled: !_saving,
+                                onTap: () =>
+                                    setState(() => _editPriority = priorityUrgent),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                        ] else
+                          Text(
+                            'Priority: ${priorityToDisplayName(st.priority)}',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        if (creator) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Start: ${_editStart != null ? ymd.format(_editStart!) : "—"}',
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () async {
+                                        final d = await showDatePicker(
+                                          context: context,
+                                          initialDate:
+                                              _editStart ?? DateTime.now(),
+                                          firstDate: DateTime(2020),
+                                          lastDate: DateTime.now().add(
+                                            const Duration(days: 365 * 10),
+                                          ),
+                                        );
+                                        if (d != null) {
+                                          setState(() => _editStart = d);
+                                        }
+                                      },
+                                child: const Text('Pick'),
+                              ),
+                              if (_editStart != null)
+                                TextButton(
+                                  onPressed: _saving
+                                      ? null
+                                      : () => setState(() => _editStart = null),
+                                  child: const Text('Clear'),
+                                ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Due: ${_editDue != null ? ymd.format(_editDue!) : "—"}',
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () async {
+                                        final start = _editStart;
+                                        final d = await showDatePicker(
+                                          context: context,
+                                          initialDate:
+                                              _editDue ?? DateTime.now(),
+                                          firstDate: start ?? DateTime(2020),
+                                          lastDate: DateTime.now().add(
+                                            const Duration(days: 365 * 10),
+                                          ),
+                                        );
+                                        if (d != null) {
+                                          setState(() => _editDue = d);
+                                        }
+                                      },
+                                child: const Text('Pick'),
+                              ),
+                              if (_editDue != null)
+                                TextButton(
+                                  onPressed: _saving
+                                      ? null
+                                      : () => setState(() => _editDue = null),
+                                  child: const Text('Clear'),
+                                ),
+                            ],
+                          ),
+                        ] else ...[
+                          if (st.startDate != null)
+                            Text('Start: ${ymd.format(st.startDate!)}'),
+                          if (st.dueDate != null)
+                            Text('Due: ${ymd.format(st.dueDate!)}'),
+                        ],
+                        const SizedBox(height: 16),
+                        const Divider(),
+                        const SizedBox(height: 8),
                         Text(
                           'Status',
                           style: Theme.of(context).textTheme.titleMedium
@@ -830,21 +938,89 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           'Submission: ${st.submission?.trim().isNotEmpty == true ? st.submission!.trim() : '—'}',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _attachController,
-                          readOnly: _saving || !(pic || creator),
-                          decoration: const InputDecoration(
-                            labelText: 'Attachment (hyperlink)',
-                            hintText: 'https://…',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Last update by: ${st.updateByStaffName ?? '—'}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _subtaskLastUpdatedLine(st.updateDate),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                         ),
                       ],
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                Text(
+                  'Attachment',
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                if (_canEditSubtaskAttachments(state, st))
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: _saving ? null : _addSubtaskAttachmentRow,
+                      icon: const Icon(Icons.add_link_outlined),
+                      label: const Text('Add attachment'),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                ...List.generate(_subtaskAttachments.length, (i) {
+                  final e = _subtaskAttachments[i];
+                  final canEdit = _canEditSubtaskAttachments(state, st);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextField(
+                                controller: e.urlController,
+                                readOnly: _saving || !canEdit,
+                                decoration: const InputDecoration(
+                                  labelText: 'Attachment (hyperlink)',
+                                  hintText: 'https://…',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: e.descController,
+                                readOnly: _saving || !canEdit,
+                                decoration: const InputDecoration(
+                                  labelText: 'Attachment description',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (canEdit)
+                          IconButton(
+                            onPressed: _saving
+                                ? null
+                                : () => _removeSubtaskAttachmentRow(i),
+                            icon: const Icon(Icons.remove_circle_outline),
+                            tooltip: 'Remove',
+                          ),
+                      ],
+                    ),
+                  );
+                }),
                 const SizedBox(height: 16),
                 Text(
                   'Comments',

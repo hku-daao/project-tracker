@@ -58,6 +58,20 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 }
 
+class _TaskAttachmentEntry {
+  _TaskAttachmentEntry({this.id, String? url, String? desc})
+      : urlController = TextEditingController(text: url ?? ''),
+        descController = TextEditingController(text: desc ?? '');
+  final String? id;
+  final TextEditingController urlController;
+  final TextEditingController descController;
+
+  void dispose() {
+    urlController.dispose();
+    descController.dispose();
+  }
+}
+
 /// Supabase singular [`task`] row: editable fields, status actions, comments, Update.
 class SingularTaskDetailView extends StatefulWidget {
   final String taskId;
@@ -78,7 +92,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
-  final _submissionLinkController = TextEditingController();
+  final List<_TaskAttachmentEntry> _taskAttachments = [];
 
   DateTime? _startDate;
   DateTime? _dueDate;
@@ -592,8 +606,63 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
-    _submissionLinkController.dispose();
+    _clearTaskAttachments();
     super.dispose();
+  }
+
+  void _clearTaskAttachments() {
+    for (final e in _taskAttachments) {
+      e.dispose();
+    }
+    _taskAttachments.clear();
+  }
+
+  Future<void> _reloadTaskAttachmentsFromDb() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final rows = await SupabaseService.fetchAttachmentsForTask(widget.taskId);
+    if (!mounted) return;
+    setState(() {
+      _clearTaskAttachments();
+      for (final r in rows) {
+        _taskAttachments.add(
+          _TaskAttachmentEntry(
+            id: r.id,
+            url: r.content,
+            desc: r.description,
+          ),
+        );
+      }
+    });
+  }
+
+  void _addTaskAttachmentRow() {
+    setState(() => _taskAttachments.add(_TaskAttachmentEntry()));
+  }
+
+  void _removeTaskAttachmentRow(int index) {
+    setState(() {
+      _taskAttachments[index].dispose();
+      _taskAttachments.removeAt(index);
+    });
+  }
+
+  List<({String? content, String? description})> _taskAttachmentPayload() {
+    return _taskAttachments
+        .map(
+          (e) => (
+            content: e.urlController.text,
+            description: e.descController.text,
+          ),
+        )
+        .toList();
+  }
+
+  String? _firstTaskAttachmentUrl() {
+    for (final e in _taskAttachments) {
+      final u = e.urlController.text.trim();
+      if (u.isNotEmpty) return u;
+    }
+    return null;
   }
 
   /// [stored] is `task.update_date` from DB; display adds +8h (Hong Kong offset).
@@ -800,9 +869,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     try {
       final data = await SupabaseService.fetchStaffAssigneePickerData();
       final row = await SupabaseService.fetchSingularTaskById(widget.taskId);
-      final attachmentUrl = await SupabaseService.fetchAttachmentContentForTask(
-        widget.taskId,
-      );
+      final attachmentRows =
+          await SupabaseService.fetchAttachmentsForTask(widget.taskId);
       final selectedAppIds = <String>{};
       if (row != null) {
         for (var i = 1; i <= 10; i++) {
@@ -861,7 +929,17 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       }
 
       if (!mounted) return;
+      _clearTaskAttachments();
       setState(() {
+        for (final r in attachmentRows) {
+          _taskAttachments.add(
+            _TaskAttachmentEntry(
+              id: r.id,
+              url: r.content,
+              desc: r.description,
+            ),
+          );
+        }
         _selectedAssigneeIds
           ..clear()
           ..addAll(selectedAppIds);
@@ -888,7 +966,6 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           _singularTaskPicStaffUuid = null;
         }
         _resolvedIsPic = resolvedIsPic;
-        _submissionLinkController.text = attachmentUrl ?? '';
         _pickerLoading = false;
         _loadingStaff = false;
         _loadedForm = true;
@@ -1152,10 +1229,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         return;
       }
 
-      if (_isCreator(state, task)) {
-        final errAttach = await SupabaseService.upsertAttachmentContentForTask(
+      if (_isCreator(state, task) || _isPicEffective(state, task)) {
+        final errAttach = await SupabaseService.replaceAttachmentsForTask(
           taskId: task.id,
-          content: _submissionLinkController.text,
+          rows: _taskAttachmentPayload(),
         );
         if (errAttach != null && mounted) {
           showCopyableSnackBar(
@@ -1163,6 +1240,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             'Task updated, but attachment was not saved: $errAttach',
             backgroundColor: Colors.orange,
           );
+        } else if (errAttach == null && mounted) {
+          await _reloadTaskAttachmentsFromDb();
         }
       }
 
@@ -1238,7 +1317,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   }
 
   Future<void> _submitForReview(AppState state, Task task) async {
-    final link = _submissionLinkController.text.trim();
+    final link = _firstTaskAttachmentUrl()?.trim() ?? '';
     final subComment = _commentController.text.trim();
     if (link.isEmpty && subComment.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1258,9 +1337,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final errAttach = await SupabaseService.upsertAttachmentContentForTask(
+      final errAttach = await SupabaseService.replaceAttachmentsForTask(
         taskId: task.id,
-        content: link,
+        rows: _taskAttachmentPayload(),
       );
       if (errAttach != null) {
         if (mounted) {
@@ -1272,6 +1351,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         }
         return;
       }
+      if (mounted) await _reloadTaskAttachmentsFromDb();
       if (subComment.isNotEmpty) {
         final c = await SupabaseService.insertSingularCommentRow(
           taskId: task.id,
@@ -1979,7 +2059,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     child: Text(
                                       _startDate == null
                                           ? 'Start date: not set'
-                                          : 'Start: ${DateFormat.yMMMd().format(_startDate!)}',
+                                          : 'Start: ${DateFormat('yyyy-MM-dd').format(_startDate!)}',
                                     ),
                                   ),
                                   TextButton.icon(
@@ -2017,7 +2097,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     child: Text(
                                       _dueDate == null
                                           ? 'Due date: not set'
-                                          : 'Due: ${DateFormat.yMMMd().format(_dueDate!)}',
+                                          : 'Due: ${DateFormat('yyyy-MM-dd').format(_dueDate!)}',
                                     ),
                                   ),
                                   TextButton.icon(
@@ -2051,6 +2131,22 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                               const Divider(),
                               const SizedBox(height: 8),
                               Text(
+                                'Status',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Task status: $_localStatus',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Submission: ${task.submission?.trim().isNotEmpty == true ? task.submission!.trim() : '—'}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
                                 'Last updated by: ${task.updateByStaffName ?? '—'}',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
@@ -2071,45 +2167,76 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                     ],
                   ),
                 ),
-                      const SizedBox(height: 16),
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                'Status',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Task status: $_localStatus',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Submission: ${task.submission?.trim().isNotEmpty == true ? task.submission!.trim() : '—'}',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _submissionLinkController,
-                                readOnly: _saving ||
-                                    !(_isCreator(state, task) ||
-                                        _isPicEffective(state, task)),
-                                decoration: const InputDecoration(
-                                  labelText: 'Attachment (hyperlink)',
-                                  hintText: 'https://…',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                              ),
-                            ],
+                      const SizedBox(height: 24),
+                      Text(
+                        'Attachment',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_isCreator(state, task) ||
+                          _isPicEffective(state, task))
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _saving ? null : _addTaskAttachmentRow,
+                            icon: const Icon(Icons.add_link_outlined),
+                            label: const Text('Add attachment'),
                           ),
                         ),
-                      ),
+                      const SizedBox(height: 8),
+                      ...List.generate(_taskAttachments.length, (i) {
+                        final e = _taskAttachments[i];
+                        final canEdit = _isCreator(state, task) ||
+                            _isPicEffective(state, task);
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    TextField(
+                                      controller: e.descController,
+                                      readOnly: _saving || !canEdit,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Attachment description',
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: e.urlController,
+                                      readOnly: _saving || !canEdit,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Attachment (hyperlink)',
+                                        hintText: 'https://…',
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (canEdit)
+                                IconButton(
+                                  onPressed: _saving
+                                      ? null
+                                      : () => _removeTaskAttachmentRow(i),
+                                  icon: const Icon(
+                                    Icons.remove_circle_outline,
+                                  ),
+                                  tooltip: 'Remove',
+                                ),
+                            ],
+                          ),
+                        );
+                      }),
                       const SizedBox(height: 16),
                       Text(
                         'Sub-tasks',
@@ -2166,8 +2293,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                 TaskListCard.buildSubmissionTag(s.submission);
                             final metaLine =
                                 '${priorityToDisplayName(s.priority)} · ${s.status}'
-                                '${s.startDate != null ? ' · Start ${DateFormat.yMMMd().format(s.startDate!)}' : ''}'
-                                '${s.dueDate != null ? ' · Due ${DateFormat.yMMMd().format(s.dueDate!)}' : ''}';
+                                '${s.startDate != null ? ' · Start ${DateFormat('yyyy-MM-dd').format(s.startDate!)}' : ''}'
+                                '${s.dueDate != null ? ' · Due ${DateFormat('yyyy-MM-dd').format(s.dueDate!)}' : ''}';
                             return Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
@@ -2476,12 +2603,12 @@ class _LegacyTaskDetailViewState extends State<_LegacyTaskDetailView> {
                         if (task.startDate != null)
                           _Chip(
                             label:
-                                'Start ${DateFormat.yMMMd().format(task.startDate!)}',
+                                'Start ${DateFormat('yyyy-MM-dd').format(task.startDate!)}',
                           ),
                         if (task.endDate != null)
                           _Chip(
                             label:
-                                'End ${DateFormat.yMMMd().format(task.endDate!)}',
+                                'End ${DateFormat('yyyy-MM-dd').format(task.endDate!)}',
                             color: task.isOverdue ? Colors.red.shade100 : null,
                           ),
                         if (task.assigneeIds.isNotEmpty)

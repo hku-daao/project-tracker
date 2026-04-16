@@ -109,6 +109,16 @@ class AppState extends ChangeNotifier {
   bool get hasCreateTaskUnsavedDraft =>
       _createTaskHasUnsavedDraft?.call() ?? false;
 
+  /// Set by [CreateSubtaskScreen] while mounted; used for optional global draft checks.
+  bool Function()? _createSubtaskHasUnsavedDraft;
+
+  void setCreateSubtaskDraftChecker(bool Function()? checker) {
+    _createSubtaskHasUnsavedDraft = checker;
+  }
+
+  bool get hasCreateSubtaskUnsavedDraft =>
+      _createSubtaskHasUnsavedDraft?.call() ?? false;
+
   /// Replace teams used for filters (ids must match [Task.teamId] from Supabase singular `task`).
   void setTeamsForFilter(List<Team> teams) {
     _teams = List<Team>.from(teams);
