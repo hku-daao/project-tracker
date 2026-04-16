@@ -578,6 +578,25 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      try {
+        final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+        if (token != null) {
+          final ne = await BackendApi().notifySubtaskSubmission(
+            idToken: token,
+            subtaskId: st.id,
+          );
+          if (ne != null && mounted) {
+            final short = ne.length > 120 ? '${ne.substring(0, 120)}…' : ne;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Submitted; email: $short'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 8),
+              ),
+            );
+          }
+        }
+      } catch (_) {}
       _commentController.clear();
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -605,6 +624,25 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      try {
+        final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+        if (token != null) {
+          final ne = await BackendApi().notifySubtaskAccepted(
+            idToken: token,
+            subtaskId: st.id,
+          );
+          if (ne != null && mounted) {
+            final short = ne.length > 120 ? '${ne.substring(0, 120)}…' : ne;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Accept email: $short'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 8),
+              ),
+            );
+          }
+        }
+      } catch (_) {}
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Accepted'), backgroundColor: Colors.green),
@@ -628,6 +666,25 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      try {
+        final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+        if (token != null) {
+          final ne = await BackendApi().notifySubtaskReturned(
+            idToken: token,
+            subtaskId: st.id,
+          );
+          if (ne != null && mounted) {
+            final short = ne.length > 120 ? '${ne.substring(0, 120)}…' : ne;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Return email: $short'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 8),
+              ),
+            );
+          }
+        }
+      } catch (_) {}
       await _load();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Returned'), backgroundColor: Colors.green),

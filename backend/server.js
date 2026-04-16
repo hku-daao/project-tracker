@@ -3062,6 +3062,24 @@ ${landing}`;
   return { html, text };
 }
 
+function buildSubtaskWorkflowEmailShell(subtaskName, subtaskUrl, bodyLinesHtml, bodyLinesText) {
+  const safeTitle = escapeHtml(subtaskName);
+  const safeSubtaskUrlAttr = escapeHtml(subtaskUrl);
+  const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+  const safeLandingHref = escapeHtml(landing);
+  const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">${bodyLinesHtml}<br><br>
+<a href="${safeSubtaskUrlAttr}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br><br>
+<a href="${safeLandingHref}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;color:#1565C0;">Project Tracker</a></div>`;
+  const text = `${bodyLinesText.join('\n\n')}
+
+${subtaskName}
+${subtaskUrl}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
 /**
  * POST { taskId } — PIC only. To: create_by, Cc: pic. Submission for review.
  */
@@ -3373,6 +3391,333 @@ async function handleNotifyTaskReturned(req, res) {
   }
 }
 
+/**
+ * POST { subtaskId } — PIC only. To: create_by, Cc: pic. Submission for review.
+ */
+async function handleNotifySubtaskSubmission(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: sErr } = await supabase
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (sErr || !row) {
+      sendJson(req, res, 404, { error: 'Sub-task not found' });
+      return;
+    }
+    const picId = (row.pic || '').toString().trim();
+    if (!picId) {
+      sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
+      return;
+    }
+    const { data: picStaff, error: pErr } = await supabase
+      .from('staff')
+      .select('id, email, name, display_name')
+      .eq('id', picId)
+      .maybeSingle();
+    if (pErr || !picStaff) {
+      sendJson(req, res, 400, { error: 'PIC staff not found' });
+      return;
+    }
+    const picEmail = (picStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const picNotifyEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const picAddr = (picNotifyEmail || picEmail).toLowerCase();
+    if (!sessionEmail || sessionEmail !== picAddr) {
+      sendJson(req, res, 403, {
+        error:
+          'Only the sub-task PIC (staff email must match signed-in user) can send submission emails',
+      });
+      return;
+    }
+    const creatorRaw = (row.create_by || '').toString().trim();
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    if (!creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const toEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    if (!toEmail) {
+      sendJson(req, res, 400, { error: 'Creator has no email' });
+      return;
+    }
+    const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
+    const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
+    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const creatorHi = staffDisplayName(creatorStaff, toEmail);
+    const picLineName = staffDisplayName(picStaff, picAddr);
+    const safeCreatorHi = escapeHtml(creatorHi);
+    const safePicLine = escapeHtml(picLineName);
+    const bodyLinesHtml = `Hi ${safeCreatorHi}.<br><br>${safePicLine} would like to seek you to review below sub-task:`;
+    const bodyLinesText = [
+      `Hi ${creatorHi}.`,
+      `${picLineName} would like to seek you to review below sub-task:`,
+    ];
+    const { html, text } = buildSubtaskWorkflowEmailShell(
+      subtaskName,
+      subtaskUrl,
+      bodyLinesHtml,
+      bodyLinesText,
+    );
+    const ccAddr = picNotifyEmail || picEmail;
+    const r = await sendMailgun({
+      to: toEmail,
+      cc: ccAddr,
+      subject,
+      text,
+      html,
+      from: MAILGUN_NOTIFICATION_FROM,
+      replyTo: picNotifyEmail || picEmail,
+    });
+    if (!r.ok) {
+      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      return;
+    }
+    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+  } catch (e) {
+    console.error('handleNotifySubtaskSubmission:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/**
+ * POST { subtaskId } — create_by only. To: pic, Cc: create_by. Sub-task accepted.
+ */
+async function handleNotifySubtaskAccepted(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: sErr } = await supabase
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (sErr || !row) {
+      sendJson(req, res, 404, { error: 'Sub-task not found' });
+      return;
+    }
+    const creatorRaw = (row.create_by || '').toString().trim();
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    if (!creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
+    if (!sessionEmail || sessionEmail !== creatorAddr) {
+      sendJson(req, res, 403, {
+        error:
+          'Only the sub-task creator (staff email must match signed-in user) can send acceptance emails',
+      });
+      return;
+    }
+    const picId = (row.pic || '').toString().trim();
+    if (!picId) {
+      sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
+      return;
+    }
+    const { data: picStaff } = await supabase
+      .from('staff')
+      .select('id, email, name, display_name')
+      .eq('id', picId)
+      .maybeSingle();
+    if (!picStaff) {
+      sendJson(req, res, 400, { error: 'PIC staff not found' });
+      return;
+    }
+    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    if (!toEmail) {
+      sendJson(req, res, 400, { error: 'PIC has no email' });
+      return;
+    }
+    const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
+    const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
+    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const picHi = staffDisplayName(picStaff, toEmail);
+    const safePicHi = escapeHtml(picHi);
+    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your sub-task has been accepted.`;
+    const bodyLinesText = [`Hi ${picHi}.`, 'Your sub-task has been accepted.'];
+    const { html, text } = buildSubtaskWorkflowEmailShell(
+      subtaskName,
+      subtaskUrl,
+      bodyLinesHtml,
+      bodyLinesText,
+    );
+    const r = await sendMailgun({
+      to: toEmail,
+      cc: creatorNotifyEmail || creatorEmail,
+      subject,
+      text,
+      html,
+      from: MAILGUN_NOTIFICATION_FROM,
+      replyTo: creatorNotifyEmail || creatorEmail,
+    });
+    if (!r.ok) {
+      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      return;
+    }
+    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+  } catch (e) {
+    console.error('handleNotifySubtaskAccepted:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/**
+ * POST { subtaskId } — create_by only. To: pic, Cc: create_by. Sub-task returned.
+ */
+async function handleNotifySubtaskReturned(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req.headers.authorization);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!supabase) {
+    sendJson(req, res, 503, { error: 'Supabase not configured' });
+    return;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: sErr } = await supabase
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (sErr || !row) {
+      sendJson(req, res, 404, { error: 'Sub-task not found' });
+      return;
+    }
+    const creatorRaw = (row.create_by || '').toString().trim();
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    if (!creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
+    if (!sessionEmail || sessionEmail !== creatorAddr) {
+      sendJson(req, res, 403, {
+        error:
+          'Only the sub-task creator (staff email must match signed-in user) can send return emails',
+      });
+      return;
+    }
+    const picId = (row.pic || '').toString().trim();
+    if (!picId) {
+      sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
+      return;
+    }
+    const { data: picStaff } = await supabase
+      .from('staff')
+      .select('id, email, name, display_name')
+      .eq('id', picId)
+      .maybeSingle();
+    if (!picStaff) {
+      sendJson(req, res, 400, { error: 'PIC staff not found' });
+      return;
+    }
+    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    if (!toEmail) {
+      sendJson(req, res, 400, { error: 'PIC has no email' });
+      return;
+    }
+    const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
+    const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
+    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const picHi = staffDisplayName(picStaff, toEmail);
+    const safePicHi = escapeHtml(picHi);
+    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your sub-task has been returned.`;
+    const bodyLinesText = [`Hi ${picHi}.`, 'Your sub-task has been returned.'];
+    const { html, text } = buildSubtaskWorkflowEmailShell(
+      subtaskName,
+      subtaskUrl,
+      bodyLinesHtml,
+      bodyLinesText,
+    );
+    const r = await sendMailgun({
+      to: toEmail,
+      cc: creatorNotifyEmail || creatorEmail,
+      subject,
+      text,
+      html,
+      from: MAILGUN_NOTIFICATION_FROM,
+      replyTo: creatorNotifyEmail || creatorEmail,
+    });
+    if (!r.ok) {
+      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      return;
+    }
+    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+  } catch (e) {
+    console.error('handleNotifySubtaskReturned:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     applyCors(req, res, 204);
@@ -3457,6 +3802,18 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/task-returned' && req.method === 'POST') {
     await handleNotifyTaskReturned(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-submission' && req.method === 'POST') {
+    await handleNotifySubtaskSubmission(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-accepted' && req.method === 'POST') {
+    await handleNotifySubtaskAccepted(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-returned' && req.method === 'POST') {
+    await handleNotifySubtaskReturned(req, res);
     return;
   }
   if (path === '/api/cron/urgent-task-reminders' && req.method === 'POST') {
