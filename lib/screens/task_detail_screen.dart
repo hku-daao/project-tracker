@@ -2388,7 +2388,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         decoration: InputDecoration(
                           hintText: _canWriteComments(state, task)
                               ? 'Comments'
-                              : 'Only task assignees can add comments',
+                              : 'Only task creator and task assignees can add comments',
                           hintStyle: TextStyle(color: Colors.grey.shade600),
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.all(12),

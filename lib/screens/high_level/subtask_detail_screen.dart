@@ -1037,7 +1037,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                   decoration: InputDecoration(
                     hintText: (assignee || creator)
                         ? 'Comments'
-                        : 'Only assignees can add comments',
+                        : 'Only sub-task creator and sub-task assignees can add comments',
                     hintStyle: TextStyle(color: Colors.grey.shade600),
                     border: const OutlineInputBorder(),
                     contentPadding: const EdgeInsets.all(12),
