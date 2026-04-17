@@ -12,6 +12,8 @@ const Map<TaskStatus, String> taskStatusDisplayNames = {
 
 /// Low-level task (Planner-style) assigned by Directors to Responsible Officers.
 class Task {
+  static const Object _unsetChangeDueReason = Object();
+
   final String id;
 
   /// Optional team ID for low-level view (filter officers by team).
@@ -52,6 +54,9 @@ class Task {
   /// PIC/creator workflow: `Submitted`, `Accepted`, `Returned`, or null.
   final String? submission;
 
+  /// When start→due span exceeds policy for priority (`task.change_due_reason`).
+  final String? changeDueReason;
+
   const Task({
     required this.id,
     this.teamId,
@@ -74,6 +79,7 @@ class Task {
     this.pic,
     this.updateDate,
     this.submission,
+    this.changeDueReason,
   });
 
   Task copyWith({
@@ -98,6 +104,7 @@ class Task {
     String? pic,
     DateTime? updateDate,
     String? submission,
+    Object? changeDueReason = _unsetChangeDueReason,
   }) {
     return Task(
       id: id ?? this.id,
@@ -121,6 +128,9 @@ class Task {
       pic: pic ?? this.pic,
       updateDate: updateDate ?? this.updateDate,
       submission: submission ?? this.submission,
+      changeDueReason: identical(changeDueReason, _unsetChangeDueReason)
+          ? this.changeDueReason
+          : changeDueReason as String?,
     );
   }
 

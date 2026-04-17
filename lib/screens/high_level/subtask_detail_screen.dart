@@ -12,6 +12,7 @@ import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
+import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../web_deep_link.dart';
 
@@ -53,6 +54,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   final _descController = TextEditingController();
   final List<_SubtaskAttachmentEntry> _subtaskAttachments = [];
   final _commentController = TextEditingController();
+  final _changeDueReasonController = TextEditingController();
   final _editCommentController = TextEditingController();
 
   /// Non-null while inline-editing a [SubtaskCommentRowDisplay] by id.
@@ -88,6 +90,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     _descController.dispose();
     _clearSubtaskAttachments();
     _commentController.dispose();
+    _changeDueReasonController.dispose();
     _editCommentController.dispose();
     super.dispose();
   }
@@ -238,8 +241,17 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         _editPriority = st.priority;
         _editStart = st.startDate;
         _editDue = st.dueDate;
+        _changeDueReasonController.text = st.changeDueReason ?? '';
       }
     });
+  }
+
+  bool _needsChangeDueReason() {
+    return dueDateExceedsPolicyForPriority(
+      _editStart,
+      _editDue,
+      _editPriority,
+    );
   }
 
   bool _uuidEq(String? a, String? b) {
@@ -570,6 +582,20 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         }
         return;
       }
+      final needsDueReason = _needsChangeDueReason();
+      if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Enter a reason when the due date is beyond the allowed working days for this priority.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
       final err = await SupabaseService.updateSubtaskRow(
         subtaskId: st.id,
         subtaskName: _nameController.text.trim(),
@@ -581,6 +607,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         clearDueDate: _editDue == null,
         picStaffLookupKey: picKey,
         updaterStaffLookupKey: state.userStaffAppId,
+        updateChangeDueReason: true,
+        changeDueReason:
+            needsDueReason ? _changeDueReasonController.text.trim() : null,
       );
       if (!mounted) return;
       if (err != null) {
@@ -1295,11 +1324,33 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                 ),
                             ],
                           ),
+                          if (_needsChangeDueReason()) ...[
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _changeDueReasonController,
+                              readOnly: _saving,
+                              decoration: const InputDecoration(
+                                labelText: 'Reason',
+                                hintText: 'Extend timeline reason',
+                                border: OutlineInputBorder(),
+                                alignLabelWithHint: true,
+                              ),
+                              maxLines: 3,
+                            ),
+                          ],
                         ] else ...[
                           if (st.startDate != null)
                             Text('Start: ${ymd.format(st.startDate!)}'),
                           if (st.dueDate != null)
                             Text('Due: ${ymd.format(st.dueDate!)}'),
+                          if ((st.changeDueReason ?? '').trim().isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                'Reason: ${st.changeDueReason}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
                         ],
                         const SizedBox(height: 16),
                         const Divider(),

@@ -9,6 +9,7 @@ import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
+import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 
 /// Warn before leaving [CreateSubtaskScreen] while a draft exists (back button / system back).
@@ -50,6 +51,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
+  final _changeDueReasonController = TextEditingController();
 
   int _priority = priorityStandard;
   late DateTime _anchorStartDate;
@@ -88,6 +90,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
+    _changeDueReasonController.dispose();
     super.dispose();
   }
 
@@ -103,7 +106,16 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     if (_endDate != null && _dateOnlyCompare(_endDate!, expectedDue) != 0) {
       return true;
     }
+    if (_changeDueReasonController.text.trim().isNotEmpty) return true;
     return false;
+  }
+
+  bool _needsChangeDueReason() {
+    return dueDateExceedsPolicyForPriority(
+      _startDate,
+      _endDate,
+      _priority,
+    );
   }
 
   Future<void> _handlePopRequest() async {
@@ -171,6 +183,22 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
       );
       return;
     }
+    final needsDueReason = dueDateExceedsPolicyForPriority(
+      _startDate,
+      due,
+      _priority,
+    );
+    if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter a reason when the due date is beyond the allowed working days for this priority.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
     setState(() => _submitting = true);
     try {
       final slots = <String?>[];
@@ -209,6 +237,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         picStaffUuid: picUuid,
         creatorStaffLookupKey: state.userStaffAppId,
         initialComment: _commentController.text.trim(),
+        changeDueReason:
+            needsDueReason ? _changeDueReasonController.text.trim() : null,
       );
       if (ins.error != null || ins.subtaskId == null) {
         showCopyableSnackBar(
@@ -444,6 +474,27 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                           ),
                         ],
                       ),
+                      if (_needsChangeDueReason()) ...[
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _changeDueReasonController,
+                          readOnly: _submitting,
+                          decoration: const InputDecoration(
+                            labelText: 'Reason',
+                            hintText: 'Extend timeline reason',
+                            border: OutlineInputBorder(),
+                            alignLabelWithHint: true,
+                          ),
+                          maxLines: 3,
+                          validator: (v) {
+                            if (!_needsChangeDueReason()) return null;
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Required when due date exceeds allowed working days';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _descController,

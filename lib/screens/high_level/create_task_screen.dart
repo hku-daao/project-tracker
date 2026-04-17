@@ -11,6 +11,7 @@ import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
+import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
 
@@ -27,6 +28,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentsController = TextEditingController();
+  final _changeDueReasonController = TextEditingController();
   final Set<String> _selectedTeamIds = {};
   final Set<String> _selectedAssigneeIds = {};
   /// Person in charge — same key as [assigneeIds]; with one assignee, always that id.
@@ -80,7 +82,14 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     if (_endDate != null && _dateOnlyCompare(_endDate!, defaultEnd) != 0) {
       return true;
     }
+    if (_changeDueReasonController.text.trim().isNotEmpty) return true;
     return false;
+  }
+
+  bool _needsChangeDueReason() {
+    final start = _startDate ?? _anchorCreateDate;
+    final due = _endDate;
+    return dueDateExceedsPolicyForPriority(start, due, _priority);
   }
 
   DateTime _defaultDueForPriority(int priority) {
@@ -246,6 +255,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     _nameController.dispose();
     _descController.dispose();
     _commentsController.dispose();
+    _changeDueReasonController.dispose();
     super.dispose();
   }
 
@@ -352,6 +362,20 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       return;
     }
 
+    final needsDueReason =
+        dueDateExceedsPolicyForPriority(capturedStart, capturedEnd, priority);
+    if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter a reason when the due date is beyond the allowed working days for this priority.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     final String picKey;
     if (directorIds.length == 1) {
       picKey = directorIds.first;
@@ -381,6 +405,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       endDate: capturedEnd,
       createByAssigneeKey: state.userStaffAppId,
       pic: picKey,
+      changeDueReason: needsDueReason
+          ? _changeDueReasonController.text.trim()
+          : null,
     );
 
     String? cloudErr;
@@ -397,6 +424,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         status: 'Incomplete',
         creatorStaffLookupKey: state.userStaffAppId,
         picStaffLookupKey: picKey,
+        changeDueReason:
+            needsDueReason ? _changeDueReasonController.text.trim() : null,
       );
       cloudErr = ins.error;
       insertedTaskId = ins.taskId;
@@ -886,6 +915,27 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                 ),
               ],
             ),
+            if (_needsChangeDueReason()) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _changeDueReasonController,
+                readOnly: _submitting,
+                decoration: const InputDecoration(
+                  labelText: 'Reason',
+                  hintText: 'Extend timeline reason',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 3,
+                validator: (v) {
+                  if (!_needsChangeDueReason()) return null;
+                  if (v == null || v.trim().isEmpty) {
+                    return 'Required when due date exceeds allowed working days';
+                  }
+                  return null;
+                },
+              ),
+            ],
             const SizedBox(height: 16),
             TextFormField(
               controller: _descController,

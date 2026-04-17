@@ -589,6 +589,7 @@ class AppState extends ChangeNotifier {
     DateTime? endDate,
     String? createByAssigneeKey,
     String? pic,
+    String? changeDueReason,
   }) {
     final id = const Uuid().v4();
     final task = Task(
@@ -604,6 +605,7 @@ class AppState extends ChangeNotifier {
       createdAt: HkTime.localCreatedAtForTask(),
       createByAssigneeKey: createByAssigneeKey,
       pic: pic,
+      changeDueReason: changeDueReason,
     );
     _tasks.add(task);
     notifyListeners();

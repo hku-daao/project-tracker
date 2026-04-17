@@ -1,5 +1,7 @@
 /// Row from `public.subtask` (child of singular `task`).
 class SingularSubtask {
+  static const Object _unsetChangeDueReason = Object();
+
   const SingularSubtask({
     required this.id,
     required this.taskId,
@@ -16,6 +18,7 @@ class SingularSubtask {
     this.createDate,
     this.updateDate,
     this.updateByStaffName,
+    this.changeDueReason,
   });
 
   final String id;
@@ -43,6 +46,9 @@ class SingularSubtask {
 
   /// Resolved from `subtask.update_by` → `staff.name`.
   final String? updateByStaffName;
+
+  /// When start→due span exceeds policy (`subtask.change_due_reason`).
+  final String? changeDueReason;
 
   bool get isDeleted => status.trim().toLowerCase() == 'deleted';
 
@@ -75,6 +81,7 @@ class SingularSubtask {
     DateTime? createDate,
     DateTime? updateDate,
     String? updateByStaffName,
+    Object? changeDueReason = _unsetChangeDueReason,
   }) {
     return SingularSubtask(
       id: id ?? this.id,
@@ -92,6 +99,9 @@ class SingularSubtask {
       createDate: createDate ?? this.createDate,
       updateDate: updateDate ?? this.updateDate,
       updateByStaffName: updateByStaffName ?? this.updateByStaffName,
+      changeDueReason: identical(changeDueReason, _unsetChangeDueReason)
+          ? this.changeDueReason
+          : changeDueReason as String?,
     );
   }
 }

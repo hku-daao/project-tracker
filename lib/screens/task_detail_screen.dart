@@ -18,6 +18,7 @@ import '../priority.dart';
 import '../services/backend_api.dart';
 import '../services/supabase_service.dart';
 import '../utils/copyable_snackbar.dart';
+import '../utils/due_span_policy.dart';
 import '../utils/hk_time.dart';
 import '../web_deep_link.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
@@ -111,6 +112,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
+  final _changeDueReasonController = TextEditingController();
   final List<_TaskAttachmentEntry> _taskAttachments = [];
 
   DateTime? _startDate;
@@ -626,6 +628,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
+    _changeDueReasonController.dispose();
     _clearTaskAttachments();
     super.dispose();
   }
@@ -710,6 +713,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final da = DateTime(a.year, a.month, a.day);
     final db = DateTime(b.year, b.month, b.day);
     return da.compareTo(db);
+  }
+
+  bool _needsChangeDueReason() {
+    return dueDateExceedsPolicyForPriority(
+      _startDate,
+      _dueDate,
+      _localPriority,
+    );
   }
 
   String _normalizeLocalStatus(String? db) {
@@ -879,6 +890,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       _descController.text = task.description;
       _startDate = task.startDate;
       _dueDate = task.endDate;
+      _changeDueReasonController.text = task.changeDueReason ?? '';
       _localPriority = task.priority.clamp(1, 2);
       _localStatus = _normalizeLocalStatus(task.dbStatus);
     }
@@ -1002,6 +1014,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           _localStatus = _normalizeLocalStatus(row['status']?.toString());
           _taskCreateByStaffUuid = row['create_by']?.toString().trim();
           _singularTaskPicStaffUuid = row['pic']?.toString().trim();
+          _changeDueReasonController.text =
+              row['change_due_reason']?.toString() ?? '';
         } else {
           _singularTaskPicStaffUuid = null;
         }
@@ -1168,6 +1182,18 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       );
       return;
     }
+    final needsDueReason = _needsChangeDueReason();
+    if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter a reason when the due date is beyond the allowed working days for this priority.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
     if (_saving) return;
 
     final useServer = state.assignableStaffFromServer.isNotEmpty;
@@ -1261,6 +1287,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         clearDueDate: _dueDate == null,
         updateByStaffLookupKey: state.userStaffAppId,
         picStaffLookupKey: picKey,
+        updateChangeDueReason: true,
+        changeDueReason:
+            needsDueReason ? _changeDueReasonController.text.trim() : null,
       );
       if (!mounted) return;
 
@@ -1343,6 +1372,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           updateByStaffName: updaterName,
           updateDate: DateTime.now(),
           pic: picKey,
+          changeDueReason:
+              needsDueReason ? _changeDueReasonController.text.trim() : null,
         ),
       );
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2205,6 +2236,30 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     ),
                                 ],
                               ),
+                              if (_canEditSingularTaskMetadata(state, task)) ...[
+                                if (_needsChangeDueReason()) ...[
+                                  const SizedBox(height: 8),
+                                  TextFormField(
+                                    controller: _changeDueReasonController,
+                                    readOnly: _saving,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Reason',
+                                      hintText: 'Extend timeline reason',
+                                      border: OutlineInputBorder(),
+                                      alignLabelWithHint: true,
+                                    ),
+                                    maxLines: 3,
+                                  ),
+                                ],
+                              ] else if ((task.changeDueReason ?? '')
+                                  .trim()
+                                  .isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Reason: ${task.changeDueReason}',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ],
                               const SizedBox(height: 16),
                               const Divider(),
                               const SizedBox(height: 8),

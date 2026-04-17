@@ -325,6 +325,10 @@ class SupabaseService {
 
     /// Sets `task.pic` (staff id); omit to leave column unchanged.
     String? picStaffLookupKey,
+
+    /// When true, sets `change_due_reason` (null clears).
+    bool updateChangeDueReason = false,
+    String? changeDueReason,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -365,6 +369,10 @@ class SupabaseService {
         if (picStaffId != null && picStaffId.isNotEmpty) {
           map['pic'] = picStaffId;
         }
+      }
+      if (updateChangeDueReason) {
+        final t = changeDueReason?.trim();
+        map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
       }
       if (map.isEmpty) return null;
       await Supabase.instance.client.from('task').update(map).eq('id', taskId);
@@ -531,7 +539,14 @@ class SupabaseService {
       pic: _picAssigneeKey(row, staffUuidToAppId),
       updateDate: _parseDateTimeNullable(row['update_date']),
       submission: _submissionFromRow(row['submission']),
+      changeDueReason: _nullableTrimmedString(row['change_due_reason']),
     );
+  }
+
+  static String? _nullableTrimmedString(dynamic v) {
+    final s = v?.toString().trim() ?? '';
+    if (s.isEmpty) return null;
+    return s;
   }
 
   static String? _submissionFromRow(dynamic v) {
@@ -1208,6 +1223,9 @@ class SupabaseService {
 
     /// `staff.app_id` or uuid; stored as `task.pic` (staff id).
     String? picStaffLookupKey,
+
+    /// When due span exceeds policy for priority.
+    String? changeDueReason,
   }) async {
     if (!_enabled) return (error: 'Supabase not configured', taskId: null);
     final name = taskName.trim();
@@ -1254,6 +1272,10 @@ class SupabaseService {
         if (picStaffId != null && picStaffId.isNotEmpty) {
           map['pic'] = picStaffId;
         }
+      }
+      final cdr = changeDueReason?.trim();
+      if (cdr != null && cdr.isNotEmpty) {
+        map['change_due_reason'] = cdr;
       }
       final res = await Supabase.instance.client
           .from('task')
@@ -1701,6 +1723,7 @@ class SupabaseService {
       createDate: _parseDateTime(row['create_date']),
       updateDate: _parseDateTimeNullable(row['update_date']),
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
+      changeDueReason: _nullableTrimmedString(row['change_due_reason']),
     );
   }
 
@@ -1763,6 +1786,7 @@ class SupabaseService {
     required String picStaffUuid,
     String? creatorStaffLookupKey,
     String? initialComment,
+    String? changeDueReason,
   }) async {
     if (!_enabled) return (error: 'Supabase not configured', subtaskId: null);
     final name = subtaskName.trim();
@@ -1805,6 +1829,10 @@ class SupabaseService {
       if (pic.isNotEmpty) {
         map['pic'] = pic;
       }
+      final cdr = changeDueReason?.trim();
+      if (cdr != null && cdr.isNotEmpty) {
+        map['change_due_reason'] = cdr;
+      }
       final ins = await Supabase.instance.client
           .from('subtask')
           .insert(map)
@@ -1842,6 +1870,10 @@ class SupabaseService {
     /// Sets `subtask.pic` (staff id); omit to leave column unchanged.
     String? picStaffLookupKey,
     String? updaterStaffLookupKey,
+
+    /// When true, sets `change_due_reason` (null clears).
+    bool updateChangeDueReason = false,
+    String? changeDueReason,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -1876,6 +1908,10 @@ class SupabaseService {
         if (staffId != null && staffId.isNotEmpty) {
           map['update_by'] = staffId;
         }
+      }
+      if (updateChangeDueReason) {
+        final t = changeDueReason?.trim();
+        map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
       }
       await Supabase.instance.client.from('subtask').update(map).eq('id', subtaskId);
       return null;
