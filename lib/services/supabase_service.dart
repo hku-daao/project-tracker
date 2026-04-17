@@ -374,7 +374,10 @@ class SupabaseService {
     }
   }
 
-  /// All attachment rows for a singular task (ordered by `created_at`).
+  /// All attachment rows for a singular task.
+  ///
+  /// Selects only `id`, `content`, `description` and orders by `id` so schemas that use
+  /// `create_date` / `created_at` / neither do not break PostgREST (see sub-task attachments).
   static Future<List<TaskAttachmentRow>> fetchAttachmentsForTask(
     String taskId,
   ) async {
@@ -384,36 +387,47 @@ class SupabaseService {
     try {
       final res = await Supabase.instance.client
           .from('attachment')
-          .select('id, content, description, created_at')
+          .select('id, content, description')
           .eq('task_id', id)
-          .order('created_at', ascending: true);
+          .order('id', ascending: true);
       final out = <TaskAttachmentRow>[];
+      var i = 0;
       for (final raw in (res as List)) {
         final m = Map<String, dynamic>.from(raw as Map);
-        final rowId = m['id']?.toString() ?? '';
-        if (rowId.isEmpty) continue;
+        final content = m['content']?.toString();
+        final description = m['description']?.toString();
+        final rowId = m['id']?.toString().trim() ?? '';
+        final rowUuid = rowId.isNotEmpty
+            ? rowId
+            : 'task-att-$i-${content.hashCode}-${description.hashCode}';
+        i++;
         out.add(
           TaskAttachmentRow(
-            id: rowId,
-            content: m['content']?.toString(),
-            description: m['description']?.toString(),
+            id: rowUuid,
+            content: content,
+            description: description,
           ),
         );
       }
       return out;
-    } catch (_) {
-      return [];
+    } catch (e) {
+      debugPrint('fetchAttachmentsForTask: $e');
+      rethrow;
     }
   }
 
   /// First hyperlink only (legacy callers).
   static Future<String?> fetchAttachmentContentForTask(String taskId) async {
-    final rows = await fetchAttachmentsForTask(taskId);
-    for (final r in rows) {
-      final c = r.content?.trim();
-      if (c != null && c.isNotEmpty) return c;
+    try {
+      final rows = await fetchAttachmentsForTask(taskId);
+      for (final r in rows) {
+        final c = r.content?.trim();
+        if (c != null && c.isNotEmpty) return c;
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   /// Replaces all `attachment` rows for [taskId] with [rows] (skips rows where both fields are empty).
@@ -1889,57 +1903,53 @@ class SupabaseService {
     final sid = subtaskId.trim();
     if (sid.isEmpty) return [];
     try {
+      // Avoid created_at vs create_date drift across DBs; id order is stable for the list UI.
       final res = await Supabase.instance.client
           .from('subtask_attachment')
-          .select('id, content, description, created_at')
+          .select('id, content, description')
           .eq('subtask_id', sid)
-          .order('created_at', ascending: true);
+          .order('id', ascending: true);
       final out = <SubtaskAttachmentRow>[];
+      var i = 0;
       for (final raw in (res as List)) {
         final m = Map<String, dynamic>.from(raw as Map);
-        final rowId = m['id']?.toString() ?? '';
-        if (rowId.isEmpty) continue;
+        final content = m['content']?.toString();
+        final description = m['description']?.toString();
+        final rowId = m['id']?.toString().trim() ?? '';
+        final id = rowId.isNotEmpty
+            ? rowId
+            : 'subtask-att-$i-${content.hashCode}-${description.hashCode}';
+        i++;
         out.add(
           SubtaskAttachmentRow(
-            id: rowId,
-            content: m['content']?.toString(),
-            description: m['description']?.toString(),
+            id: id,
+            content: content,
+            description: description,
           ),
         );
       }
       return out;
-    } catch (_) {
-      return [];
+    } catch (e) {
+      debugPrint('fetchSubtaskAttachments: $e');
+      rethrow;
     }
   }
 
   /// Replaces all `subtask_attachment` rows (skips rows where both fields are empty).
   ///
-  /// Pass [parentTaskId] when known (parent singular `task.id`) to avoid an extra query.
-  /// If omitted, `task_id` is loaded from `subtask.task_id`. Inserts include `task_id` when
-  /// the database column exists (required by FK `subtask_attachment_task_id_fkey` on some DBs).
+  /// Inserts use `subtask_id` only (see migration `035_subtask_tables.sql`). If your database
+  /// adds an optional `task_id` column (e.g. `042_subtask_attachment_task_id.sql`), run that
+  /// migration and extend this method to set it; PostgREST errors with PGRST204 if the client
+  /// sends a column that does not exist.
   static Future<String?> replaceSubtaskAttachments({
     required String subtaskId,
     required List<({String? content, String? description})> rows,
-    String? parentTaskId,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     final sid = subtaskId.trim();
     if (sid.isEmpty) return 'Missing sub-task id';
     try {
       final supabase = Supabase.instance.client;
-      var tid = parentTaskId?.trim() ?? '';
-      if (tid.isEmpty) {
-        final subRow = await supabase
-            .from('subtask')
-            .select('task_id')
-            .eq('id', sid)
-            .maybeSingle();
-        tid = subRow?['task_id']?.toString().trim() ?? '';
-      }
-      if (tid.isEmpty) {
-        return 'Sub-task has no parent task (task_id)';
-      }
       await supabase.from('subtask_attachment').delete().eq('subtask_id', sid);
       for (final r in rows) {
         final c = r.content?.trim() ?? '';
@@ -1947,7 +1957,6 @@ class SupabaseService {
         if (c.isEmpty && d.isEmpty) continue;
         final map = <String, dynamic>{
           'subtask_id': sid,
-          'task_id': tid,
           'content': c.isEmpty ? null : c,
           'description': d.isEmpty ? null : d,
         };
@@ -1972,12 +1981,16 @@ class SupabaseService {
 
   /// First hyperlink only (legacy).
   static Future<String?> fetchSubtaskAttachmentContent(String subtaskId) async {
-    final rows = await fetchSubtaskAttachments(subtaskId);
-    for (final r in rows) {
-      final c = r.content?.trim();
-      if (c != null && c.isNotEmpty) return c;
+    try {
+      final rows = await fetchSubtaskAttachments(subtaskId);
+      for (final r in rows) {
+        final c = r.content?.trim();
+        if (c != null && c.isNotEmpty) return c;
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   static Future<({String? error, String? commentId})> insertSubtaskCommentRow({

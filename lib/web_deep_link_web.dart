@@ -85,3 +85,71 @@ void clearDeepLinkQueryFromAddressBar() {
   final safePath = (path == null || path.isEmpty) ? '/' : path;
   html.window.history.replaceState(null, '', safePath);
 }
+
+/// Keeps `?task=` in the address bar and session so a browser refresh reopens [TaskDetailScreen].
+void syncWebLocationForTaskDetail(String taskId) {
+  final id = taskId.trim();
+  if (id.isEmpty) return;
+  html.window.sessionStorage[_kTaskKey] = id;
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  _replaceQueryParams((q) {
+    q['task'] = id;
+    q.remove('subtask');
+  });
+}
+
+/// Clears task id from URL/session (e.g. when leaving task detail for home).
+void clearWebTaskDetailFromLocation() {
+  html.window.sessionStorage.remove(_kTaskKey);
+  _replaceQueryParams((q) => q.remove('task'));
+}
+
+/// Keeps `?subtask=` so refresh stays on [SubtaskDetailScreen].
+void syncWebLocationForSubtaskDetail(String subtaskId) {
+  final id = subtaskId.trim();
+  if (id.isEmpty) return;
+  html.window.sessionStorage[_kSubtaskKey] = id;
+  html.window.sessionStorage.remove(_kTaskKey);
+  _replaceQueryParams((q) {
+    q['subtask'] = id;
+    q.remove('task');
+  });
+}
+
+/// Clears subtask from URL/session; optionally restores [parentTaskId] for the underlying task screen.
+void clearWebSubtaskDetailFromLocation({String? parentTaskId}) {
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  _replaceQueryParams((q) => q.remove('subtask'));
+  final p = parentTaskId?.trim();
+  if (p != null && p.isNotEmpty) {
+    syncWebLocationForTaskDetail(p);
+  }
+}
+
+/// Updates either path `?query` or hash `#/path?query` so [readTaskIdFromUrlOrSession] /
+/// [readSubtaskIdFromUrlOrSession] still resolve after refresh.
+void _replaceQueryParams(void Function(Map<String, String> q) mutate) {
+  final href = html.window.location.href;
+  final uri = Uri.parse(href);
+  final frag = uri.fragment;
+  if (frag.contains('?')) {
+    final qIdx = frag.indexOf('?');
+    final pathPart = frag.substring(0, qIdx);
+    final queryPart = frag.substring(qIdx + 1);
+    final inner = Uri.parse('https://dummy.invalid?$queryPart');
+    final q = Map<String, String>.from(inner.queryParameters);
+    mutate(q);
+    final newFrag = q.isEmpty
+        ? pathPart
+        : '$pathPart?${Uri(queryParameters: q).query}';
+    final newUri = uri.replace(fragment: newFrag);
+    html.window.history.replaceState(null, '', newUri.toString());
+    return;
+  }
+  final q = Map<String, String>.from(uri.queryParameters);
+  mutate(q);
+  final newUri = uri.replace(
+    queryParameters: q.isEmpty ? null : q,
+  );
+  html.window.history.replaceState(null, '', newUri.toString());
+}

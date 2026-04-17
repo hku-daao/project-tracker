@@ -138,8 +138,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
   void _openWebDeepLinkIfPending() {
     final sub = readSubtaskIdFromUrlOrSession();
     if (sub != null && sub.isNotEmpty) {
-      consumeSubtaskDeepLink();
-      clearDeepLinkQueryFromAddressBar();
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
           builder: (_) => SubtaskDetailScreen(subtaskId: sub),
@@ -149,8 +147,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
     }
     final taskId = readTaskIdFromUrlOrSession();
     if (taskId != null && taskId.isNotEmpty) {
-      consumeTaskDeepLink();
-      clearDeepLinkQueryFromAddressBar();
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
           builder: (_) => TaskDetailScreen(taskId: taskId),

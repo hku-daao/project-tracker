@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -18,6 +19,7 @@ import '../services/backend_api.dart';
 import '../services/supabase_service.dart';
 import '../utils/copyable_snackbar.dart';
 import '../utils/hk_time.dart';
+import '../web_deep_link.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
 import '../widgets/task_list_card.dart';
 
@@ -36,6 +38,22 @@ class TaskDetailScreen extends StatefulWidget {
 }
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      syncWebLocationForTaskDetail(widget.taskId);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (kIsWeb) {
+      clearWebTaskDetailFromLocation();
+    }
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -348,6 +366,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   bool _isAssigneeOnlyNotCreator(AppState state, Task task) =>
       _isTaskAssignee(state, task) && !_isCreator(state, task);
 
+  /// Assignee who is not the PIC — uses the comment-only [Update] (PIC uses main [Update] for attachments).
+  bool _isCommentOnlyAssignee(AppState state, Task task) =>
+      _isAssigneeOnlyNotCreator(state, task) && !_isPicEffective(state, task);
+
   /// Name, description, assignees, PIC, priority, start/due — creator only.
   bool _canEditSingularTaskMetadata(AppState state, Task task) =>
       _isCreator(state, task);
@@ -617,20 +639,35 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
   Future<void> _reloadTaskAttachmentsFromDb() async {
     if (!SupabaseConfig.isConfigured) return;
-    final rows = await SupabaseService.fetchAttachmentsForTask(widget.taskId);
-    if (!mounted) return;
-    setState(() {
-      _clearTaskAttachments();
-      for (final r in rows) {
-        _taskAttachments.add(
-          _TaskAttachmentEntry(
-            id: r.id,
-            url: r.content,
-            desc: r.description,
+    try {
+      final rows = await SupabaseService.fetchAttachmentsForTask(widget.taskId);
+      if (!mounted) return;
+      setState(() {
+        _clearTaskAttachments();
+        for (final r in rows) {
+          _taskAttachments.add(
+            _TaskAttachmentEntry(
+              id: r.id,
+              url: r.content,
+              desc: r.description,
+            ),
+          );
+        }
+      });
+    } catch (e, st) {
+      debugPrint('reload task attachments: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not reload attachments: ${e.toString().length > 120 ? '${e.toString().substring(0, 120)}…' : e}',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 6),
           ),
         );
       }
-    });
+    }
   }
 
   void _addTaskAttachmentRow() {
@@ -866,8 +903,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     try {
       final data = await SupabaseService.fetchStaffAssigneePickerData();
       final row = await SupabaseService.fetchSingularTaskById(widget.taskId);
-      final attachmentRows =
-          await SupabaseService.fetchAttachmentsForTask(widget.taskId);
+      List<TaskAttachmentRow> attachmentRows = [];
+      try {
+        attachmentRows =
+            await SupabaseService.fetchAttachmentsForTask(widget.taskId);
+      } catch (e, st) {
+        debugPrint('task attachments initial load: $e\n$st');
+        attachmentRows = [];
+      }
       final selectedAppIds = <String>{};
       if (row != null) {
         for (var i = 1; i <= 10; i++) {
@@ -1308,6 +1351,44 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           backgroundColor: Colors.green,
         ),
       );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// PIC (not task creator): save attachment rows only.
+  Future<void> _saveTaskAttachmentsOnly(AppState state, Task task) async {
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured.');
+      return;
+    }
+    if (_saving) return;
+    if (!_isPicEffective(state, task) || _isCreator(state, task)) {
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final errAttach = await SupabaseService.replaceAttachmentsForTask(
+        taskId: task.id,
+        rows: _taskAttachmentPayload(),
+      );
+      if (errAttach != null && mounted) {
+        showCopyableSnackBar(
+          context,
+          errAttach,
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+      if (mounted) await _reloadTaskAttachmentsFromDb();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Attachments saved'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -2193,31 +2274,40 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    TextField(
-                                      controller: e.descController,
-                                      readOnly: _saving || !canEdit,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment description',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
+                                child: Card(
+                                  margin: EdgeInsets.zero,
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        TextField(
+                                          controller: e.descController,
+                                          readOnly: _saving || !canEdit,
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment description',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextField(
+                                          controller: e.urlController,
+                                          readOnly: _saving || !canEdit,
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment (hyperlink)',
+                                            hintText: 'https://…',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: e.urlController,
-                                      readOnly: _saving || !canEdit,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment (hyperlink)',
-                                        hintText: 'https://…',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                               if (canEdit)
@@ -2406,17 +2496,27 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       else
                         ..._singularCommentTiles(context, state),
                       const SizedBox(height: 24),
-                      if (_canEditSingularTaskMetadata(state, task))
+                      if (_isCreator(state, task) ||
+                          _isPicEffective(state, task))
                         FilledButton(
                           onPressed: _saving
                               ? null
-                              : () => _saveTaskFields(state, task),
+                              : () async {
+                                  if (_isCreator(state, task)) {
+                                    await _saveTaskFields(state, task);
+                                  } else {
+                                    await _saveTaskAttachmentsOnly(
+                                      state,
+                                      task,
+                                    );
+                                  }
+                                },
                           style: FilledButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
                           child: Text(_saving ? 'Saving…' : 'Update'),
                         ),
-                      if (_isAssigneeOnlyNotCreator(state, task)) ...[
+                      if (_isCommentOnlyAssignee(state, task)) ...[
                         const SizedBox(height: 12),
                         FilledButton(
                           onPressed: _saving

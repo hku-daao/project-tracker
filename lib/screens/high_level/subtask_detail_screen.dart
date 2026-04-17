@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -12,6 +13,7 @@ import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
+import '../../web_deep_link.dart';
 
 class _SubtaskAttachmentEntry {
   _SubtaskAttachmentEntry({this.id, String? url, String? desc})
@@ -71,11 +73,17 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) {
+      syncWebLocationForSubtaskDetail(widget.subtaskId);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   @override
   void dispose() {
+    if (kIsWeb) {
+      clearWebSubtaskDetailFromLocation(parentTaskId: _sub?.taskId);
+    }
     _nameController.dispose();
     _descController.dispose();
     _clearSubtaskAttachments();
@@ -122,9 +130,11 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   }
 
   bool _canEditSubtaskAttachments(AppState state, SingularSubtask st) =>
-      _isCreator(state, st) || _isPic(state, st);
+      _isCreator(state, st) || _isPic(state, st) || _isAssignee(state, st);
 
-  Future<void> _load() async {
+  /// When [rebindAttachments] is false, existing attachment text fields are left unchanged
+  /// (use after Update/Submit when rows were just written — avoids empty SELECT wiping the UI).
+  Future<void> _load({bool rebindAttachments = true}) async {
     if (!SupabaseConfig.isConfigured) {
       setState(() => _loading = false);
       return;
@@ -147,7 +157,14 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     }
     List<SubtaskAttachmentRow> attRows = [];
     if (st != null) {
-      attRows = await SupabaseService.fetchSubtaskAttachments(st.id);
+      if (rebindAttachments) {
+        try {
+          attRows = await SupabaseService.fetchSubtaskAttachments(st.id);
+        } catch (e, stTrace) {
+          debugPrint('subtask attachments load: $e\n$stTrace');
+          attRows = [];
+        }
+      }
       final cm = await SupabaseService.fetchSubtaskComments(st.id);
       if (mounted) {
         setState(() {
@@ -183,7 +200,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       }
     }
     if (!mounted) return;
-    _clearSubtaskAttachments();
+    if (rebindAttachments) {
+      _clearSubtaskAttachments();
+    }
     setState(() {
       _sub = st;
       _parentTask = parent;
@@ -195,14 +214,16 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       if (st != null) {
         _nameController.text = st.subtaskName;
         _descController.text = st.description;
-        for (final r in attRows) {
-          _subtaskAttachments.add(
-            _SubtaskAttachmentEntry(
-              id: r.id,
-              url: r.content,
-              desc: r.description,
-            ),
-          );
+        if (rebindAttachments) {
+          for (final r in attRows) {
+            _subtaskAttachments.add(
+              _SubtaskAttachmentEntry(
+                id: r.id,
+                url: r.content,
+                desc: r.description,
+              ),
+            );
+          }
         }
         _editPriority = st.priority;
         _editStart = st.startDate;
@@ -378,7 +399,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         return;
       }
       _commentController.clear();
-      await _load();
+      await _load(rebindAttachments: false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Comment added'), backgroundColor: Colors.green),
       );
@@ -423,7 +444,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
           final errA = await SupabaseService.replaceSubtaskAttachments(
             subtaskId: st.id,
-            parentTaskId: st.taskId,
             rows: _subtaskAttachmentPayload(),
           );
           if (!mounted) return;
@@ -433,7 +453,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
           await _notifySubtaskUpdatedEmail(st.id);
           if (!mounted) return;
-          await _load();
+          await _load(rebindAttachments: false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Saved'),
@@ -450,7 +470,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         try {
           final errA = await SupabaseService.replaceSubtaskAttachments(
             subtaskId: st.id,
-            parentTaskId: st.taskId,
             rows: _subtaskAttachmentPayload(),
           );
           if (!mounted) return;
@@ -458,10 +477,34 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
             return;
           }
-          await _load();
+          await _load(rebindAttachments: false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Saved'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } finally {
+          if (mounted) setState(() => _saving = false);
+        }
+        return;
+      }
+      if (_isAssignee(state, st) && !_isPic(state, st)) {
+        setState(() => _saving = true);
+        try {
+          final errA = await SupabaseService.replaceSubtaskAttachments(
+            subtaskId: st.id,
+            rows: _subtaskAttachmentPayload(),
+          );
+          if (!mounted) return;
+          if (errA != null) {
+            showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+            return;
+          }
+          await _load(rebindAttachments: false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Attachments saved'),
               backgroundColor: Colors.green,
             ),
           );
@@ -517,7 +560,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       }
       final errA = await SupabaseService.replaceSubtaskAttachments(
         subtaskId: st.id,
-        parentTaskId: st.taskId,
         rows: _subtaskAttachmentPayload(),
       );
       if (!mounted) return;
@@ -527,7 +569,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       }
       await _notifySubtaskUpdatedEmail(st.id);
       if (!mounted) return;
-      await _load();
+      await _load(rebindAttachments: false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Saved'), backgroundColor: Colors.green),
       );
@@ -554,7 +596,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     try {
       final e = await SupabaseService.replaceSubtaskAttachments(
         subtaskId: st.id,
-        parentTaskId: st.taskId,
         rows: _subtaskAttachmentPayload(),
       );
       if (e != null && mounted) {
@@ -602,7 +643,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         }
       } catch (_) {}
       _commentController.clear();
-      await _load();
+      await _load(rebindAttachments: false);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Submitted'),
@@ -647,7 +689,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
         }
       } catch (_) {}
-      await _load();
+      await _load(rebindAttachments: false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Accepted'), backgroundColor: Colors.green),
       );
@@ -689,7 +731,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
         }
       } catch (_) {}
-      await _load();
+      await _load(rebindAttachments: false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Returned'), backgroundColor: Colors.green),
       );
@@ -741,7 +783,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         return;
       }
       _cancelCommentEdit();
-      await _load();
+      await _load(rebindAttachments: false);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -779,7 +821,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
       return;
     }
-    await _load();
+    await _load(rebindAttachments: false);
   }
 
   Future<void> _notifySubtaskUpdatedEmail(String subtaskId) async {
@@ -1298,72 +1340,77 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: canEdit
-                              ? Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    TextField(
-                                      controller: e.urlController,
-                                      readOnly: _saving,
-                                      enableInteractiveSelection: true,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment (hyperlink)',
-                                        hintText: 'https://…',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: e.descController,
-                                      readOnly: _saving,
-                                      enableInteractiveSelection: true,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment description',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    InputDecorator(
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment (hyperlink)',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
-                                      child: SelectableText(
-                                        e.urlController.text.isEmpty
-                                            ? '—'
-                                            : e.urlController.text,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    InputDecorator(
-                                      decoration: const InputDecoration(
-                                        labelText: 'Attachment description',
-                                        border: OutlineInputBorder(),
-                                        isDense: true,
-                                      ),
-                                      child: SelectableText(
-                                        e.descController.text.isEmpty
-                                            ? '—'
-                                            : e.descController.text,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                          child: Card(
+                            margin: EdgeInsets.zero,
+                            clipBehavior: Clip.antiAlias,
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.stretch,
+                                children: [
+                                  canEdit
+                                      ? TextField(
+                                          controller: e.descController,
+                                          readOnly: _saving,
+                                          enableInteractiveSelection: true,
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment description',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                        )
+                                      : InputDecorator(
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment description',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          child: SelectableText(
+                                            e.descController.text.isEmpty
+                                                ? '—'
+                                                : e.descController.text,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium,
+                                          ),
+                                        ),
+                                  const SizedBox(height: 8),
+                                  canEdit
+                                      ? TextField(
+                                          controller: e.urlController,
+                                          readOnly: _saving,
+                                          enableInteractiveSelection: true,
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment (hyperlink)',
+                                            hintText: 'https://…',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                        )
+                                      : InputDecorator(
+                                          decoration: const InputDecoration(
+                                            labelText:
+                                                'Attachment (hyperlink)',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                          ),
+                                          child: SelectableText(
+                                            e.urlController.text.isEmpty
+                                                ? '—'
+                                                : e.urlController.text,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium,
+                                          ),
+                                        ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                         if (canEdit)
                           IconButton(
