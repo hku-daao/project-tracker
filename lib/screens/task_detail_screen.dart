@@ -737,6 +737,40 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     return '—';
   }
 
+  /// Priority · status · Start · Due; due date value is red when overdue (HK calendar).
+  Widget _buildSubtaskMetaLine(BuildContext context, SingularSubtask s) {
+    final theme = Theme.of(context);
+    final baseStyle = theme.textTheme.bodyMedium;
+    final prefix = '${priorityToDisplayName(s.priority)} · ${s.status}';
+    final startPart = s.startDate != null
+        ? ' · Start ${DateFormat('yyyy-MM-dd').format(s.startDate!)}'
+        : '';
+    if (s.dueDate == null) {
+      return Text('$prefix$startPart');
+    }
+    final dueDay = DateTime(s.dueDate!.year, s.dueDate!.month, s.dueDate!.day);
+    final st = s.status.trim().toLowerCase();
+    final blocked = st == 'completed' || st == 'deleted';
+    final overdue =
+        !blocked && HkTime.todayDateOnlyHk().isAfter(dueDay);
+    final dueStr = DateFormat('yyyy-MM-dd').format(s.dueDate!);
+    if (!overdue) {
+      return Text('$prefix$startPart · Due $dueStr');
+    }
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          TextSpan(text: '$prefix$startPart · Due '),
+          TextSpan(
+            text: dueStr,
+            style: baseStyle?.copyWith(color: Colors.red),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _normalizeLocalStatus(String? db) {
     if (db == null || db.trim().isEmpty) return 'Incomplete';
     final l = db.trim().toLowerCase();
@@ -2461,10 +2495,6 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                       );
                             final showOverPreset =
                                 (s.changeDueReason ?? '').trim().isNotEmpty;
-                            final metaLine =
-                                '${priorityToDisplayName(s.priority)} · ${s.status}'
-                                '${s.startDate != null ? ' · Start ${DateFormat('yyyy-MM-dd').format(s.startDate!)}' : ''}'
-                                '${s.dueDate != null ? ' · Due ${DateFormat('yyyy-MM-dd').format(s.dueDate!)}' : ''}';
                             return Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
@@ -2535,7 +2565,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     ),
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
-                                      child: Text(metaLine),
+                                      child: _buildSubtaskMetaLine(context, s),
                                     ),
                                   ],
                                 ),

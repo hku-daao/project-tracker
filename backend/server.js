@@ -12,11 +12,13 @@ const MAILGUN_NOTIFICATION_FROM =
   (process.env.MAILGUN_NOTIFICATION_FROM || '').trim() ||
   'no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org';
 /** Public web app origin for task links in emails (no trailing slash). */
-const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
+const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
 /** Marketing / landing URL for “Project Tracker” link in comment emails (no trailing slash). */
 const PROJECT_TRACKER_LANDING_URL = (
-  process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai'
+  process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk'
 ).trim().replace(/\/$/, '');
+/** Same base as [PROJECT_TRACKER_LANDING_URL] with trailing slash (overdue email templates). */
+const OVERDUE_REMINDER_LANDING_HREF = `${PROJECT_TRACKER_LANDING_URL}/`;
 
 /**
  * Flutter web deep link: hash query survives many email clients better than `?subtask=` alone.
@@ -24,7 +26,7 @@ const PROJECT_TRACKER_LANDING_URL = (
  */
 function subtaskWebAppUrl(subtaskId) {
   const id = String(subtaskId || '').trim();
-  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku-ia.ai').trim().replace(/\/$/, '');
+  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
   return `${base}/#/?subtask=${encodeURIComponent(id)}`;
 }
 
@@ -53,6 +55,7 @@ const DEFAULT_CORS_ORIGINS = [
   'https://daao-a20c6.web.app',
   'https://testprojectmanagementtracking.firebaseapp.com',
   'https://projecttrackertest.hku-ia.ai',
+  'https://projecttracker.hku.hk',
   'https://projecttracker.hku-ia.ai',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -968,7 +971,7 @@ function buildUrgentTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have an <b>upcoming</b> task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -991,7 +994,7 @@ function buildDueTodayTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) 
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have a task <b>due today</b><br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -1049,13 +1052,119 @@ function buildCreatorDueTodaySubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. There is a sub-task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
 Due Date: ${safeDue}<br><br>
 <a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
   const text = `Hi ${displayName}. There is a sub-task due.
+
+${subtaskName}
+${subtaskUrl}
+
+Due Date: ${dueYmd}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
+/** Overdue (HK) — task creator. Due date in red; “Project Tracker” → fixed HKU landing URL. */
+function buildCreatorOverdueTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
+  const safeName = escapeHtml(displayName);
+  const safeTitle = escapeHtml(taskName);
+  const safeUrl = escapeHtml(taskUrl);
+  const safeDue = escapeHtml(dueYmd);
+  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const safeLanding = escapeHtml(landing);
+  const html = `Hi ${safeName}. There is a task overdue.<br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: <span style="color:red;">${safeDue}</span><br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${displayName}. There is a task overdue.
+
+${taskName}
+${taskUrl}
+
+Due Date: ${dueYmd}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
+/** Overdue (HK) — task assignees. */
+function buildAssigneeOverdueTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
+  const safeName = escapeHtml(displayName);
+  const safeTitle = escapeHtml(taskName);
+  const safeUrl = escapeHtml(taskUrl);
+  const safeDue = escapeHtml(dueYmd);
+  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const safeLanding = escapeHtml(landing);
+  const html = `Hi ${safeName}. You have a task <b>overdue</b><br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: <span style="color:red;">${safeDue}</span><br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${displayName}. You have a task overdue.
+
+${taskName}
+${taskUrl}
+
+Due Date: ${dueYmd}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
+/** Overdue (HK) — sub-task creator. */
+function buildCreatorOverdueSubtaskReminderEmail(
+  displayName,
+  subtaskName,
+  subtaskUrl,
+  dueYmd,
+) {
+  const safeName = escapeHtml(displayName);
+  const safeTitle = escapeHtml(subtaskName);
+  const safeUrl = escapeHtml(subtaskUrl);
+  const safeDue = escapeHtml(dueYmd);
+  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const safeLanding = escapeHtml(landing);
+  const html = `Hi ${safeName}. There is a sub-task overdue.<br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: <span style="color:red;">${safeDue}</span><br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${displayName}. There is a sub-task overdue.
+
+${subtaskName}
+${subtaskUrl}
+
+Due Date: ${dueYmd}
+
+Project Tracker
+${landing}`;
+  return { html, text };
+}
+
+/** Overdue (HK) — sub-task assignees. */
+function buildAssigneeOverdueSubtaskReminderEmail(
+  displayName,
+  subtaskName,
+  subtaskUrl,
+  dueYmd,
+) {
+  const safeName = escapeHtml(displayName);
+  const safeTitle = escapeHtml(subtaskName);
+  const safeUrl = escapeHtml(subtaskUrl);
+  const safeDue = escapeHtml(dueYmd);
+  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const safeLanding = escapeHtml(landing);
+  const html = `Hi ${safeName}. You have a sub-task <b>overdue</b><br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: <span style="color:red;">${safeDue}</span><br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${displayName}. You have a sub-task overdue.
 
 ${subtaskName}
 ${subtaskUrl}
@@ -1104,7 +1213,7 @@ function buildCreatorUrgentSubtaskReminderEmail(displayName, subtaskName, subtas
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}.<br><br>
 There is an <b>upcoming</b> sub-task due.<br><br>
@@ -1138,7 +1247,7 @@ function buildAssigneeUrgentSubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have an <b>upcoming</b> sub-task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -1169,7 +1278,7 @@ function buildAssigneeDueTodaySubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku-ia.ai').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have a sub-task <b>due today</b><br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -2263,6 +2372,507 @@ async function runCreatorDueTodaySubtaskReminderJob() {
   return summary;
 }
 
+/**
+ * HK calendar: today > due_date. CreatorOverdueReminder → task.create_by (not when create_by = assignee_01).
+ */
+async function runCreatorOverdueTaskReminderJob() {
+  const todayYmd = hkTodayYyyyMmDd();
+  const summary = {
+    todayHk: todayYmd,
+    scanned: 0,
+    eligible: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    tasksUpdatedAfterSend: 0,
+    errors: [],
+  };
+  if (!supabase) {
+    summary.errors.push('Supabase not configured');
+    return summary;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    summary.errors.push('Mailgun not configured');
+    return summary;
+  }
+
+  const { data: tasks, error: qErr } = await supabase
+    .from('task')
+    .select('*')
+    .not('due_date', 'is', null);
+
+  if (qErr) {
+    summary.errors.push(qErr.message || String(qErr));
+    return summary;
+  }
+
+  const list = tasks || [];
+  summary.scanned = list.length;
+
+  for (const taskRow of list) {
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
+
+    const lastCreator = taskRow.creator_overdue_reminder_last_sent_on;
+    const lastCreatorStr =
+      lastCreator == null || lastCreator === ''
+        ? null
+        : String(lastCreator).trim().slice(0, 10);
+    if (lastCreatorStr === todayYmd) {
+      continue;
+    }
+
+    const taskId = String(taskRow.id || '').trim();
+    const creatorId = (taskRow.create_by || '').toString().trim();
+    if (!creatorId) {
+      continue;
+    }
+
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
+      supabase,
+      creatorId,
+    );
+    if (staffErr) {
+      summary.errors.push(`creator overdue staff lookup ${taskId}: ${staffErr.message}`);
+      continue;
+    }
+    if (!staffRow) {
+      summary.errors.push(
+        `creator staff not found for task ${taskId} (create_by=${creatorId}; try staff.id or staff.app_id)`,
+      );
+      continue;
+    }
+    const resolvedCreatorStaffId = String(staffRow.id || '').trim();
+    const assignee01 = (taskRow.assignee_01 || '').toString().trim();
+    if (
+      assignee01 &&
+      resolvedCreatorStaffId.toLowerCase() === assignee01.toLowerCase()
+    ) {
+      continue;
+    }
+
+    summary.eligible += 1;
+    const taskName = String(taskRow.task_name || '').trim() || '(no title)';
+    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
+    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    if (!to) {
+      summary.errors.push(
+        `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId}; set staff.email or link app_users.email)`,
+      );
+      continue;
+    }
+    const displayName =
+      (staffRow.display_name || '').trim() ||
+      (staffRow.name || '').trim() ||
+      to;
+
+    const { html, text } = buildCreatorOverdueTaskReminderEmail(
+      displayName,
+      taskName,
+      taskUrl,
+      dueYmd,
+    );
+    const r = await sendMailgun({
+      to,
+      subject: mailSubjectSingleLine('A task overdue'),
+      text,
+      html,
+      from: MAILGUN_NOTIFICATION_FROM,
+    });
+    summary.emailsAttempted += 1;
+    if (r.ok) summary.emailsOk += 1;
+    else {
+      summary.errors.push(
+        `Mailgun creator overdue task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+      );
+      continue;
+    }
+
+    const { error: uErr } = await supabase
+      .from('task')
+      .update({ creator_overdue_reminder_last_sent_on: todayYmd })
+      .eq('id', taskId);
+    if (uErr) {
+      summary.errors.push(`creator overdue update ${taskId}: ${uErr.message}`);
+    } else {
+      summary.tasksUpdatedAfterSend += 1;
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * HK calendar: today > due_date. AssigneeOverdueReminder → each non-empty assignee_01..10 (per slot / day).
+ */
+async function runAssigneeOverdueTaskReminderJob() {
+  const todayYmd = hkTodayYyyyMmDd();
+  const summary = {
+    todayHk: todayYmd,
+    scanned: 0,
+    eligible: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    tasksUpdatedAfterSend: 0,
+    errors: [],
+  };
+  if (!supabase) {
+    summary.errors.push('Supabase not configured');
+    return summary;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    summary.errors.push('Mailgun not configured');
+    return summary;
+  }
+
+  const { data: tasks, error: qErr } = await supabase
+    .from('task')
+    .select('*')
+    .not('due_date', 'is', null);
+
+  if (qErr) {
+    summary.errors.push(qErr.message || String(qErr));
+    return summary;
+  }
+
+  const list = tasks || [];
+  summary.scanned = list.length;
+
+  for (const taskRow of list) {
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
+
+    const taskId = String(taskRow.id || '').trim();
+    const taskName = String(taskRow.task_name || '').trim() || '(no title)';
+    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
+
+    let anySlotThisTask = false;
+    for (let slot = 1; slot <= 10; slot++) {
+      const assigneeKey = `assignee_${String(slot).padStart(2, '0')}`;
+      const sentCol = `${assigneeKey}_overdue_reminder_last_sent_on`;
+      const staffId = (taskRow[assigneeKey] || '').toString().trim();
+      if (!staffId) continue;
+
+      const lastSent = taskRow[sentCol];
+      const lastStr =
+        lastSent == null || lastSent === ''
+          ? null
+          : String(lastSent).trim().slice(0, 10);
+      if (lastStr === todayYmd) continue;
+
+      if (!anySlotThisTask) {
+        summary.eligible += 1;
+        anySlotThisTask = true;
+      }
+
+      const { data: staffRow } = await supabase
+        .from('staff')
+        .select('id, email, name, display_name')
+        .eq('id', staffId)
+        .maybeSingle();
+      if (!staffRow) {
+        summary.errors.push(`assignee overdue staff not found (task ${taskId}, ${assigneeKey})`);
+        continue;
+      }
+      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      if (!to) {
+        summary.errors.push(
+          `assignee has no email (task ${taskId}, ${assigneeKey}, staff.id=${staffId})`,
+        );
+        continue;
+      }
+      const displayName =
+        (staffRow.display_name || '').trim() ||
+        (staffRow.name || '').trim() ||
+        to;
+
+      const { html, text } = buildAssigneeOverdueTaskReminderEmail(
+        displayName,
+        taskName,
+        taskUrl,
+        dueYmd,
+      );
+      const r = await sendMailgun({
+        to,
+        subject: mailSubjectSingleLine('You have tasks overdue'),
+        text,
+        html,
+        from: MAILGUN_NOTIFICATION_FROM,
+      });
+      summary.emailsAttempted += 1;
+      if (r.ok) summary.emailsOk += 1;
+      else {
+        summary.errors.push(
+          `Mailgun assignee overdue task=${taskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        );
+        continue;
+      }
+
+      const { error: uErr } = await supabase
+        .from('task')
+        .update({ [sentCol]: todayYmd })
+        .eq('id', taskId);
+      if (uErr) {
+        summary.errors.push(`assignee overdue update ${taskId} ${sentCol}: ${uErr.message}`);
+      } else {
+        summary.tasksUpdatedAfterSend += 1;
+      }
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * HK calendar: today > subtask.due_date. Subtask_CreatorOverdueReminder → subtask.create_by (skip if = assignee_01).
+ */
+async function runCreatorOverdueSubtaskReminderJob() {
+  const todayYmd = hkTodayYyyyMmDd();
+  const summary = {
+    todayHk: todayYmd,
+    scanned: 0,
+    eligible: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    subtasksUpdatedAfterSend: 0,
+    errors: [],
+  };
+  if (!supabase) {
+    summary.errors.push('Supabase not configured');
+    return summary;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    summary.errors.push('Mailgun not configured');
+    return summary;
+  }
+
+  const { data: subtasks, error: qErr } = await supabase
+    .from('subtask')
+    .select('*')
+    .not('due_date', 'is', null);
+
+  if (qErr) {
+    summary.errors.push(qErr.message || String(qErr));
+    return summary;
+  }
+
+  const list = subtasks || [];
+  summary.scanned = list.length;
+
+  for (const row of list) {
+    if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
+
+    const lastCreator = row.subtask_creator_overdue_reminder_last_sent_on;
+    const lastCreatorStr =
+      lastCreator == null || lastCreator === ''
+        ? null
+        : String(lastCreator).trim().slice(0, 10);
+    if (lastCreatorStr === todayYmd) {
+      continue;
+    }
+
+    const subtaskId = String(row.id || '').trim();
+    const creatorId = (row.create_by || '').toString().trim();
+    if (!creatorId) {
+      continue;
+    }
+
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(supabase, creatorId);
+    if (staffErr) {
+      summary.errors.push(`subtask creator overdue staff lookup ${subtaskId}: ${staffErr.message}`);
+      continue;
+    }
+    if (!staffRow) {
+      summary.errors.push(
+        `creator staff not found for subtask ${subtaskId} (create_by=${creatorId})`,
+      );
+      continue;
+    }
+    const resolvedCreatorStaffId = String(staffRow.id || '').trim();
+    const assignee01 = (row.assignee_01 || '').toString().trim();
+    if (
+      assignee01 &&
+      resolvedCreatorStaffId.toLowerCase() === assignee01.toLowerCase()
+    ) {
+      continue;
+    }
+
+    summary.eligible += 1;
+    const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
+    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    if (!to) {
+      summary.errors.push(
+        `subtask creator has no email (subtask ${subtaskId}, staff.id=${resolvedCreatorStaffId})`,
+      );
+      continue;
+    }
+    const displayName =
+      (staffRow.display_name || '').trim() ||
+      (staffRow.name || '').trim() ||
+      to;
+
+    const { html, text } = buildCreatorOverdueSubtaskReminderEmail(
+      displayName,
+      subtaskName,
+      subtaskUrl,
+      dueYmd,
+    );
+    const r = await sendMailgun({
+      to,
+      subject: mailSubjectSingleLine('A sub-task overdue'),
+      text,
+      html,
+      from: MAILGUN_NOTIFICATION_FROM,
+    });
+    summary.emailsAttempted += 1;
+    if (r.ok) summary.emailsOk += 1;
+    else {
+      summary.errors.push(
+        `Mailgun subtask creator overdue subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+      );
+      continue;
+    }
+
+    const { error: uErr } = await supabase
+      .from('subtask')
+      .update({ subtask_creator_overdue_reminder_last_sent_on: todayYmd })
+      .eq('id', subtaskId);
+    if (uErr) {
+      summary.errors.push(`subtask creator overdue update ${subtaskId}: ${uErr.message}`);
+    } else {
+      summary.subtasksUpdatedAfterSend += 1;
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * HK calendar: today > subtask.due_date. Subtask_AssigneeOverdueReminder → each assignee slot (per slot / day).
+ */
+async function runAssigneeOverdueSubtaskReminderJob() {
+  const todayYmd = hkTodayYyyyMmDd();
+  const summary = {
+    todayHk: todayYmd,
+    scanned: 0,
+    eligible: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    subtasksUpdatedAfterSend: 0,
+    errors: [],
+  };
+  if (!supabase) {
+    summary.errors.push('Supabase not configured');
+    return summary;
+  }
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    summary.errors.push('Mailgun not configured');
+    return summary;
+  }
+
+  const { data: subtasks, error: qErr } = await supabase
+    .from('subtask')
+    .select('*')
+    .not('due_date', 'is', null);
+
+  if (qErr) {
+    summary.errors.push(qErr.message || String(qErr));
+    return summary;
+  }
+
+  const list = subtasks || [];
+  summary.scanned = list.length;
+
+  for (const row of list) {
+    if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
+
+    const subtaskId = String(row.id || '').trim();
+    const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
+    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
+
+    let anySlotThisRow = false;
+    for (let slot = 1; slot <= 10; slot++) {
+      const assigneeKey = `assignee_${String(slot).padStart(2, '0')}`;
+      const sentCol = `${assigneeKey}_overdue_reminder_last_sent_on`;
+      const staffId = (row[assigneeKey] || '').toString().trim();
+      if (!staffId) continue;
+
+      const lastSent = row[sentCol];
+      const lastStr =
+        lastSent == null || lastSent === ''
+          ? null
+          : String(lastSent).trim().slice(0, 10);
+      if (lastStr === todayYmd) continue;
+
+      if (!anySlotThisRow) {
+        summary.eligible += 1;
+        anySlotThisRow = true;
+      }
+
+      const { data: staffRow } = await supabase
+        .from('staff')
+        .select('id, email, name, display_name')
+        .eq('id', staffId)
+        .maybeSingle();
+      if (!staffRow) {
+        summary.errors.push(`subtask assignee overdue staff not found (subtask ${subtaskId}, ${assigneeKey})`);
+        continue;
+      }
+      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      if (!to) {
+        summary.errors.push(
+          `subtask assignee has no email (subtask ${subtaskId}, ${assigneeKey}, staff.id=${staffId})`,
+        );
+        continue;
+      }
+      const displayName =
+        (staffRow.display_name || '').trim() ||
+        (staffRow.name || '').trim() ||
+        to;
+
+      const { html, text } = buildAssigneeOverdueSubtaskReminderEmail(
+        displayName,
+        subtaskName,
+        subtaskUrl,
+        dueYmd,
+      );
+      const r = await sendMailgun({
+        to,
+        subject: mailSubjectSingleLine('You have sub-tasks overdue'),
+        text,
+        html,
+        from: MAILGUN_NOTIFICATION_FROM,
+      });
+      summary.emailsAttempted += 1;
+      if (r.ok) summary.emailsOk += 1;
+      else {
+        summary.errors.push(
+          `Mailgun subtask assignee overdue subtask=${subtaskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        );
+        continue;
+      }
+
+      const { error: uErr } = await supabase
+        .from('subtask')
+        .update({ [sentCol]: todayYmd })
+        .eq('id', subtaskId);
+      if (uErr) {
+        summary.errors.push(`subtask assignee overdue update ${subtaskId} ${sentCol}: ${uErr.message}`);
+      } else {
+        summary.subtasksUpdatedAfterSend += 1;
+      }
+    }
+  }
+
+  return summary;
+}
+
 /** Returns true if the request was rejected (response already sent). */
 function cronUnauthorized(req, res) {
   if (!CRON_SECRET) {
@@ -2297,6 +2907,10 @@ async function handleCronUrgentTaskReminders(req, res) {
     const assigneeDueTodaySubtask = await runAssigneeDueTodaySubtaskReminderJob();
     const creatorDueToday = await runCreatorDueTodayReminderJob();
     const creatorDueTodaySubtask = await runCreatorDueTodaySubtaskReminderJob();
+    const creatorOverdue = await runCreatorOverdueTaskReminderJob();
+    const assigneeOverdue = await runAssigneeOverdueTaskReminderJob();
+    const creatorOverdueSubtask = await runCreatorOverdueSubtaskReminderJob();
+    const assigneeOverdueSubtask = await runAssigneeOverdueSubtaskReminderJob();
     sendJson(req, res, 200, {
       ok: true,
       urgent,
@@ -2307,6 +2921,10 @@ async function handleCronUrgentTaskReminders(req, res) {
       assigneeDueTodaySubtask,
       creatorDueToday,
       creatorDueTodaySubtask,
+      creatorOverdue,
+      assigneeOverdue,
+      creatorOverdueSubtask,
+      assigneeOverdueSubtask,
     });
   } catch (e) {
     console.error('handleCronUrgentTaskReminders:', e);
@@ -2787,7 +3405,7 @@ async function handleNotifyTaskUpdated(req, res) {
     const subject = `Task updated - ${taskTitleForSubject}`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const updatedAtLine = formatUpdateDateTimeYmdHm(taskRow.update_date);
-    const landing = 'https://projecttracker.hku-ia.ai/';
+    const landing = 'https://projecttracker.hku.hk/';
     const safeLandingHref = escapeHtml(landing);
     const safeTaskUrlAttr = escapeHtml(taskUrl);
     const safeTitle = escapeHtml(taskName);
@@ -2947,7 +3565,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     const subject = `Sub-task updated - ${taskTitleForSubject}`;
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const updatedAtLine = formatUpdateDateTimeYmdHm(row.update_date);
-    const landing = 'https://projecttracker.hku-ia.ai/';
+    const landing = 'https://projecttracker.hku.hk/';
     const safeLandingHref = escapeHtml(landing);
     const safeSubtaskUrlAttr = escapeHtml(subtaskUrl);
     const safeSubtaskNameForLink = escapeHtml(subtaskTitle);
@@ -3855,12 +4473,16 @@ server.listen(PORT, () => {
           .then(() => runAssigneeDueTodaySubtaskReminderJob())
           .then(() => runCreatorDueTodayReminderJob())
           .then(() => runCreatorDueTodaySubtaskReminderJob())
+          .then(() => runCreatorOverdueTaskReminderJob())
+          .then(() => runAssigneeOverdueTaskReminderJob())
+          .then(() => runCreatorOverdueSubtaskReminderJob())
+          .then(() => runAssigneeOverdueSubtaskReminderJob())
           .catch((e) => console.error('daily task-reminder cron:', e));
       },
       { timezone: 'Asia/Hong_Kong' },
     );
     console.log(
-      'Task reminders: urgent assignees + urgent task/sub-task creators (80%) + due-today (assignees + task/sub-task creators) daily at 09:00 Asia/Hong_Kong (DISABLE_INTERNAL_URGENT_CRON=true to turn off)',
+      'Task reminders: urgent (80%) + due-today + overdue (task/sub-task creators + assignees) daily at 09:00 Asia/Hong_Kong (DISABLE_INTERNAL_URGENT_CRON=true to turn off)',
     );
   }
 });
