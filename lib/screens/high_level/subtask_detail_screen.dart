@@ -129,6 +129,16 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     return null;
   }
 
+  bool _subtaskAttachmentPayloadHasNonEmptyRow() {
+    for (final p in _subtaskAttachmentPayload()) {
+      if (p.content?.trim().isNotEmpty == true ||
+          p.description?.trim().isNotEmpty == true) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool _canEditSubtaskAttachments(AppState state, SingularSubtask st) =>
       _isCreator(state, st) || _isPic(state, st) || _isAssignee(state, st);
 
@@ -289,49 +299,39 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     return _uuidEq(_myStaffUuid, id);
   }
 
+  /// [onTap] null = read-only (same visuals as creator, no interaction).
   Widget _priorityToggleButton({
     required String label,
     required bool selected,
-    required VoidCallback onTap,
-    bool enabled = true,
+    VoidCallback? onTap,
   }) {
-    return Expanded(
-      child: Opacity(
-        opacity: enabled ? 1.0 : 0.45,
-        child: Material(
-          color: selected ? _selGreen : Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            onTap: enabled
-                ? onTap
-                : () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'You do not have permission for this action.',
-                        ),
-                      ),
-                    );
-                  },
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _selGreen, width: 1.5),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: selected ? Colors.white : Colors.black87,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
+    final inner = Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _selGreen, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 16,
+          color: selected ? Colors.white : Colors.black87,
+          fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+    return Expanded(
+      child: Material(
+        color: selected ? _selGreen : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        child: onTap != null
+            ? InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(8),
+                child: inner,
+              )
+            : inner,
       ),
     );
   }
@@ -501,6 +501,32 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         return;
       }
       if (canPic && multiTaskAssignees && !picDirty) {
+        if (_canEditSubtaskAttachments(state, st) &&
+            _subtaskAttachmentPayloadHasNonEmptyRow()) {
+          setState(() => _saving = true);
+          try {
+            final errA = await SupabaseService.replaceSubtaskAttachments(
+              subtaskId: st.id,
+              rows: _subtaskAttachmentPayload(),
+            );
+            if (!mounted) return;
+            if (errA != null) {
+              showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+              return;
+            }
+            await _load(rebindAttachments: false);
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Attachments saved'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          } finally {
+            if (mounted) setState(() => _saving = false);
+          }
+          return;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('No changes to save'),
@@ -510,24 +536,40 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       }
       return;
     }
-    if (_editStart != null &&
-        _editDue != null &&
-        DateTime(_editDue!.year, _editDue!.month, _editDue!.day)
-            .isBefore(DateTime(_editStart!.year, _editStart!.month, _editStart!.day))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Due date cannot be before start date'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
     final picKey =
         picDirty && _picEditKey != null && parent.assigneeIds.contains(_picEditKey!)
         ? _picEditKey
         : null;
     setState(() => _saving = true);
     try {
+      final errA = await SupabaseService.replaceSubtaskAttachments(
+        subtaskId: st.id,
+        rows: _subtaskAttachmentPayload(),
+      );
+      if (!mounted) return;
+      if (errA != null) {
+        showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
+        return;
+      }
+      if (_editStart != null &&
+          _editDue != null &&
+          DateTime(_editDue!.year, _editDue!.month, _editDue!.day).isBefore(
+            DateTime(
+              _editStart!.year,
+              _editStart!.month,
+              _editStart!.day,
+            ),
+          )) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Due date cannot be before start date'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
       final err = await SupabaseService.updateSubtaskRow(
         subtaskId: st.id,
         subtaskName: _nameController.text.trim(),
@@ -543,15 +585,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       if (!mounted) return;
       if (err != null) {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
-        return;
-      }
-      final errA = await SupabaseService.replaceSubtaskAttachments(
-        subtaskId: st.id,
-        rows: _subtaskAttachmentPayload(),
-      );
-      if (!mounted) return;
-      if (errA != null) {
-        showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
         return;
       }
       await _notifySubtaskUpdatedEmail(st.id);
@@ -1154,41 +1187,42 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                             ),
                           ),
                         const SizedBox(height: 12),
-                        if (creator) ...[
-                          Text(
-                            'Priority',
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              _priorityToggleButton(
-                                label: 'Standard',
-                                selected: _editPriority == priorityStandard,
-                                enabled: !_saving,
-                                onTap: () => setState(
-                                  () => _editPriority = priorityStandard,
-                                ),
+                        Text(
+                          'Priority',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(
+                                fontWeight: FontWeight.w600,
                               ),
-                              const SizedBox(width: 12),
-                              _priorityToggleButton(
-                                label: 'URGENT',
-                                selected: _editPriority == priorityUrgent,
-                                enabled: !_saving,
-                                onTap: () =>
-                                    setState(() => _editPriority = priorityUrgent),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                        ] else
-                          Text(
-                            'Priority: ${priorityToDisplayName(st.priority)}',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            _priorityToggleButton(
+                              label: 'Standard',
+                              selected: creator
+                                  ? (_editPriority == priorityStandard)
+                                  : (st.priority == priorityStandard),
+                              onTap: creator && !_saving
+                                  ? () => setState(
+                                        () => _editPriority = priorityStandard,
+                                      )
+                                  : null,
+                            ),
+                            const SizedBox(width: 12),
+                            _priorityToggleButton(
+                              label: 'URGENT',
+                              selected: creator
+                                  ? (_editPriority == priorityUrgent)
+                                  : (st.priority == priorityUrgent),
+                              onTap: creator && !_saving
+                                  ? () => setState(
+                                        () => _editPriority = priorityUrgent,
+                                      )
+                                  : null,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
                         if (creator) ...[
                           Row(
                             children: [
@@ -1450,9 +1484,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               !(canSetPic && multiTaskAssignees))
                       ? null
                       : () async {
-                          if (creator || (canSetPic && multiTaskAssignees)) {
-                            await _saveMetadata(state, st);
-                          }
+                          await _saveMetadata(state, st);
                           if ((assignee || creator) &&
                               _commentController.text.trim().isNotEmpty) {
                             await _postComment(state, st);
