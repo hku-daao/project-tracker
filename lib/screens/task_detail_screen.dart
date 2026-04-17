@@ -2365,17 +2365,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       else
                         ..._subtasks.map(
                           (s) {
-                            final assigneeNames = s.assigneeIds
-                                .map(
-                                  (id) =>
-                                      state.assigneeById(id)?.name ?? id,
-                                )
-                                .join(', ');
-                            final picLine = s.pic != null &&
-                                    s.pic!.trim().isNotEmpty
-                                ? (state.assigneeById(s.pic!)?.name ??
-                                    s.pic!.trim())
-                                : '—';
+                            final assigneeNamesLine = s.assigneeNamesDisplayLine(
+                              (id) => state.assigneeById(id)?.name ?? id,
+                            );
+                            final picLine = s.picDisplayName(
+                              (id) => state.assigneeById(id)?.name ?? id,
+                            );
                             final subTag =
                                 (s.submission?.trim().toLowerCase() ==
                                         'pending')
@@ -2416,7 +2411,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                         bottom: 4,
                                       ),
                                       child: Text(
-                                        'Assignee(s): ${assigneeNames.isNotEmpty ? assigneeNames : "—"}',
+                                        'Assignee(s): $assigneeNamesLine',
                                         style: Theme.of(context)
                                             .textTheme
                                             .bodySmall
@@ -2425,21 +2420,20 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                             ),
                                       ),
                                     ),
-                                    if (s.assigneeIds.length != 1)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 4,
-                                        ),
-                                        child: Text(
-                                          'PIC: $picLine',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                        ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 4,
                                       ),
+                                      child: Text(
+                                        'PIC: $picLine',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                      ),
+                                    ),
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
                                       child: Text(metaLine),

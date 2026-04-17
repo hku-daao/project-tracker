@@ -322,6 +322,7 @@ class _HomePageView extends StatefulWidget {
 class _HomePageViewState extends State<_HomePageView>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  late final AppState _appState;
   int _lastStableTabIndex = 0;
   bool _leaveDraftDialogOpen = false;
 
@@ -335,9 +336,20 @@ class _HomePageViewState extends State<_HomePageView>
     CreateTaskScreen(key: PageStorageKey<String>('home_create_task')),
   ];
 
+  void _onAppStateForTasksTab() {
+    if (!mounted) return;
+    if (_appState.takeSwitchToTasksTabPending()) {
+      if (_tabController.index != 0) {
+        _tabController.animateTo(0);
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _appState = context.read<AppState>();
+    _appState.addListener(_onAppStateForTasksTab);
     _tabController = TabController(length: 2, vsync: this);
     _lastStableTabIndex = _tabController.index;
     _tabController.addListener(_onTabControllerChanged);
@@ -372,6 +384,7 @@ class _HomePageViewState extends State<_HomePageView>
 
   @override
   void dispose() {
+    _appState.removeListener(_onAppStateForTasksTab);
     _tabController.removeListener(_onTabControllerChanged);
     _tabController.dispose();
     super.dispose();

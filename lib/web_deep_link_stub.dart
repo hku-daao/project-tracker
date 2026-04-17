@@ -1,5 +1,7 @@
 void captureWebDeepLinkForSession() {}
 
+(String?, String?) readDeepLinkIdsFromUrlOrHash() => (null, null);
+
 String? readSubtaskIdFromUrlOrSession() => null;
 
 String? readTaskIdFromUrlOrSession() => null;
@@ -17,3 +19,5 @@ void clearWebTaskDetailFromLocation() {}
 void syncWebLocationForSubtaskDetail(String subtaskId) {}
 
 void clearWebSubtaskDetailFromLocation({String? parentTaskId}) {}
+
+void syncWebLocationForLanding() {}

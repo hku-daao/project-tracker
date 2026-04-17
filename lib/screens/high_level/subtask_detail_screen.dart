@@ -258,19 +258,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   bool _canEditSubtaskPic(AppState state, SingularSubtask st, Task parent) =>
       _isCreator(state, st) || _isParentTaskCreator(state, parent);
 
-  String _subtaskAssigneeLine(AppState state, SingularSubtask st) {
-    if (st.assigneeIds.isEmpty) return '—';
-    return st.assigneeIds
-        .map((id) => state.assigneeById(id)?.name ?? id)
-        .join(', ');
-  }
-
-  String _picDisplayName(AppState state, SingularSubtask st) {
-    final p = st.pic?.trim();
-    if (p == null || p.isEmpty) return '—';
-    return state.assigneeById(p)?.name ?? p;
-  }
-
   bool _picEditIsDirty(Task parent) {
     if (parent.assigneeIds.length <= 1) return false;
     final a = _picAssigneeKeyResolved?.trim() ?? '';
@@ -1063,7 +1050,16 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Sub-task assignee(s): ${_subtaskAssigneeLine(state, st)}',
+                          'Sub-task assignee(s): ${st.assigneeNamesDisplayLine(
+                            (id) => state.assigneeById(id)?.name ?? id,
+                          )}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'PIC: ${st.picDisplayName(
+                            (id) => state.assigneeById(id)?.name ?? id,
+                          )}',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                         if (showPicDropdown) ...[
@@ -1091,12 +1087,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                       setState(() => _picEditKey = v);
                                     }
                                   },
-                          ),
-                        ] else if (st.assigneeIds.length > 1) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'PIC: ${_picDisplayName(state, st)}',
-                            style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
                         if (canSetPic && parent.assigneeIds.isEmpty) ...[

@@ -254,6 +254,22 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     return context.read<AppState>().getAssigneesForTeams(_selectedTeamIds.toList());
   }
 
+  Future<void> _reloadTasksAfterCreate() async {
+    if (!SupabaseConfig.isConfigured) return;
+    try {
+      final data = await SupabaseService.fetchTasksFromSupabase();
+      if (!mounted) return;
+      context.read<AppState>().applyTasksFromSupabase(
+            data ?? TasksLoadResult.empty,
+          );
+      final deleted = await SupabaseService.fetchDeletedTasksFromSupabase();
+      if (!mounted) return;
+      context.read<AppState>().applyDeletedTasksFromSupabase(deleted);
+    } catch (e, st) {
+      debugPrint('reload tasks after create: $e\n$st');
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_endDate == null) {
@@ -499,6 +515,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         backgroundColor: Colors.blue,
         duration: const Duration(seconds: 10),
       );
+      if (mounted) context.read<AppState>().requestSwitchToTasksTab();
     } else if (cloudErr != null) {
       showCopyableSnackBar(
         context,
@@ -514,6 +531,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
           duration: Duration(seconds: 4),
         ),
       );
+      await _reloadTasksAfterCreate();
+      if (mounted) context.read<AppState>().requestSwitchToTasksTab();
     }
     } finally {
       if (mounted) setState(() => _submitting = false);

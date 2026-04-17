@@ -35,6 +35,10 @@ void captureWebDeepLinkForSession() {
   }
 }
 
+/// Task / subtask ids from the address bar (path, query, hash) — **not** session storage.
+/// Used on startup so a full refresh on the landing page does not reopen detail from stale session.
+(String?, String?) readDeepLinkIdsFromUrlOrHash() => _idsFromLocation();
+
 (String?, String?) _idsFromLocation() {
   final href = html.window.location.href;
   final uri = Uri.parse(href);
@@ -124,6 +128,16 @@ void clearWebSubtaskDetailFromLocation({String? parentTaskId}) {
   if (p != null && p.isNotEmpty) {
     syncWebLocationForTaskDetail(p);
   }
+}
+
+/// Clears task/subtask ids from URL and session so a refresh on the landing page stays on home.
+void syncWebLocationForLanding() {
+  html.window.sessionStorage.remove(_kTaskKey);
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  _replaceQueryParams((q) {
+    q.remove('task');
+    q.remove('subtask');
+  });
 }
 
 /// Updates either path `?query` or hash `#/path?query` so [readTaskIdFromUrlOrSession] /

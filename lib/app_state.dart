@@ -109,6 +109,21 @@ class AppState extends ChangeNotifier {
   bool get hasCreateTaskUnsavedDraft =>
       _createTaskHasUnsavedDraft?.call() ?? false;
 
+  /// Set by [CreateTaskScreen] after a successful save; [HomeScreen] consumes to switch to Tasks tab.
+  bool _switchToTasksTabPending = false;
+
+  void requestSwitchToTasksTab() {
+    _switchToTasksTabPending = true;
+    notifyListeners();
+  }
+
+  /// Returns true once, then clears the pending flag.
+  bool takeSwitchToTasksTabPending() {
+    if (!_switchToTasksTabPending) return false;
+    _switchToTasksTabPending = false;
+    return true;
+  }
+
   /// Set by [CreateSubtaskScreen] while mounted; used for optional global draft checks.
   bool Function()? _createSubtaskHasUnsavedDraft;
 

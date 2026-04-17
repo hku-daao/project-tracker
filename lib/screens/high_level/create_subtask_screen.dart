@@ -55,7 +55,6 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
   late DateTime _anchorStartDate;
   late DateTime _startDate;
   DateTime? _endDate;
-  String? _selectedAssigneeKey;
   String? _picKey;
   bool _submitting = false;
 
@@ -75,11 +74,14 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
       final task = context.read<AppState>().taskById(widget.taskId);
       if (task == null) return;
       final ids = task.assigneeIds;
+      if (ids.isEmpty) return;
+      final pic = task.pic?.trim();
+      final picInList =
+          pic != null && pic.isNotEmpty && ids.contains(pic) ? pic : null;
       if (ids.length == 1) {
-        setState(() {
-          _selectedAssigneeKey = ids.first;
-          _picKey = ids.first;
-        });
+        setState(() => _picKey = ids.first);
+      } else {
+        setState(() => _picKey = picInList ?? ids.first);
       }
     });
   }
@@ -139,21 +141,24 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
       return;
     }
     final assigneeIds = task.assigneeIds;
-    final assigneeKey = _selectedAssigneeKey ??
-        (assigneeIds.length == 1 ? assigneeIds.first : null) ??
-        _picKey;
-    if (assigneeKey == null || assigneeKey.isEmpty) {
+    if (assigneeIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Select an assignee'),
+          content: Text('Parent task has no assignees.'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
-    final picK = _picKey ?? assigneeKey;
-    if (!task.assigneeIds.contains(assigneeKey)) {
-      showCopyableSnackBar(context, 'Assignee must be a task assignee.');
+    final picK = _picKey ??
+        (assigneeIds.length == 1 ? assigneeIds.first : null);
+    if (picK == null || picK.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a Sub-task PIC'),
+          backgroundColor: Colors.orange,
+        ),
+      );
       return;
     }
     if (!task.assigneeIds.contains(picK)) {
@@ -172,24 +177,30 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     }
     setState(() => _submitting = true);
     try {
-      final assigneeUuid = await SupabaseService.staffRowIdForAssigneeKey(
-        assigneeKey,
-      );
+      final slots = <String?>[];
+      for (final aid in assigneeIds.take(10)) {
+        final u = await SupabaseService.staffRowIdForAssigneeKey(aid);
+        if (u == null || u.isEmpty) {
+          showCopyableSnackBar(
+            context,
+            'Could not resolve staff id for task assignee.',
+            backgroundColor: Colors.orange,
+          );
+          return;
+        }
+        slots.add(u);
+      }
+      while (slots.length < 10) {
+        slots.add(null);
+      }
       final picUuid = await SupabaseService.staffRowIdForAssigneeKey(picK);
-      if (assigneeUuid == null ||
-          assigneeUuid.isEmpty ||
-          picUuid == null ||
-          picUuid.isEmpty) {
+      if (picUuid == null || picUuid.isEmpty) {
         showCopyableSnackBar(
           context,
-          'Could not resolve staff id for assignee/PIC.',
+          'Could not resolve staff id for PIC.',
           backgroundColor: Colors.orange,
         );
         return;
-      }
-      final slots = <String?>[assigneeUuid];
-      while (slots.length < 10) {
-        slots.add(null);
       }
       final ins = await SupabaseService.insertSubtaskRow(
         taskId: widget.taskId,
@@ -305,9 +316,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                       const SizedBox(height: 16),
                       if (multi) ...[
                         DropdownButtonFormField<String>(
-                          value: _selectedAssigneeKey != null &&
-                                  assigneeIds.contains(_selectedAssigneeKey)
-                              ? _selectedAssigneeKey
+                          value: _picKey != null && assigneeIds.contains(_picKey)
+                              ? _picKey
                               : null,
                           decoration: const InputDecoration(
                             labelText: 'Sub-task PIC',
@@ -321,17 +331,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                                 ),
                               )
                               .toList(),
-                          onChanged: (v) => setState(() {
-                            _selectedAssigneeKey = v;
-                            _picKey = v;
-                          }),
+                          onChanged: (v) => setState(() => _picKey = v),
                         ),
-                        const SizedBox(height: 8),
-                        if (_selectedAssigneeKey != null)
-                          Text(
-                            'PIC: ${_labelForKey(_selectedAssigneeKey!, state)}',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
                         const SizedBox(height: 16),
                       ],
                       TextFormField(

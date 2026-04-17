@@ -46,6 +46,19 @@ class SingularSubtask {
 
   bool get isDeleted => status.trim().toLowerCase() == 'deleted';
 
+  /// Comma-separated staff names (same order as `assignee_01`… in DB).
+  String assigneeNamesDisplayLine(String Function(String assigneeKey) nameFor) {
+    if (assigneeIds.isEmpty) return '—';
+    return assigneeIds.map((id) => nameFor(id)).join(', ');
+  }
+
+  /// Resolved display name for [pic], or em dash.
+  String picDisplayName(String Function(String assigneeKey) nameFor) {
+    final p = pic?.trim();
+    if (p == null || p.isEmpty) return '—';
+    return nameFor(p);
+  }
+
   SingularSubtask copyWith({
     String? id,
     String? taskId,
