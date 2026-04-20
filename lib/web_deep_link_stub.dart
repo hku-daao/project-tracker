@@ -1,4 +1,4 @@
-void captureWebDeepLinkForSession() {}
+void captureWebDeepLinkForSession({bool clearStaleWhenUrlEmpty = true}) {}
 
 (String?, String?) readDeepLinkIdsFromUrlOrHash() => (null, null);
 

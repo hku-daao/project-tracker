@@ -22,16 +22,30 @@ String? _paramFromWindowHash(String key) {
   return _paramFromFragment(frag, key);
 }
 
-/// Stores `subtask` / `task` from the real address bar (path or hash) so deep links survive login redirects.
-void captureWebDeepLinkForSession() {
+/// Stores `subtask` / `task` from the address bar so deep links survive [usePathUrlStrategy] and login.
+///
+/// Call once **before** [usePathUrlStrategy] with [clearStaleWhenUrlEmpty] true so a visit to `/`
+/// clears leftover session ids. Call again **after** [usePathUrlStrategy] with
+/// [clearStaleWhenUrlEmpty] false: if the URL no longer shows `?task=` / hash params but the first
+/// call already saved them, we must **not** clear session.
+void captureWebDeepLinkForSession({bool clearStaleWhenUrlEmpty = true}) {
   final ids = _idsFromLocation();
-  var sub = ids.$1;
-  var task = ids.$2;
-  if (sub != null && sub.isNotEmpty) {
-    html.window.sessionStorage[_kSubtaskKey] = sub;
+  final sub = ids.$1;
+  final task = ids.$2;
+  final hasSub = sub != null && sub.isNotEmpty;
+  final hasTask = task != null && task.isNotEmpty;
+  if (hasSub || hasTask) {
+    if (hasSub) {
+      html.window.sessionStorage[_kSubtaskKey] = sub;
+    }
+    if (hasTask) {
+      html.window.sessionStorage[_kTaskKey] = task;
+    }
+    return;
   }
-  if (task != null && task.isNotEmpty) {
-    html.window.sessionStorage[_kTaskKey] = task;
+  if (clearStaleWhenUrlEmpty) {
+    html.window.sessionStorage.remove(_kSubtaskKey);
+    html.window.sessionStorage.remove(_kTaskKey);
   }
 }
 

@@ -136,24 +136,26 @@ class _AppBootstrapState extends State<AppBootstrap> {
   }
 
   void _openWebDeepLinkIfPending() {
-    final ids = readDeepLinkIdsFromUrlOrHash();
-    if (ids.$1 != null && ids.$1!.isNotEmpty) {
+    // Prefer URL, then session (populated by [captureWebDeepLinkForSession] before path strategy).
+    // URL-only would miss deep links after [usePathUrlStrategy] strips the query from [href].
+    final subId = readSubtaskIdFromUrlOrSession();
+    if (subId != null && subId.isNotEmpty) {
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
-          builder: (_) => SubtaskDetailScreen(subtaskId: ids.$1!),
+          builder: (_) => SubtaskDetailScreen(subtaskId: subId),
         ),
       );
       return;
     }
-    if (ids.$2 != null && ids.$2!.isNotEmpty) {
+    final taskId = readTaskIdFromUrlOrSession();
+    if (taskId != null && taskId.isNotEmpty) {
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
-          builder: (_) => TaskDetailScreen(taskId: ids.$2!),
+          builder: (_) => TaskDetailScreen(taskId: taskId),
         ),
       );
       return;
     }
-    // No task/subtask in URL — stay on home; clear stale session so refresh does not reopen detail.
     syncWebLocationForLanding();
   }
 
