@@ -446,12 +446,17 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     return true;
   }
 
-  Future<void> _postComment(AppState state, SingularSubtask st) async {
+  /// Returns `true` if a comment row was inserted. [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
+  Future<bool> _postComment(
+    AppState state,
+    SingularSubtask st, {
+    bool suppressSuccessSnack = false,
+  }) async {
     if (!_isAssignee(state, st) && !_isCreator(state, st)) {
-      return;
+      return false;
     }
     final t = _commentController.text.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty) return false;
     setState(() => _saving = true);
     try {
       final ins = await SupabaseService.insertSubtaskCommentRow(
@@ -459,24 +464,36 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         description: t,
         creatorStaffLookupKey: state.userStaffAppId,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       if (ins.error != null) {
         showCopyableSnackBar(context, ins.error!, backgroundColor: Colors.orange);
-        return;
+        return false;
       }
       _commentController.clear();
       await _load(rebindAttachments: false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Comment added'), backgroundColor: Colors.green),
-      );
+      if (!suppressSuccessSnack && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sub-task is updated'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      return true;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<void> _saveMetadata(AppState state, SingularSubtask st) async {
+  /// Returns `true` if sub-task rows were written. Use [suppressSuccessSnack] with a follow-up [willSaveCommentAfter] + combined snackbar from **Update**.
+  Future<bool> _saveMetadata(
+    AppState state,
+    SingularSubtask st, {
+    bool suppressSuccessSnack = false,
+    bool willSaveCommentAfter = false,
+  }) async {
     final parent = _parentTask;
-    if (parent == null) return;
+    if (parent == null) return false;
     final creator = _isCreator(state, st);
     final canPic = _canEditSubtaskPic(state, st, parent);
     final multiTaskAssignees = parent.assigneeIds.length > 1;
@@ -494,7 +511,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
               backgroundColor: Colors.orange,
             ),
           );
-          return;
+          return false;
         }
         setState(() => _saving = true);
         try {
@@ -503,40 +520,44 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             picStaffLookupKey: key,
             updaterStaffLookupKey: state.userStaffAppId,
           );
-          if (!mounted) return;
+          if (!mounted) return false;
           if (err != null) {
             showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
-            return;
+            return false;
           }
           final errA = await SupabaseService.replaceSubtaskAttachments(
             subtaskId: st.id,
             rows: _subtaskAttachmentPayload(),
           );
-          if (!mounted) return;
+          if (!mounted) return false;
           if (errA != null) {
             showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
-            return;
+            return false;
           }
           await _notifySubtaskUpdatedEmail(st.id);
-          if (!mounted) return;
+          if (!mounted) return false;
           await _load(rebindAttachments: false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Saved'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          if (!suppressSuccessSnack && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Sub-task is updated'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+          return true;
         } finally {
           if (mounted) setState(() => _saving = false);
         }
-        return;
       }
       if (_isPic(state, st)) {
         if (!_subtaskAttachmentsDirty()) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Nothing is updated')),
-          );
-          return;
+          if (!willSaveCommentAfter) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Nothing is updated')),
+            );
+          }
+          return false;
         }
         setState(() => _saving = true);
         try {
@@ -544,29 +565,33 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             subtaskId: st.id,
             rows: _subtaskAttachmentPayload(),
           );
-          if (!mounted) return;
+          if (!mounted) return false;
           if (errA != null) {
             showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
-            return;
+            return false;
           }
           await _load(rebindAttachments: false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Saved'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          if (!suppressSuccessSnack && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Sub-task is updated'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+          return true;
         } finally {
           if (mounted) setState(() => _saving = false);
         }
-        return;
       }
       if (_isAssignee(state, st) && !_isPic(state, st)) {
         if (!_subtaskAttachmentsDirty()) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Nothing is updated')),
-          );
-          return;
+          if (!willSaveCommentAfter) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Nothing is updated')),
+            );
+          }
+          return false;
         }
         setState(() => _saving = true);
         try {
@@ -574,22 +599,24 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             subtaskId: st.id,
             rows: _subtaskAttachmentPayload(),
           );
-          if (!mounted) return;
+          if (!mounted) return false;
           if (errA != null) {
             showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
-            return;
+            return false;
           }
           await _load(rebindAttachments: false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Saved'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          if (!suppressSuccessSnack && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Sub-task is updated'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+          return true;
         } finally {
           if (mounted) setState(() => _saving = false);
         }
-        return;
       }
       if (canPic && multiTaskAssignees && !picDirty) {
         if (_canEditSubtaskAttachments(state, st) && _subtaskAttachmentsDirty()) {
@@ -599,38 +626,45 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
               subtaskId: st.id,
               rows: _subtaskAttachmentPayload(),
             );
-            if (!mounted) return;
+            if (!mounted) return false;
             if (errA != null) {
               showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
-              return;
+              return false;
             }
             await _load(rebindAttachments: false);
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Saved'),
-                backgroundColor: Colors.green,
-              ),
-            );
+            if (!mounted) return false;
+            if (!suppressSuccessSnack && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Sub-task is updated'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+            return true;
           } finally {
             if (mounted) setState(() => _saving = false);
           }
-          return;
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nothing is updated'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        if (!willSaveCommentAfter) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nothing is updated'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return false;
       }
-      return;
+      return false;
     }
     if (!_subtaskCreatorHasMetadataOrAttachmentChanges(state, st, parent)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nothing is updated')),
-      );
-      return;
+      if (!willSaveCommentAfter) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nothing is updated')),
+        );
+      }
+      return false;
     }
     final picKey =
         picDirty && _picEditKey != null && parent.assigneeIds.contains(_picEditKey!)
@@ -642,10 +676,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         subtaskId: st.id,
         rows: _subtaskAttachmentPayload(),
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       if (errA != null) {
         showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
-        return;
+        return false;
       }
       if (_editStart != null &&
           _editDue != null &&
@@ -664,7 +698,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             ),
           );
         }
-        return;
+        return false;
       }
       final needsDueReason = _needsChangeDueReason();
       if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
@@ -678,7 +712,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             ),
           );
         }
-        return;
+        return false;
       }
       final err = await SupabaseService.updateSubtaskRow(
         subtaskId: st.id,
@@ -695,17 +729,23 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         changeDueReason:
             needsDueReason ? _changeDueReasonController.text.trim() : null,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       if (err != null) {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
-        return;
+        return false;
       }
       await _notifySubtaskUpdatedEmail(st.id);
-      if (!mounted) return;
+      if (!mounted) return false;
       await _load(rebindAttachments: false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saved'), backgroundColor: Colors.green),
-      );
+      if (!suppressSuccessSnack && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sub-task is updated'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      return true;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1624,10 +1664,30 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               !(canSetPic && multiTaskAssignees))
                       ? null
                       : () async {
-                          await _saveMetadata(state, st);
-                          if ((assignee || creator) &&
-                              _commentController.text.trim().isNotEmpty) {
-                            await _postComment(state, st);
+                          final hadComment = (assignee || creator) &&
+                              _commentController.text.trim().isNotEmpty;
+                          final metaOk = await _saveMetadata(
+                            state,
+                            st,
+                            suppressSuccessSnack: true,
+                            willSaveCommentAfter: hadComment,
+                          );
+                          var commentOk = false;
+                          if (hadComment) {
+                            commentOk = await _postComment(
+                              state,
+                              st,
+                              suppressSuccessSnack: true,
+                            );
+                          }
+                          if (!mounted) return;
+                          if (metaOk || commentOk) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Sub-task is updated'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
                           }
                         },
                   child: Text(_saving ? 'Saving…' : 'Update'),

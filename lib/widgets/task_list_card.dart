@@ -7,7 +7,6 @@ import '../models/task.dart';
 import '../priority.dart';
 import '../services/supabase_service.dart';
 import '../screens/task_detail_screen.dart';
-import '../utils/hk_time.dart';
 
 /// PIC team colour definition (`staff.team_id` / `team.team_id` business keys).
 class PicTeamColorEntry {
@@ -125,55 +124,6 @@ class TaskListCard extends StatelessWidget {
     return taskStatusDisplayNames[t.status] ?? '';
   }
 
-  /// Completed / deleted tasks are not treated as overdue for list highlighting.
-  static bool _taskBlocksOverdueDueDateHighlight(Task t) {
-    if (t.isSingularTableRow) {
-      final raw = t.dbStatus?.trim().toLowerCase() ?? '';
-      if (raw == 'completed' || raw == 'deleted') return true;
-      if (raw.isEmpty) return t.status == TaskStatus.done;
-      return false;
-    }
-    return t.status == TaskStatus.done;
-  }
-
-  /// HK calendar: today > due date (date-only), excluding completed/deleted.
-  static bool _isTaskCardOverdue(Task t) {
-    final due = t.endDate;
-    if (due == null) return false;
-    if (_taskBlocksOverdueDueDateHighlight(t)) return false;
-    final dueDay = DateTime(due.year, due.month, due.day);
-    return HkTime.todayDateOnlyHk().isAfter(dueDay);
-  }
-
-  /// Priority · status · Start · Due line; due date value is red when overdue.
-  static Widget buildTaskMetaLine(BuildContext context, Task t) {
-    final theme = Theme.of(context);
-    final baseStyle = theme.textTheme.bodyMedium;
-    final prefix =
-        '${priorityToDisplayName(t.priority)} · ${statusLabel(t)}'
-        '${t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : ''}';
-    final due = t.endDate;
-    if (due == null) {
-      return Text(prefix);
-    }
-    final dueStr = DateFormat.yMMMd().format(due);
-    if (!_isTaskCardOverdue(t)) {
-      return Text('$prefix · Due $dueStr');
-    }
-    return Text.rich(
-      TextSpan(
-        style: baseStyle,
-        children: [
-          TextSpan(text: '$prefix · Due '),
-          TextSpan(
-            text: dueStr,
-            style: baseStyle?.copyWith(color: Colors.red),
-          ),
-        ],
-      ),
-    );
-  }
-
   static bool _isSubmissionSubmitted(Task t) {
     final s = t.submission?.trim().toLowerCase() ?? '';
     return s == 'submitted';
@@ -284,40 +234,27 @@ class TaskListCard extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 12),
           color: cardTint,
           child: ListTile(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
+            title: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        t.name,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (_isSubmissionSubmitted(t)) ...[
-                      const SizedBox(width: 8),
-                      _submissionBadge('Submitted', Colors.red),
-                    ],
-                    if (_isSubmissionAccepted(t)) ...[
-                      const SizedBox(width: 8),
-                      _submissionBadge('Accepted', _kAcceptedTagColor),
-                    ],
-                    if (_isSubmissionReturned(t)) ...[
-                      const SizedBox(width: 8),
-                      _submissionBadge('Returned', _kReturnedTagColor),
-                    ],
-                  ],
-                ),
-                if ((t.changeDueReason ?? '').trim().isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: buildOverPresetTimelineTag(),
+                Expanded(
+                  child: Text(
+                    t.name,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                ),
+                if (_isSubmissionSubmitted(t)) ...[
+                  const SizedBox(width: 8),
+                  _submissionBadge('Submitted', Colors.red),
+                ],
+                if (_isSubmissionAccepted(t)) ...[
+                  const SizedBox(width: 8),
+                  _submissionBadge('Accepted', _kAcceptedTagColor),
+                ],
+                if (_isSubmissionReturned(t)) ...[
+                  const SizedBox(width: 8),
+                  _submissionBadge('Returned', _kReturnedTagColor),
                 ],
               ],
             ),
@@ -356,7 +293,11 @@ class TaskListCard extends StatelessWidget {
                           ),
                     ),
                   ),
-                buildTaskMetaLine(context, t),
+                Text(
+                  '${priorityToDisplayName(t.priority)} · ${statusLabel(t)}'
+                  '${t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : ''}'
+                  '${t.endDate != null ? ' · Due ${DateFormat.yMMMd().format(t.endDate!)}' : ''}',
+                ),
               ],
             ),
             trailing: const Icon(Icons.chevron_right),

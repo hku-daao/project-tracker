@@ -1265,7 +1265,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       if (ok) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Comment posted.'),
+            content: Text('Task is updated'),
             backgroundColor: Colors.green,
           ),
         );
@@ -1509,7 +1509,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Task updated'),
+          content: Text('Task is updated'),
           backgroundColor: Colors.green,
         ),
       );
@@ -1518,7 +1518,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
   }
 
-  /// PIC (not task creator): save attachment rows only.
+  /// PIC (not task creator): save attachment rows and/or a new comment (same as creator [Update] for comments).
   Future<void> _saveTaskAttachmentsOnly(AppState state, Task task) async {
     if (!SupabaseConfig.isConfigured) {
       showCopyableSnackBar(context, 'Supabase not configured.');
@@ -1528,7 +1528,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     if (!_isPicEffective(state, task) || _isCreator(state, task)) {
       return;
     }
-    if (!_taskAttachmentsDirty()) {
+    final pendingComment = _commentController.text.trim().isNotEmpty;
+    final attachmentsDirty = _taskAttachmentsDirty();
+    if (!pendingComment && !attachmentsDirty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nothing is updated')),
       );
@@ -1536,23 +1538,33 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
     setState(() => _saving = true);
     try {
-      final errAttach = await SupabaseService.replaceAttachmentsForTask(
-        taskId: task.id,
-        rows: _taskAttachmentPayload(),
-      );
-      if (errAttach != null && mounted) {
-        showCopyableSnackBar(
-          context,
-          errAttach,
-          backgroundColor: Colors.orange,
+      if (attachmentsDirty) {
+        final errAttach = await SupabaseService.replaceAttachmentsForTask(
+          taskId: task.id,
+          rows: _taskAttachmentPayload(),
         );
-        return;
+        if (errAttach != null && mounted) {
+          showCopyableSnackBar(
+            context,
+            errAttach,
+            backgroundColor: Colors.orange,
+          );
+          return;
+        }
+        if (mounted) await _reloadTaskAttachmentsFromDb();
       }
-      if (mounted) await _reloadTaskAttachmentsFromDb();
+      if (pendingComment) {
+        final commentOk = await _insertPendingCommentFromController(
+          state,
+          task,
+          commentSaveErrorPrefix: 'Comment was not saved:',
+        );
+        if (!commentOk) return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Saved'),
+            content: Text('Task is updated'),
             backgroundColor: Colors.green,
           ),
         );
