@@ -790,6 +790,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         subtaskId: st.id,
         submission: 'Submitted',
         updaterStaffLookupKey: state.userStaffAppId,
+        stampSubmitDateNow: true,
       );
       if (!mounted) return;
       if (err != null) {
@@ -832,11 +833,13 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   Future<void> _accept(AppState state, SingularSubtask st) async {
     setState(() => _saving = true);
     try {
+      final completedAt = st.submitDate ?? DateTime.now().toUtc();
       final err = await SupabaseService.updateSubtaskRow(
         subtaskId: st.id,
         status: 'Completed',
         submission: 'Accepted',
         updaterStaffLookupKey: state.userStaffAppId,
+        completionDateAt: completedAt,
       );
       if (!mounted) return;
       if (err != null) {
@@ -879,6 +882,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         status: 'Incomplete',
         submission: 'Returned',
         updaterStaffLookupKey: state.userStaffAppId,
+        clearCompletionDate: true,
       );
       if (!mounted) return;
       if (err != null) {
@@ -1499,6 +1503,18 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           'Submission: ${st.submission?.trim().isNotEmpty == true ? st.submission!.trim() : '—'}',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
+                        if (st.completionDate != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Completion Date: ${HkTime.formatInstantAsHk(st.completionDate!, 'yyyy-MM-dd')}',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         Text(
                           'Last update by: ${st.updateByStaffName ?? '—'}',

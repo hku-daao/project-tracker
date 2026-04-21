@@ -806,6 +806,19 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     return '—';
   }
 
+  /// Green segment ` · Completed on …` when sub-task is completed (matches landing [TaskListCard]).
+  String? _subtaskCompletedOnColoredSegment(SingularSubtask s) {
+    final cd = s.completionDate;
+    if (cd == null) return null;
+    final sub = s.submission?.trim().toLowerCase() ?? '';
+    final st = s.status.trim().toLowerCase();
+    final show = sub == 'completed' ||
+        st == 'completed' ||
+        st == 'complete';
+    if (!show) return null;
+    return ' · Completed on ${HkTime.formatInstantAsHk(cd, 'MMM dd, y')}';
+  }
+
   /// Priority · status · Start · Due; due date value is red when overdue (HK calendar).
   Widget _buildSubtaskMetaLine(BuildContext context, SingularSubtask s) {
     final theme = Theme.of(context);
@@ -814,8 +827,25 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final startPart = s.startDate != null
         ? ' · Start ${DateFormat('yyyy-MM-dd').format(s.startDate!)}'
         : '';
+    final greenSeg = _subtaskCompletedOnColoredSegment(s);
+    final greenStyle = baseStyle?.copyWith(
+      color: TaskListCard.kCompletedOnMetaColor,
+      fontWeight: FontWeight.w600,
+    );
+
     if (s.dueDate == null) {
-      return Text('$prefix$startPart');
+      if (greenSeg == null) {
+        return Text('$prefix$startPart');
+      }
+      return Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            TextSpan(text: '$prefix$startPart'),
+            TextSpan(text: greenSeg, style: greenStyle),
+          ],
+        ),
+      );
     }
     final dueDay = DateTime(s.dueDate!.year, s.dueDate!.month, s.dueDate!.day);
     final st = s.status.trim().toLowerCase();
@@ -824,7 +854,32 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         !blocked && HkTime.todayDateOnlyHk().isAfter(dueDay);
     final dueStr = DateFormat('yyyy-MM-dd').format(s.dueDate!);
     if (!overdue) {
-      return Text('$prefix$startPart · Due $dueStr');
+      if (greenSeg == null) {
+        return Text('$prefix$startPart · Due $dueStr');
+      }
+      return Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            TextSpan(text: '$prefix$startPart · Due $dueStr'),
+            TextSpan(text: greenSeg, style: greenStyle),
+          ],
+        ),
+      );
+    }
+    if (greenSeg == null) {
+      return Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            TextSpan(text: '$prefix$startPart · Due '),
+            TextSpan(
+              text: dueStr,
+              style: baseStyle?.copyWith(color: Colors.red),
+            ),
+          ],
+        ),
+      );
     }
     return Text.rich(
       TextSpan(
@@ -835,6 +890,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             text: dueStr,
             style: baseStyle?.copyWith(color: Colors.red),
           ),
+          TextSpan(text: greenSeg, style: greenStyle),
         ],
       ),
     );
@@ -1632,6 +1688,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         taskId: task.id,
         submission: 'Submitted',
         updateByStaffLookupKey: state.userStaffAppId,
+        stampSubmitDateNow: true,
       );
       if (err != null) {
         if (mounted) {
@@ -1665,7 +1722,11 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         });
       }
       state.replaceTask(
-        task.copyWith(submission: 'Submitted', updateDate: DateTime.now()),
+        task.copyWith(
+          submission: 'Submitted',
+          submitDate: DateTime.now().toUtc(),
+          updateDate: DateTime.now(),
+        ),
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1693,11 +1754,13 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       );
       if (!commentOk) return;
 
+      final completedAt = task.submitDate ?? DateTime.now().toUtc();
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Completed',
         submission: 'Accepted',
         updateByStaffLookupKey: state.userStaffAppId,
+        completionDateAt: completedAt,
       );
       if (err != null) {
         if (mounted) {
@@ -1731,6 +1794,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           dbStatus: 'Completed',
           status: TaskStatus.done,
           submission: 'Accepted',
+          completionDate: completedAt,
           updateDate: DateTime.now(),
         ),
       );
@@ -1765,6 +1829,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         status: 'Incomplete',
         submission: 'Returned',
         updateByStaffLookupKey: state.userStaffAppId,
+        clearCompletionDate: true,
       );
       if (err != null) {
         if (mounted) {
@@ -1798,6 +1863,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           dbStatus: 'Incomplete',
           status: TaskStatus.todo,
           submission: 'Returned',
+          clearCompletionDate: true,
           updateDate: DateTime.now(),
         ),
       );
@@ -2439,6 +2505,18 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                 'Submission: ${task.submission?.trim().isNotEmpty == true ? task.submission!.trim() : '—'}',
                                 style: Theme.of(context).textTheme.bodyMedium,
                               ),
+                              if (task.completionDate != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Completion Date: ${HkTime.formatInstantAsHk(task.completionDate!, 'yyyy-MM-dd')}',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
                               const SizedBox(height: 16),
                               Text(
                                 'Last updated by: ${task.updateByStaffName ?? '—'}',

@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../models/task.dart';
 import '../priority.dart';
 import '../services/supabase_service.dart';
+import '../utils/hk_time.dart';
 import '../screens/task_detail_screen.dart';
 
 /// PIC team colour definition (`staff.team_id` / `team.team_id` business keys).
@@ -124,6 +125,54 @@ class TaskListCard extends StatelessWidget {
     return taskStatusDisplayNames[t.status] ?? '';
   }
 
+  static bool _isTaskDisplayCompleted(Task t) {
+    if (t.isSingularTableRow) {
+      final s = t.dbStatus?.trim().toLowerCase() ?? '';
+      return s == 'completed' || s == 'complete';
+    }
+    return t.status == TaskStatus.done;
+  }
+
+  /// Same green as the **Accepted** submission chip (`#298A00`).
+  static const Color kCompletedOnMetaColor = Color(0xFF298A00);
+
+  /// Priority · status · Start · Due · Completed on … (single line).
+  static Widget buildTaskMetaLine(BuildContext context, Task t) {
+    final theme = Theme.of(context);
+    final baseStyle = theme.textTheme.bodyMedium;
+    final prefix =
+        '${priorityToDisplayName(t.priority)} · ${statusLabel(t)}'
+        '${t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : ''}';
+    final due = t.endDate;
+    final duePart =
+        due != null ? ' · Due ${DateFormat.yMMMd().format(due)}' : '';
+    final comp = t.completionDate;
+    final showCompleted = _isTaskDisplayCompleted(t) && comp != null;
+    if (!showCompleted) {
+      return Text(
+        '$prefix$duePart',
+        style: baseStyle,
+      );
+    }
+    final completedSeg =
+        ' · Completed on ${HkTime.formatInstantAsHk(comp, 'MMM dd, y')}';
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          TextSpan(text: '$prefix$duePart'),
+          TextSpan(
+            text: completedSeg,
+            style: baseStyle?.copyWith(
+              color: kCompletedOnMetaColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   static bool _isSubmissionSubmitted(Task t) {
     final s = t.submission?.trim().toLowerCase() ?? '';
     return s == 'submitted';
@@ -139,7 +188,7 @@ class TaskListCard extends StatelessWidget {
     return s == 'returned';
   }
 
-  static const Color _kAcceptedTagColor = Color(0xFF298A00);
+  static const Color _kAcceptedTagColor = kCompletedOnMetaColor;
   static const Color _kReturnedTagColor = Color(0xFF0B0094);
 
   static Widget _submissionBadge(String label, Color backgroundColor) {
@@ -293,11 +342,7 @@ class TaskListCard extends StatelessWidget {
                           ),
                     ),
                   ),
-                Text(
-                  '${priorityToDisplayName(t.priority)} · ${statusLabel(t)}'
-                  '${t.startDate != null ? ' · Start ${DateFormat.yMMMd().format(t.startDate!)}' : ''}'
-                  '${t.endDate != null ? ' · Due ${DateFormat.yMMMd().format(t.endDate!)}' : ''}',
-                ),
+                buildTaskMetaLine(context, t),
               ],
             ),
             trailing: const Icon(Icons.chevron_right),

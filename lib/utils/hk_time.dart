@@ -30,6 +30,14 @@ class HkTime {
     return '$y-${p2(n.month)}-${p2(n.day)}T${p2(n.hour)}:${p2(n.minute)}:${p2(n.second)}+08:00';
   }
 
+  /// Same +08:00 wall encoding as [timestampForDb], for an arbitrary UTC [instant] (e.g. from DB).
+  static String timestampForDbFromStoredUtc(DateTime instant) {
+    final hk = instant.toUtc().add(const Duration(hours: 8));
+    String p2(int v) => v.toString().padLeft(2, '0');
+    final y = hk.year.toString().padLeft(4, '0');
+    return '$y-${p2(hk.month)}-${p2(hk.day)}T${p2(hk.hour)}:${p2(hk.minute)}:${p2(hk.second)}+08:00';
+  }
+
   /// `yyyy-MM-dd` for PostgreSQL **`date`** columns (`task.start_date`, `task.due_date`).
   static String dateOnlyHkMidnightForDb(DateTime d) {
     String p2(int v) => v.toString().padLeft(2, '0');

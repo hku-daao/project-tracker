@@ -329,6 +329,15 @@ class SupabaseService {
     /// When true, sets `change_due_reason` (null clears).
     bool updateChangeDueReason = false,
     String? changeDueReason,
+
+    /// Sets `task.submit_date` to current HK instant (PIC **Submit**).
+    bool stampSubmitDateNow = false,
+
+    /// Sets `task.completion_date` (use [task.submitDate] at **Accept**).
+    DateTime? completionDateAt,
+
+    /// Clears `task.completion_date` (e.g. **Return**).
+    bool clearCompletionDate = false,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -373,6 +382,15 @@ class SupabaseService {
       if (updateChangeDueReason) {
         final t = changeDueReason?.trim();
         map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
+      }
+      if (clearCompletionDate) {
+        map['completion_date'] = null;
+      } else if (completionDateAt != null) {
+        map['completion_date'] =
+            HkTime.timestampForDbFromStoredUtc(completionDateAt.toUtc());
+      }
+      if (stampSubmitDateNow) {
+        map['submit_date'] = HkTime.timestampForDb();
       }
       if (map.isEmpty) return null;
       await Supabase.instance.client.from('task').update(map).eq('id', taskId);
@@ -539,6 +557,8 @@ class SupabaseService {
       pic: _picAssigneeKey(row, staffUuidToAppId),
       updateDate: _parseDateTimeNullable(row['update_date']),
       submission: _submissionFromRow(row['submission']),
+      submitDate: _parseDateTimeNullable(row['submit_date']),
+      completionDate: _parseDateTimeNullable(row['completion_date']),
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
     );
   }
@@ -1723,6 +1743,8 @@ class SupabaseService {
       dueDate: _parseDate(row['due_date']),
       status: row['status'] as String? ?? 'Incomplete',
       submission: row['submission'] as String?,
+      submitDate: _parseDateTimeNullable(row['submit_date']),
+      completionDate: _parseDateTimeNullable(row['completion_date']),
       assigneeIds: assigneeIds,
       pic: picKey,
       createDate: _parseDateTime(row['create_date']),
@@ -1879,6 +1901,10 @@ class SupabaseService {
     /// When true, sets `change_due_reason` (null clears).
     bool updateChangeDueReason = false,
     String? changeDueReason,
+
+    bool stampSubmitDateNow = false,
+    DateTime? completionDateAt,
+    bool clearCompletionDate = false,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -1917,6 +1943,15 @@ class SupabaseService {
       if (updateChangeDueReason) {
         final t = changeDueReason?.trim();
         map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
+      }
+      if (clearCompletionDate) {
+        map['completion_date'] = null;
+      } else if (completionDateAt != null) {
+        map['completion_date'] =
+            HkTime.timestampForDbFromStoredUtc(completionDateAt.toUtc());
+      }
+      if (stampSubmitDateNow) {
+        map['submit_date'] = HkTime.timestampForDb();
       }
       await Supabase.instance.client.from('subtask').update(map).eq('id', subtaskId);
       return null;

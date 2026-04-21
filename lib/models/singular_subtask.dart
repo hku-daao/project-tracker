@@ -14,6 +14,8 @@ class SingularSubtask {
     this.dueDate,
     required this.status,
     this.submission,
+    this.submitDate,
+    this.completionDate,
     required this.assigneeIds,
     this.pic,
     this.createDate,
@@ -39,6 +41,12 @@ class SingularSubtask {
   final DateTime? dueDate;
   final String status;
   final String? submission;
+
+  /// When assignee clicked **Submit** (`subtask.submit_date`).
+  final DateTime? submitDate;
+
+  /// When sub-task became **Completed** (`subtask.completion_date`).
+  final DateTime? completionDate;
 
   /// Resolved to `staff.app_id` where possible (same as [Task.assigneeIds]).
   final List<String> assigneeIds;
@@ -81,6 +89,10 @@ class SingularSubtask {
     DateTime? dueDate,
     String? status,
     String? submission,
+    DateTime? submitDate,
+    bool clearSubmitDate = false,
+    DateTime? completionDate,
+    bool clearCompletionDate = false,
     List<String>? assigneeIds,
     String? pic,
     DateTime? createDate,
@@ -100,6 +112,10 @@ class SingularSubtask {
       dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,
       submission: submission ?? this.submission,
+      submitDate: clearSubmitDate ? null : (submitDate ?? this.submitDate),
+      completionDate: clearCompletionDate
+          ? null
+          : (completionDate ?? this.completionDate),
       assigneeIds: assigneeIds ?? this.assigneeIds,
       pic: pic ?? this.pic,
       createDate: createDate ?? this.createDate,

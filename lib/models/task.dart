@@ -54,6 +54,12 @@ class Task {
   /// PIC/creator workflow: `Submitted`, `Accepted`, `Returned`, or null.
   final String? submission;
 
+  /// When PIC clicked **Submit** (`task.submit_date`, HK instant written by app).
+  final DateTime? submitDate;
+
+  /// When task became **Completed**; product rule: equals [submitDate] at accept (`task.completion_date`).
+  final DateTime? completionDate;
+
   /// When start→due span exceeds policy for priority (`task.change_due_reason`).
   final String? changeDueReason;
 
@@ -79,6 +85,8 @@ class Task {
     this.pic,
     this.updateDate,
     this.submission,
+    this.submitDate,
+    this.completionDate,
     this.changeDueReason,
   });
 
@@ -104,6 +112,10 @@ class Task {
     String? pic,
     DateTime? updateDate,
     String? submission,
+    DateTime? submitDate,
+    bool clearSubmitDate = false,
+    DateTime? completionDate,
+    bool clearCompletionDate = false,
     Object? changeDueReason = _unsetChangeDueReason,
   }) {
     return Task(
@@ -128,6 +140,10 @@ class Task {
       pic: pic ?? this.pic,
       updateDate: updateDate ?? this.updateDate,
       submission: submission ?? this.submission,
+      submitDate: clearSubmitDate ? null : (submitDate ?? this.submitDate),
+      completionDate: clearCompletionDate
+          ? null
+          : (completionDate ?? this.completionDate),
       changeDueReason: identical(changeDueReason, _unsetChangeDueReason)
           ? this.changeDueReason
           : changeDueReason as String?,

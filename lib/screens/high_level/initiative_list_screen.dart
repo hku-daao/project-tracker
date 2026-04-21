@@ -60,6 +60,9 @@ class InitiativeListScreen extends StatefulWidget {
 }
 
 class _InitiativeListScreenState extends State<InitiativeListScreen> {
+  /// Landing list column: [TaskListCard] + search field alignment.
+  static const double _kLandingTaskListMaxWidth = 1100;
+
   /// Max width for team / status filter fields (readable on wide layouts).
   static const double _filterFieldMaxWidth = 420;
 
@@ -790,8 +793,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             builder: (context, constraints) {
               final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
 
-              /// Same max width as [ListView] / [TaskListCard] column below (`maxWidth: 700`).
-              final listColumnMaxWidth = min(700.0, constraints.maxWidth);
+              /// Same max width as [ListView] / [TaskListCard] column below.
+              final listColumnMaxWidth = min(
+                _kLandingTaskListMaxWidth,
+                constraints.maxWidth,
+              );
               final wideFilterWidth = min(
                 280.0,
                 constraints.maxWidth * 0.38,
@@ -1246,7 +1252,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               ? Center(child: Text(_emptyListMessage()))
               : Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 700),
+                    constraints: BoxConstraints(
+                      maxWidth: _kLandingTaskListMaxWidth,
+                    ),
                     child: ListView(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       children: [
