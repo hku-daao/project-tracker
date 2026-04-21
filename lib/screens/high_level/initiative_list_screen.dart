@@ -18,6 +18,7 @@ import 'initiative_detail_screen.dart';
 enum TaskListSortColumn {
   creator('creator'),
   assignee('assignee'),
+  pic('pic'),
   startDate('startDate'),
   dueDate('dueDate'),
   status('status'),
@@ -40,6 +41,8 @@ enum TaskListSortColumn {
         return 'Creator';
       case TaskListSortColumn.assignee:
         return 'Assignee';
+      case TaskListSortColumn.pic:
+        return 'PIC';
       case TaskListSortColumn.startDate:
         return 'Start date';
       case TaskListSortColumn.dueDate:
@@ -311,6 +314,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return names.join(', ');
   }
 
+  String _picSortKey(Task t, AppState state) {
+    final p = t.pic?.trim();
+    if (p == null || p.isEmpty) return '';
+    return state.assigneeById(p)?.name ?? p;
+  }
+
   static int _cmpStrNullable(String? a, String? b, bool ascending) {
     final sa = a?.trim().toLowerCase() ?? '';
     final sb = b?.trim().toLowerCase() ?? '';
@@ -344,6 +353,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           c = _cmpStrNullable(
             _assigneeSortKey(a, state),
             _assigneeSortKey(b, state),
+            asc,
+          );
+          break;
+        case TaskListSortColumn.pic:
+          c = _cmpStrNullable(
+            _picSortKey(a, state),
+            _picSortKey(b, state),
             asc,
           );
           break;

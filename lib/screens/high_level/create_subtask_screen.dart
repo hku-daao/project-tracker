@@ -9,6 +9,7 @@ import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
+import '../../utils/home_navigation.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 
@@ -125,6 +126,15 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     }
     final leave = await _confirmLeaveCreateSubtaskDraft(context);
     if (mounted && leave) Navigator.of(context).pop();
+  }
+
+  Future<void> _handleBackToHome() async {
+    if (!_hasUnsavedDraft()) {
+      if (mounted) navigateToHomeTasksTab(context);
+      return;
+    }
+    final leave = await _confirmLeaveCreateSubtaskDraft(context);
+    if (mounted && leave) navigateToHomeTasksTab(context);
   }
 
   DateTime _defaultDueForPriority(int priority) {
@@ -534,6 +544,12 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                             _submitting ? null : () => _handlePopRequest(),
                         icon: const Icon(Icons.arrow_back),
                         label: const Text('Back to task'),
+                      ),
+                      TextButton.icon(
+                        onPressed:
+                            _submitting ? null : () => _handleBackToHome(),
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Back to home'),
                       ),
                     ],
                   ),

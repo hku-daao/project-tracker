@@ -15,6 +15,8 @@ import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../web_deep_link.dart';
+import '../task_detail_screen.dart';
+import '../../utils/home_navigation.dart';
 
 class _SubtaskAttachmentEntry {
   _SubtaskAttachmentEntry({this.id, String? url, String? desc})
@@ -32,9 +34,17 @@ class _SubtaskAttachmentEntry {
 
 /// Detail view for a row in `public.subtask`.
 class SubtaskDetailScreen extends StatefulWidget {
-  const SubtaskDetailScreen({super.key, required this.subtaskId});
+  const SubtaskDetailScreen({
+    super.key,
+    required this.subtaskId,
+    this.replaceWithParentTaskOnBack = false,
+  });
 
   final String subtaskId;
+
+  /// When true (e.g. opened from the landing task list without [TaskDetailScreen] underneath),
+  /// **Back to task** opens the parent [TaskDetailScreen] via [Navigator.pushReplacement] instead of [pop].
+  final bool replaceWithParentTaskOnBack;
 
   @override
   State<SubtaskDetailScreen> createState() => _SubtaskDetailScreenState();
@@ -104,6 +114,24 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   void _addSubtaskAttachmentRow() {
     setState(() => _subtaskAttachments.add(_SubtaskAttachmentEntry()));
+  }
+
+  void _onBackToTask() {
+    if (_saving) return;
+    final tid = _sub?.taskId;
+    if (tid == null || tid.isEmpty) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    if (widget.replaceWithParentTaskOnBack) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => TaskDetailScreen(taskId: tid),
+        ),
+      );
+    } else {
+      Navigator.of(context).pop(true);
+    }
   }
 
   void _removeSubtaskAttachmentRow(int index) {
@@ -1503,10 +1531,22 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           'Submission: ${st.submission?.trim().isNotEmpty == true ? st.submission!.trim() : '—'}',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
+                        if (st.submitDate != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Submission date: ${HkTime.formatInstantAsHk(st.submitDate!, 'yyyy-MM-dd')}',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
+                        ],
                         if (st.completionDate != null) ...[
                           const SizedBox(height: 4),
                           Text(
-                            'Completion Date: ${HkTime.formatInstantAsHk(st.completionDate!, 'yyyy-MM-dd')}',
+                            'Completion date: ${HkTime.formatInstantAsHk(st.completionDate!, 'yyyy-MM-dd')}',
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
                                   color: Theme.of(context)
@@ -1765,9 +1805,16 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 ],
                 const SizedBox(height: 24),
                 TextButton.icon(
-                  onPressed: _saving ? null : () => Navigator.of(context).pop(true),
+                  onPressed: _saving ? null : _onBackToTask,
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('Back to task'),
+                ),
+                TextButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () => navigateToHomeTasksTab(context),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Back to home'),
                 ),
               ],
             ),

@@ -21,8 +21,8 @@ import '../utils/copyable_snackbar.dart';
 import '../utils/due_span_policy.dart';
 import '../utils/hk_time.dart';
 import '../web_deep_link.dart';
+import '../widgets/singular_subtask_row_card.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
-import '../widgets/task_list_card.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
@@ -804,96 +804,6 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       return state.assigneeById(k)?.name ?? k;
     }
     return '—';
-  }
-
-  /// Green segment ` · Completed on …` when sub-task is completed (matches landing [TaskListCard]).
-  String? _subtaskCompletedOnColoredSegment(SingularSubtask s) {
-    final cd = s.completionDate;
-    if (cd == null) return null;
-    final sub = s.submission?.trim().toLowerCase() ?? '';
-    final st = s.status.trim().toLowerCase();
-    final show = sub == 'completed' ||
-        st == 'completed' ||
-        st == 'complete';
-    if (!show) return null;
-    return ' · Completed on ${HkTime.formatInstantAsHk(cd, 'MMM dd, y')}';
-  }
-
-  /// Priority · status · Start · Due; due date value is red when overdue (HK calendar).
-  Widget _buildSubtaskMetaLine(BuildContext context, SingularSubtask s) {
-    final theme = Theme.of(context);
-    final baseStyle = theme.textTheme.bodyMedium;
-    final prefix = '${priorityToDisplayName(s.priority)} · ${s.status}';
-    final startPart = s.startDate != null
-        ? ' · Start ${DateFormat('yyyy-MM-dd').format(s.startDate!)}'
-        : '';
-    final greenSeg = _subtaskCompletedOnColoredSegment(s);
-    final greenStyle = baseStyle?.copyWith(
-      color: TaskListCard.kCompletedOnMetaColor,
-      fontWeight: FontWeight.w600,
-    );
-
-    if (s.dueDate == null) {
-      if (greenSeg == null) {
-        return Text('$prefix$startPart');
-      }
-      return Text.rich(
-        TextSpan(
-          style: baseStyle,
-          children: [
-            TextSpan(text: '$prefix$startPart'),
-            TextSpan(text: greenSeg, style: greenStyle),
-          ],
-        ),
-      );
-    }
-    final dueDay = DateTime(s.dueDate!.year, s.dueDate!.month, s.dueDate!.day);
-    final st = s.status.trim().toLowerCase();
-    final blocked = st == 'completed' || st == 'deleted';
-    final overdue =
-        !blocked && HkTime.todayDateOnlyHk().isAfter(dueDay);
-    final dueStr = DateFormat('yyyy-MM-dd').format(s.dueDate!);
-    if (!overdue) {
-      if (greenSeg == null) {
-        return Text('$prefix$startPart · Due $dueStr');
-      }
-      return Text.rich(
-        TextSpan(
-          style: baseStyle,
-          children: [
-            TextSpan(text: '$prefix$startPart · Due $dueStr'),
-            TextSpan(text: greenSeg, style: greenStyle),
-          ],
-        ),
-      );
-    }
-    if (greenSeg == null) {
-      return Text.rich(
-        TextSpan(
-          style: baseStyle,
-          children: [
-            TextSpan(text: '$prefix$startPart · Due '),
-            TextSpan(
-              text: dueStr,
-              style: baseStyle?.copyWith(color: Colors.red),
-            ),
-          ],
-        ),
-      );
-    }
-    return Text.rich(
-      TextSpan(
-        style: baseStyle,
-        children: [
-          TextSpan(text: '$prefix$startPart · Due '),
-          TextSpan(
-            text: dueStr,
-            style: baseStyle?.copyWith(color: Colors.red),
-          ),
-          TextSpan(text: greenSeg, style: greenStyle),
-        ],
-      ),
-    );
   }
 
   String _normalizeLocalStatus(String? db) {
@@ -2505,10 +2415,22 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                 'Submission: ${task.submission?.trim().isNotEmpty == true ? task.submission!.trim() : '—'}',
                                 style: Theme.of(context).textTheme.bodyMedium,
                               ),
+                              if (task.submitDate != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Submission date: ${HkTime.formatInstantAsHk(task.submitDate!, 'yyyy-MM-dd')}',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
                               if (task.completionDate != null) ...[
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Completion Date: ${HkTime.formatInstantAsHk(task.completionDate!, 'yyyy-MM-dd')}',
+                                  'Completion date: ${HkTime.formatInstantAsHk(task.completionDate!, 'yyyy-MM-dd')}',
                                   style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
                                         color: Theme.of(context)
@@ -2659,110 +2581,23 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       else
                         ..._subtasks.map(
                           (s) {
-                            final assigneeNamesLine = s.assigneeNamesDisplayLine(
-                              (id) => state.assigneeById(id)?.name ?? id,
-                            );
-                            final picLine = s.picDisplayName(
-                              (id) => state.assigneeById(id)?.name ?? id,
-                            );
-                            final subTag =
-                                (s.submission?.trim().toLowerCase() ==
-                                        'pending')
-                                    ? null
-                                    : TaskListCard.buildSubmissionTag(
-                                        s.submission,
-                                      );
-                            final showOverPreset =
-                                (s.changeDueReason ?? '').trim().isNotEmpty;
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                title: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            s.subtaskName,
-                                            maxLines: 3,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        if (subTag != null) ...[
-                                          const SizedBox(width: 8),
-                                          subTag,
-                                        ],
-                                      ],
+                            return SingularSubtaskRowCard(
+                              subtask: s,
+                              resolveName: (id) =>
+                                  state.assigneeById(id)?.name ?? id,
+                              onTap: () async {
+                                final changed =
+                                    await Navigator.of(context).push<bool>(
+                                  MaterialPageRoute<bool>(
+                                    builder: (_) => SubtaskDetailScreen(
+                                      subtaskId: s.id,
                                     ),
-                                    if (showOverPreset) ...[
-                                      const SizedBox(height: 6),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: TaskListCard
-                                            .buildOverPresetTimelineTag(),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        top: 4,
-                                        bottom: 4,
-                                      ),
-                                      child: Text(
-                                        'Assignee(s): $assigneeNamesLine',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 4,
-                                      ),
-                                      child: Text(
-                                        'PIC: $picLine',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 2),
-                                      child: _buildSubtaskMetaLine(context, s),
-                                    ),
-                                  ],
-                                ),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () async {
-                                  final changed =
-                                      await Navigator.of(context).push<bool>(
-                                    MaterialPageRoute<bool>(
-                                      builder: (_) => SubtaskDetailScreen(
-                                        subtaskId: s.id,
-                                      ),
-                                    ),
-                                  );
-                                  if (changed == true && mounted) {
-                                    await _loadSubtasks();
-                                  }
-                                },
-                              ),
+                                  ),
+                                );
+                                if (changed == true && mounted) {
+                                  await _loadSubtasks();
+                                }
+                              },
                             );
                           },
                         ),

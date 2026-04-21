@@ -142,7 +142,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
     if (subId != null && subId.isNotEmpty) {
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
-          builder: (_) => SubtaskDetailScreen(subtaskId: subId),
+          builder: (_) => SubtaskDetailScreen(
+            subtaskId: subId,
+            replaceWithParentTaskOnBack: true,
+          ),
         ),
       );
       return;
