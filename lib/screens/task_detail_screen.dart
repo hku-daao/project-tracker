@@ -16,12 +16,16 @@ import '../models/staff_for_assignment.dart';
 import '../models/team.dart';
 import '../priority.dart';
 import '../services/backend_api.dart';
+import '../services/firebase_attachment_upload_service.dart';
 import '../services/supabase_service.dart';
+import '../utils/attachment_url_launch.dart';
 import '../utils/copyable_snackbar.dart';
 import '../utils/due_span_policy.dart';
 import '../utils/hk_time.dart';
 import '../utils/subtask_list_sort.dart';
 import '../web_deep_link.dart';
+import '../widgets/attachment_add_link_dialog.dart';
+import '../widgets/attachment_link_preview.dart';
 import '../widgets/singular_subtask_row_card.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
 import '../widgets/subtask_meta_line.dart';
@@ -712,14 +716,59 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
   }
 
-  void _addTaskAttachmentRow() {
-    setState(() => _taskAttachments.add(_TaskAttachmentEntry()));
-  }
-
   void _removeTaskAttachmentRow(int index) {
     setState(() {
       _taskAttachments[index].dispose();
       _taskAttachments.removeAt(index);
+    });
+  }
+
+  Future<void> _addTaskAttachmentFromDevice() async {
+    final r = await FirebaseAttachmentUploadService.pickUploadForTask(
+      widget.taskId,
+    );
+    if (!mounted) return;
+    if (r.error != null && r.error!.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(r.error!),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    if (r.url == null) return;
+    if (!mounted) return;
+    setState(() {
+      _taskAttachments.add(
+        _TaskAttachmentEntry(
+          url: r.url,
+          desc: (r.label ?? '').trim(),
+        ),
+      );
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'File is uploaded. Press Update to save the attachment to the task.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _addTaskAttachmentFromLink() async {
+    final result = await showAttachmentAddLinkDialog(context);
+    if (!mounted || result == null) return;
+    setState(() {
+      _taskAttachments.add(
+        _TaskAttachmentEntry(
+          url: result.url,
+          desc: result.description,
+        ),
+      );
     });
   }
 
@@ -2507,11 +2556,46 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           _isPicEffective(state, task))
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                _saving ? null : _addTaskAttachmentRow,
-                            icon: const Icon(Icons.add_link_outlined),
-                            label: const Text('Add attachment'),
+                          child: MenuAnchor(
+                            menuChildren: [
+                              MenuItemButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () {
+                                        Future.microtask(
+                                          _addTaskAttachmentFromDevice,
+                                        );
+                                      },
+                                child: const Text('From your device'),
+                              ),
+                              MenuItemButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () {
+                                        Future.microtask(
+                                          _addTaskAttachmentFromLink,
+                                        );
+                                      },
+                                child: const Text('Link to a file or website'),
+                              ),
+                            ],
+                            builder: (ctx, menuController, _) {
+                              final can = _isCreator(state, task) ||
+                                  _isPicEffective(state, task);
+                              return OutlinedButton.icon(
+                                icon: const Icon(Icons.add_link_outlined),
+                                label: const Text('Add attachment'),
+                                onPressed: (_saving || !can)
+                                    ? null
+                                    : () {
+                                        if (menuController.isOpen) {
+                                          menuController.close();
+                                        } else {
+                                          menuController.open();
+                                        }
+                                      },
+                              );
+                            },
                           ),
                         ),
                       const SizedBox(height: 8),
@@ -2545,17 +2629,55 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                           ),
                                         ),
                                         const SizedBox(height: 8),
-                                        TextField(
-                                          controller: e.urlController,
-                                          readOnly: _saving || !canEdit,
-                                          decoration: const InputDecoration(
-                                            labelText:
-                                                'Attachment (hyperlink)',
-                                            hintText: 'https://…',
-                                            border: OutlineInputBorder(),
-                                            isDense: true,
+                                        if (canEdit)
+                                          TextField(
+                                            controller: e.urlController,
+                                            readOnly: _saving,
+                                            decoration: InputDecoration(
+                                              labelText: 'Attachment link',
+                                              hintText: 'https://…',
+                                              border: const OutlineInputBorder(),
+                                              isDense: true,
+                                              suffixIcon: IconButton(
+                                                icon: const Icon(
+                                                  Icons.open_in_new_outlined,
+                                                  size: 20,
+                                                ),
+                                                tooltip: 'Open link',
+                                                onPressed: () {
+                                                  final u =
+                                                      e.urlController.text.trim();
+                                                  if (u.isEmpty) {
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Enter a link first.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                    return;
+                                                  }
+                                                  openAttachmentUrl(
+                                                    context,
+                                                    u,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          InputDecorator(
+                                            decoration: const InputDecoration(
+                                              labelText: 'Attachment link',
+                                              border: OutlineInputBorder(),
+                                              isDense: true,
+                                            ),
+                                            child: AttachmentLinkPreview(
+                                              text: e.urlController.text,
+                                            ),
                                           ),
-                                        ),
                                       ],
                                     ),
                                   ),

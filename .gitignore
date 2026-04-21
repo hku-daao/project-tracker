@@ -47,6 +47,10 @@ app.*.map.json
 firebase-sa*.json
 firebase-sa.json.json
 **/serviceAccount*.json
+**/firebase-adminsdk*.json
+**/*-adminsdk-*.json
+**/google-services.json
+**/GoogleService-Info.plist
 
 # Supabase local tooling (avoid committing node_modules)
 supabase/node_modules/

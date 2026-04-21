@@ -6,6 +6,11 @@ node_modules/
 .env.local
 .env.*.local
 
+# Firebase Admin SDK (never commit)
+**/firebase-adminsdk*.json
+**/*-adminsdk-*.json
+**/serviceAccount*.json
+
 # Logs
 logs
 *.log

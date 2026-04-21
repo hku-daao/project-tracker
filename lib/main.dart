@@ -1,6 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage_web/firebase_storage_web.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
@@ -25,6 +27,9 @@ void main() async {
       // Use DefaultFirebaseOptions (FlutterFire pattern). Do not call firebase.initializeApp() in
       // index.html — that can prevent Pigeon from wiring FirebaseCoreHostApi and causes channel-error.
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      // Bind Storage to the JS SDK. If this is skipped, [FirebaseStorage.instance] may keep using
+      // Pigeon/MethodChannel (no web host) → uploads throw in messages.pigeon.dart.
+      FirebaseStorageWeb.registerWith(Registrar());
     }
     if (SupabaseConfig.isConfigured) {
       await Supabase.initialize(

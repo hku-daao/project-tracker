@@ -10,11 +10,15 @@ import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
 import '../../priority.dart';
 import '../../services/backend_api.dart';
+import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/attachment_url_launch.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../web_deep_link.dart';
+import '../../widgets/attachment_add_link_dialog.dart';
+import '../../widgets/attachment_link_preview.dart';
 import '../task_detail_screen.dart';
 import '../../utils/home_navigation.dart';
 
@@ -112,10 +116,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     _subtaskAttachments.clear();
   }
 
-  void _addSubtaskAttachmentRow() {
-    setState(() => _subtaskAttachments.add(_SubtaskAttachmentEntry()));
-  }
-
   void _onBackToTask() {
     if (_saving) return;
     final tid = _sub?.taskId;
@@ -138,6 +138,54 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     setState(() {
       _subtaskAttachments[index].dispose();
       _subtaskAttachments.removeAt(index);
+    });
+  }
+
+  Future<void> _addSubtaskAttachmentFromDevice() async {
+    final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
+      widget.subtaskId,
+    );
+    if (!mounted) return;
+    if (r.error != null && r.error!.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(r.error!),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    if (r.url == null) return;
+    setState(() {
+      _subtaskAttachments.add(
+        _SubtaskAttachmentEntry(
+          url: r.url,
+          desc: (r.label ?? '').trim(),
+        ),
+      );
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'File is uploaded. Press Update to save the attachment to the sub-task.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _addSubtaskAttachmentFromLink() async {
+    final result = await showAttachmentAddLinkDialog(context);
+    if (!mounted || result == null) return;
+    setState(() {
+      _subtaskAttachments.add(
+        _SubtaskAttachmentEntry(
+          url: result.url,
+          desc: result.description,
+        ),
+      );
     });
   }
 
@@ -1584,10 +1632,45 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 if (_canEditSubtaskAttachments(state, st))
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      onPressed: _saving ? null : _addSubtaskAttachmentRow,
-                      icon: const Icon(Icons.add_link_outlined),
-                      label: const Text('Add attachment'),
+                    child: MenuAnchor(
+                      menuChildren: [
+                        MenuItemButton(
+                          onPressed: _saving
+                              ? null
+                              : () {
+                                  Future.microtask(
+                                    _addSubtaskAttachmentFromDevice,
+                                  );
+                                },
+                          child: const Text('From your device'),
+                        ),
+                        MenuItemButton(
+                          onPressed: _saving
+                              ? null
+                              : () {
+                                  Future.microtask(
+                                    _addSubtaskAttachmentFromLink,
+                                  );
+                                },
+                          child: const Text('Link to a file or website'),
+                        ),
+                      ],
+                      builder: (ctx, menuController, _) {
+                        final can = _canEditSubtaskAttachments(state, st);
+                        return OutlinedButton.icon(
+                          icon: const Icon(Icons.add_link_outlined),
+                          label: const Text('Add attachment'),
+                          onPressed: (_saving || !can)
+                              ? null
+                              : () {
+                                  if (menuController.isOpen) {
+                                    menuController.close();
+                                  } else {
+                                    menuController.open();
+                                  }
+                                },
+                        );
+                      },
                     ),
                   ),
                 const SizedBox(height: 8),
@@ -1638,35 +1721,53 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                           ),
                                         ),
                                   const SizedBox(height: 8),
-                                  canEdit
-                                      ? TextField(
-                                          controller: e.urlController,
-                                          readOnly: _saving,
-                                          enableInteractiveSelection: true,
-                                          decoration: const InputDecoration(
-                                            labelText:
-                                                'Attachment (hyperlink)',
-                                            hintText: 'https://…',
-                                            border: OutlineInputBorder(),
-                                            isDense: true,
+                                  if (canEdit)
+                                    TextField(
+                                      controller: e.urlController,
+                                      readOnly: _saving,
+                                      enableInteractiveSelection: true,
+                                      decoration: InputDecoration(
+                                        labelText: 'Attachment link',
+                                        hintText: 'https://…',
+                                        border: const OutlineInputBorder(),
+                                        isDense: true,
+                                        suffixIcon: IconButton(
+                                          icon: const Icon(
+                                            Icons.open_in_new_outlined,
+                                            size: 20,
                                           ),
-                                        )
-                                      : InputDecorator(
-                                          decoration: const InputDecoration(
-                                            labelText:
-                                                'Attachment (hyperlink)',
-                                            border: OutlineInputBorder(),
-                                            isDense: true,
-                                          ),
-                                          child: SelectableText(
-                                            e.urlController.text.isEmpty
-                                                ? '—'
-                                                : e.urlController.text,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodyMedium,
-                                          ),
+                                          tooltip: 'Open link',
+                                          onPressed: () {
+                                            final u =
+                                                e.urlController.text.trim();
+                                            if (u.isEmpty) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Enter a link first.',
+                                                  ),
+                                                ),
+                                              );
+                                              return;
+                                            }
+                                            openAttachmentUrl(context, u);
+                                          },
                                         ),
+                                      ),
+                                    )
+                                  else
+                                    InputDecorator(
+                                      decoration: const InputDecoration(
+                                        labelText: 'Attachment link',
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                      child: AttachmentLinkPreview(
+                                        text: e.urlController.text,
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

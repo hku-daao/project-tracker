@@ -32,10 +32,9 @@
   <title>Project Tracker</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Firebase JS (compat). Load only — Dart (firebase_core) calls initializeApp via Pigeon. -->
-  <!-- Do NOT call firebase.initializeApp() here; it breaks FirebaseCoreHostApi on Flutter web. -->
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <!-- Do NOT load firebase-*-compat.js here. FlutterFire (firebase_core_web) injects the
+       modular Firebase JS SDK (v11.x) for app, auth, storage, etc. Mixing compat 10.x scripts
+       with that breaks Storage interop (uncaught errors in guardWebExceptions / ref()). -->
 </head>
 <body>
   <div id="loading" style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:18px;">
@@ -49,7 +48,6 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <!-- No "async" so bootstrap runs after Firebase scripts in <head> have executed. -->
   <script src="flutter_bootstrap.js"></script>
 </body>
 </html>
