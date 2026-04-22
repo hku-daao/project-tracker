@@ -639,9 +639,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   /// Returns `true` if a comment row was inserted. [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
   ///
-  /// When the poster is a **sub-task assignee** (`assignee_01`…`assignee_10`), notifies the creator
-  /// via [BackendApi.notifySubtaskCommentAdded] (`handleNotifySubtaskComment`). Creator-only comments
-  /// use [notifySubtaskUpdated] instead; the server also rejects non-assignee authors for the comment API.
+  /// After insert, notifies the sub-task creator via [BackendApi.notifySubtaskCommentAdded] when the
+  /// poster is **not** the sub-task creator (server checks assignee on sub-task or parent task and
+  /// skips self-mail).
   Future<bool> _postComment(
     AppState state,
     SingularSubtask st, {
@@ -667,7 +667,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       final newCommentId = ins.commentId?.trim();
       if (newCommentId != null &&
           newCommentId.isNotEmpty &&
-          _isAssignee(state, st)) {
+          !_isCreator(state, st)) {
         await _notifySubtaskCommentCreatorEmail(newCommentId);
       }
       _commentController.clear();
@@ -974,7 +974,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           return;
         }
         final cid = ins.commentId?.trim();
-        if (cid != null && cid.isNotEmpty && _isAssignee(state, st)) {
+        if (cid != null && cid.isNotEmpty && !_isCreator(state, st)) {
           await _notifySubtaskCommentCreatorEmail(cid);
         }
       }

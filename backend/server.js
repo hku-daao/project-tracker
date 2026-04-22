@@ -921,6 +921,27 @@ function isStaffSubtaskAssignee(subtaskRow, staffUuid) {
 }
 
 /**
+ * True when [staffUuid] is on the sub-task assignee slots or on the parent singular `task`
+ * assignee slots (same staff.id uuid space as `subtask_comment.create_by`).
+ */
+async function isStaffSubtaskOrParentTaskAssignee(subtaskRow, staffUuid, supabaseClient) {
+  if (isStaffSubtaskAssignee(subtaskRow, staffUuid)) return true;
+  const tid = (subtaskRow.task_id || '').toString().trim();
+  if (!tid || !supabaseClient) return false;
+  const { data: taskRow, error: tErr } = await supabaseClient
+    .from('task')
+    .select('*')
+    .eq('id', tid)
+    .maybeSingle();
+  if (tErr || !taskRow) return false;
+  const sid = String(staffUuid || '').trim().toLowerCase();
+  if (!sid) return false;
+  return collectTaskAssigneeStaffIds(taskRow).some(
+    (id) => String(id).trim().toLowerCase() === sid,
+  );
+}
+
+/**
  * Task-comment email to task creator only (`handleNotifyTaskComment`).
  * @param {{ recipientDisplayName: string, commentDescription: string, taskName: string, taskUrl: string }} p
  */
@@ -3655,8 +3676,9 @@ async function handleNotifyTaskComment(req, res) {
 
 /**
  * POST { commentId } — comment author only (session = author staff email). Sends **one** Mailgun
- * message to **subtask.create_by** only when the author is in `assignee_01`…`assignee_10` and is
- * not the creator (no self-email). Not used for creator-only comments (`handleNotifySubtaskUpdated`).
+ * message to **subtask.create_by** when the author is on **sub-task** or **parent task** assignee
+ * slots (`assignee_01`…`assignee_10`, same `staff.id` as `subtask_comment.create_by`) and is not the
+ * sub-task creator (no self-email). Creator-only comments use `handleNotifySubtaskUpdated`.
  */
 async function handleNotifySubtaskComment(req, res) {
   if (req.method !== 'POST') {
@@ -3737,7 +3759,12 @@ async function handleNotifySubtaskComment(req, res) {
       sendJson(req, res, 404, { error: 'Sub-task not found' });
       return;
     }
-    if (!isStaffSubtaskAssignee(subtaskRow, authorStaffId)) {
+    const authorIsAssignee = await isStaffSubtaskOrParentTaskAssignee(
+      subtaskRow,
+      authorStaffId,
+      supabase,
+    );
+    if (!authorIsAssignee) {
       sendJson(req, res, 200, {
         ok: true,
         commentId,
@@ -3747,7 +3774,7 @@ async function handleNotifySubtaskComment(req, res) {
           {
             ok: true,
             skipped:
-              'sub-task comment notify is only for comments by assignee_01…assignee_10 (not PIC-only / non-assignee authors)',
+              'sub-task comment notify is only for comment authors who are sub-task assignees or parent-task assignees (staff.id)',
           },
         ],
       });

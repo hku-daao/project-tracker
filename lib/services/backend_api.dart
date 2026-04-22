@@ -424,8 +424,8 @@ class BackendApi {
     }
   }
 
-  /// Emails the **sub-task creator** when an **assignee** (`assignee_01`…`assignee_10`) saves a comment
-  /// (not when the author is only the creator without an assignee slot, or creator self-comment).
+  /// Emails the **sub-task creator** when a **non-creator** saves a comment (author must be a sub-task
+  /// or parent-task assignee per server rules; creator self-comments are skipped).
   /// Server: `POST /api/notify/subtask-comment` (`handleNotifySubtaskComment`). Uses
   /// `TASK_COMMENT_EMAIL_ENABLED` like task-comment notifications.
   Future<String?> notifySubtaskCommentAdded({
