@@ -4176,17 +4176,29 @@ async function handleNotifySubtaskUpdated(req, res) {
       sendJson(req, res, 400, { error: 'Updater staff not found' });
       return;
     }
-    const updaterEmail = (updaterStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!updaterEmail || updaterEmail !== sessionEmail) {
+    const updaterMatchesSession = await sessionEmailBelongsToStaffRow(
+      supabase,
+      updaterStaff,
+      sessionEmail,
+    );
+    if (!updaterMatchesSession) {
       sendJson(req, res, 403, {
         error:
-          'Only the user who updated the sub-task (staff email must match signed-in user) can send update emails',
+          'Only the user who updated the sub-task (signed-in email must match staff.email or linked app_users email) can send update emails',
       });
       return;
     }
+    const updaterReplyTo = (
+      (await resolveStaffEmailForNotifications(supabase, updaterStaff)) ||
+      (updaterStaff.email || '').trim()
+    ).trim();
     const updaterNameForBody =
-      (updaterStaff.name || '').trim() || updaterEmail;
+      (updaterStaff.display_name || '').trim() ||
+      (updaterStaff.name || '').trim() ||
+      updaterReplyTo ||
+      sessionEmail ||
+      'Colleague';
     const creatorId = (row.create_by || '').toString().trim();
     const updaterNorm = String(updaterId).trim().toLowerCase();
     const creatorNorm = creatorId ? creatorId.toLowerCase() : '';
@@ -4267,15 +4279,19 @@ async function handleNotifySubtaskUpdated(req, res) {
 
     const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
     const results = [];
-    const replyTo = updaterEmail;
+    const replyTo =
+      updaterReplyTo || sessionEmail || undefined;
 
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await supabase
         .from('staff')
-        .select('email, name, display_name')
+        .select('id, email, name, display_name')
         .eq('id', staffUuid)
         .maybeSingle();
-      const to = (s?.email || '').trim();
+      const to = (
+        (await resolveStaffEmailForNotifications(supabase, s)) ||
+        (s?.email || '').trim()
+      ).trim();
       if (!to) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;

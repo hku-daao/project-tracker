@@ -717,7 +717,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           final err = await SupabaseService.updateSubtaskRow(
             subtaskId: st.id,
             picStaffLookupKey: key,
-            updaterStaffLookupKey: state.userStaffAppId,
+            bumpSubtaskRowAuditFields: false,
           );
           if (!mounted) return false;
           if (err != null) {
@@ -2003,21 +2003,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           }
                           if (!mounted) return;
                           if (metaOk || commentOk) {
-                            final sk = state.userStaffAppId?.trim();
-                            if (sk != null && sk.isNotEmpty) {
-                              final touchErr =
-                                  await SupabaseService.updateSubtaskRow(
-                                subtaskId: st.id,
-                                updaterStaffLookupKey: sk,
-                              );
-                              if (touchErr != null && mounted) {
-                                showCopyableSnackBar(
-                                  context,
-                                  'Sub-task saved; email stamp skipped: $touchErr',
-                                  backgroundColor: Colors.orange,
-                                );
-                              }
-                            }
+                            // Row `update_by` / `update_date` are set only inside creator `_saveMetadata`
+                            // → `updateSubtaskRow` (not for comment-only saves; each comment has its own time).
                             if (creator && (metaOk || commentOk)) {
                               await _notifySubtaskUpdatedEmail(
                                 st.id,

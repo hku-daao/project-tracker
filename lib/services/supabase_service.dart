@@ -1906,12 +1906,17 @@ class SupabaseService {
     bool stampSubmitDateNow = false,
     DateTime? completionDateAt,
     bool clearCompletionDate = false,
+
+    /// When false, does not set `update_date` (and omit [updaterStaffLookupKey] to leave `update_by` unchanged).
+    /// Use for edits that should not appear as “Last updated” on the sub-task row (e.g. non-creator PIC only).
+    bool bumpSubtaskRowAuditFields = true,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
-      final map = <String, dynamic>{
-        'update_date': HkTime.timestampForDb(),
-      };
+      final map = <String, dynamic>{};
+      if (bumpSubtaskRowAuditFields) {
+        map['update_date'] = HkTime.timestampForDb();
+      }
       if (subtaskName != null) map['subtask_name'] = subtaskName.trim();
       if (description != null) map['description'] = description.trim();
       if (priorityDisplay != null) map['priority'] = priorityDisplay;

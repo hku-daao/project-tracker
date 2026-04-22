@@ -123,6 +123,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
   final _changeDueReasonController = TextEditingController();
+  final FocusNode _changeDueReasonFocusNode = FocusNode();
   final List<_TaskAttachmentEntry> _taskAttachments = [];
 
   /// Normalized attachment rows after load/reload — for “nothing changed” detection.
@@ -673,6 +674,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     _descController.dispose();
     _commentController.dispose();
     _changeDueReasonController.dispose();
+    _changeDueReasonFocusNode.dispose();
     _clearTaskAttachments();
     super.dispose();
   }
@@ -943,10 +945,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     return da.compareTo(db);
   }
 
+  /// True when the selected start→due span exceeds the Standard / URGENT working-day cap.
+  /// (No bypass via sub-tasks: if dates exceed policy, a reason is required before **Update**.)
   bool _needsChangeDueReason() {
-    if (allSubtasksComplyWithDueSpanPolicy(_subtasks)) {
-      return false;
-    }
     return dueDateExceedsPolicyForPriority(
       _startDate,
       _dueDate,
@@ -1429,9 +1430,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
     final needsDueReason = _needsChangeDueReason();
     if (needsDueReason && _changeDueReasonController.text.trim().isEmpty) {
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _changeDueReasonFocusNode.requestFocus();
+        });
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(duration: const Duration(seconds: 4), content: Text(
-            'Enter a reason when the due date is beyond the allowed working days for this priority',
+            'Enter a reason when the start/due span exceeds the allowed working days for this priority',
           ),
           backgroundColor: Colors.orange,
         ),
@@ -2556,6 +2562,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   const SizedBox(height: 8),
                                   TextFormField(
                                     controller: _changeDueReasonController,
+                                    focusNode: _changeDueReasonFocusNode,
                                     readOnly: _saving,
                                     decoration: const InputDecoration(
                                       labelText: 'Reason',
