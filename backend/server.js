@@ -821,6 +821,28 @@ function collectTaskAssigneeStaffIds(taskRow) {
   return assigneeIds;
 }
 
+/**
+ * Default recipients for task-updated emails: assignee_01..10 with values plus
+ * create_by, deduped (normalized key -> canonical id string).
+ * @param {Record<string, unknown>} taskRow
+ * @returns {Map<string, string>}
+ */
+function buildTaskUpdatedDefaultRecipientStaffIds(taskRow) {
+  const recipientByNorm = new Map();
+  for (const id of collectTaskAssigneeStaffIds(taskRow)) {
+    const raw = String(id).trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
+  }
+  const createBy = (taskRow.create_by || '').toString().trim();
+  if (createBy) {
+    const key = createBy.toLowerCase();
+    if (!recipientByNorm.has(key)) recipientByNorm.set(key, createBy);
+  }
+  return recipientByNorm;
+}
+
 /** Same slot layout as [collectTaskAssigneeStaffIds] for `public.subtask`. */
 function collectSubtaskAssigneeStaffIds(subtaskRow) {
   return collectTaskAssigneeStaffIds(subtaskRow);
@@ -3433,6 +3455,11 @@ async function handleNotifyTaskComment(req, res) {
 /**
  * POST { taskId } — last updater only (session email = staff.email for task.update_by).
  * Emails each assignee (assignee_01..10) plus create_by, deduped; one Mailgun message per recipient.
+ * If the updater is the task creator and the payload includes at least one allowed field change
+ * (task detail columns), the creator is not emailed (no self-email for column edits).
+ * Comment-only updates: assignee (not creator) commenting → notify create_by only; creator (not
+ * assignee) commenting → notify assignees only. If that targeted set is empty, falls back to the
+ * default full recipient list.
  */
 async function handleNotifyTaskUpdated(req, res) {
   if (req.method !== 'POST') {
@@ -3540,24 +3567,59 @@ async function handleNotifyTaskUpdated(req, res) {
     const changeLinesHtml = changeLinesHtmlParts.join('<br>');
     const changeLinesText = changeLinesTextParts.join('\n');
 
-    /** @type {Map<string, string>} normalized staff id -> canonical id string */
-    const recipientByNorm = new Map();
-    for (const id of collectTaskAssigneeStaffIds(taskRow)) {
-      const raw = String(id).trim();
-      if (!raw) continue;
-      const key = raw.toLowerCase();
-      if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
-    }
     const creatorId = (taskRow.create_by || '').toString().trim();
-    if (creatorId) {
-      const key = creatorId.toLowerCase();
-      if (!recipientByNorm.has(key)) recipientByNorm.set(key, creatorId);
+    const assigneeIdsForRouting = collectTaskAssigneeStaffIds(taskRow);
+    /** @type {Map<string, string>} normalized staff id -> canonical id string */
+    let recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+
+    const updaterNorm = String(updaterId).trim().toLowerCase();
+    const hasFieldChanges = changeLinesHtmlParts.length > 0;
+    const hasComment = Boolean(commentTrim);
+    const updaterInAssignees = assigneeIdsForRouting.some(
+      (id) => String(id).trim().toLowerCase() === updaterNorm,
+    );
+    const updaterIsCreator =
+      Boolean(creatorId) && updaterNorm === creatorId.toLowerCase();
+
+    if (hasComment && !hasFieldChanges) {
+      if (updaterInAssignees && !updaterIsCreator && creatorId) {
+        recipientByNorm = new Map();
+        recipientByNorm.set(creatorId.toLowerCase(), creatorId);
+      } else if (updaterIsCreator && !updaterInAssignees) {
+        recipientByNorm = new Map();
+        for (const id of assigneeIdsForRouting) {
+          const raw = String(id).trim();
+          if (!raw) continue;
+          const key = raw.toLowerCase();
+          if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
+        }
+      }
+      if (recipientByNorm.size === 0) {
+        recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+      }
     }
+
+    const omitSelfCreatorForFieldUpdates =
+      changeLinesHtmlParts.length > 0 &&
+      creatorId &&
+      updaterNorm === creatorId.toLowerCase();
 
     const results = [];
     const replyTo = updaterEmail;
 
     for (const staffUuid of recipientByNorm.values()) {
+      if (
+        omitSelfCreatorForFieldUpdates &&
+        String(staffUuid).trim().toLowerCase() === updaterNorm
+      ) {
+        results.push({
+          staffId: staffUuid,
+          ok: true,
+          skipped:
+            'task creator is updater (task detail columns changed); no self-email',
+        });
+        continue;
+      }
       const { data: s } = await supabase
         .from('staff')
         .select('email, name, display_name')
