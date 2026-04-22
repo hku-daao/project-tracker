@@ -959,16 +959,45 @@ ${TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF}`;
  */
 const SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF = 'https://projecttracker.hku.hk';
 
+/** En dash (U+2013) after “Comment is added”, per product template. */
+const SUBTASK_COMMENT_ADDED_LINE_EN_DASH = '\u2013';
+
+/**
+ * Plain text for email from `subtask_comment.description` (`text` column; also accepts JSON
+ * `{"value":"..."}` when stored as a string or parsed object, matching `{description.value}`).
+ */
+function subtaskCommentDescriptionPlainText(raw) {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    if (Object.prototype.hasOwnProperty.call(raw, 'value')) {
+      return String(raw.value ?? '').trim();
+    }
+  }
+  const s = String(raw).trim();
+  if (s.startsWith('{') && s.includes('"value"')) {
+    try {
+      const o = JSON.parse(s);
+      if (o && typeof o === 'object' && o.value != null) {
+        return String(o.value).trim();
+      }
+    } catch (_) {
+      /* use full string */
+    }
+  }
+  return s;
+}
+
 /**
  * Sub-task comment email to sub-task creator only (`handleNotifySubtaskComment`).
- * Body: Hi {creator display_name}; “Comment is added – {description}”; bold+underlined
- * {subtask_name} → `subtaskWebAppUrl(subtask.id)`; “Project Tracker” → product URL; Aptos 16px.
+ * Subject: `{comment author} comments on sub-task "{subtask.subtask_name}"`.
+ * Body: Hi {creator staff.display_name}; Comment is added – {description}; bold+underlined
+ * {subtask.subtask_name} → `subtaskWebAppUrl(subtask.id)`; “Project Tracker” → product URL; Aptos 16px.
  *
  * @param {{ recipientDisplayName: string, commentDescription: string, subtaskName: string, subtaskUrl: string }} p
  */
 function buildSubtaskCommentCreatorEmailHtml(p) {
   const safeHi = escapeHtml(p.recipientDisplayName);
-  let desc = String(p.commentDescription || '').trim();
+  let desc = subtaskCommentDescriptionPlainText(p.commentDescription);
   if (!desc) desc = '(no text)';
   if (desc.length > TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN) {
     desc = `${desc.slice(0, TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN)}…`;
@@ -980,20 +1009,20 @@ function buildSubtaskCommentCreatorEmailHtml(p) {
   const bodyFont =
     "font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;";
   return `<div style="margin:0;${bodyFont}">Hi ${safeHi},<br><br>
-Comment is added – ${safeDesc}<br><br>
+Comment is added ${SUBTASK_COMMENT_ADDED_LINE_EN_DASH} ${safeDesc}<br><br>
 <a href="${safeSubtaskUrlAttr}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br><br>
 <a href="${safeLandingHref}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;color:#1565C0;">Project Tracker</a></div>`;
 }
 
 function buildSubtaskCommentCreatorEmailText(p) {
-  let desc = String(p.commentDescription || '').trim();
+  let desc = subtaskCommentDescriptionPlainText(p.commentDescription);
   if (!desc) desc = '(no text)';
   if (desc.length > TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN) {
     desc = `${desc.slice(0, TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN)}…`;
   }
   return `Hi ${p.recipientDisplayName},
 
-Comment is added – ${desc}
+Comment is added ${SUBTASK_COMMENT_ADDED_LINE_EN_DASH} ${desc}
 
 ${p.subtaskName}
 ${p.subtaskUrl}
@@ -3694,13 +3723,14 @@ async function handleNotifySubtaskComment(req, res) {
     }
     const { data: subtaskRow, error: tErr } = await supabase
       .from('subtask')
-      .select('*')
+      .select('id, subtask_name, create_by')
       .eq('id', subtaskId)
       .maybeSingle();
     if (tErr || !subtaskRow) {
       sendJson(req, res, 404, { error: 'Sub-task not found' });
       return;
     }
+    /** Resolved from `subtask_comment.create_by` → staff (subject line). */
     const authorNameForSubject =
       (authorStaff.display_name || '').trim() ||
       (authorStaff.name || '').trim() ||
@@ -3709,7 +3739,8 @@ async function handleNotifySubtaskComment(req, res) {
       (subtaskRow.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `${mailSubjectSingleLine(authorNameForSubject)} comments on sub-task "${subtaskTitleForSubject}"`;
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const subtaskRowId = (subtaskRow.id || subtaskId || '').toString().trim();
+    const subtaskUrl = subtaskWebAppUrl(subtaskRowId);
 
     const authorNorm = authorStaffId.toLowerCase();
     const creatorId = (subtaskRow.create_by || '').toString().trim();
