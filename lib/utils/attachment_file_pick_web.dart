@@ -10,9 +10,18 @@ Future<PickedFileBytes?> pickOneFileWithBytes() {
   final completer = Completer<PickedFileBytes?>();
   var changeTriggered = false;
 
+  // iOS Safari (and some WebKit builds) ignore programmatic .click() on inputs with
+  // display:none. Use an off-screen, minimally opaque element instead.
   final input = html.FileUploadInputElement()
     ..multiple = false
-    ..style.display = 'none';
+    ..accept = '*/*'
+    ..style.position = 'fixed'
+    ..style.left = '0'
+    ..style.top = '0'
+    ..style.width = '1px'
+    ..style.height = '1px'
+    ..style.opacity = '0.01'
+    ..style.overflow = 'hidden';
 
   void complete(PickedFileBytes? value) {
     if (completer.isCompleted) return;

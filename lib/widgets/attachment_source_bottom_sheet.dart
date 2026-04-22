@@ -1,10 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
-/// iOS often refuses to show the system document picker if it is presented while
-/// another route (menu overlay, modal sheet, etc.) is still being torn down. Pop the
-/// sheet first, then run the native pick after the **next** frame so the presenter
-/// hierarchy is stable.
+/// **Native iOS:** defer the native document picker until after the modal sheet is
+/// torn down (two post-frame callbacks), or `UIDocumentPicker` may not present.
+///
+/// **Web (especially iOS Safari):** [user activation] is lost if we defer past the
+/// current tap handler. Call the pick action **immediately** after [Navigator.pop].
+///
+/// [user activation]: https://developer.mozilla.org/en-US/docs/Web/Security/User_activation
 Future<void> showAttachmentSourceBottomSheet({
   required BuildContext context,
   required VoidCallback onPickFromDevice,
@@ -14,6 +18,14 @@ Future<void> showAttachmentSourceBottomSheet({
     SchedulerBinding.instance.addPostFrameCallback((_) {
       SchedulerBinding.instance.addPostFrameCallback((_) => action());
     });
+  }
+
+  void afterPop(VoidCallback action) {
+    if (kIsWeb) {
+      action();
+    } else {
+      runAfterSheetDismissed(action);
+    }
   }
 
   return showModalBottomSheet<void>(
@@ -31,7 +43,7 @@ Future<void> showAttachmentSourceBottomSheet({
               title: const Text('From your device'),
               onTap: () {
                 Navigator.pop(sheetCtx);
-                runAfterSheetDismissed(onPickFromDevice);
+                afterPop(onPickFromDevice);
               },
             ),
             ListTile(
@@ -39,7 +51,7 @@ Future<void> showAttachmentSourceBottomSheet({
               title: const Text('Link to a file or website'),
               onTap: () {
                 Navigator.pop(sheetCtx);
-                runAfterSheetDismissed(onPickFromLink);
+                afterPop(onPickFromLink);
               },
             ),
           ],
