@@ -424,9 +424,10 @@ class BackendApi {
     }
   }
 
-  /// Emails the sub-task creator after a comment is saved (not when the creator comments on own sub-task).
-  /// Server: `POST /api/notify/subtask-comment` (`handleNotifySubtaskComment`). Uses the same
-  /// `TASK_COMMENT_EMAIL_ENABLED` flag as task-comment notifications.
+  /// Emails the **sub-task creator** when an **assignee** (`assignee_01`…`assignee_10`) saves a comment
+  /// (not when the author is only the creator without an assignee slot, or creator self-comment).
+  /// Server: `POST /api/notify/subtask-comment` (`handleNotifySubtaskComment`). Uses
+  /// `TASK_COMMENT_EMAIL_ENABLED` like task-comment notifications.
   Future<String?> notifySubtaskCommentAdded({
     required String idToken,
     required String commentId,
@@ -495,10 +496,15 @@ class BackendApi {
     }
   }
 
-  /// Emails sub-task assignees and creator after the sub-task row is updated (Update button). Requires Mailgun.
+  /// Sub-task update notification (`POST /api/notify/subtask-updated`). Requires Mailgun.
   ///
-  /// [changes]: each `{ 'field': 'subtaskName'|'description'|... , 'value': '...' }` for email lines.
-  /// [commentAddedText]: when a sub-task comment was saved in the same update.
+  /// The server **only sends** when `subtask.update_by` is the sub-task **creator** (`create_by`)
+  /// and the signed-in user matches that staff row. Recipients: non-empty `assignee_01`…`assignee_10`
+  /// plus `create_by`, deduped (one Mailgun message each).
+  ///
+  /// [changes]: `{ 'field': 'subtaskName'|'description'|'assignees'|'priority'|'startDate'|'dueDate', 'value': '...' }`.
+  /// [commentAddedText]: optional; when the creator saved a comment in the same action, body includes
+  /// `Sub-task comment is added – …`.
   Future<String?> notifySubtaskUpdated({
     required String idToken,
     required String subtaskId,

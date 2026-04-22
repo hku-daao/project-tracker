@@ -639,9 +639,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   /// Returns `true` if a comment row was inserted. [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
   ///
-  /// On success, notifies the sub-task creator via [BackendApi.notifySubtaskCommentAdded] (correct
-  /// subject: `… comments on sub-task "…"`). Do not bundle the comment into [notifySubtaskUpdated],
-  /// which uses a different subject (`Sub-task updated - …`).
+  /// When the poster is a **sub-task assignee** (`assignee_01`…`assignee_10`), notifies the creator
+  /// via [BackendApi.notifySubtaskCommentAdded] (`handleNotifySubtaskComment`). Creator-only comments
+  /// use [notifySubtaskUpdated] instead; the server also rejects non-assignee authors for the comment API.
   Future<bool> _postComment(
     AppState state,
     SingularSubtask st, {
@@ -665,7 +665,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         return false;
       }
       final newCommentId = ins.commentId?.trim();
-      if (newCommentId != null && newCommentId.isNotEmpty) {
+      if (newCommentId != null &&
+          newCommentId.isNotEmpty &&
+          _isAssignee(state, st)) {
         await _notifySubtaskCommentCreatorEmail(newCommentId);
       }
       _commentController.clear();
@@ -731,7 +733,6 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             showCopyableSnackBar(context, errA, backgroundColor: Colors.orange);
             return false;
           }
-          await _notifySubtaskUpdatedEmail(st.id);
           if (!mounted) return false;
           await _load(rebindAttachments: false);
           if (!suppressSuccessSnack && mounted) {
@@ -973,7 +974,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           return;
         }
         final cid = ins.commentId?.trim();
-        if (cid != null && cid.isNotEmpty) {
+        if (cid != null && cid.isNotEmpty && _isAssignee(state, st)) {
           await _notifySubtaskCommentCreatorEmail(cid);
         }
       }
@@ -1194,6 +1195,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     await _load(rebindAttachments: false);
   }
 
+  /// Calls [BackendApi.notifySubtaskUpdated]. The API sends mail only when the sub-task **creator**
+  /// (`create_by`) is the row updater; callers should invoke this from the creator **Update** path only.
   Future<void> _notifySubtaskUpdatedEmail(
     String subtaskId, {
     List<Map<String, String>>? changes,
@@ -2015,10 +2018,12 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                 );
                               }
                             }
-                            if (metaOk) {
+                            if (creator && (metaOk || commentOk)) {
                               await _notifySubtaskUpdatedEmail(
                                 st.id,
-                                changes: changesForEmail,
+                                changes: metaOk ? changesForEmail : const [],
+                                commentAddedText:
+                                    commentOk ? pendingCommentSnap : null,
                               );
                             }
                             ScaffoldMessenger.of(context).showSnackBar(

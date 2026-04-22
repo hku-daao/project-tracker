@@ -120,7 +120,8 @@ ${TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF}`;
 }
 
 /**
- * Sub-task-updated assignee email: Aptos 16px (same layout as task-updated).
+ * Sub-task-updated notify email (creator save only): Aptos 16px; `changeLines*` = `{A} is updated – {value}`;
+ * optional `commentLine*` = `Sub-task comment is added – …`; title link; Updated by / at; Project Tracker.
  *
  * @param {{ recipientDisplayName: string, changeLinesHtml: string, changeLinesText: string, commentLineHtml: string, commentLineText: string, subtaskName: string, subtaskUrl: string, updaterName: string, updatedAtLine: string }} p
  */
@@ -130,20 +131,17 @@ function buildSubtaskUpdatedAssigneeEmailHtml(p) {
   const safeTitle = escapeHtml(p.subtaskName);
   const safeUpdater = escapeHtml(p.updaterName);
   const safeUpdatedAt = escapeHtml(p.updatedAtLine);
-  const safeLandingHref = escapeHtml(TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF);
+  const safeLandingHref = escapeHtml(SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF);
   const chHtml = (p.changeLinesHtml || '').trim();
   const cmtHtml = (p.commentLineHtml || '').trim();
   const topParts = [];
   if (chHtml) topParts.push(chHtml);
   if (cmtHtml) topParts.push(cmtHtml);
   const topBlock = topParts.join('<br><br>');
-  const defaultLine =
-    '<span style="color:#000000;font-family:Aptos,\'Segoe UI\',Calibri,sans-serif;font-size:16px;">The sub-task has been updated.</span>';
-  const firstBlock = topBlock ? topBlock : defaultLine;
   const bodyFont =
     "font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;";
   return `<div style="margin:0;${bodyFont}">Hi ${safeHi},<br><br>
-${firstBlock}<br><br>
+${topBlock}<br><br>
 <a href="${safeUrlAttr}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br><br>
 Updated by: ${safeUpdater}<br><br>
 Updated at: ${safeUpdatedAt}<br><br>
@@ -156,11 +154,10 @@ function buildSubtaskUpdatedAssigneeEmailText(p) {
   const topParts = [];
   if (ch) topParts.push(ch);
   if (cmt) topParts.push(cmt);
-  const top = topParts.join('\n\n');
-  const first = top ? top : 'The sub-task has been updated.';
+  const topBlock = topParts.join('\n\n');
   return `Hi ${p.recipientDisplayName},
 
-${first}
+${topBlock}
 
 ${p.subtaskName}
 ${p.subtaskUrl}
@@ -170,7 +167,7 @@ Updated by: ${p.updaterName}
 Updated at: ${p.updatedAtLine}
 
 Project Tracker
-${TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF}`;
+${SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF}`;
 }
 
 /** Task-comment emails (`handleNotifyTaskComment`). Default on; set `TASK_COMMENT_EMAIL_ENABLED=false` to disable. */
@@ -912,6 +909,15 @@ function buildTaskUpdatedDefaultRecipientStaffIds(taskRow) {
 /** Same slot layout as [collectTaskAssigneeStaffIds] for `public.subtask`. */
 function collectSubtaskAssigneeStaffIds(subtaskRow) {
   return collectTaskAssigneeStaffIds(subtaskRow);
+}
+
+/** True when [staffUuid] matches a non-empty `assignee_01`…`assignee_10` on [subtaskRow]. */
+function isStaffSubtaskAssignee(subtaskRow, staffUuid) {
+  const sid = String(staffUuid || '').trim().toLowerCase();
+  if (!sid) return false;
+  return collectSubtaskAssigneeStaffIds(subtaskRow).some(
+    (id) => String(id).trim().toLowerCase() === sid,
+  );
 }
 
 /**
@@ -3648,8 +3654,9 @@ async function handleNotifyTaskComment(req, res) {
 }
 
 /**
- * POST { commentId } — subtask_comment author only; emails sub-task creator (`subtask.create_by`)
- * when they are not the author. Uses `buildSubtaskCommentCreatorEmail*` (subject/body per product template).
+ * POST { commentId } — comment author only (session = author staff email). Sends **one** Mailgun
+ * message to **subtask.create_by** only when the author is in `assignee_01`…`assignee_10` and is
+ * not the creator (no self-email). Not used for creator-only comments (`handleNotifySubtaskUpdated`).
  */
 async function handleNotifySubtaskComment(req, res) {
   if (req.method !== 'POST') {
@@ -3723,11 +3730,27 @@ async function handleNotifySubtaskComment(req, res) {
     }
     const { data: subtaskRow, error: tErr } = await supabase
       .from('subtask')
-      .select('id, subtask_name, create_by')
+      .select('*')
       .eq('id', subtaskId)
       .maybeSingle();
     if (tErr || !subtaskRow) {
       sendJson(req, res, 404, { error: 'Sub-task not found' });
+      return;
+    }
+    if (!isStaffSubtaskAssignee(subtaskRow, authorStaffId)) {
+      sendJson(req, res, 200, {
+        ok: true,
+        commentId,
+        subtaskId,
+        recipients: 0,
+        results: [
+          {
+            ok: true,
+            skipped:
+              'sub-task comment notify is only for comments by assignee_01…assignee_10 (not PIC-only / non-assignee authors)',
+          },
+        ],
+      });
       return;
     }
     /** Resolved from `subtask_comment.create_by` → staff (subject line). */
@@ -4087,9 +4110,10 @@ async function handleNotifyTaskUpdated(req, res) {
 }
 
 /**
- * POST { subtaskId, changes?, commentAddedText? } — last updater only (session email = staff.email
- * for subtask.update_by). Emails assignee_01..10 plus create_by, deduped; one Mailgun message per recipient.
- * Same routing as task-updated: comment-only narrow recipients; creator skips self-email on field changes.
+ * POST { subtaskId, changes?, commentAddedText? } — only when `subtask.update_by` is the sub-task
+ * creator (`create_by`) and session email matches that staff row. One Mailgun message per recipient:
+ * assignee_01..10 (non-empty) plus `create_by`, deduped. Field lines: `{A} is updated – {new_value}`
+ * for allowed keys; optional `commentAddedText`: `Sub-task comment is added – …` (creator comment).
  */
 async function handleNotifySubtaskUpdated(req, res) {
   if (req.method !== 'POST') {
@@ -4150,13 +4174,31 @@ async function handleNotifySubtaskUpdated(req, res) {
     }
     const updaterNameForBody =
       (updaterStaff.name || '').trim() || updaterEmail;
+    const creatorId = (row.create_by || '').toString().trim();
+    const updaterNorm = String(updaterId).trim().toLowerCase();
+    const creatorNorm = creatorId ? creatorId.toLowerCase() : '';
+    if (!creatorId || updaterNorm !== creatorNorm) {
+      sendJson(req, res, 200, {
+        ok: true,
+        skipped: true,
+        subtaskId,
+        message:
+          'Sub-task update notification emails are sent only when the sub-task creator saves changes or adds a comment.',
+        recipients: 0,
+        results: [],
+      });
+      return;
+    }
+
     const subtaskTitle =
       (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskTitle).replace(/"/g, '');
     const subject = `Sub-task updated - ${subtaskTitleForSubject}`;
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
+    const subtaskRowId = (row.id || subtaskId || '').toString().trim();
+    const subtaskUrl = subtaskWebAppUrl(subtaskRowId);
     const updatedAtLine = formatUpdateDateTimeYmdHm(row.update_date);
 
+    const dash = SUBTASK_COMMENT_ADDED_LINE_EN_DASH;
     const changeLinesHtmlParts = [];
     const changeLinesTextParts = [];
     const rawChanges = Array.isArray(body.changes) ? body.changes : [];
@@ -4175,97 +4217,46 @@ async function handleNotifySubtaskUpdated(req, res) {
       }
       const safeVal = escapeHtml(value);
       const safeLbl = escapeHtml(label);
-      changeLinesHtmlParts.push(
-        `<span style="color:#000000;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;">${safeLbl} is updated – ${safeVal}</span>`,
-      );
-      changeLinesTextParts.push(`${label} is updated – ${value}`);
+      changeLinesHtmlParts.push(`${safeLbl} is updated ${dash} ${safeVal}`);
+      changeLinesTextParts.push(`${label} is updated ${dash} ${value}`);
       nCh += 1;
     }
     let commentLineHtml = '';
     let commentLineText = '';
     const rawSubComment =
       body.commentAddedText != null ? String(body.commentAddedText) : '';
-    const commentTrim = rawSubComment.trim();
-    if (commentTrim) {
-      let c = commentTrim;
+    const commentPlain = subtaskCommentDescriptionPlainText(rawSubComment).trim();
+    if (commentPlain) {
+      let c = commentPlain;
       if (c.length > TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN) {
         c = `${c.slice(0, TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN)}…`;
       }
       const safeC = escapeHtml(c);
-      commentLineHtml = `<span style="color:#000000;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;">Sub-task comment is added – ${safeC}</span>`;
-      commentLineText = `Sub-task comment is added – ${c}`;
+      commentLineHtml = `Sub-task comment is added ${dash} ${safeC}`;
+      commentLineText = `Sub-task comment is added ${dash} ${c}`;
     }
-    const changeLinesHtml = changeLinesHtmlParts.join('<br>');
-    const changeLinesText = changeLinesTextParts.join('\n');
+    const changeLinesHtml = changeLinesHtmlParts.join('<br><br>');
+    const changeLinesText = changeLinesTextParts.join('\n\n');
 
-    const creatorId = (row.create_by || '').toString().trim();
-    const assigneeIdsForRouting = collectSubtaskAssigneeStaffIds(row);
-    let recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
-
-    const updaterNorm = String(updaterId).trim().toLowerCase();
     const hasFieldChanges = changeLinesHtmlParts.length > 0;
-    const hasComment = Boolean(commentTrim);
-    const updaterInAssignees = assigneeIdsForRouting.some(
-      (id) => String(id).trim().toLowerCase() === updaterNorm,
-    );
-    const updaterIsCreator =
-      Boolean(creatorId) && updaterNorm === creatorId.toLowerCase();
-
-    if (hasComment && !hasFieldChanges) {
-      if (updaterInAssignees && !updaterIsCreator && creatorId) {
-        recipientByNorm = new Map();
-        recipientByNorm.set(creatorId.toLowerCase(), creatorId);
-      } else if (updaterIsCreator && !updaterInAssignees) {
-        recipientByNorm = new Map();
-        for (const id of assigneeIdsForRouting) {
-          const raw = String(id).trim();
-          if (!raw) continue;
-          const key = raw.toLowerCase();
-          if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
-        }
-      }
-      if (recipientByNorm.size === 0) {
-        recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
-      }
+    const hasComment = Boolean(commentPlain);
+    if (!hasFieldChanges && !hasComment) {
+      sendJson(req, res, 200, {
+        ok: true,
+        skipped: true,
+        subtaskId,
+        message: 'No notifyable column changes or creator comment in the request.',
+        recipients: 0,
+        results: [],
+      });
+      return;
     }
 
-    const creatorNormKey = creatorId ? creatorId.toLowerCase() : '';
-    const skipEnsureCreatorBecauseCreatorNotAssigneeComment =
-      hasComment &&
-      !hasFieldChanges &&
-      updaterIsCreator &&
-      !updaterInAssignees;
-    if (
-      hasComment &&
-      !hasFieldChanges &&
-      creatorId &&
-      updaterNorm !== creatorNormKey &&
-      !skipEnsureCreatorBecauseCreatorNotAssigneeComment
-    ) {
-      recipientByNorm.set(creatorNormKey, creatorId);
-    }
-
-    const omitSelfCreatorForFieldUpdates =
-      changeLinesHtmlParts.length > 0 &&
-      creatorId &&
-      updaterNorm === creatorId.toLowerCase();
-
+    const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
     const results = [];
     const replyTo = updaterEmail;
 
     for (const staffUuid of recipientByNorm.values()) {
-      if (
-        omitSelfCreatorForFieldUpdates &&
-        String(staffUuid).trim().toLowerCase() === updaterNorm
-      ) {
-        results.push({
-          staffId: staffUuid,
-          ok: true,
-          skipped:
-            'sub-task creator is updater (sub-task detail columns changed); no self-email',
-        });
-        continue;
-      }
       const { data: s } = await supabase
         .from('staff')
         .select('email, name, display_name')
