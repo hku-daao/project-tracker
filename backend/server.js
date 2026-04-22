@@ -3599,6 +3599,22 @@ async function handleNotifyTaskUpdated(req, res) {
       }
     }
 
+    const creatorNormKey = creatorId ? creatorId.toLowerCase() : '';
+    const skipEnsureCreatorBecauseCreatorNotAssigneeComment =
+      hasComment &&
+      !hasFieldChanges &&
+      updaterIsCreator &&
+      !updaterInAssignees;
+    if (
+      hasComment &&
+      !hasFieldChanges &&
+      creatorId &&
+      updaterNorm !== creatorNormKey &&
+      !skipEnsureCreatorBecauseCreatorNotAssigneeComment
+    ) {
+      recipientByNorm.set(creatorNormKey, creatorId);
+    }
+
     const omitSelfCreatorForFieldUpdates =
       changeLinesHtmlParts.length > 0 &&
       creatorId &&
