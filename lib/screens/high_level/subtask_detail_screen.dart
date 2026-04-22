@@ -20,6 +20,7 @@ import '../../utils/hk_time.dart';
 import '../../web_deep_link.dart';
 import '../../widgets/attachment_add_link_dialog.dart';
 import '../../widgets/attachment_edit_dialog.dart';
+import '../../widgets/attachment_source_bottom_sheet.dart';
 import '../../widgets/outlook_attachment_chip.dart';
 import '../task_detail_screen.dart';
 import '../../utils/home_navigation.dart';
@@ -58,9 +59,6 @@ class SubtaskDetailScreen extends StatefulWidget {
 
 class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   static const Color _selGreen = Color(0xFF1B5E20);
-
-  /// Close-then-pick must stay on the user gesture stack (see task attachment menu).
-  final MenuController _attachmentMenuController = MenuController();
 
   SingularSubtask? _sub;
   Task? _parentTask;
@@ -1646,44 +1644,24 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 if (_canEditSubtaskAttachments(state, st))
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: MenuAnchor(
-                      controller: _attachmentMenuController,
-                      menuChildren: [
-                        MenuItemButton(
-                          onPressed: _saving
-                              ? null
-                              : () {
-                                  _attachmentMenuController.close();
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.add_link_outlined),
+                      label: const Text('Add attachment'),
+                      onPressed: _saving
+                          ? null
+                          : () {
+                              showAttachmentSourceBottomSheet(
+                                context: context,
+                                onPickFromDevice: () {
+                                  if (!mounted) return;
                                   _addSubtaskAttachmentFromDevice();
                                 },
-                          child: const Text('From your device'),
-                        ),
-                        MenuItemButton(
-                          onPressed: _saving
-                              ? null
-                              : () {
-                                  _attachmentMenuController.close();
+                                onPickFromLink: () {
+                                  if (!mounted) return;
                                   _addSubtaskAttachmentFromLink();
                                 },
-                          child: const Text('Link to a file or website'),
-                        ),
-                      ],
-                      builder: (ctx, menuController, _) {
-                        final can = _canEditSubtaskAttachments(state, st);
-                        return OutlinedButton.icon(
-                          icon: const Icon(Icons.add_link_outlined),
-                          label: const Text('Add attachment'),
-                          onPressed: (_saving || !can)
-                              ? null
-                              : () {
-                                  if (menuController.isOpen) {
-                                    menuController.close();
-                                  } else {
-                                    menuController.open();
-                                  }
-                                },
-                        );
-                      },
+                              );
+                            },
                     ),
                   ),
                 const SizedBox(height: 8),

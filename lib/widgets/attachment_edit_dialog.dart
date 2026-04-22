@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 typedef AttachmentPickUpload = Future<({String? url, String? label, String? error})> Function();
@@ -50,6 +51,14 @@ Future<({String description, String url})?> showAttachmentEditDialog(
                     icon: const Icon(Icons.upload_file_outlined, size: 20),
                     label: const Text('Replace with file from device'),
                     onPressed: () async {
+                      // Let the dialog finish any tap handling before presenting the
+                      // system document picker (iOS is strict about nested presentations).
+                      if (!kIsWeb) {
+                        await Future<void>.delayed(
+                          const Duration(milliseconds: 50),
+                        );
+                      }
+                      if (!ctx.mounted) return;
                       final r = await pickReplaceFromDevice();
                       if (!ctx.mounted) return;
                       if (r.error != null && r.error!.isNotEmpty) {

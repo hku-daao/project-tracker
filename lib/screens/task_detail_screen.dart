@@ -27,6 +27,7 @@ import '../utils/subtask_list_sort.dart';
 import '../web_deep_link.dart';
 import '../widgets/attachment_add_link_dialog.dart';
 import '../widgets/attachment_edit_dialog.dart';
+import '../widgets/attachment_source_bottom_sheet.dart';
 import '../widgets/outlook_attachment_chip.dart';
 import '../widgets/singular_subtask_row_card.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
@@ -167,10 +168,6 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
   static const int _maxAssignees = 10;
   static const Color _selGreen = Color(0xFF1B5E20);
-
-  /// Close-then-pick must not defer to [Future.microtask]; native pickers need a
-  /// synchronous gesture chain on Android/iOS.
-  final MenuController _attachmentMenuController = MenuController();
 
   @override
   void didChangeDependencies() {
@@ -2567,45 +2564,26 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           _isPicEffective(state, task))
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: MenuAnchor(
-                            controller: _attachmentMenuController,
-                            menuChildren: [
-                              MenuItemButton(
-                                onPressed: _saving
-                                    ? null
-                                    : () {
-                                        _attachmentMenuController.close();
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.add_link_outlined),
+                            label: const Text('Add attachment'),
+                            onPressed: (_saving ||
+                                    !(_isCreator(state, task) ||
+                                        _isPicEffective(state, task)))
+                                ? null
+                                : () {
+                                    showAttachmentSourceBottomSheet(
+                                      context: context,
+                                      onPickFromDevice: () {
+                                        if (!mounted) return;
                                         _addTaskAttachmentFromDevice();
                                       },
-                                child: const Text('From your device'),
-                              ),
-                              MenuItemButton(
-                                onPressed: _saving
-                                    ? null
-                                    : () {
-                                        _attachmentMenuController.close();
+                                      onPickFromLink: () {
+                                        if (!mounted) return;
                                         _addTaskAttachmentFromLink();
                                       },
-                                child: const Text('Link to a file or website'),
-                              ),
-                            ],
-                            builder: (ctx, menuController, _) {
-                              final can = _isCreator(state, task) ||
-                                  _isPicEffective(state, task);
-                              return OutlinedButton.icon(
-                                icon: const Icon(Icons.add_link_outlined),
-                                label: const Text('Add attachment'),
-                                onPressed: (_saving || !can)
-                                    ? null
-                                    : () {
-                                        if (menuController.isOpen) {
-                                          menuController.close();
-                                        } else {
-                                          menuController.open();
-                                        }
-                                      },
-                              );
-                            },
+                                    );
+                                  },
                           ),
                         ),
                       const SizedBox(height: 8),
