@@ -639,13 +639,13 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   /// Returns `true` if a comment row was inserted. [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
   ///
-  /// When [suppressCreatorCommentEmail] is true (e.g. **Update** bundles the comment into
-  /// [BackendApi.notifySubtaskUpdated]), the dedicated creator comment email is not sent here.
+  /// On success, notifies the sub-task creator via [BackendApi.notifySubtaskCommentAdded] (correct
+  /// subject: `… comments on sub-task "…"`). Do not bundle the comment into [notifySubtaskUpdated],
+  /// which uses a different subject (`Sub-task updated - …`).
   Future<bool> _postComment(
     AppState state,
     SingularSubtask st, {
     bool suppressSuccessSnack = false,
-    bool suppressCreatorCommentEmail = false,
   }) async {
     if (!_isAssignee(state, st) && !_isCreator(state, st)) {
       return false;
@@ -665,9 +665,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         return false;
       }
       final newCommentId = ins.commentId?.trim();
-      if (newCommentId != null &&
-          newCommentId.isNotEmpty &&
-          !suppressCreatorCommentEmail) {
+      if (newCommentId != null && newCommentId.isNotEmpty) {
         await _notifySubtaskCommentCreatorEmail(newCommentId);
       }
       _commentController.clear();
@@ -1994,15 +1992,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           );
                           var commentOk = false;
                           if (hadComment) {
-                            final token =
-                                await FirebaseAuth.instance.currentUser
-                                    ?.getIdToken();
-                            if (!mounted) return;
                             commentOk = await _postComment(
                               state,
                               st,
                               suppressSuccessSnack: true,
-                              suppressCreatorCommentEmail: token != null,
                             );
                           }
                           if (!mounted) return;
@@ -2022,12 +2015,12 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                 );
                               }
                             }
-                            await _notifySubtaskUpdatedEmail(
-                              st.id,
-                              changes: metaOk ? changesForEmail : const [],
-                              commentAddedText:
-                                  commentOk ? pendingCommentSnap : null,
-                            );
+                            if (metaOk) {
+                              await _notifySubtaskUpdatedEmail(
+                                st.id,
+                                changes: changesForEmail,
+                              );
+                            }
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(duration: const Duration(seconds: 4), content: Text('Sub-task is updated'),
                                 backgroundColor: Colors.green,
