@@ -162,13 +162,13 @@ class FirebaseAttachmentUploadService {
       final tid = taskId.trim();
       if (tid.isEmpty) return (url: null, label: null, error: 'Missing task id');
 
+      final err = _guardSync();
+      if (err != null) return (url: null, label: null, error: err);
+
       final picked = await pickOneFileWithBytes();
       if (picked == null) {
         return (url: null, label: null, error: null);
       }
-
-      final err = _guardSync();
-      if (err != null) return (url: null, label: null, error: err);
 
       final label =
           picked.name.trim().isEmpty ? 'attachment' : picked.name.trim();
@@ -201,13 +201,13 @@ class FirebaseAttachmentUploadService {
         return (url: null, label: null, error: 'Missing sub-task id');
       }
 
+      final err = _guardSync();
+      if (err != null) return (url: null, label: null, error: err);
+
       final picked = await pickOneFileWithBytes();
       if (picked == null) {
         return (url: null, label: null, error: null);
       }
-
-      final err = _guardSync();
-      if (err != null) return (url: null, label: null, error: err);
 
       final label =
           picked.name.trim().isEmpty ? 'attachment' : picked.name.trim();
