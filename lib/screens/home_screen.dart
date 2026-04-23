@@ -6,10 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app_state.dart';
 import '../../models/staff_team_lookup.dart';
 import '../../config/admin_config.dart';
-import '../../config/api_config.dart';
 import '../../config/environment_config.dart';
 import '../../config/supabase_config.dart';
-import '../../services/backend_api.dart';
 import '../../web_deep_link.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
@@ -93,20 +91,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool? _backendOk;
-  String? _backendError;
-  bool _checkingBackend = false;
-  final BackendApi _backendApi = BackendApi();
   AppState? _appState;
 
   /// Hides the FAB while scrolling down; shows again on scroll up or when scrolling stops.
   bool _createTaskFabVisible = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkBackend();
-  }
 
   @override
   void didChangeDependencies() {
@@ -160,30 +148,33 @@ class _HomeScreenState extends State<HomeScreen> {
     return false;
   }
 
-  Future<void> _checkBackend() async {
-    if (_checkingBackend) return;
-    setState(() {
-      _checkingBackend = true;
-      _backendError = null;
+  void _closeDrawerThenFeedback() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openFeedbackForm(context);
     });
-    try {
-      final result = await _backendApi.checkHealth();
-      if (mounted) {
-        setState(() {
-          _backendOk = result.ok;
-          _backendError = result.ok ? null : (result.message ?? 'Unknown error');
-          _checkingBackend = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _backendOk = false;
-          _backendError = e.toString();
-          _checkingBackend = false;
-        });
-      }
+  }
+
+  void _closeDrawerThenGoHome() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    });
+  }
+
+  Future<void> _closeDrawerThenSignOut() async {
+    Navigator.of(context).pop();
+    if (!mounted) return;
+    final appState = context.read<AppState>();
+    if (appState.hasCreateTaskUnsavedDraft) {
+      final leave = await _confirmLeaveCreateTaskDraft(context);
+      if (!mounted || !leave) return;
     }
+    if (kIsWeb) {
+      syncWebLocationForLanding();
+    }
+    await FirebaseAuth.instance.signOut();
   }
 
   @override
@@ -198,152 +189,89 @@ class _HomeScreenState extends State<HomeScreen> {
           fontSize: 22,
           fontWeight: FontWeight.bold,
         );
-    final welcomeStyle = Theme.of(context).textTheme.titleSmall?.copyWith(
-          fontWeight: FontWeight.w600,
-        ) ??
-        const TextStyle(fontWeight: FontWeight.w600);
-
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        leadingWidth: 0,
-        titleSpacing: 0,
-        centerTitle: false,
-        title: LayoutBuilder(
-          builder: (context, constraints) {
-            final barW = constraints.maxWidth;
-            return SizedBox(
-              width: barW,
-              height: kToolbarHeight,
-              child: Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      'Project Tracker',
-                      style: titleStyle,
-                    ),
-                  ),
-                  Positioned(
-                    left: 12,
-                    top: 0,
-                    bottom: 0,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: barW * 0.42),
-                        child: Text(
-                          'Welcome, $welcomeName',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: welcomeStyle,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        if (FirebaseAuth.instance.currentUser?.email
-                                ?.toLowerCase() ==
-                            AdminConfig.systemAdminEmail.toLowerCase())
-                          IconButton(
-                            icon: const Icon(
-                              Icons.admin_panel_settings_outlined,
+      drawer: Drawer(
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              DrawerHeader(
+                margin: EdgeInsets.zero,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                ),
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Project Tracker',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
                             ),
-                            tooltip: 'System Admin',
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const SystemAdminScreen(),
-                                ),
-                              );
-                            },
-                          ),
-                        IconButton(
-                          icon: const Icon(Icons.feedback_outlined),
-                          tooltip: 'Feedback',
-                          onPressed: () => _openFeedbackForm(context),
-                        ),
-                        if (kIsWeb)
-                          IconButton(
-                            icon: const Icon(Icons.logout),
-                            onPressed: () async {
-                              final appState = context.read<AppState>();
-                              if (appState.hasCreateTaskUnsavedDraft) {
-                                final leave =
-                                    await _confirmLeaveCreateTaskDraft(
-                                  context,
-                                );
-                                if (!context.mounted || !leave) return;
-                              }
-                              if (kIsWeb) {
-                                syncWebLocationForLanding();
-                              }
-                              await FirebaseAuth.instance.signOut();
-                            },
-                            tooltip: 'Sign out',
-                          ),
-                        Tooltip(
-                          message: _backendOk == true
-                              ? 'Backend (${AppEnvironment.label}): ${ApiConfig.baseUrl}'
-                              : _backendOk == false
-                                  ? 'Backend unavailable${_backendError != null ? ': $_backendError' : ''}'
-                                  : 'Checking backend...',
-                          child: IconButton(
-                            icon: _checkingBackend
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Icon(
-                                    _backendOk == true
-                                        ? Icons.cloud_done
-                                        : Icons.cloud_off,
-                                    color: _backendOk == true
-                                        ? Colors.green
-                                        : _backendOk == false
-                                            ? Colors.red
-                                            : Colors.grey,
-                                  ),
-                            onPressed: () async {
-                              await _checkBackend();
-                              if (mounted &&
-                                  _backendOk == false &&
-                                  _backendError != null) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Backend: $_backendError'),
-                                    duration: const Duration(seconds: 4),
-                                    action: SnackBarAction(
-                                      label: 'Retry',
-                                      onPressed: _checkBackend,
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Welcome, $welcomeName',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            );
-          },
+              ListTile(
+                leading: const Icon(Icons.home),
+                title: const Text('Home'),
+                onTap: _closeDrawerThenGoHome,
+              ),
+              ListTile(
+                leading: const Icon(Icons.feedback_outlined),
+                title: const Text('Feedback'),
+                onTap: _closeDrawerThenFeedback,
+              ),
+              if (kIsWeb)
+                ListTile(
+                  leading: const Icon(Icons.logout),
+                  title: const Text('Sign out'),
+                  onTap: () async {
+                    await _closeDrawerThenSignOut();
+                  },
+                ),
+            ],
+          ),
         ),
+      ),
+      appBar: AppBar(
+        centerTitle: true,
+        titleSpacing: 0,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            'Project Tracker',
+            style: titleStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        actions: [
+          if (FirebaseAuth.instance.currentUser?.email?.toLowerCase() ==
+              AdminConfig.systemAdminEmail.toLowerCase())
+            IconButton(
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              tooltip: 'System Admin',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => const SystemAdminScreen(),
+                  ),
+                );
+              },
+            ),
+        ],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Column(
