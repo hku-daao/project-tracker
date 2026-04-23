@@ -15,7 +15,7 @@ import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
 
-/// Warn before leaving the create flow while a draft exists (Tasks tab / Sign out).
+/// Warn before leaving the create flow while a draft exists (create screen / Sign out).
 Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
   final r = await showDialog<bool>(
     context: context,
@@ -97,11 +97,67 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _backendError;
   bool _checkingBackend = false;
   final BackendApi _backendApi = BackendApi();
+  AppState? _appState;
+
+  /// Hides the FAB while scrolling down; shows again on scroll up or when scrolling stops.
+  bool _createTaskFabVisible = true;
 
   @override
   void initState() {
     super.initState();
     _checkBackend();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final app = context.read<AppState>();
+    if (!identical(_appState, app)) {
+      _appState?.removeListener(_onConsumeSwitchToTasksTab);
+      _appState = app;
+      _appState!.addListener(_onConsumeSwitchToTasksTab);
+    }
+  }
+
+  /// Clears [AppState.takeSwitchToTasksTabPending] after save / deep link; task list is always shown.
+  void _onConsumeSwitchToTasksTab() {
+    if (!mounted) return;
+    _appState?.takeSwitchToTasksTabPending();
+  }
+
+  @override
+  void dispose() {
+    _appState?.removeListener(_onConsumeSwitchToTasksTab);
+    super.dispose();
+  }
+
+  void _openCreateTaskScreen() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Create task')),
+          body: const CreateTaskScreen(),
+        ),
+      ),
+    );
+  }
+
+  bool _onLandingScrollNotification(ScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical) return false;
+    if (n is ScrollUpdateNotification) {
+      final d = n.scrollDelta;
+      if (d == null) return false;
+      if (d > 6 && _createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = false);
+      } else if (d < -6 && !_createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = true);
+      }
+    } else if (n is ScrollEndNotification) {
+      if (!_createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = true);
+      }
+    }
+    return false;
   }
 
   Future<void> _checkBackend() async {
@@ -320,115 +376,30 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           Expanded(
-            child: const _HomePageView(),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _onLandingScrollNotification,
+              child: const InitiativeListScreen(),
+            ),
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Home Page: Tasks + Create task
-class _HomePageView extends StatefulWidget {
-  const _HomePageView();
-
-  @override
-  State<_HomePageView> createState() => _HomePageViewState();
-}
-
-class _HomePageViewState extends State<_HomePageView>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-  late final AppState _appState;
-  int _lastStableTabIndex = 0;
-  bool _leaveDraftDialogOpen = false;
-
-  static const _tabs = [
-    Tab(icon: Icon(Icons.flag), text: 'Tasks'),
-    Tab(icon: Icon(Icons.add_circle_outline), text: 'Create task'),
-  ];
-
-  static const _tabViews = [
-    InitiativeListScreen(),
-    CreateTaskScreen(key: PageStorageKey<String>('home_create_task')),
-  ];
-
-  void _onAppStateForTasksTab() {
-    if (!mounted) return;
-    if (_appState.takeSwitchToTasksTabPending()) {
-      if (_tabController.index != 0) {
-        _tabController.animateTo(0);
-      }
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _appState = context.read<AppState>();
-    _appState.addListener(_onAppStateForTasksTab);
-    _tabController = TabController(length: 2, vsync: this);
-    _lastStableTabIndex = _tabController.index;
-    _tabController.addListener(_onTabControllerChanged);
-  }
-
-  void _onTabControllerChanged() {
-    if (_tabController.indexIsChanging || _leaveDraftDialogOpen) return;
-    final now = _tabController.index;
-    final appState = context.read<AppState>();
-    if (_lastStableTabIndex == 1 &&
-        now == 0 &&
-        appState.hasCreateTaskUnsavedDraft) {
-      _leaveDraftDialogOpen = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) {
-          _leaveDraftDialogOpen = false;
-          return;
-        }
-        final leave = await _confirmLeaveCreateTaskDraft(context);
-        _leaveDraftDialogOpen = false;
-        if (!mounted) return;
-        if (leave) {
-          setState(() => _lastStableTabIndex = 0);
-        } else {
-          _tabController.animateTo(1);
-        }
-      });
-      return;
-    }
-    _lastStableTabIndex = now;
-  }
-
-  @override
-  void dispose() {
-    _appState.removeListener(_onAppStateForTasksTab);
-    _tabController.removeListener(_onTabControllerChanged);
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        TabBar(
-          controller: _tabController,
-          tabs: _tabs,
-          isScrollable: _tabs.length > 3,
-        ),
-        Expanded(
-          child: AnimatedBuilder(
-            animation: _tabController,
-            builder: (context, _) {
-              return IndexedStack(
-                index: _tabController.index,
-                sizing: StackFit.expand,
-                children: _tabViews,
-              );
-            },
+      floatingActionButton: AnimatedOpacity(
+        opacity: _createTaskFabVisible ? 1 : 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        child: IgnorePointer(
+          ignoring: !_createTaskFabVisible,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: FloatingActionButton.extended(
+              onPressed: _openCreateTaskScreen,
+              icon: const Icon(Icons.add),
+              label: const Text('Create task'),
+            ),
           ),
         ),
-      ],
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 }

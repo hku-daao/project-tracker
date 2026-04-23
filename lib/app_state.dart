@@ -99,7 +99,7 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  /// Set by [CreateTaskScreen] while mounted; used to warn before leaving the tab or signing out.
+  /// Set by [CreateTaskScreen] while mounted; used to warn before leaving the screen or signing out.
   bool Function()? _createTaskHasUnsavedDraft;
 
   void setCreateTaskDraftChecker(bool Function()? checker) {
@@ -109,7 +109,7 @@ class AppState extends ChangeNotifier {
   bool get hasCreateTaskUnsavedDraft =>
       _createTaskHasUnsavedDraft?.call() ?? false;
 
-  /// Set by [CreateTaskScreen] after a successful save; [HomeScreen] consumes to switch to Tasks tab.
+  /// Set by [CreateTaskScreen] after a successful save; [HomeScreen] consumes (task list is always visible).
   bool _switchToTasksTabPending = false;
 
   void requestSwitchToTasksTab() {

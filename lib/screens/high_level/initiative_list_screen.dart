@@ -1415,7 +1415,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           },
         ),
         Expanded(
-          child: filteredInitiatives.isEmpty &&
+          child:               filteredInitiatives.isEmpty &&
                   filteredTasks.isEmpty &&
                   filteredDeletedTasks.isEmpty
               ? Center(child: Text(_emptyListMessage()))
@@ -1428,7 +1428,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                             maxWidth: _kLandingTaskListMaxWidth,
                           ),
                           child: ListView(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                             children: [
                               if (filteredInitiatives.isNotEmpty) ...[
                                 Padding(
@@ -1519,9 +1519,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
                                   16,
-                                  10,
+                                  6,
                                   16,
-                                  10,
+                                  6,
                                 ),
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
@@ -1540,7 +1540,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                       ),
                                     if (filteredTasks.isNotEmpty &&
                                         filteredDeletedTasks.isNotEmpty)
-                                      const Divider(height: 20),
+                                      const Divider(height: 12),
                                     if (filteredDeletedTasks.isNotEmpty)
                                       _buildLandingTaskPaginationBar(
                                         context: context,
