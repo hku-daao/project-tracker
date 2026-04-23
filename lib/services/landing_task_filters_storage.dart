@@ -13,12 +13,24 @@ class LandingTaskFilters {
     required this.search,
     this.sortColumn,
     this.sortAscending = true,
+    this.filterAssigneeTeamId,
+    this.filterAssigneeStaffIds = const [],
+    this.filterCreatorTeamId,
+    this.filterCreatorStaffIds = const [],
   });
 
   final String filterType;
   final List<String> teamIds;
   final List<String> assigneeIds;
   final List<String> statuses;
+
+  /// Team roster for "Filter by assignee" submenu; staff ids filter tasks/initiatives.
+  final String? filterAssigneeTeamId;
+  final List<String> filterAssigneeStaffIds;
+
+  /// Team roster for "Filter by creator" submenu; staff ids filter tasks by [Task.createByAssigneeKey].
+  final String? filterCreatorTeamId;
+  final List<String> filterCreatorStaffIds;
 
   /// `pending` | `submitted` | `accepted` | `returned` — empty = all submissions.
   final List<String> submissionFilters;
@@ -38,6 +50,10 @@ class LandingTaskFilters {
         // Persist explicit null so clearing sort overwrites any previous column in storage.
         'sortColumn': sortColumn,
         'sortAscending': sortAscending,
+        'filterAssigneeTeamId': filterAssigneeTeamId,
+        'filterAssigneeStaffIds': filterAssigneeStaffIds,
+        'filterCreatorTeamId': filterCreatorTeamId,
+        'filterCreatorStaffIds': filterCreatorStaffIds,
       };
 
   static LandingTaskFilters? fromJson(Map<String, dynamic>? j) {
@@ -53,6 +69,14 @@ class LandingTaskFilters {
       search: j['search'] as String? ?? '',
       sortColumn: j['sortColumn'] as String?,
       sortAscending: j['sortAscending'] as bool? ?? true,
+      filterAssigneeTeamId: j['filterAssigneeTeamId'] as String?,
+      filterAssigneeStaffIds: List<String>.from(
+        j['filterAssigneeStaffIds'] as List? ?? const [],
+      ),
+      filterCreatorTeamId: j['filterCreatorTeamId'] as String?,
+      filterCreatorStaffIds: List<String>.from(
+        j['filterCreatorStaffIds'] as List? ?? const [],
+      ),
     );
   }
 }

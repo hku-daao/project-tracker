@@ -9,6 +9,7 @@ import '../../app_state.dart';
 import '../../models/initiative.dart';
 import '../../models/task.dart';
 import '../../models/assignee.dart';
+import '../../models/team.dart';
 import '../../priority.dart';
 import '../../services/landing_task_filters_storage.dart';
 import '../../widgets/task_list_card.dart';
@@ -69,12 +70,22 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// Max width for team / status filter fields (readable on wide layouts).
   static const double _filterFieldMaxWidth = 420;
 
-  /// Selected `Team.id` values. Empty = all teams (default).
-  final Set<String> _selectedTeamIds = {};
+  /// "Filter by assignee" submenu: roster team, then multi-select teammates (tasks/initiatives).
+  String? _filterAssigneeMenuTeamId;
+  final Set<String> _filterAssigneeMenuStaffIds = {};
 
-  /// When exactly one team is selected: subset of that team's member ids to filter by.
-  /// Empty = all members (default).
-  final Set<String> _selectedAssigneeIds = {};
+  /// "Filter by creator" submenu: roster team, then multi-select teammates (tasks by creator).
+  String? _filterCreatorMenuTeamId;
+  final Set<String> _filterCreatorMenuStaffIds = {};
+
+  late final ExpansibleController _filterAssigneeRootController;
+  late final ExpansibleController _filterAssigneeTeamController;
+  late final ExpansibleController _filterAssigneeTeammateTileController;
+  late final ExpansibleController _filterCreatorRootController;
+  late final ExpansibleController _filterCreatorTeamController;
+  late final ExpansibleController _filterCreatorTeammateTileController;
+  late final ExpansibleController _filterStatusTileController;
+  late final ExpansibleController _filterSubmissionTileController;
 
   /// Scope: `all` | `assigned` | `created` (chips: All, Assigned to me, My created tasks).
   String _filterType = 'all';
@@ -192,17 +203,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
-  /// Closed field preview: "Team" until user picks one or more teams from the menu.
-  String _teamFilterDisplayText(AppState state) {
-    if (_selectedTeamIds.isEmpty) return 'Team';
-    final names = <String>[];
-    for (final team in state.teams) {
-      if (_selectedTeamIds.contains(team.id)) names.add(team.name);
-    }
-    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return names.join(', ');
-  }
-
   /// Closed field preview: "Status" until user picks one or more statuses from the menu.
   String _statusFilterDisplayText() {
     if (_selectedTaskStatuses.isEmpty) return 'Status';
@@ -238,46 +238,128 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         .join(', ');
   }
 
-  /// True when team/status filters, assignee, or search are not at default (all).
+  /// True when status / submission / assignee / creator / search are not at default (all).
   bool get _hasTeamOrStatusFilterSelections =>
-      _selectedTeamIds.isNotEmpty ||
       _selectedTaskStatuses.isNotEmpty ||
       _selectedSubmissionFilters.isNotEmpty ||
-      _selectedAssigneeIds.isNotEmpty ||
+      _filterAssigneeMenuStaffIds.isNotEmpty ||
+      _filterCreatorMenuStaffIds.isNotEmpty ||
       _taskSearchController.text.trim().isNotEmpty;
 
   void _clearTeamAndStatusFilters() {
     setState(() {
-      _selectedTeamIds.clear();
       _selectedTaskStatuses.clear();
       _selectedSubmissionFilters.clear();
-      _selectedAssigneeIds.clear();
+      _filterAssigneeMenuTeamId = null;
+      _filterAssigneeMenuStaffIds.clear();
+      _filterCreatorMenuTeamId = null;
+      _filterCreatorMenuStaffIds.clear();
       _taskSearchController.clear();
       _tasksPageIndex = 0;
       _deletedTasksPageIndex = 0;
     });
     _persistLandingFilters();
+    _collapseAllFilterMenuExpansionTiles();
+  }
+
+  void _collapseAllFilterMenuExpansionTiles() {
+    _filterAssigneeRootController.collapse();
+    _filterAssigneeTeamController.collapse();
+    _filterAssigneeTeammateTileController.collapse();
+    _filterCreatorRootController.collapse();
+    _filterCreatorTeamController.collapse();
+    _filterCreatorTeammateTileController.collapse();
+    _filterStatusTileController.collapse();
+    _filterSubmissionTileController.collapse();
+  }
+
+  /// When the filter [MenuAnchor] closes (e.g. tap outside), reset all expansion tiles.
+  void _onFilterMenuAnchorClosed() {
+    _collapseAllFilterMenuExpansionTiles();
+  }
+
+  bool get _filterAssigneeRosterEngaged =>
+      (_filterAssigneeMenuTeamId != null &&
+          _filterAssigneeMenuTeamId!.isNotEmpty) ||
+      _filterAssigneeMenuStaffIds.isNotEmpty;
+
+  bool get _filterCreatorRosterEngaged =>
+      (_filterCreatorMenuTeamId != null &&
+          _filterCreatorMenuTeamId!.isNotEmpty) ||
+      _filterCreatorMenuStaffIds.isNotEmpty;
+
+  void _collapseAssigneeFilterExpansionIfEngaged() {
+    if (!_filterAssigneeRosterEngaged) return;
+    _filterAssigneeRootController.collapse();
+    _filterAssigneeTeamController.collapse();
+    _filterAssigneeTeammateTileController.collapse();
+  }
+
+  void _collapseCreatorFilterExpansionIfEngaged() {
+    if (!_filterCreatorRosterEngaged) return;
+    _filterCreatorRootController.collapse();
+    _filterCreatorTeamController.collapse();
+    _filterCreatorTeammateTileController.collapse();
+  }
+
+  /// After changing Status or Submission from a checkbox, hide roster panels if used.
+  void _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange() {
+    _collapseAssigneeFilterExpansionIfEngaged();
+    _collapseCreatorFilterExpansionIfEngaged();
+  }
+
+  /// Accordion: only one of Assignee / Creator / Status / Submission stays expanded.
+  void _onTopLevelFilterSectionExpanded(String openedId) {
+    if (openedId != 'assignee') {
+      _filterAssigneeRootController.collapse();
+      _filterAssigneeTeamController.collapse();
+      _filterAssigneeTeammateTileController.collapse();
+    }
+    if (openedId != 'creator') {
+      _filterCreatorRootController.collapse();
+      _filterCreatorTeamController.collapse();
+      _filterCreatorTeammateTileController.collapse();
+    }
+    if (openedId != 'status') _filterStatusTileController.collapse();
+    if (openedId != 'submission') _filterSubmissionTileController.collapse();
+  }
+
+  /// Under Assignee or Creator: only Team or Teammate stays expanded.
+  void _onTeamStaffNestedSectionExpanded({
+    required String rootId,
+    required String openedNestedId,
+  }) {
+    if (rootId == 'assignee') {
+      if (openedNestedId != 'team') _filterAssigneeTeamController.collapse();
+      if (openedNestedId != 'teammate') {
+        _filterAssigneeTeammateTileController.collapse();
+      }
+    } else {
+      if (openedNestedId != 'team') _filterCreatorTeamController.collapse();
+      if (openedNestedId != 'teammate') {
+        _filterCreatorTeammateTileController.collapse();
+      }
+    }
   }
 
   /// One-line summary inside the closed "Filter" control.
   String _filterMenuSummaryLine(AppState state) {
     final parts = <String>[];
-    if (_selectedTeamIds.isEmpty) {
-      parts.add('All teams');
-    } else {
-      parts.add(_teamFilterDisplayText(state));
+    if (_filterAssigneeMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterAssigneeMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('Assignee: ${names.join(', ')}');
     }
-    if (_selectedTeamIds.length == 1) {
-      if (_selectedAssigneeIds.isEmpty) {
-        parts.add('All members');
-      } else {
-        final names =
-            _selectedAssigneeIds
-                .map((id) => state.assigneeById(id)?.name ?? id)
-                .toList()
-              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-        parts.add(names.join(', '));
-      }
+    if (_filterCreatorMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterCreatorMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('Creator: ${names.join(', ')}');
     }
     if (_selectedTaskStatuses.isEmpty) {
       parts.add('All status');
@@ -408,15 +490,23 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (_taskSearchController.text.trim().isNotEmpty) {
       return 'No tasks match your search.';
     }
-    if (_selectedTeamIds.isEmpty) {
-      return 'No tasks yet. Create one in the "Create task" tab.';
+    if (_hasTeamOrStatusFilterSelections) {
+      return 'No tasks for this filter.';
     }
-    return 'No tasks for this filter.';
+    return 'No tasks yet. Create one in the "Create task" tab.';
   }
 
   @override
   void initState() {
     super.initState();
+    _filterAssigneeRootController = ExpansibleController();
+    _filterAssigneeTeamController = ExpansibleController();
+    _filterAssigneeTeammateTileController = ExpansibleController();
+    _filterCreatorRootController = ExpansibleController();
+    _filterCreatorTeamController = ExpansibleController();
+    _filterCreatorTeammateTileController = ExpansibleController();
+    _filterStatusTileController = ExpansibleController();
+    _filterSubmissionTileController = ExpansibleController();
     _taskSearchController.addListener(_onSearchTextChangedForPersist);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -509,19 +599,38 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   void _applyTeamsAndAssigneesFromSaved(LandingTaskFilters data, AppState state) {
-    _selectedTeamIds.clear();
+    _restoreMenuRoleFiltersFromSaved(data, state);
+  }
+
+  void _restoreMenuRoleFiltersFromSaved(
+    LandingTaskFilters data,
+    AppState state,
+  ) {
     final validTeamIds = state.teams.map((t) => t.id).toSet();
-    for (final id in data.teamIds) {
-      if (validTeamIds.contains(id)) _selectedTeamIds.add(id);
-    }
-    _selectedAssigneeIds.clear();
-    if (_selectedTeamIds.length == 1) {
-      final memberIds = _getTeamMembers(state, _selectedTeamIds.first)
-          .map((a) => a.id)
-          .toSet();
-      for (final id in data.assigneeIds) {
-        if (memberIds.contains(id)) _selectedAssigneeIds.add(id);
+    final at = data.filterAssigneeTeamId?.trim();
+    if (at != null && at.isNotEmpty && validTeamIds.contains(at)) {
+      _filterAssigneeMenuTeamId = at;
+      _filterAssigneeMenuStaffIds.clear();
+      final assigneeMembers =
+          _getTeamMembers(state, at).map((e) => e.id).toSet();
+      for (final id in data.filterAssigneeStaffIds) {
+        if (assigneeMembers.contains(id)) _filterAssigneeMenuStaffIds.add(id);
       }
+    } else {
+      _filterAssigneeMenuTeamId = null;
+      _filterAssigneeMenuStaffIds.clear();
+    }
+    final ct = data.filterCreatorTeamId?.trim();
+    if (ct != null && ct.isNotEmpty && validTeamIds.contains(ct)) {
+      _filterCreatorMenuTeamId = ct;
+      _filterCreatorMenuStaffIds.clear();
+      final creatorMembers = _getTeamMembers(state, ct).map((e) => e.id).toSet();
+      for (final id in data.filterCreatorStaffIds) {
+        if (creatorMembers.contains(id)) _filterCreatorMenuStaffIds.add(id);
+      }
+    } else {
+      _filterCreatorMenuTeamId = null;
+      _filterCreatorMenuStaffIds.clear();
     }
   }
 
@@ -538,13 +647,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       uid,
       LandingTaskFilters(
         filterType: _filterType,
-        teamIds: _selectedTeamIds.toList(),
-        assigneeIds: _selectedAssigneeIds.toList(),
+        teamIds: const [],
+        assigneeIds: const [],
         statuses: _selectedTaskStatuses.toList(),
         submissionFilters: _selectedSubmissionFilters.toList(),
         search: _taskSearchController.text,
         sortColumn: _taskSortColumn?.storageKey,
         sortAscending: _taskSortAscending,
+        filterAssigneeTeamId: _filterAssigneeMenuTeamId,
+        filterAssigneeStaffIds: _filterAssigneeMenuStaffIds.toList(),
+        filterCreatorTeamId: _filterCreatorMenuTeamId,
+        filterCreatorStaffIds: _filterCreatorMenuStaffIds.toList(),
       ),
     );
   }
@@ -554,6 +667,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _searchPersistDebounce?.cancel();
     _taskSearchController.removeListener(_onSearchTextChangedForPersist);
     _appStateListenerRef?.removeListener(_onAppStateForDeferredTeamRestore);
+    _filterAssigneeRootController.dispose();
+    _filterAssigneeTeamController.dispose();
+    _filterAssigneeTeammateTileController.dispose();
+    _filterCreatorRootController.dispose();
+    _filterCreatorTeamController.dispose();
+    _filterCreatorTeammateTileController.dispose();
+    _filterStatusTileController.dispose();
+    _filterSubmissionTileController.dispose();
     _taskSearchController.dispose();
     super.dispose();
   }
@@ -776,15 +897,26 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final state = context.watch<AppState>();
     final teamsSorted = [...state.teams]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    var initiatives = state.initiativesForTeams(_selectedTeamIds);
-    var tasks = state.tasksForTeams(_selectedTeamIds);
+    const allTeams = <String>{};
+    var initiatives = state.initiativesForTeams(allTeams);
+    var tasks = state.tasksForTeams(allTeams);
 
-    if (_selectedAssigneeIds.isNotEmpty) {
+    if (_filterAssigneeMenuStaffIds.isNotEmpty) {
       initiatives = initiatives
-          .where((i) => i.directorIds.any(_selectedAssigneeIds.contains))
+          .where((i) => i.directorIds.any(_filterAssigneeMenuStaffIds.contains))
           .toList();
       tasks = tasks
-          .where((t) => t.assigneeIds.any(_selectedAssigneeIds.contains))
+          .where((t) => t.assigneeIds.any(_filterAssigneeMenuStaffIds.contains))
+          .toList();
+    }
+    if (_filterCreatorMenuStaffIds.isNotEmpty) {
+      tasks = tasks
+          .where((t) {
+            final k = t.createByAssigneeKey?.trim();
+            return k != null &&
+                k.isNotEmpty &&
+                _filterCreatorMenuStaffIds.contains(k);
+          })
           .toList();
     }
 
@@ -932,7 +1064,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _tasksPageSize,
     );
 
-    final reminders = state.getPendingRemindersForTeams(_selectedTeamIds);
+    final reminders = state.getPendingRemindersForTeams(allTeams);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -970,6 +1102,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
               final filterMenu = MenuAnchor(
                 controller: _filterMenuController,
+                onClose: _onFilterMenuAnchorClosed,
                 menuChildren: [
                   Padding(
                     padding: const EdgeInsets.symmetric(
@@ -985,278 +1118,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-                                child: Text(
-                                  'Team',
-                                  style: Theme.of(context).textTheme.titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
+                              ..._landingFilterMenuSections(
+                                context,
+                                state,
+                                teamsSorted,
                               ),
-                              for (final team in teamsSorted)
-                                CheckboxMenuButton(
-                                  closeOnActivate: false,
-                                  value: _selectedTeamIds.contains(team.id),
-                                  onChanged: (bool? v) {
-                                    if (v == null) return;
-                                    setState(() {
-                                      if (v) {
-                                        _selectedTeamIds.add(team.id);
-                                      } else {
-                                        _selectedTeamIds.remove(team.id);
-                                      }
-                                      if (_selectedTeamIds.length != 1) {
-                                        _selectedAssigneeIds.clear();
-                                      }
-                                      _tasksPageIndex = 0;
-                                      _deletedTasksPageIndex = 0;
-                                    });
-                                    _persistLandingFilters();
-                                  },
-                  child: Text(team.name),
-                ),
-                              if (_selectedTeamIds.length == 1) ...[
-                                const Divider(height: 24),
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    4,
-                                    0,
-                                    4,
-                                    8,
-                                  ),
-                                  child: Text(
-                                    'Team member',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                                CheckboxMenuButton(
-                                  closeOnActivate: false,
-                                  value: _selectedAssigneeIds.isEmpty,
-                                  onChanged: (bool? v) {
-                                    if (v == null || !v) return;
-                                    setState(() {
-                                      _selectedAssigneeIds.clear();
-                                      _tasksPageIndex = 0;
-                                      _deletedTasksPageIndex = 0;
-                                    });
-                                    _persistLandingFilters();
-                                  },
-                                  child: const Text('All team members'),
-                                ),
-                                for (final assignee in _getTeamMembers(
-                                  state,
-                                  _selectedTeamIds.first,
-                                ))
-                                  CheckboxMenuButton(
-                                    closeOnActivate: false,
-                                    value: _selectedAssigneeIds.contains(
-                                      assignee.id,
-                                    ),
-                                    onChanged: (bool? v) {
-                                      if (v == null) return;
-                                      setState(() {
-                                        if (v) {
-                                          _selectedAssigneeIds.add(assignee.id);
-                                        } else {
-                                          _selectedAssigneeIds.remove(
-                                            assignee.id,
-                                          );
-                                        }
-                                        _tasksPageIndex = 0;
-                                        _deletedTasksPageIndex = 0;
-                                      });
-                                      _persistLandingFilters();
-                                    },
-                                    child: Text(assignee.name),
-                                  ),
-                              ],
-                              const Divider(height: 24),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                                child: Text(
-                                  'Status',
-                                  style: Theme.of(context).textTheme.titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedTaskStatuses.contains(
-                                  _statusIncomplete,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedTaskStatuses.add(
-                                        _statusIncomplete,
-                                      );
-                                    } else {
-                                      _selectedTaskStatuses.remove(
-                                        _statusIncomplete,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Incomplete'),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedTaskStatuses.contains(
-                                  _statusCompleted,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedTaskStatuses.add(
-                                        _statusCompleted,
-                                      );
-                                    } else {
-                                      _selectedTaskStatuses.remove(
-                                        _statusCompleted,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Completed'),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedTaskStatuses.contains(
-                                  _statusDeleted,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedTaskStatuses.add(_statusDeleted);
-                                    } else {
-                                      _selectedTaskStatuses.remove(
-                                        _statusDeleted,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Deleted'),
-                              ),
-                              const Divider(height: 24),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                  child: Text(
-                                  'Submission',
-                                  style: Theme.of(context).textTheme.titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedSubmissionFilters.contains(
-                                  _submissionPending,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedSubmissionFilters.add(
-                                        _submissionPending,
-                                      );
-                                    } else {
-                                      _selectedSubmissionFilters.remove(
-                                        _submissionPending,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Pending'),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedSubmissionFilters.contains(
-                                  _submissionSubmitted,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedSubmissionFilters.add(
-                                        _submissionSubmitted,
-                                      );
-                                    } else {
-                                      _selectedSubmissionFilters.remove(
-                                        _submissionSubmitted,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Submitted'),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedSubmissionFilters.contains(
-                                  _submissionAccepted,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedSubmissionFilters.add(
-                                        _submissionAccepted,
-                                      );
-                                    } else {
-                                      _selectedSubmissionFilters.remove(
-                                        _submissionAccepted,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Accepted'),
-                              ),
-                              CheckboxMenuButton(
-                                closeOnActivate: false,
-                                value: _selectedSubmissionFilters.contains(
-                                  _submissionReturned,
-                                ),
-                                onChanged: (bool? v) {
-                                  if (v == null) return;
-                                  setState(() {
-                                    if (v) {
-                                      _selectedSubmissionFilters.add(
-                                        _submissionReturned,
-                                      );
-                                    } else {
-                                      _selectedSubmissionFilters.remove(
-                                        _submissionReturned,
-                                      );
-                                    }
-                                    _tasksPageIndex = 0;
-                                    _deletedTasksPageIndex = 0;
-                                  });
-                                  _persistLandingFilters();
-                                },
-                                child: const Text('Returned'),
-                              ),
+                              ..._landingStatusSubmissionSections(context),
                               const Divider(height: 16),
                               MenuItemButton(
                                 closeOnActivate: false,
@@ -1566,6 +1433,397 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         ),
       ],
     );
+  }
+
+  /// Assignee or Creator: root [ExpansionTile] → **Team** → **Teammate** (checkboxes).
+  Widget _landingTeamStaffFilterExpansion(
+    BuildContext context, {
+    required String sectionTitle,
+    required String topSectionId,
+    required ExpansibleController rootController,
+    required ExpansibleController teamController,
+    required List<Team> teamsSorted,
+    required String? rosterTeamId,
+    required List<Assignee> teammates,
+    required Set<String> staffIds,
+    required void Function(String teamId) onSelectTeam,
+    required VoidCallback onClearAllStaff,
+    required void Function(String staffId, bool selected) onStaffSelectionChanged,
+    required ExpansibleController teammateExpansionController,
+  }) {
+    final titleStyle = Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
+    const innerTilePadding = EdgeInsets.fromLTRB(12, 0, 4, 0);
+
+    return ExpansionTile(
+      controller: rootController,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+      title: Text(sectionTitle, style: titleStyle),
+      onExpansionChanged: (expanded) {
+        if (expanded) _onTopLevelFilterSectionExpanded(topSectionId);
+      },
+      children: [
+        ExpansionTile(
+          controller: teamController,
+          tilePadding: innerTilePadding,
+          title: const Text('Team'),
+          onExpansionChanged: (expanded) {
+            if (expanded) {
+              _onTeamStaffNestedSectionExpanded(
+                rootId: topSectionId,
+                openedNestedId: 'team',
+              );
+            }
+          },
+          children: teamsSorted.isEmpty
+              ? const [
+                  ListTile(
+                    dense: true,
+                    enabled: false,
+                    title: Text('No teams loaded'),
+                  ),
+                ]
+              : teamsSorted
+                  .map(
+                    (t) => MenuItemButton(
+                      closeOnActivate: false,
+                      onPressed: () {
+                        onSelectTeam(t.id);
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (context.mounted) {
+                            teammateExpansionController.expand();
+                          }
+                        });
+                      },
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(t.name)),
+                          if (rosterTeamId == t.id)
+                            Icon(
+                              Icons.check,
+                              size: 18,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+        ),
+        ExpansionTile(
+          controller: teammateExpansionController,
+          tilePadding: innerTilePadding,
+          title: const Text('Teammate'),
+          onExpansionChanged: (expanded) {
+            if (expanded) {
+              _onTeamStaffNestedSectionExpanded(
+                rootId: topSectionId,
+                openedNestedId: 'teammate',
+              );
+            }
+          },
+          children: rosterTeamId == null
+              ? const [
+                  ListTile(
+                    dense: true,
+                    enabled: false,
+                    title: Text('Select a team first'),
+                  ),
+                ]
+              : [
+                  CheckboxMenuButton(
+                    closeOnActivate: false,
+                    value: staffIds.isEmpty,
+                    onChanged: (bool? v) {
+                      if (v != true) return;
+                      onClearAllStaff();
+                    },
+                    child: const Text('All teammates'),
+                  ),
+                  ...teammates.map(
+                    (a) => CheckboxMenuButton(
+                      closeOnActivate: false,
+                      value: staffIds.contains(a.id),
+                      onChanged: (bool? v) {
+                        if (v == null) return;
+                        onStaffSelectionChanged(a.id, v);
+                      },
+                      child: Text(a.name),
+                    ),
+                  ),
+                ],
+        ),
+      ],
+    );
+  }
+
+  /// Status / Submission: expandable sections with [CheckboxMenuButton].
+  List<Widget> _landingStatusSubmissionSections(BuildContext context) {
+    final titleStyle = Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
+    return [
+      ExpansionTile(
+        controller: _filterStatusTileController,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+        title: Text('Status', style: titleStyle),
+        onExpansionChanged: (expanded) {
+          if (expanded) _onTopLevelFilterSectionExpanded('status');
+        },
+        children: [
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedTaskStatuses.contains(_statusIncomplete),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedTaskStatuses.add(_statusIncomplete);
+                } else {
+                  _selectedTaskStatuses.remove(_statusIncomplete);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Incomplete'),
+          ),
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedTaskStatuses.contains(_statusCompleted),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedTaskStatuses.add(_statusCompleted);
+                } else {
+                  _selectedTaskStatuses.remove(_statusCompleted);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Completed'),
+          ),
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedTaskStatuses.contains(_statusDeleted),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedTaskStatuses.add(_statusDeleted);
+                } else {
+                  _selectedTaskStatuses.remove(_statusDeleted);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Deleted'),
+          ),
+        ],
+      ),
+      ExpansionTile(
+        controller: _filterSubmissionTileController,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+        title: Text('Submission', style: titleStyle),
+        onExpansionChanged: (expanded) {
+          if (expanded) _onTopLevelFilterSectionExpanded('submission');
+        },
+        children: [
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedSubmissionFilters.contains(_submissionPending),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedSubmissionFilters.add(_submissionPending);
+                } else {
+                  _selectedSubmissionFilters.remove(_submissionPending);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Pending'),
+          ),
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedSubmissionFilters.contains(_submissionSubmitted),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedSubmissionFilters.add(_submissionSubmitted);
+                } else {
+                  _selectedSubmissionFilters.remove(_submissionSubmitted);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Submitted'),
+          ),
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedSubmissionFilters.contains(_submissionAccepted),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedSubmissionFilters.add(_submissionAccepted);
+                } else {
+                  _selectedSubmissionFilters.remove(_submissionAccepted);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Accepted'),
+          ),
+          CheckboxMenuButton(
+            closeOnActivate: false,
+            value: _selectedSubmissionFilters.contains(_submissionReturned),
+            onChanged: (bool? v) {
+              if (v == null) return;
+              setState(() {
+                if (v) {
+                  _selectedSubmissionFilters.add(_submissionReturned);
+                } else {
+                  _selectedSubmissionFilters.remove(_submissionReturned);
+                }
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+              _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
+            },
+            child: const Text('Returned'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// Filter [MenuAnchor] body: expandable Assignee / Creator → Team → Teammate.
+  List<Widget> _landingFilterMenuSections(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted,
+  ) {
+    String? rosterTeamIdOrNull(String? stored) {
+      if (stored == null || stored.isEmpty) return null;
+      return teamsSorted.any((t) => t.id == stored) ? stored : null;
+    }
+
+    final assigneeTeamField = rosterTeamIdOrNull(_filterAssigneeMenuTeamId);
+    final creatorTeamField = rosterTeamIdOrNull(_filterCreatorMenuTeamId);
+    final assigneeMembers = assigneeTeamField == null
+        ? <Assignee>[]
+        : _getTeamMembers(state, assigneeTeamField);
+    final creatorMembers = creatorTeamField == null
+        ? <Assignee>[]
+        : _getTeamMembers(state, creatorTeamField);
+
+    return [
+      _landingTeamStaffFilterExpansion(
+        context,
+        sectionTitle: 'Assignee',
+        topSectionId: 'assignee',
+        rootController: _filterAssigneeRootController,
+        teamController: _filterAssigneeTeamController,
+        teamsSorted: teamsSorted,
+        rosterTeamId: assigneeTeamField,
+        teammates: assigneeMembers,
+        staffIds: _filterAssigneeMenuStaffIds,
+        teammateExpansionController: _filterAssigneeTeammateTileController,
+        onSelectTeam: (teamId) {
+          setState(() {
+            _filterAssigneeMenuTeamId = teamId;
+            _filterAssigneeMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onClearAllStaff: () {
+          setState(() {
+            _filterAssigneeMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onStaffSelectionChanged: (id, selected) {
+          setState(() {
+            if (selected) {
+              _filterAssigneeMenuStaffIds.add(id);
+            } else {
+              _filterAssigneeMenuStaffIds.remove(id);
+            }
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+      ),
+      _landingTeamStaffFilterExpansion(
+        context,
+        sectionTitle: 'Creator',
+        topSectionId: 'creator',
+        rootController: _filterCreatorRootController,
+        teamController: _filterCreatorTeamController,
+        teamsSorted: teamsSorted,
+        rosterTeamId: creatorTeamField,
+        teammates: creatorMembers,
+        staffIds: _filterCreatorMenuStaffIds,
+        teammateExpansionController: _filterCreatorTeammateTileController,
+        onSelectTeam: (teamId) {
+          setState(() {
+            _filterCreatorMenuTeamId = teamId;
+            _filterCreatorMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onClearAllStaff: () {
+          setState(() {
+            _filterCreatorMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onStaffSelectionChanged: (id, selected) {
+          setState(() {
+            if (selected) {
+              _filterCreatorMenuStaffIds.add(id);
+            } else {
+              _filterCreatorMenuStaffIds.remove(id);
+            }
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+      ),
+    ];
   }
 
   List<Assignee> _getTeamMembers(AppState state, String teamId) {
