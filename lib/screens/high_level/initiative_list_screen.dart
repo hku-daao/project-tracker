@@ -92,6 +92,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   TaskListSortColumn? _taskSortColumn;
   bool _taskSortAscending = true;
 
+  /// Client-side paging for [TaskListCard] lists (search/filter unchanged; slice after).
+  static const List<int> _landingTaskPageSizes = [25, 50, 100, 200];
+  int _tasksPageSize = 50;
+  int _tasksPageIndex = 0;
+  int _deletedTasksPageIndex = 0;
+
   /// Per-user prefs: do not persist until first load finished (avoids clobbering saved teams).
   bool _landingFiltersPrefsReady = false;
 
@@ -169,7 +175,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         label: Text(label, maxLines: 1, softWrap: false),
         selected: selected,
         onSelected: (_) {
-          setState(() => _filterType = value);
+          setState(() {
+            _filterType = value;
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
           _persistLandingFilters();
         },
         selectedColor: selectedBg,
@@ -243,6 +253,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _selectedSubmissionFilters.clear();
       _selectedAssigneeIds.clear();
       _taskSearchController.clear();
+      _tasksPageIndex = 0;
+      _deletedTasksPageIndex = 0;
     });
     _persistLandingFilters();
   }
@@ -568,6 +580,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               _taskSortColumn = column;
               _taskSortAscending = false;
             }
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
           });
           _persistLandingFilters();
         },
@@ -620,11 +634,112 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
+  static int _landingLastPageIndex(int itemCount, int pageSize) {
+    if (itemCount <= 0 || pageSize <= 0) return 0;
+    return (itemCount - 1) ~/ pageSize;
+  }
+
+  static List<T> _landingPageSlice<T>(
+    List<T> items,
+    int pageIndex,
+    int pageSize,
+  ) {
+    if (items.isEmpty || pageSize <= 0) return const [];
+    final last = _landingLastPageIndex(items.length, pageSize);
+    final p = pageIndex.clamp(0, last);
+    final start = p * pageSize;
+    final end = min(start + pageSize, items.length);
+    return items.sublist(start, end);
+  }
+
+  Widget _buildLandingTaskPaginationBar({
+    required BuildContext context,
+    required int totalCount,
+    required int pageIndex,
+    required void Function(int newPageIndex) onPageChanged,
+    required bool showPageSizeDropdown,
+  }) {
+    if (totalCount <= 0) return const SizedBox.shrink();
+    final lastPage = _landingLastPageIndex(totalCount, _tasksPageSize);
+    final cur = pageIndex.clamp(0, lastPage);
+    final from = cur * _tasksPageSize + 1;
+    final to = min((cur + 1) * _tasksPageSize, totalCount);
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.zero,
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          if (showPageSizeDropdown)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Per page',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<int>(
+                  value: _tasksPageSize,
+                  items: _landingTaskPageSizes
+                      .map(
+                        (n) => DropdownMenuItem<int>(
+                          value: n,
+                          child: Text('$n'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() {
+                      _tasksPageSize = v;
+                      _tasksPageIndex = 0;
+                      _deletedTasksPageIndex = 0;
+                    });
+                  },
+                ),
+              ],
+            ),
+          Text(
+            'Page ${cur + 1} of ${lastPage + 1} · $from–$to of $totalCount',
+            style: theme.textTheme.bodySmall,
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: cur > 0
+                    ? () => onPageChanged(cur - 1)
+                    : null,
+                child: const Text('Previous'),
+              ),
+              TextButton(
+                onPressed: cur < lastPage
+                    ? () => onPageChanged(cur + 1)
+                    : null,
+                child: const Text('Next'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Landing Tasks tab — same width as the task list column below.
   Widget _buildLandingTaskSearchField() {
     return TextField(
       controller: _taskSearchController,
-      onChanged: (_) => setState(() {}),
+      onChanged: (_) {
+        setState(() {
+          _tasksPageIndex = 0;
+          _deletedTasksPageIndex = 0;
+        });
+      },
       decoration: InputDecoration(
         labelText: 'Search tasks',
         hintText: 'Search by task name, description',
@@ -638,6 +753,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 onPressed: () {
                   setState(() {
                     _taskSearchController.clear();
+                    _tasksPageIndex = 0;
+                    _deletedTasksPageIndex = 0;
                   });
                 },
               )
@@ -804,6 +921,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     filteredDeletedTasks = _applyTaskSearch(filteredDeletedTasks);
     filteredDeletedTasks = _sortTasks(filteredDeletedTasks, state);
 
+    final pagedTasks = _landingPageSlice(
+      filteredTasks,
+      _tasksPageIndex,
+      _tasksPageSize,
+    );
+    final pagedDeletedTasks = _landingPageSlice(
+      filteredDeletedTasks,
+      _deletedTasksPageIndex,
+      _tasksPageSize,
+    );
+
     final reminders = state.getPendingRemindersForTeams(_selectedTeamIds);
 
     return Column(
@@ -880,6 +1008,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                       if (_selectedTeamIds.length != 1) {
                                         _selectedAssigneeIds.clear();
                                       }
+                                      _tasksPageIndex = 0;
+                                      _deletedTasksPageIndex = 0;
                                     });
                                     _persistLandingFilters();
                                   },
@@ -907,7 +1037,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   value: _selectedAssigneeIds.isEmpty,
                                   onChanged: (bool? v) {
                                     if (v == null || !v) return;
-                                    setState(_selectedAssigneeIds.clear);
+                                    setState(() {
+                                      _selectedAssigneeIds.clear();
+                                      _tasksPageIndex = 0;
+                                      _deletedTasksPageIndex = 0;
+                                    });
                                     _persistLandingFilters();
                                   },
                                   child: const Text('All team members'),
@@ -931,6 +1065,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                             assignee.id,
                                           );
                                         }
+                                        _tasksPageIndex = 0;
+                                        _deletedTasksPageIndex = 0;
                                       });
                                       _persistLandingFilters();
                                     },
@@ -963,6 +1099,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _statusIncomplete,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -985,6 +1123,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _statusCompleted,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1005,6 +1145,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _statusDeleted,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1036,6 +1178,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _submissionPending,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1058,6 +1202,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _submissionSubmitted,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1080,6 +1226,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _submissionAccepted,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1102,6 +1250,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         _submissionReturned,
                                       );
                                     }
+                                    _tasksPageIndex = 0;
+                                    _deletedTasksPageIndex = 0;
                                   });
                                   _persistLandingFilters();
                                 },
@@ -1265,72 +1415,153 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           },
         ),
         Expanded(
-          child:
-              filteredInitiatives.isEmpty &&
+          child: filteredInitiatives.isEmpty &&
                   filteredTasks.isEmpty &&
                   filteredDeletedTasks.isEmpty
               ? Center(child: Text(_emptyListMessage()))
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: _kLandingTaskListMaxWidth,
-                    ),
-                    child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+              : Column(
                   children: [
-                        if (filteredInitiatives.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 8),
-                        child: Text(
-                              'Initiatives',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
+                    Expanded(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: _kLandingTaskListMaxWidth,
                           ),
-                          ...filteredInitiatives.map(
-                            (init) =>
-                                _buildInitiativeCard(context, state, init),
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                            children: [
+                              if (filteredInitiatives.isNotEmpty) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 8,
+                                    bottom: 8,
+                                  ),
+                                  child: Text(
+                                    'Initiatives',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                ...filteredInitiatives.map(
+                                  (init) => _buildInitiativeCard(
+                                    context,
+                                    state,
+                                    init,
+                                  ),
+                                ),
+                              ],
+                              if (filteredTasks.isNotEmpty) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 16,
+                                    bottom: 8,
+                                  ),
+                                  child: Text(
+                                    'Tasks (${filteredTasks.length})',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.only(bottom: 12),
+                                  child: PicTeamColorLegend(),
+                                ),
+                                ...pagedTasks.map((t) => TaskListCard(task: t)),
+                              ],
+                              if (filteredDeletedTasks.isNotEmpty) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 24,
+                                    bottom: 8,
+                                  ),
+                                  child: Text(
+                                    'Deleted tasks',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ),
+                                if (filteredTasks.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.only(bottom: 12),
+                                    child: PicTeamColorLegend(),
+                                  ),
+                                ...pagedDeletedTasks.map(
+                                  (t) => TaskListCard(task: t),
+                                ),
+                              ],
+                            ],
                           ),
-                        ],
-                        if (filteredTasks.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 16, bottom: 8),
-                        child: Text(
-                              'Tasks (${filteredTasks.length})',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 12),
-                            child: PicTeamColorLegend(),
-                          ),
-                          ...filteredTasks.map((t) => TaskListCard(task: t)),
-                        ],
-                        if (filteredDeletedTasks.isNotEmpty) ...[
-                          Padding(
-                            padding: const EdgeInsets.only(top: 24, bottom: 8),
-                            child: Text(
-                              'Deleted tasks',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                              ),
                         ),
                       ),
-                          if (filteredTasks.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 12),
-                              child: PicTeamColorLegend(),
-                            ),
-                          ...filteredDeletedTasks.map(
-                            (t) => TaskListCard(task: t),
-                          ),
-                        ],
-                      ],
                     ),
-                  ),
+                    if (filteredTasks.isNotEmpty ||
+                        filteredDeletedTasks.isNotEmpty)
+                      Material(
+                        elevation: 6,
+                        shadowColor: Colors.black26,
+                        color: Theme.of(context).colorScheme.surface,
+                        child: SafeArea(
+                          top: false,
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: _kLandingTaskListMaxWidth,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  10,
+                                  16,
+                                  10,
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (filteredTasks.isNotEmpty)
+                                      _buildLandingTaskPaginationBar(
+                                        context: context,
+                                        totalCount: filteredTasks.length,
+                                        pageIndex: _tasksPageIndex,
+                                        onPageChanged: (i) {
+                                          setState(() => _tasksPageIndex = i);
+                                        },
+                                        showPageSizeDropdown: true,
+                                      ),
+                                    if (filteredTasks.isNotEmpty &&
+                                        filteredDeletedTasks.isNotEmpty)
+                                      const Divider(height: 20),
+                                    if (filteredDeletedTasks.isNotEmpty)
+                                      _buildLandingTaskPaginationBar(
+                                        context: context,
+                                        totalCount:
+                                            filteredDeletedTasks.length,
+                                        pageIndex: _deletedTasksPageIndex,
+                                        onPageChanged: (i) {
+                                          setState(
+                                            () => _deletedTasksPageIndex = i,
+                                          );
+                                        },
+                                        showPageSizeDropdown: false,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
         ),
       ],
