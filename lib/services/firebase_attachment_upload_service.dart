@@ -101,6 +101,68 @@ class FirebaseAttachmentUploadService {
     return '${const Uuid().v4()}$ext';
   }
 
+  /// `alt=media&token=` URL from a Storage object JSON body (multipart response or `GET .../o/`).
+  static String? _downloadUrlFromObjectJson(
+    Map<String, dynamic> json,
+    String bucket,
+    String fallbackObjectPath,
+  ) {
+    String? token;
+    final md = json['metadata'];
+    if (md is Map) {
+      final mdMap = Map<String, dynamic>.from(md);
+      final raw = mdMap['firebaseStorageDownloadTokens']?.toString();
+      if (raw != null && raw.isNotEmpty) {
+        token = raw.contains(',') ? raw.split(',').first.trim() : raw.trim();
+      }
+    }
+    token ??= json['downloadTokens']?.toString();
+    if (token != null && token.contains(',')) {
+      token = token.split(',').first.trim();
+    }
+    final nameInObj = json['name']?.toString().trim();
+    final objectName = (nameInObj != null && nameInObj.isNotEmpty)
+        ? nameInObj
+        : fallbackObjectPath;
+    if (token == null || token.isEmpty) return null;
+    return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(objectName)}?alt=media&token=$token';
+  }
+
+  /// Public for [openAttachmentUrl] on **web** only — avoids `firebase_storage_web` `getDownloadURL` interop bugs.
+  static Future<String?> fetchStorageDownloadUrlRest(String objectPath) async {
+    if (Firebase.apps.isEmpty) return null;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    final idToken = await user.getIdToken();
+    final bucket = Firebase.app().options.storageBucket?.trim() ?? '';
+    if (bucket.isEmpty) return null;
+    final trimmed = objectPath.trim();
+    if (trimmed.isEmpty) return null;
+    final enc = Uri.encodeComponent(trimmed);
+    final uri = Uri.parse(
+      'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$enc',
+    );
+    final resp = await http.get(
+      uri,
+      headers: {'Authorization': 'Bearer $idToken'},
+    );
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      debugPrint(
+        'fetchStorageDownloadUrlRest HTTP ${resp.statusCode} ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}…' : resp.body}',
+      );
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) return null;
+      final json = Map<String, dynamic>.from(decoded);
+      return _downloadUrlFromObjectJson(json, bucket, trimmed);
+    } catch (e, st) {
+      debugPrint('fetchStorageDownloadUrlRest parse: $e\n$st');
+      return null;
+    }
+  }
+
   /// Web upload with custom metadata (multipart) so Storage `create` rules can require ACL.
   static Future<({String? url, String? error})> _uploadObjectWebMultipart({
     required String objectPath,
@@ -150,11 +212,16 @@ class FirebaseAttachmentUploadService {
     );
 
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      return (
-        url: null,
-        error:
-            'Storage upload failed (HTTP ${resp.statusCode}). ${resp.body.length > 400 ? '${resp.body.substring(0, 400)}…' : resp.body}',
-      );
+      final bodyShort =
+          resp.body.length > 400 ? '${resp.body.substring(0, 400)}…' : resp.body;
+      var msg = 'Storage upload failed (HTTP ${resp.statusCode}). $bodyShort';
+      if (resp.statusCode == 403) {
+        msg += ' Deploy Storage rules (firebase deploy --only storage). If you use '
+            'Firebase Anonymous sign-in, remove the anonymous check in storage.rules. '
+            'Ensure your Firebase user uid matches the path and ACL metadata includes '
+            'your staff key when staffKey custom claims are enabled.';
+      }
+      return (url: null, error: msg);
     }
 
     try {
@@ -164,36 +231,12 @@ class FirebaseAttachmentUploadService {
       }
       final json = Map<String, dynamic>.from(decoded);
 
-      String? token;
-      final md = json['metadata'];
-      if (md is Map) {
-        final mdMap = Map<String, dynamic>.from(md);
-        final raw = mdMap['firebaseStorageDownloadTokens']?.toString();
-        if (raw != null && raw.isNotEmpty) {
-          token = raw.contains(',') ? raw.split(',').first.trim() : raw.trim();
-        }
-      }
-      token ??= json['downloadTokens']?.toString();
-      if (token != null && token.contains(',')) {
-        token = token.split(',').first.trim();
-      }
-
-      final nameInObj = json['name']?.toString() ?? objectPath;
-      final mediaLink = json['mediaLink']?.toString();
-
-      if (token != null && token.isNotEmpty) {
-        final downloadUrl =
-            'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(nameInObj)}?alt=media&token=$token';
+      final downloadUrl = _downloadUrlFromObjectJson(json, bucket, objectPath);
+      if (downloadUrl != null) {
         return (url: downloadUrl, error: null);
       }
-      if (mediaLink != null && mediaLink.isNotEmpty) {
-        return (url: mediaLink, error: null);
-      }
-      return (
-        url: null,
-        error:
-            'Upload succeeded but no download URL could be built. Response keys: ${json.keys.join(', ')}',
-      );
+      // Bytes are on the server; token may appear after a follow-up GET (handled in [_putBytes]).
+      return (url: null, error: null);
     } catch (e, st) {
       debugPrint('parse Storage multipart JSON: $e\n$st');
       return (url: null, error: 'Upload succeeded but response could not be parsed: $e');
@@ -322,7 +365,22 @@ class FirebaseAttachmentUploadService {
         if (up.error != null) {
           return (url: null, label: null, error: up.error);
         }
-        return (url: up.url, label: originalFilename, error: null);
+        // On web, `getDownloadURL()` often throws in firebase_storage_web; use REST instead.
+        var downloadUrl = up.url;
+        if (downloadUrl == null ||
+            downloadUrl.isEmpty ||
+            !downloadUrl.contains('token=')) {
+          downloadUrl = await fetchStorageDownloadUrlRest(path);
+        }
+        if (downloadUrl == null || downloadUrl.isEmpty) {
+          return (
+            url: null,
+            label: null,
+            error:
+                'Upload finished but could not obtain a download link (try again).',
+          );
+        }
+        return (url: downloadUrl, label: originalFilename, error: null);
       }
 
       final ref = FirebaseStorage.instance.ref(path);

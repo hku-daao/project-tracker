@@ -17,6 +17,14 @@ class AttachmentLinkPreview extends StatelessWidget {
         style: Theme.of(context).textTheme.bodyMedium,
       );
     }
+    if (attachmentTextIsJsonNotAUrl(t)) {
+      return Text(
+        'Invalid link (JSON was saved instead of a URL). Re-upload the file.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.error,
+            ),
+      );
+    }
     final uri = Uri.tryParse(t);
     final clickable =
         uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
