@@ -144,18 +144,34 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     });
   }
 
+  List<String?> _singularSubtaskAttachmentAclKeys(SingularSubtask st) => [
+    st.createByStaffId,
+    st.pic,
+    ...st.assigneeIds,
+  ];
+
   Future<void> _addSubtaskAttachmentFromDevice() async {
+    final st = _sub;
+    if (st == null) {
+      if (mounted) {
+        showCopyableSnackBar(
+          context,
+          'Sub-task is not loaded yet; try again in a moment.',
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
+    }
     final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
       widget.subtaskId,
+      aclStaffKeys: _singularSubtaskAttachmentAclKeys(st),
     );
     if (!mounted) return;
     if (r.error != null && r.error!.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          content: Text(r.error!),
-          backgroundColor: Colors.orange,
-        ),
+      showCopyableSnackBar(
+        context,
+        r.error!,
+        backgroundColor: Colors.orange,
       );
       return;
     }
@@ -195,10 +211,20 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       context,
       initialDescription: e.descController.text,
       initialUrl: e.urlController.text,
-      pickReplaceFromDevice: () =>
-          FirebaseAttachmentUploadService.pickUploadForSubtask(
-            widget.subtaskId,
-          ),
+      pickReplaceFromDevice: () {
+        final st = _sub;
+        if (st == null) {
+          return Future.value((
+            url: null,
+            label: null,
+            error: 'Sub-task is not loaded yet; try again in a moment.',
+          ));
+        }
+        return FirebaseAttachmentUploadService.pickUploadForSubtask(
+          widget.subtaskId,
+          aclStaffKeys: _singularSubtaskAttachmentAclKeys(st),
+        );
+      },
     );
     if (!mounted || r == null) return;
     setState(() {

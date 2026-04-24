@@ -721,9 +721,27 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     });
   }
 
+  List<String?> _singularTaskAttachmentAclKeys(Task task) => [
+    task.createByAssigneeKey,
+    task.pic,
+    ...task.assigneeIds,
+  ];
+
   Future<void> _addTaskAttachmentFromDevice() async {
+    final task = context.read<AppState>().taskById(widget.taskId);
+    if (task == null) {
+      if (mounted) {
+        showCopyableSnackBar(
+          context,
+          'Task is not loaded yet; try again in a moment.',
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
+    }
     final r = await FirebaseAttachmentUploadService.pickUploadForTask(
       widget.taskId,
+      aclStaffKeys: _singularTaskAttachmentAclKeys(task),
     );
     if (!mounted) return;
     if (r.error != null && r.error!.isNotEmpty) {
@@ -767,8 +785,20 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       context,
       initialDescription: e.descController.text,
       initialUrl: e.urlController.text,
-      pickReplaceFromDevice: () =>
-          FirebaseAttachmentUploadService.pickUploadForTask(widget.taskId),
+      pickReplaceFromDevice: () {
+        final task = context.read<AppState>().taskById(widget.taskId);
+        if (task == null) {
+          return Future.value((
+            url: null,
+            label: null,
+            error: 'Task is not loaded yet; try again in a moment.',
+          ));
+        }
+        return FirebaseAttachmentUploadService.pickUploadForTask(
+          widget.taskId,
+          aclStaffKeys: _singularTaskAttachmentAclKeys(task),
+        );
+      },
     );
     if (!mounted || r == null) return;
     setState(() {

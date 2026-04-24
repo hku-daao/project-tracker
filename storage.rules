@@ -1,0 +1,58 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Logged-in app user: Firebase Auth session + non-anonymous + staffKey (Admin SDK).
+    // Non–Firebase-authenticated requests fail here; ACL still requires metadataGrantsAccess.
+    function isAppUser() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.keys().hasAll(['staffKey'])
+        && request.auth.token.staffKey is string
+        && request.auth.token.staffKey.size() > 0;
+    }
+
+    function staffKeyValue() {
+      return request.auth.token.staffKey;
+    }
+
+    // File ACL: upload stores staff ids in custom metadata m0..m9 (see app upload service).
+    function metadataGrantsAccess(meta) {
+      let k = staffKeyValue();
+      return (meta.keys().hasAll(['m0']) && meta.m0 == k)
+        || (meta.keys().hasAll(['m1']) && meta.m1 == k)
+        || (meta.keys().hasAll(['m2']) && meta.m2 == k)
+        || (meta.keys().hasAll(['m3']) && meta.m3 == k)
+        || (meta.keys().hasAll(['m4']) && meta.m4 == k)
+        || (meta.keys().hasAll(['m5']) && meta.m5 == k)
+        || (meta.keys().hasAll(['m6']) && meta.m6 == k)
+        || (meta.keys().hasAll(['m7']) && meta.m7 == k)
+        || (meta.keys().hasAll(['m8']) && meta.m8 == k)
+        || (meta.keys().hasAll(['m9']) && meta.m9 == k);
+    }
+
+    match /project_tracker/users/{uploaderUid}/task_attachments/{taskId}/{fileName} {
+      allow read: if isAppUser() && metadataGrantsAccess(resource.metadata);
+
+      allow create: if isAppUser()
+        && request.auth.uid == uploaderUid
+        && metadataGrantsAccess(request.resource.metadata);
+
+      allow update, delete: if isAppUser()
+        && request.auth.uid == uploaderUid
+        && metadataGrantsAccess(request.resource.metadata);
+    }
+
+    match /project_tracker/users/{uploaderUid}/subtask_attachments/{subtaskId}/{fileName} {
+      allow read: if isAppUser() && metadataGrantsAccess(resource.metadata);
+
+      allow create: if isAppUser()
+        && request.auth.uid == uploaderUid
+        && metadataGrantsAccess(request.resource.metadata);
+
+      allow update, delete: if isAppUser()
+        && request.auth.uid == uploaderUid
+        && metadataGrantsAccess(request.resource.metadata);
+    }
+  }
+}

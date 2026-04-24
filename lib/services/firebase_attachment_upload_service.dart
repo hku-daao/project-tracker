@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,6 +13,13 @@ import '../utils/attachment_file_pick.dart';
 /// Picks a file and uploads to Firebase Storage; callers store [downloadUrl] in Supabase
 /// `attachment.content` / `subtask_attachment.content` and [suggestedLabel] in `description`.
 ///
+/// **Access control (no Firestore):** each object stores up to 10 staff identifiers in
+/// custom metadata keys `m0`…`m9` (creator, PIC, assignees — same strings you use in
+/// Supabase, e.g. `staff.app_id` and/or `staff.id` uuid). Storage security rules should
+/// allow **read** only when `request.auth.token.staffKey` equals one of those metadata
+/// values. Set `staffKey` on the Firebase user with the Admin SDK after login/profile
+/// sync so it matches the strings you pass in [aclStaffKeys].
+///
 /// On **web**, the first `await` in the pick flow must be the file dialog (see
 /// [pickOneFileWithBytes]) so the browser keeps
 /// [user activation](https://developer.mozilla.org/en-US/docs/Web/Security/User_activation).
@@ -22,6 +30,25 @@ class FirebaseAttachmentUploadService {
   static const String _storageAppRoot = 'project_tracker';
 
   static const int _maxBytes = 50 * 1024 * 1024;
+
+  /// Max distinct staff keys stored per object (Storage rules should mirror this count).
+  static const int aclMetadataSlotCount = 10;
+
+  /// Builds `m0`…`m9` custom metadata from non-empty, de-duplicated [keys] (order preserved).
+  static Map<String, String> aclMetadataFromStaffKeys(Iterable<String?> keys) {
+    final seen = <String>{};
+    final out = <String, String>{};
+    var i = 0;
+    for (final raw in keys) {
+      final s = raw?.trim();
+      if (s == null || s.isEmpty || seen.contains(s)) continue;
+      seen.add(s);
+      out['m$i'] = s;
+      i++;
+      if (i >= aclMetadataSlotCount) break;
+    }
+    return out;
+  }
 
   static String? _guardSync() {
     if (Firebase.apps.isEmpty) {
@@ -74,13 +101,12 @@ class FirebaseAttachmentUploadService {
     return '${const Uuid().v4()}$ext';
   }
 
-  /// Web-only upload via Storage REST (`uploadType=media`) using the Firebase ID token.
-  /// Avoids `firebase_storage_web` JS interop (`ref` / `guard`) which can throw non-`JSError`
-  /// values in some browser/SDK combinations.
-  static Future<({String? url, String? error})> _uploadObjectWebRest({
+  /// Web upload with custom metadata (multipart) so Storage `create` rules can require ACL.
+  static Future<({String? url, String? error})> _uploadObjectWebMultipart({
     required String objectPath,
     required Uint8List bytes,
     required String contentType,
+    required Map<String, String> customMetadata,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -91,19 +117,36 @@ class FirebaseAttachmentUploadService {
     if (bucket.isEmpty) {
       return (url: null, error: 'Firebase app has no storageBucket in options.');
     }
+    if (customMetadata.isEmpty) {
+      return (url: null, error: 'Missing attachment access metadata.');
+    }
+
+    final boundary = 'dart-${const Uuid().v4()}';
+    final metaJson = jsonEncode({
+      'contentType': contentType,
+      'metadata': customMetadata,
+    });
+    final b = BytesBuilder(copy: false);
+    b.add('--$boundary\r\n'.codeUnits);
+    b.add('Content-Type: application/json; charset=UTF-8\r\n\r\n'.codeUnits);
+    b.add(utf8.encode(metaJson));
+    b.add('\r\n--$boundary\r\n'.codeUnits);
+    b.add('Content-Type: $contentType\r\n\r\n'.codeUnits);
+    b.add(bytes);
+    b.add('\r\n--$boundary--\r\n'.codeUnits);
 
     final encodedName = Uri.encodeComponent(objectPath);
     final uri = Uri.parse(
-      'https://firebasestorage.googleapis.com/v0/b/$bucket/o?uploadType=media&name=$encodedName',
+      'https://firebasestorage.googleapis.com/v0/b/$bucket/o?uploadType=multipart&name=$encodedName',
     );
 
     final resp = await http.post(
       uri,
       headers: {
         'Authorization': 'Bearer $idToken',
-        'Content-Type': contentType,
+        'Content-Type': 'multipart/related; boundary=$boundary',
       },
-      body: bytes,
+      body: b.toBytes(),
     );
 
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
@@ -152,15 +195,16 @@ class FirebaseAttachmentUploadService {
             'Upload succeeded but no download URL could be built. Response keys: ${json.keys.join(', ')}',
       );
     } catch (e, st) {
-      debugPrint('parse Storage upload JSON: $e\n$st');
+      debugPrint('parse Storage multipart JSON: $e\n$st');
       return (url: null, error: 'Upload succeeded but response could not be parsed: $e');
     }
   }
 
   /// Returns `(url, label)` on success, `error` on failure, all null if user cancelled pick.
   static Future<({String? url, String? label, String? error})> pickUploadForTask(
-    String taskId,
-  ) async {
+    String taskId, {
+    required List<String?> aclStaffKeys,
+  }) async {
     try {
       final tid = taskId.trim();
       if (tid.isEmpty) return (url: null, label: null, error: 'Missing task id');
@@ -183,10 +227,21 @@ class FirebaseAttachmentUploadService {
         return (url: null, label: null, error: 'File too large (max 50 MB).');
       }
 
+      final acl = aclMetadataFromStaffKeys(aclStaffKeys);
+      if (acl.isEmpty) {
+        return (
+          url: null,
+          label: null,
+          error:
+              'Cannot upload: no staff keys for attachment access (creator / PIC / assignees).',
+        );
+      }
+
       return _putBytes(
         storageRelativeFolder: 'task_attachments/$tid',
         originalFilename: label,
         bytes: bytes,
+        aclMetadata: acl,
       );
     } catch (e, st) {
       debugPrint('pickUploadForTask: $e\n$st');
@@ -196,8 +251,9 @@ class FirebaseAttachmentUploadService {
 
   /// Same contract as [pickUploadForTask] for sub-task rows.
   static Future<({String? url, String? label, String? error})> pickUploadForSubtask(
-    String subtaskId,
-  ) async {
+    String subtaskId, {
+    required List<String?> aclStaffKeys,
+  }) async {
     try {
       final sid = subtaskId.trim();
       if (sid.isEmpty) {
@@ -222,10 +278,21 @@ class FirebaseAttachmentUploadService {
         return (url: null, label: null, error: 'File too large (max 50 MB).');
       }
 
+      final acl = aclMetadataFromStaffKeys(aclStaffKeys);
+      if (acl.isEmpty) {
+        return (
+          url: null,
+          label: null,
+          error:
+              'Cannot upload: no staff keys for attachment access (creator / PIC / assignees).',
+        );
+      }
+
       return _putBytes(
         storageRelativeFolder: 'subtask_attachments/$sid',
         originalFilename: label,
         bytes: bytes,
+        aclMetadata: acl,
       );
     } catch (e, st) {
       debugPrint('pickUploadForSubtask: $e\n$st');
@@ -237,6 +304,7 @@ class FirebaseAttachmentUploadService {
     required String storageRelativeFolder,
     required String originalFilename,
     required Uint8List bytes,
+    required Map<String, String> aclMetadata,
   }) async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final objectName = _storageObjectName(originalFilename);
@@ -245,10 +313,11 @@ class FirebaseAttachmentUploadService {
     final contentType = _contentTypeForFilename(originalFilename);
     try {
       if (kIsWeb) {
-        final up = await _uploadObjectWebRest(
+        final up = await _uploadObjectWebMultipart(
           objectPath: path,
           bytes: bytes,
           contentType: contentType,
+          customMetadata: aclMetadata,
         );
         if (up.error != null) {
           return (url: null, label: null, error: up.error);
@@ -257,7 +326,10 @@ class FirebaseAttachmentUploadService {
       }
 
       final ref = FirebaseStorage.instance.ref(path);
-      final meta = SettableMetadata(contentType: contentType);
+      final meta = SettableMetadata(
+        contentType: contentType,
+        customMetadata: aclMetadata,
+      );
       await ref.putData(bytes, meta);
       final downloadUrl = await ref.getDownloadURL();
       return (url: downloadUrl, label: originalFilename, error: null);
