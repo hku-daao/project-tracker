@@ -6,8 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/firebase_attachment_upload_service.dart';
-import 'attachment_open_download_stub.dart'
-    if (dart.library.html) 'attachment_open_download_web.dart';
 import 'copyable_snackbar.dart';
 
 /// True when [uri] is an object URL under this app’s Firebase Storage bucket.
@@ -157,22 +155,8 @@ Future<void> openAttachmentUrl(BuildContext context, String raw) async {
       );
       return;
     }
-    // Web: fetch bytes in-app then open a blob URL so the tab never navigates to a
-    // JSON metadata response from the Storage API.
-    if (kIsWeb &&
-        _isAppFirebaseStorageObjectUrl(launch) &&
-        !_projectFirebaseUrlMissingDownloadToken(launch)) {
-      if (await openHttpUrlAsBlobInNewTab(launch.toString())) {
-        return;
-      }
-      if (!context.mounted) return;
-      showCopyableSnackBar(
-        context,
-        'Could not open this file (invalid or expired link). Re-upload the attachment.',
-        backgroundColor: Colors.orange,
-      );
-      return;
-    }
+    // Use navigation (`launchUrl`) for Storage download links. In-app `http.get` to the
+    // same URL hits browser CORS and fails with "Failed to fetch" on many origins.
     final ok = await launchUrl(launch, mode: LaunchMode.externalApplication);
     if (!ok && context.mounted) {
       showCopyableSnackBar(
