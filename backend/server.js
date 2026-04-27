@@ -466,6 +466,14 @@ async function handleAttachmentStream(req, res) {
     sendJson(req, res, 404, { error: 'Not found' });
     return;
   }
+  const authSession = await verifyFirebaseToken(req.headers.authorization);
+  if (!authSession) {
+    sendJson(req, res, 401, {
+      error: 'Authorization required',
+      message: 'Send Authorization: Bearer <Firebase ID token> when opening attachments.',
+    });
+    return;
+  }
   const ticket = url.searchParams.get('ticket');
   const sess = ticket ? parseAndVerifyAttachmentStreamTicket(ticket) : null;
   if (!sess) {
@@ -484,10 +492,32 @@ async function handleAttachmentStream(req, res) {
     return;
   }
   const bucket = firebaseAdmin.storage().bucket(bucketName);
+  let liveMeta;
+  try {
+    [liveMeta] = await bucket.file(sess.objectPath).getMetadata();
+  } catch (_) {
+    sendJson(req, res, 404, { error: 'Not found' });
+    return;
+  }
+  if (
+    !canReadAttachmentObject(
+      authSession.uid,
+      authSession.staffKey,
+      sess.objectPath,
+      liveMeta,
+    )
+  ) {
+    sendJson(req, res, 403, { error: 'Forbidden' });
+    return;
+  }
   const file = bucket.file(sess.objectPath);
   const readStream = file.createReadStream();
+  const contentType =
+    (liveMeta.contentType && String(liveMeta.contentType).trim()) ||
+    sess.contentType ||
+    'application/octet-stream';
   const headers = {
-    'Content-Type': sess.contentType || 'application/octet-stream',
+    'Content-Type': contentType,
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
   };

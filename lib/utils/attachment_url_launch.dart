@@ -3,10 +3,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/backend_api.dart';
 import '../services/firebase_attachment_upload_service.dart';
+import 'attachment_open_bytes.dart';
 import 'attachment_storage_new_tab.dart';
 import 'copyable_snackbar.dart';
 
@@ -110,60 +112,108 @@ Future<String> _effectiveLaunchUrl(String raw) async {
   return raw.trim();
 }
 
+String _filenameHintFromStorageObjectPath(String objectPath) {
+  final segments = objectPath.split('/').where((s) => s.isNotEmpty).toList();
+  if (segments.isEmpty) return 'attachment';
+  return segments.last;
+}
+
 Future<void> _openHttpsLaunchUri(BuildContext context, Uri launch) async {
   final user = _firebaseUserIfAvailable();
-  if (_isAppFirebaseStorageObjectUrl(launch) &&
-      user != null &&
-      Firebase.apps.isNotEmpty) {
+  final isAppStorage = _isAppFirebaseStorageObjectUrl(launch);
+
+  if (isAppStorage && user != null && Firebase.apps.isNotEmpty) {
     final objectPath = _objectPathFromFirebaseStorageApiUrl(launch);
-    if (objectPath != null && objectPath.isNotEmpty) {
-      try {
-        final idToken = await user.getIdToken();
-        if (idToken != null && idToken.isNotEmpty) {
-          final proxy = await BackendApi().createAttachmentProxyStreamUrl(
-            idToken: idToken,
-            objectPath: objectPath,
-          );
-          if (proxy != null && proxy.isNotEmpty) {
-            final u = Uri.tryParse(proxy);
-            if (u != null && u.hasScheme) {
-              if (kIsWeb && tryOpenUrlInNewTab(proxy)) {
-                return;
-              }
-              final ok = await launchUrl(
-                u,
-                mode: LaunchMode.externalApplication,
-              );
-              if (ok) {
-                return;
-              }
-            }
-          }
-          if (kIsWeb) {
-            if (!context.mounted) return;
-            showCopyableSnackBar(
-              context,
-              'Could not open this attachment through a secure link. '
-              'Ensure the app backend is deployed and try again.',
-              backgroundColor: Colors.orange,
-            );
-            return;
-          }
-        }
-      } catch (e, st) {
-        debugPrint('openAttachmentUrl proxy: $e\n$st');
-        if (kIsWeb) {
-          if (!context.mounted) return;
-          showCopyableSnackBar(
-            context,
-            'Could not open attachment: $e',
-            backgroundColor: Colors.orange,
-          );
+    if (objectPath == null || objectPath.isEmpty) {
+      if (!context.mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Invalid attachment path.',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    try {
+      final idToken = await user.getIdToken();
+      if (idToken == null || idToken.isEmpty) {
+        if (!context.mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Sign in again to open this attachment.',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+      final proxy = await BackendApi().createAttachmentProxyStreamUrl(
+        idToken: idToken,
+        objectPath: objectPath,
+      );
+      if (proxy == null || proxy.isEmpty) {
+        if (!context.mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Could not open this attachment through a secure link. '
+          'Ensure the app backend is deployed and try again.',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+      final u = Uri.tryParse(proxy);
+      if (u == null || !u.hasScheme) {
+        if (!context.mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Invalid attachment open URL.',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+      final resp = await http
+          .get(
+            u,
+            headers: {'Authorization': 'Bearer $idToken'},
+          )
+          .timeout(const Duration(minutes: 2));
+      if (resp.statusCode == 200) {
+        final ct = resp.headers['content-type']?.split(';').first.trim() ??
+            'application/octet-stream';
+        final name = _filenameHintFromStorageObjectPath(objectPath);
+        final opened = await openAttachmentBytesInSystemViewer(
+          resp.bodyBytes,
+          ct,
+          name,
+        );
+        if (opened) {
           return;
         }
+        if (!context.mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Could not open the file viewer.',
+          backgroundColor: Colors.orange,
+        );
+        return;
       }
+      if (!context.mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Could not load attachment (HTTP ${resp.statusCode}). '
+        'Redeploy the backend if this persists.',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    } catch (e, st) {
+      debugPrint('openAttachmentUrl proxy: $e\n$st');
+      if (!context.mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Could not open attachment: $e',
+        backgroundColor: Colors.orange,
+      );
+      return;
     }
   }
+
   if (kIsWeb && _isFirebaseStorageMediaDownloadUrl(launch)) {
     if (tryOpenUrlInNewTab(launch.toString())) {
       return;
