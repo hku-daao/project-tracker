@@ -274,9 +274,80 @@ async function verifyFirebaseToken(authHeader) {
   }
 }
 
-/** One-time attachment streams: sessionId -> { objectPath, contentType, expiresAt } */
-const attachmentDownloadSessions = new Map();
-const ATTACHMENT_SESSION_TTL_MS = 120000;
+/** Short-lived attachment stream tickets (PDF viewers issue multiple GET/Range requests). */
+const ATTACHMENT_STREAM_TTL_MS = 300000;
+
+function getAttachmentStreamSigningSecret() {
+  const s = (
+    process.env.ATTACHMENT_STREAM_SIGNING_SECRET ||
+    process.env.CRON_SECRET ||
+    ''
+  ).trim();
+  return s;
+}
+
+/**
+ * Signed ticket: base64url(JSON).base64url(HMAC-SHA256(secret, payloadB64)).
+ * Stateless across Railway instances; reusable until [exp] for Range/subrequests.
+ */
+function createAttachmentStreamTicket(objectPath, contentType, expMs) {
+  const secret = getAttachmentStreamSigningSecret();
+  if (!secret) return null;
+  const payload = Buffer.from(
+    JSON.stringify({
+      objectPath,
+      contentType: contentType || 'application/octet-stream',
+      exp: expMs,
+    }),
+    'utf8',
+  );
+  const payloadB64 = payload.toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', secret)
+    .update(payloadB64)
+    .digest('base64url');
+  return `${payloadB64}.${sig}`;
+}
+
+function parseAndVerifyAttachmentStreamTicket(ticket) {
+  const secret = getAttachmentStreamSigningSecret();
+  if (!secret || !ticket || typeof ticket !== 'string') return null;
+  const dot = ticket.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const payloadB64 = ticket.slice(0, dot);
+  const sig = ticket.slice(dot + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', secret)
+    .update(payloadB64)
+    .digest('base64url');
+  let a;
+  let b;
+  try {
+    a = Buffer.from(sig, 'base64url');
+    b = Buffer.from(expectedSig, 'base64url');
+  } catch (_) {
+    return null;
+  }
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+  if (!data || typeof data.objectPath !== 'string' || typeof data.exp !== 'number') {
+    return null;
+  }
+  if (Date.now() > data.exp) return null;
+  if (!isAllowedProjectAttachmentObjectPath(data.objectPath)) return null;
+  return {
+    objectPath: data.objectPath.trim().replace(/^\/+/, ''),
+    contentType:
+      typeof data.contentType === 'string' && data.contentType.trim()
+        ? data.contentType.trim()
+        : 'application/octet-stream',
+  };
+}
 
 function getFirebaseStorageBucketName() {
   const fromEnv = (process.env.FIREBASE_STORAGE_BUCKET || '').trim();
@@ -325,15 +396,7 @@ function canReadAttachmentObject(sessionUid, staffKey, objectPath, gcsMetadata) 
   return metadataMatchesStaffKey(gcsMetadata, staffKey);
 }
 
-function sweepExpiredAttachmentSessions() {
-  const now = Date.now();
-  for (const [k, v] of attachmentDownloadSessions) {
-    if (v.expiresAt < now) attachmentDownloadSessions.delete(k);
-  }
-}
-
 async function handleAttachmentOpenSession(req, res) {
-  sweepExpiredAttachmentSessions();
   if (req.method !== 'POST') {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
@@ -378,26 +441,37 @@ async function handleAttachmentOpenSession(req, res) {
     sendJson(req, res, 403, { error: 'Forbidden' });
     return;
   }
-  const sessionId = crypto.randomBytes(32).toString('base64url');
   const contentType =
     (meta.contentType && String(meta.contentType).trim()) ||
     'application/octet-stream';
-  attachmentDownloadSessions.set(sessionId, {
-    objectPath,
-    contentType,
-    expiresAt: Date.now() + ATTACHMENT_SESSION_TTL_MS,
-  });
+  const exp = Date.now() + ATTACHMENT_STREAM_TTL_MS;
+  const ticket = createAttachmentStreamTicket(objectPath, contentType, exp);
+  if (!ticket) {
+    sendJson(req, res, 503, {
+      error:
+        'Set ATTACHMENT_STREAM_SIGNING_SECRET (or CRON_SECRET) on the server for attachment streaming.',
+    });
+    return;
+  }
+  const qs = new URLSearchParams({ ticket }).toString();
   sendJson(req, res, 200, {
-    path: `/api/attachment/stream/${sessionId}`,
-    expiresInSec: Math.floor(ATTACHMENT_SESSION_TTL_MS / 1000),
+    path: `/api/attachment/stream?${qs}`,
+    expiresInSec: Math.floor(ATTACHMENT_STREAM_TTL_MS / 1000),
   });
 }
 
 async function handleAttachmentStream(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const m = url.pathname.match(/^\/api\/attachment\/stream\/([^/]+)$/);
-  if (!m || req.method !== 'GET') {
+  if (url.pathname !== '/api/attachment/stream' || req.method !== 'GET') {
     sendJson(req, res, 404, { error: 'Not found' });
+    return;
+  }
+  const ticket = url.searchParams.get('ticket');
+  const sess = ticket ? parseAndVerifyAttachmentStreamTicket(ticket) : null;
+  if (!sess) {
+    sendJson(req, res, 410, {
+      error: 'Link invalid or expired. Open the file again from the app.',
+    });
     return;
   }
   if (!firebaseAdmin) {
@@ -407,13 +481,6 @@ async function handleAttachmentStream(req, res) {
   const bucketName = getFirebaseStorageBucketName();
   if (!bucketName) {
     sendJson(req, res, 503, { error: 'Storage bucket not configured' });
-    return;
-  }
-  const sessionId = m[1];
-  const sess = attachmentDownloadSessions.get(sessionId);
-  attachmentDownloadSessions.delete(sessionId);
-  if (!sess || Date.now() > sess.expiresAt) {
-    sendJson(req, res, 410, { error: 'Link expired or already used' });
     return;
   }
   const bucket = firebaseAdmin.storage().bucket(bucketName);
@@ -5316,7 +5383,7 @@ const server = http.createServer(async (req, res) => {
     await handleAttachmentOpenSession(req, res);
     return;
   }
-  if (path.startsWith('/api/attachment/stream/') && req.method === 'GET') {
+  if (path === '/api/attachment/stream' && req.method === 'GET') {
     await handleAttachmentStream(req, res);
     return;
   }
@@ -5335,6 +5402,9 @@ server.listen(PORT, () => {
   );
   console.log(
     `Supabase: ${supabase ? 'ok' : 'missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY'}`,
+  );
+  console.log(
+    `Attachment stream signing: ${getAttachmentStreamSigningSecret() ? 'ok (ATTACHMENT_STREAM_SIGNING_SECRET or CRON_SECRET)' : 'MISSING — set ATTACHMENT_STREAM_SIGNING_SECRET or CRON_SECRET for /api/attachment/*'}`,
   );
   console.log(
     `Mailgun: ${MAILGUN_API_KEY && MAILGUN_DOMAIN ? 'ok' : 'optional (MAILGUN_API_KEY, MAILGUN_DOMAIN)'}`,
