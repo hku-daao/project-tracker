@@ -18,6 +18,8 @@ class LandingTaskFilters {
     this.filterCreatorTeamId,
     this.filterCreatorStaffIds = const [],
     this.filterOverdueOnly = false,
+    this.filterCreateDateStartMs,
+    this.filterCreateDateEndMs,
   });
 
   final String filterType;
@@ -38,6 +40,10 @@ class LandingTaskFilters {
 
   /// When true, landing task lists only rows that are overdue on the task due date and/or a sub-task due date (HK calendar day).
   final bool filterOverdueOnly;
+
+  /// Inclusive calendar-day bounds (local); null = not set. Applies to task create date (and sub-task rows on Customized).
+  final int? filterCreateDateStartMs;
+  final int? filterCreateDateEndMs;
   final String search;
 
   /// `creator` | `assignee` | `startDate` | `dueDate` | `status` | `submission`, or null.
@@ -60,6 +66,8 @@ class LandingTaskFilters {
         'filterAssigneeStaffIds': filterAssigneeStaffIds,
         'filterCreatorTeamId': filterCreatorTeamId,
         'filterCreatorStaffIds': filterCreatorStaffIds,
+        'filterCreateDateStartMs': filterCreateDateStartMs,
+        'filterCreateDateEndMs': filterCreateDateEndMs,
       };
 
   static LandingTaskFilters? fromJson(Map<String, dynamic>? j) {
@@ -84,6 +92,8 @@ class LandingTaskFilters {
       filterCreatorStaffIds: List<String>.from(
         j['filterCreatorStaffIds'] as List? ?? const [],
       ),
+      filterCreateDateStartMs: j['filterCreateDateStartMs'] as int?,
+      filterCreateDateEndMs: j['filterCreateDateEndMs'] as int?,
     );
   }
 }

@@ -7,6 +7,8 @@ import '../config/supabase_config.dart';
 import '../navigator_keys.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
+import '../services/startup_view_storage.dart';
+import '../utils/home_navigation.dart';
 import '../web_deep_link.dart';
 import 'high_level/subtask_detail_screen.dart';
 import 'home_screen.dart';
@@ -215,6 +217,45 @@ class _AppBootstrapState extends State<AppBootstrap> {
         ),
       );
     }
-    return const HomeScreen();
+    return const _StartupShell(child: HomeScreen());
   }
+}
+
+/// After load, opens [CustomizedDashboardPage] when the user pinned it (unless a deep link wins).
+class _StartupShell extends StatefulWidget {
+  const _StartupShell({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_StartupShell> createState() => _StartupShellState();
+}
+
+class _StartupShellState extends State<_StartupShell> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeOpenPinnedCustomized());
+  }
+
+  Future<void> _maybeOpenPinnedCustomized() async {
+    final subId = readSubtaskIdFromUrlOrSession();
+    final taskId = readTaskIdFromUrlOrSession();
+    if (subId != null && subId.isNotEmpty) return;
+    if (taskId != null && taskId.isNotEmpty) return;
+
+    final pinned = await StartupViewStorage.isCustomizedPinned();
+    if (!mounted || !pinned) return;
+    if (!context.mounted) return;
+    if (Navigator.of(context).canPop()) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: kOverviewDashboardRouteName),
+        builder: (context) => const CustomizedDashboardPage(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

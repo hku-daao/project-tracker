@@ -8,7 +8,10 @@ import '../../models/staff_team_lookup.dart';
 import '../../config/admin_config.dart';
 import '../../config/environment_config.dart';
 import '../../config/supabase_config.dart';
+import '../../utils/home_navigation.dart';
 import '../../web_deep_link.dart';
+import '../../widgets/project_tracker_drawer.dart';
+import '../services/startup_view_storage.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
@@ -53,6 +56,14 @@ Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
 /// Microsoft Forms — feedback (AppBar).
 const String _kFeedbackFormUrl =
     'https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=TrX5QnckukG_CXoNKoP_CXmxjjVqONdDujd4tWBFFN9UMk1ZS0EzMFZSSlFSMkhXTjI5UE82QThKTC4u';
+
+const String _kImportantNoticeBody =
+    'Do not store donor, prospect, or alumni data in Project Tracker, '
+    'including personal details, giving history, or engagement records. '
+    'Use Project Tracker only for task-based entries such as "prepare donor report" '
+    'or "update alumni engagement plan", and link to the appropriate secure system—'
+    'such as the institutional CRM or advancement intelligence platform—where the '
+    'actual information is maintained.';
 
 Future<void> _openFeedbackForm(BuildContext context) async {
   final uri = Uri.parse(_kFeedbackFormUrl);
@@ -163,13 +174,18 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  static const String _kImportantNoticeBody =
-      'Do not store donor, prospect, or alumni data in Project Tracker, '
-      'including personal details, giving history, or engagement records. '
-      'Use Project Tracker only for task-based entries such as "prepare donor report" '
-      'or "update alumni engagement plan", and link to the appropriate secure system—'
-      'such as the institutional CRM or advancement intelligence platform—where the '
-      'actual information is maintained.';
+  void _closeDrawerThenOpenCustomizedDashboard() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: kOverviewDashboardRouteName),
+          builder: (context) => const CustomizedDashboardPage(),
+        ),
+      );
+    });
+  }
 
   void _closeDrawerThenImportantNotice() {
     Navigator.of(context).pop();
@@ -223,65 +239,15 @@ class _HomeScreenState extends State<HomeScreen> {
           fontWeight: FontWeight.bold,
         );
     return Scaffold(
-      drawer: Drawer(
-        child: SafeArea(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              DrawerHeader(
-                margin: EdgeInsets.zero,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                ),
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Project Tracker',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Welcome, $welcomeName',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.home),
-                title: const Text('Home'),
-                onTap: _closeDrawerThenGoHome,
-              ),
-              ListTile(
-                leading: const Icon(Icons.feedback_outlined),
-                title: const Text('Feedback'),
-                onTap: _closeDrawerThenFeedback,
-              ),
-              ListTile(
-                leading: const Icon(Icons.error_outline),
-                title: const Text('Important Notice'),
-                onTap: _closeDrawerThenImportantNotice,
-              ),
-              if (kIsWeb)
-                ListTile(
-                  leading: const Icon(Icons.logout),
-                  title: const Text('Sign out'),
-                  onTap: () async {
-                    await _closeDrawerThenSignOut();
-                  },
-                ),
-            ],
-          ),
-        ),
+      drawer: ProjectTrackerDrawer(
+        welcomeName: welcomeName,
+        onHome: _closeDrawerThenGoHome,
+        onDashboardCustomized: _closeDrawerThenOpenCustomizedDashboard,
+        onFeedback: _closeDrawerThenFeedback,
+        onImportantNotice: _closeDrawerThenImportantNotice,
+        onSignOut: () async {
+          await _closeDrawerThenSignOut();
+        },
       ),
       appBar: AppBar(
         centerTitle: true,
@@ -348,6 +314,204 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+      floatingActionButton: AnimatedOpacity(
+        opacity: _createTaskFabVisible ? 1 : 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        child: IgnorePointer(
+          ignoring: !_createTaskFabVisible,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: FloatingActionButton.extended(
+              onPressed: _openCreateTaskScreen,
+              icon: const Icon(Icons.add),
+              label: const Text('Create task'),
+            ),
+          ),
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+    );
+  }
+}
+
+/// Overview (flat task list): drawer, pin as default view, FAB — body is
+/// [InitiativeListScreen.customizedFlat].
+class CustomizedDashboardPage extends StatefulWidget {
+  const CustomizedDashboardPage({super.key});
+
+  @override
+  State<CustomizedDashboardPage> createState() => _CustomizedDashboardPageState();
+}
+
+class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
+  bool _createTaskFabVisible = true;
+  bool _preferCustomizedLoaded = false;
+  bool _preferCustomized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPinPreference();
+  }
+
+  Future<void> _loadPinPreference() async {
+    final v = await StartupViewStorage.isCustomizedPinned();
+    if (!mounted) return;
+    setState(() {
+      _preferCustomized = v;
+      _preferCustomizedLoaded = true;
+    });
+  }
+
+  Future<void> _togglePinDefaultView() async {
+    final next = !_preferCustomized;
+    await StartupViewStorage.setPreferCustomized(next);
+    if (!mounted) return;
+    setState(() => _preferCustomized = next);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          next
+              ? 'Overview will open by default next time you start the app.'
+              : 'Landing page will open by default.',
+        ),
+      ),
+    );
+  }
+
+  void _openCreateTaskScreen() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Create task')),
+          body: const CreateTaskScreen(),
+        ),
+      ),
+    );
+  }
+
+  bool _onCustomizedScrollNotification(ScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical) return false;
+    if (n is ScrollUpdateNotification) {
+      final d = n.scrollDelta;
+      if (d == null) return false;
+      if (d > 6 && _createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = false);
+      } else if (d < -6 && !_createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = true);
+      }
+    } else if (n is ScrollEndNotification) {
+      if (!_createTaskFabVisible) {
+        setState(() => _createTaskFabVisible = true);
+      }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final revampLookup = context.watch<AppState>().revampStaffLookup;
+    final welcomeName = _welcomeDisplayName(revampLookup);
+    final overviewTitleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.bold,
+          fontSize: 22,
+        ) ??
+        const TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+        );
+    return Scaffold(
+      drawer: ProjectTrackerDrawer(
+        welcomeName: welcomeName,
+        onHome: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).pop();
+        },
+        onDashboardCustomized: () => Navigator.of(context).pop(),
+        onFeedback: () {
+          Navigator.of(context).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) _openFeedbackForm(context);
+          });
+        },
+        onImportantNotice: () {
+          Navigator.of(context).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) return;
+            showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Important Notice'),
+                content: SingleChildScrollView(
+                  child: Text(
+                    _kImportantNoticeBody,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          });
+        },
+        onSignOut: () async {
+          Navigator.of(context).pop();
+          if (!context.mounted) return;
+          final appState = context.read<AppState>();
+          if (appState.hasCreateTaskUnsavedDraft) {
+            final leave = await _confirmLeaveCreateTaskDraft(context);
+            if (!context.mounted || !leave) return;
+          }
+          if (kIsWeb) {
+            syncWebLocationForLanding();
+          }
+          await FirebaseAuth.instance.signOut();
+        },
+      ),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        centerTitle: true,
+        titleSpacing: 0,
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.menu),
+            tooltip: 'Menu',
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            'Overview',
+            style: overviewTitleStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        actions: [
+          if (_preferCustomizedLoaded)
+            IconButton(
+              tooltip: _preferCustomized
+                  ? 'Unpin default view'
+                  : 'Pin Overview as default view',
+              icon: Icon(
+                _preferCustomized ? Icons.push_pin : Icons.push_pin_outlined,
+              ),
+              onPressed: _togglePinDefaultView,
+            ),
+        ],
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onCustomizedScrollNotification,
+        child: const InitiativeListScreen(customizedFlat: true),
       ),
       floatingActionButton: AnimatedOpacity(
         opacity: _createTaskFabVisible ? 1 : 0,

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../utils/attachment_url_launch.dart';
 
-/// Label for an attachment chip when description is empty (e.g. filename from URL).
+/// Label for an attachment chip when description is empty — avoids Firebase storage ids.
 String attachmentChipLabel(String description, String url) {
   final d = description.trim();
   if (d.isNotEmpty) return d;
@@ -10,8 +10,10 @@ String attachmentChipLabel(String description, String url) {
   if (u.isEmpty) return 'Attachment';
   final uri = Uri.tryParse(u);
   if (uri != null && uri.pathSegments.isNotEmpty) {
-    final seg = uri.pathSegments.last;
-    if (seg.isNotEmpty) return Uri.decodeComponent(seg);
+    final seg = Uri.decodeComponent(uri.pathSegments.last);
+    if (seg.isNotEmpty && !looksLikeUuidStorageObjectFileName(seg)) {
+      return seg;
+    }
   }
   return 'Attachment';
 }
@@ -37,7 +39,11 @@ class OutlookAttachmentChip extends StatelessWidget {
       child: InkWell(
         onTap: url.trim().isEmpty
             ? null
-            : () => openAttachmentUrl(context, url),
+            : () => openAttachmentUrl(
+                  context,
+                  url,
+                  displayFileName: label,
+                ),
         borderRadius: BorderRadius.circular(4),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

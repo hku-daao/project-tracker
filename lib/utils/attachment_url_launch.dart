@@ -120,13 +120,58 @@ Future<String> _effectiveLaunchUrl(String raw) async {
   return raw.trim();
 }
 
-String _filenameHintFromStorageObjectPath(String objectPath) {
-  final segments = objectPath.split('/').where((s) => s.isNotEmpty).toList();
-  if (segments.isEmpty) return 'attachment';
-  return segments.last;
+bool _looksLikeHttpUrl(String s) {
+  final t = s.trim().toLowerCase();
+  return t.startsWith('http://') || t.startsWith('https://');
 }
 
-Future<void> _openHttpsLaunchUri(BuildContext context, Uri launch) async {
+/// Storage object basename pattern (`uuid.ext`) — not a human-chosen file name.
+bool looksLikeUuidStorageObjectFileName(String s) {
+  final base = s.split(RegExp(r'[\\/]+')).last.trim();
+  return RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,12})?$',
+    caseSensitive: false,
+  ).hasMatch(base);
+}
+
+/// Prefer [description] (Supabase `attachment.description`). Never derives a name from
+/// [url] (would be Firebase path / token noise). Empty → caller should use Storage metadata.
+String attachmentDisplayNameHint(String description, String url) {
+  final d = description.trim();
+  if (d.isEmpty) return '';
+  if (_looksLikeHttpUrl(d)) return '';
+  if (looksLikeUuidStorageObjectFileName(d)) return '';
+  return d;
+}
+
+Future<String> _resolveOpenedAttachmentFileNameAsync({
+  required String objectPath,
+  String? displayFileName,
+}) async {
+  final raw = displayFileName?.trim();
+  String? trusted = (raw != null && raw.isNotEmpty) ? raw : null;
+  if (trusted != null) {
+    if (_looksLikeHttpUrl(trusted) || looksLikeUuidStorageObjectFileName(trusted)) {
+      trusted = null;
+    }
+  }
+  if (trusted != null && trusted.isNotEmpty) return trusted;
+
+  final fromMeta =
+      await FirebaseAttachmentUploadService.fetchOriginalFileNameFromMetadata(
+        objectPath,
+      );
+  if (fromMeta != null && fromMeta.trim().isNotEmpty) return fromMeta.trim();
+
+  if (raw != null && raw.isNotEmpty) return raw;
+  return 'attachment';
+}
+
+Future<void> _openHttpsLaunchUri(
+  BuildContext context,
+  Uri launch, {
+  String? displayFileName,
+}) async {
   final user = _firebaseUserIfAvailable();
   final isAppStorage = _isAppFirebaseStorageObjectUrl(launch);
 
@@ -141,6 +186,10 @@ Future<void> _openHttpsLaunchUri(BuildContext context, Uri launch) async {
       );
       return;
     }
+    final resolvedOpenName = await _resolveOpenedAttachmentFileNameAsync(
+      objectPath: objectPath,
+      displayFileName: displayFileName,
+    );
     try {
       final idToken = await user.getIdToken();
       if (idToken == null || idToken.isEmpty) {
@@ -185,11 +234,10 @@ Future<void> _openHttpsLaunchUri(BuildContext context, Uri launch) async {
       if (resp.statusCode == 200) {
         final ct = resp.headers['content-type']?.split(';').first.trim() ??
             'application/octet-stream';
-        final name = _filenameHintFromStorageObjectPath(objectPath);
         final opened = await openAttachmentBytesInSystemViewer(
           resp.bodyBytes,
           ct,
-          name,
+          resolvedOpenName,
         );
         if (opened) {
           return;
@@ -241,7 +289,14 @@ Future<void> _openHttpsLaunchUri(BuildContext context, Uri launch) async {
 ///
 /// Firebase Storage links for this project require a **signed-in** Firebase user so
 /// logged-out people using the app cannot open uploaded attachments from here.
-Future<void> openAttachmentUrl(BuildContext context, String raw) async {
+///
+/// [displayFileName] — shown when saving to a temp file for the system viewer (e.g. original
+/// name from **Attachment description**, not the Storage object id).
+Future<void> openAttachmentUrl(
+  BuildContext context,
+  String raw, {
+  String? displayFileName,
+}) async {
   final t = raw.trim();
   if (t.isEmpty) return;
   if (_looksLikeJsonNotAUrl(t)) {
@@ -302,7 +357,11 @@ Future<void> openAttachmentUrl(BuildContext context, String raw) async {
       return;
     }
     if (!context.mounted) return;
-    await _openHttpsLaunchUri(context, launch);
+    await _openHttpsLaunchUri(
+      context,
+      launch,
+      displayFileName: displayFileName,
+    );
   } catch (e) {
     if (!context.mounted) return;
     showCopyableSnackBar(

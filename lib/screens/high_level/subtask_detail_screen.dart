@@ -14,6 +14,7 @@ import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/attachment_save_reminder_snackbar.dart';
 import '../../utils/attachment_upload_loading_overlay.dart';
+import '../../utils/home_navigation.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
@@ -24,7 +25,6 @@ import '../../widgets/attachment_edit_dialog.dart';
 import '../../widgets/attachment_source_bottom_sheet.dart';
 import '../../widgets/outlook_attachment_chip.dart';
 import '../task_detail_screen.dart';
-import '../../utils/home_navigation.dart';
 
 class _SubtaskAttachmentEntry {
   _SubtaskAttachmentEntry({this.id, String? url, String? desc})
@@ -46,6 +46,7 @@ class SubtaskDetailScreen extends StatefulWidget {
     super.key,
     required this.subtaskId,
     this.replaceWithParentTaskOnBack = false,
+    this.openedFromOverview = false,
   });
 
   final String subtaskId;
@@ -53,6 +54,9 @@ class SubtaskDetailScreen extends StatefulWidget {
   /// When true (e.g. opened from the landing task list without [TaskDetailScreen] underneath),
   /// **Back to task** opens the parent [TaskDetailScreen] via [Navigator.pushReplacement] instead of [pop].
   final bool replaceWithParentTaskOnBack;
+
+  /// Pushed from Overview vs other lists.
+  final bool openedFromOverview;
 
   @override
   State<SubtaskDetailScreen> createState() => _SubtaskDetailScreenState();
@@ -130,7 +134,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     if (widget.replaceWithParentTaskOnBack) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => TaskDetailScreen(taskId: tid),
+          builder: (_) => TaskDetailScreen(
+            taskId: tid,
+            openedFromOverview: widget.openedFromOverview,
+          ),
         ),
       );
     } else {
@@ -1945,7 +1952,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                               );
                                               return;
                                             }
-                                            openAttachmentUrl(context, u);
+                                            openAttachmentUrl(
+                                              context,
+                                              u,
+                                              displayFileName:
+                                                  attachmentDisplayNameHint(
+                                                e.descController.text,
+                                                u,
+                                              ),
+                                            );
                                           },
                                         ),
                                       ),
@@ -2137,9 +2152,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 TextButton.icon(
                   onPressed: _saving
                       ? null
-                      : () => navigateToHomeTasksTab(context),
+                      : () => widget.openedFromOverview
+                          ? popUntilOverviewOrHome(context)
+                          : navigateToHomeTasksTab(context),
                   icon: const Icon(Icons.arrow_back),
-                  label: const Text('Back to home'),
+                  label: Text(
+                    widget.openedFromOverview
+                        ? 'Back to Overview'
+                        : 'Back to home',
+                  ),
                 ),
               ],
             ),

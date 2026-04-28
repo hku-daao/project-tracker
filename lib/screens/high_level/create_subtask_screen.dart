@@ -40,9 +40,14 @@ Future<bool> _confirmLeaveCreateSubtaskDraft(BuildContext context) async {
 
 /// Create a sub-task under a singular [task] (creator only). Layout mirrors [CreateTaskScreen].
 class CreateSubtaskScreen extends StatefulWidget {
-  const CreateSubtaskScreen({super.key, required this.taskId});
+  const CreateSubtaskScreen({
+    super.key,
+    required this.taskId,
+    this.openedFromOverview = false,
+  });
 
   final String taskId;
+  final bool openedFromOverview;
 
   @override
   State<CreateSubtaskScreen> createState() => _CreateSubtaskScreenState();
@@ -131,11 +136,21 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
 
   Future<void> _handleBackToHome() async {
     if (!_hasUnsavedDraft()) {
-      if (mounted) navigateToHomeTasksTab(context);
+      if (!mounted) return;
+      if (widget.openedFromOverview) {
+        popUntilOverviewOrHome(context);
+      } else {
+        navigateToHomeTasksTab(context);
+      }
       return;
     }
     final leave = await _confirmLeaveCreateSubtaskDraft(context);
-    if (mounted && leave) navigateToHomeTasksTab(context);
+    if (!mounted || !leave) return;
+    if (widget.openedFromOverview) {
+      popUntilOverviewOrHome(context);
+    } else {
+      navigateToHomeTasksTab(context);
+    }
   }
 
   DateTime _defaultDueForPriority(int priority) {
@@ -288,6 +303,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
           backgroundColor: Colors.green,
         ),
       );
+      SupabaseService.invalidateSubtasksCacheForTask(widget.taskId);
       Navigator.of(context).pop(true);
     } finally {
       if (mounted && _submitting) {
@@ -554,7 +570,11 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                         onPressed:
                             _submitting ? null : () => _handleBackToHome(),
                         icon: const Icon(Icons.arrow_back),
-                        label: const Text('Back to home'),
+                        label: Text(
+                          widget.openedFromOverview
+                              ? 'Back to Overview'
+                              : 'Back to home',
+                        ),
                       ),
                     ],
                   ),

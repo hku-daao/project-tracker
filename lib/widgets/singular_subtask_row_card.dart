@@ -11,29 +11,42 @@ class SingularSubtaskRowCard extends StatelessWidget {
     required this.subtask,
     required this.resolveName,
     this.onTap,
+    /// Matches [TaskListCard] outer spacing when aligned as sibling rows (e.g. Customized page).
+    this.cardMargin = const EdgeInsets.only(bottom: 8),
+    /// Same PIC team tint as [TaskListCard] when set.
+    this.cardBackgroundColor,
+    /// Customized: **Sub-task:** + name, **Parent:** line, **Creator:** line.
+    this.showCustomizedLayout = false,
+    this.parentTaskName,
   });
 
   final SingularSubtask subtask;
   final String Function(String assigneeKey) resolveName;
   final VoidCallback? onTap;
+  final EdgeInsetsGeometry cardMargin;
+  final Color? cardBackgroundColor;
+  final bool showCustomizedLayout;
+  final String? parentTaskName;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final body14 = (theme.textTheme.bodyMedium ?? const TextStyle())
         .copyWith(fontSize: kLandingListCardFontSize);
-    final titleStyle =
-        body14.copyWith(fontWeight: FontWeight.bold);
+    final titleStyle = body14.copyWith(fontWeight: FontWeight.bold);
     final secondaryStyle = body14.copyWith(fontWeight: FontWeight.w500);
     final s = subtask;
     final assigneeNamesLine = s.assigneeNamesDisplayLine(resolveName);
     final picLine = s.picDisplayName(resolveName);
+    final creatorLine =
+        (s.createByStaffName ?? '').trim().isEmpty ? '—' : s.createByStaffName!.trim();
     final subTag = (s.submission?.trim().toLowerCase() == 'pending')
         ? null
         : TaskListCard.buildSubmissionTag(s.submission);
     final showOverPreset = (s.changeDueReason ?? '').trim().isNotEmpty;
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: cardMargin,
+      color: cardBackgroundColor,
       child: ListTile(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -43,12 +56,27 @@ class SingularSubtaskRowCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    s.subtaskName,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: titleStyle,
-                  ),
+                  child: showCustomizedLayout
+                      ? Text.rich(
+                          TextSpan(
+                            style: body14,
+                            children: [
+                              const TextSpan(text: 'Sub-task: '),
+                              TextSpan(
+                                text: s.subtaskName,
+                                style: titleStyle,
+                              ),
+                            ],
+                          ),
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      : Text(
+                          s.subtaskName,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: titleStyle,
+                        ),
                 ),
                 if (subTag != null) ...[
                   const SizedBox(width: 8),
@@ -56,6 +84,16 @@ class SingularSubtaskRowCard extends StatelessWidget {
                 ],
               ],
             ),
+            if (showCustomizedLayout &&
+                (parentTaskName != null && parentTaskName!.trim().isNotEmpty)) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Parent: ${parentTaskName!.trim()}',
+                style: secondaryStyle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
             if (showOverPreset) ...[
               const SizedBox(height: 6),
               Align(
@@ -83,6 +121,14 @@ class SingularSubtaskRowCard extends StatelessWidget {
                 style: secondaryStyle,
               ),
             ),
+            if (showCustomizedLayout)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'Creator: $creatorLine',
+                  style: secondaryStyle,
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: SubtaskMetaLine(subtask: s),

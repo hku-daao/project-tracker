@@ -81,6 +81,13 @@ class SupabaseService {
   /// Clears [_subtaskListMemoryCache] (e.g. when [AppState] singular task ids change).
   static void clearSubtaskListMemoryCache() => _subtaskListMemoryCache.clear();
 
+  /// Drops the cached sub-task list for [taskId] so the next [fetchSubtasksForTask] loads from the server.
+  static void invalidateSubtasksCacheForTask(String taskId) {
+    final tid = taskId.trim();
+    if (tid.isEmpty) return;
+    _subtaskListMemoryCache.remove(tid);
+  }
+
   static void _storeSubtaskListMemoryCache(
     String tid,
     List<SingularSubtask> list,

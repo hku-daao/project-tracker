@@ -18,6 +18,7 @@ import '../priority.dart';
 import '../services/backend_api.dart';
 import '../services/firebase_attachment_upload_service.dart';
 import '../services/supabase_service.dart';
+import '../utils/home_navigation.dart';
 import '../utils/attachment_save_reminder_snackbar.dart';
 import '../utils/attachment_upload_loading_overlay.dart';
 import '../utils/attachment_url_launch.dart';
@@ -39,10 +40,14 @@ class TaskDetailScreen extends StatefulWidget {
   final String taskId;
   final String? commentAuthorAssigneeId;
 
+  /// Pushed from Overview ([InitiativeListScreen.customizedFlat]) vs landing/home lists.
+  final bool openedFromOverview;
+
   const TaskDetailScreen({
     super.key,
     required this.taskId,
     this.commentAuthorAssigneeId,
+    this.openedFromOverview = false,
   });
 
   @override
@@ -80,6 +85,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       return SingularTaskDetailView(
         taskId: widget.taskId,
         commentAuthorAssigneeId: widget.commentAuthorAssigneeId,
+        openedFromOverview: widget.openedFromOverview,
       );
     }
     return _LegacyTaskDetailView(
@@ -107,11 +113,13 @@ class _TaskAttachmentEntry {
 class SingularTaskDetailView extends StatefulWidget {
   final String taskId;
   final String? commentAuthorAssigneeId;
+  final bool openedFromOverview;
 
   const SingularTaskDetailView({
     super.key,
     required this.taskId,
     this.commentAuthorAssigneeId,
+    this.openedFromOverview = false,
   });
 
   @override
@@ -2845,6 +2853,11 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                                   openAttachmentUrl(
                                                     context,
                                                     u,
+                                                    displayFileName:
+                                                        attachmentDisplayNameHint(
+                                                      e.descController.text,
+                                                      u,
+                                                    ),
                                                   );
                                                 },
                                               ),
@@ -2929,6 +2942,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                       MaterialPageRoute<bool>(
                                         builder: (_) => CreateSubtaskScreen(
                                           taskId: widget.taskId,
+                                          openedFromOverview:
+                                              widget.openedFromOverview,
                                         ),
                                       ),
                                     );
@@ -3003,6 +3018,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   MaterialPageRoute<bool>(
                                     builder: (_) => SubtaskDetailScreen(
                                       subtaskId: s.id,
+                                      openedFromOverview:
+                                          widget.openedFromOverview,
                                     ),
                                   ),
                                 );
@@ -3157,12 +3174,20 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         onPressed: _saving
                             ? null
                             : () {
-                                Navigator.of(context).popUntil(
-                                  (route) => route.isFirst,
-                                );
+                                if (widget.openedFromOverview) {
+                                  popUntilOverviewOrHome(context);
+                                } else {
+                                  Navigator.of(context).popUntil(
+                                    (route) => route.isFirst,
+                                  );
+                                }
                               },
                         icon: const Icon(Icons.arrow_back),
-                        label: const Text('Back to home'),
+                        label: Text(
+                          widget.openedFromOverview
+                              ? 'Back to Overview'
+                              : 'Back to home',
+                        ),
                       ),
                     ],
                   ),

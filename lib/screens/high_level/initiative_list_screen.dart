@@ -17,7 +17,10 @@ import '../../services/landing_task_filters_storage.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/hk_time.dart';
 import '../../widgets/task_list_card.dart';
+import '../../widgets/singular_subtask_row_card.dart';
+import '../../utils/subtask_list_sort.dart';
 import 'initiative_detail_screen.dart';
+import 'subtask_detail_screen.dart';
 
 /// Landing task list sort column (persisted as [storageKey]).
 enum TaskListSortColumn {
@@ -62,8 +65,26 @@ enum TaskListSortColumn {
   }
 }
 
+/// One row in the Customized flat list — either a task card or a sub-task card.
+class _CustomizedFlatEntry {
+  _CustomizedFlatEntry.task(this.task) : sub = null;
+  _CustomizedFlatEntry.subtask(this.task, this.sub);
+
+  final Task task;
+  final SingularSubtask? sub;
+
+  bool get isTaskRow => sub == null;
+}
+
 class InitiativeListScreen extends StatefulWidget {
-  const InitiativeListScreen({super.key});
+  const InitiativeListScreen({
+    super.key,
+    /// Dashboards → Customized: same filters/sort as landing; sub-tasks always visible on each card.
+    this.customizedFlat = false,
+  });
+
+  /// When true, initiatives are hidden and each [TaskListCard] shows sub-tasks without expand/collapse.
+  final bool customizedFlat;
 
   @override
   State<InitiativeListScreen> createState() => _InitiativeListScreenState();
@@ -93,6 +114,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   late final ExpansibleController _filterStatusTileController;
   late final ExpansibleController _filterOverdueTileController;
   late final ExpansibleController _filterSubmissionTileController;
+  late final ExpansibleController _filterCreateDateTileController;
+
+  /// Create-date range filter (task `createdAt` / sub-task `createDate` on Customized).
+  DateTime? _filterCreateDateStart;
+  DateTime? _filterCreateDateEnd;
 
   /// Scope: `all` | `assigned` | `created` (chips: All, Assigned to me, My created tasks).
   String _filterType = 'all';
@@ -118,6 +144,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   int _tasksPageSize = 50;
   int _tasksPageIndex = 0;
   int _deletedTasksPageIndex = 0;
+
+  /// Bumped after editing a sub-task on the Customized page so grouped fetch refreshes.
+  int _customizedFlatListRefreshSeq = 0;
 
   /// Min / max sub-task `due_date` per parent task id (singular tasks only); used for [TaskListSortColumn.dueDate].
   final Map<String, DateTime?> _subtaskMinDueByTaskId = {};
@@ -275,6 +304,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         .join(', ');
   }
 
+  bool get _filterCreateDateEngaged =>
+      _filterCreateDateStart != null || _filterCreateDateEnd != null;
+
   /// True when status / submission / assignee / creator / search are not at default (all).
   bool get _hasTeamOrStatusFilterSelections =>
       _selectedTaskStatuses.isNotEmpty ||
@@ -282,6 +314,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _selectedSubmissionFilters.isNotEmpty ||
       _filterAssigneeMenuStaffIds.isNotEmpty ||
       _filterCreatorMenuStaffIds.isNotEmpty ||
+      _filterCreateDateEngaged ||
       _taskSearchController.text.trim().isNotEmpty;
 
   void _clearTeamAndStatusFilters() {
@@ -294,6 +327,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _filterAssigneeMenuStaffIds.clear();
       _filterCreatorMenuTeamId = null;
       _filterCreatorMenuStaffIds.clear();
+      _filterCreateDateStart = null;
+      _filterCreateDateEnd = null;
       _taskSearchController.clear();
       _lastSubtaskSearchQueryForBlob = '';
       _subtaskMinDueByTaskId.clear();
@@ -321,6 +356,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterStatusTileController.collapse();
     _filterOverdueTileController.collapse();
     _filterSubmissionTileController.collapse();
+    _filterCreateDateTileController.collapse();
   }
 
   /// When the filter [MenuAnchor] closes (e.g. tap outside), reset all expansion tiles.
@@ -373,6 +409,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (openedId != 'status') _filterStatusTileController.collapse();
     if (openedId != 'overdue') _filterOverdueTileController.collapse();
     if (openedId != 'submission') _filterSubmissionTileController.collapse();
+    if (openedId != 'createDate') _filterCreateDateTileController.collapse();
   }
 
   /// Under Assignee or Creator: only Team or Teammate stays expanded.
@@ -412,6 +449,15 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       parts.add('Creator: ${names.join(', ')}');
     }
+    if (_filterCreateDateEngaged) {
+      final fmt = DateFormat.yMMMd();
+      final a = _filterCreateDateStart != null
+          ? fmt.format(_filterCreateDateStart!)
+          : '…';
+      final b =
+          _filterCreateDateEnd != null ? fmt.format(_filterCreateDateEnd!) : '…';
+      parts.add('Create date: $a – $b');
+    }
     if (_selectedTaskStatuses.isEmpty) {
       parts.add('All status');
     } else {
@@ -444,6 +490,28 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         .split(RegExp(r'\s+'))
         .where((s) => s.isNotEmpty)
         .toList();
+  }
+
+  /// Customized search: every token must appear in task name or description.
+  static bool _taskTextMatchesAllTokens(Task t, List<String> tokens) {
+    if (tokens.isEmpty) return false;
+    final name = t.name.toLowerCase();
+    final desc = t.description.toLowerCase();
+    for (final tkn in tokens) {
+      if (!name.contains(tkn) && !desc.contains(tkn)) return false;
+    }
+    return true;
+  }
+
+  /// Customized search: every token must appear in sub-task name or description.
+  static bool _subtaskTextMatchesAllTokens(SingularSubtask s, List<String> tokens) {
+    if (tokens.isEmpty) return false;
+    final n = s.subtaskName.toLowerCase();
+    final d = s.description.toLowerCase();
+    for (final tkn in tokens) {
+      if (!n.contains(tkn) && !d.contains(tkn)) return false;
+    }
+    return true;
   }
 
   void _scheduleLandingSubtaskServerSearch() {
@@ -763,6 +831,472 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return list.where((i) => i.name.toLowerCase().contains(raw)).toList();
   }
 
+  bool _dateWithinLastRollingMonth(DateTime d) {
+    final day = DateTime(d.year, d.month, d.day);
+    final today = HkTime.todayDateOnlyHk();
+    final start = today.subtract(const Duration(days: 30));
+    return !day.isBefore(start) && !day.isAfter(today);
+  }
+
+  bool _taskCreatedWithinLastMonth(Task t) =>
+      _dateWithinLastRollingMonth(t.createdAt);
+
+  bool _subtaskCreatedWithinLastMonth(SingularSubtask s) {
+    final cd = s.createDate;
+    if (cd == null) return false;
+    return _dateWithinLastRollingMonth(cd);
+  }
+
+  static DateTime _dateOnlyCal(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
+
+  bool _calendarDayInCreateFilterRange(DateTime day) {
+    if (!_filterCreateDateEngaged) return true;
+    final s = _filterCreateDateStart != null
+        ? _dateOnlyCal(_filterCreateDateStart!)
+        : null;
+    final e = _filterCreateDateEnd != null
+        ? _dateOnlyCal(_filterCreateDateEnd!)
+        : null;
+    if (s != null && day.isBefore(s)) return false;
+    if (e != null && day.isAfter(e)) return false;
+    return true;
+  }
+
+  bool _rowPassesCreateDateForCustomized(Task t, SingularSubtask? sub) {
+    final DateTime day;
+    if (sub == null) {
+      day = _dateOnlyCal(t.createdAt);
+    } else {
+      final cd = sub.createDate;
+      day = cd == null ? _dateOnlyCal(t.createdAt) : _dateOnlyCal(cd);
+    }
+    if (_filterCreateDateEngaged) {
+      return _calendarDayInCreateFilterRange(day);
+    }
+    if (sub == null) return _taskCreatedWithinLastMonth(t);
+    return _subtaskCreatedWithinLastMonth(sub);
+  }
+
+  Future<Map<String, List<SingularSubtask>>> _futureGroupedForCustomized(
+    List<Task> active,
+    List<Task> deleted,
+  ) async {
+    final ids = <String>{};
+    for (final t in active) {
+      if (t.isSingularTableRow) ids.add(t.id);
+    }
+    for (final t in deleted) {
+      if (t.isSingularTableRow) ids.add(t.id);
+    }
+    if (ids.isEmpty) return {};
+    return SupabaseService.fetchSubtasksGroupedForLandingPrefetch(ids.toList());
+  }
+
+  List<_CustomizedFlatEntry> _buildCustomizedFlatEntries(
+    List<Task> tasks,
+    Map<String, List<SingularSubtask>> grouped,
+    String searchRaw,
+  ) {
+    final tokens = _landingSearchTokens(searchRaw);
+    final searchActive = tokens.isNotEmpty;
+    final out = <_CustomizedFlatEntry>[];
+
+    for (final t in tasks) {
+      if (!t.isSingularTableRow) {
+        if (!searchActive) {
+          if (_rowPassesCreateDateForCustomized(t, null)) {
+            out.add(_CustomizedFlatEntry.task(t));
+          }
+        } else if (_taskTextMatchesAllTokens(t, tokens) &&
+            _rowPassesCreateDateForCustomized(t, null)) {
+          out.add(_CustomizedFlatEntry.task(t));
+        }
+        continue;
+      }
+
+      final subs = grouped[t.id] ?? [];
+      final subsNonDeleted = subs.where((s) => !s.isDeleted).toList();
+
+      if (!searchActive) {
+        final subsInRange = subsNonDeleted
+            .where((s) => _rowPassesCreateDateForCustomized(t, s))
+            .toList();
+        final taskInRange = _rowPassesCreateDateForCustomized(t, null);
+        if (!taskInRange && subsInRange.isEmpty) continue;
+        out.add(_CustomizedFlatEntry.task(t));
+        for (final s in subsInRange) {
+          out.add(_CustomizedFlatEntry.subtask(t, s));
+        }
+        continue;
+      }
+
+      final taskTextMatch = _taskTextMatchesAllTokens(t, tokens);
+      final taskRowAllowed = taskTextMatch &&
+          _rowPassesCreateDateForCustomized(t, null);
+
+      if (taskRowAllowed) {
+        out.add(_CustomizedFlatEntry.task(t));
+        continue;
+      }
+
+      for (final s in subsNonDeleted) {
+        if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+        if (!_rowPassesCreateDateForCustomized(t, s)) continue;
+        out.add(_CustomizedFlatEntry.subtask(t, s));
+      }
+    }
+    return out;
+  }
+
+  DateTime _customizedCreateInstant(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) return e.task.createdAt;
+    final cd = e.sub!.createDate;
+    return cd ?? DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  String? _customizedCreatorKey(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) return e.task.createByStaffName;
+    return e.sub!.createByStaffName;
+  }
+
+  String _customizedAssigneeKey(_CustomizedFlatEntry e, AppState state) {
+    if (e.isTaskRow) return _assigneeSortKey(e.task, state);
+    return SubtaskListSort.assigneeSortKey(
+      e.sub!,
+      (id) => state.assigneeById(id)?.name ?? id,
+    );
+  }
+
+  String _customizedPicKey(_CustomizedFlatEntry e, AppState state) {
+    if (e.isTaskRow) return _picSortKey(e.task, state);
+    return SubtaskListSort.picSortKey(
+      e.sub!,
+      (id) => state.assigneeById(id)?.name ?? id,
+    );
+  }
+
+  DateTime? _customizedStartKey(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) return e.task.startDate;
+    return e.sub!.startDate;
+  }
+
+  DateTime? _customizedDueKey(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) {
+      return _landingCalendarDueDay(e.task.endDate);
+    }
+    return _landingCalendarDueDay(e.sub!.dueDate);
+  }
+
+  String _customizedStatusKey(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) return TaskListCard.statusLabel(e.task);
+    return e.sub!.status;
+  }
+
+  String _customizedSubmissionKey(_CustomizedFlatEntry e) {
+    if (e.isTaskRow) return e.task.submission ?? '';
+    return e.sub!.submission ?? '';
+  }
+
+  int _tieBreakCustomizedFlat(_CustomizedFlatEntry a, _CustomizedFlatEntry b) {
+    final ta = a.isTaskRow ? a.task.name : a.sub!.subtaskName;
+    final tb = b.isTaskRow ? b.task.name : b.sub!.subtaskName;
+    return ta.toLowerCase().compareTo(tb.toLowerCase());
+  }
+
+  List<_CustomizedFlatEntry> _sortCustomizedFlatEntries(
+    List<_CustomizedFlatEntry> rows,
+    AppState state,
+  ) {
+    if (rows.isEmpty) return rows;
+    final col = _taskSortColumn;
+    final asc = _taskSortAscending;
+    final out = List<_CustomizedFlatEntry>.from(rows);
+    out.sort((a, b) {
+      int c;
+      if (col == null) {
+        c = _customizedCreateInstant(b).compareTo(_customizedCreateInstant(a));
+      } else {
+        switch (col) {
+          case TaskListSortColumn.creator:
+            c = _cmpStrNullable(
+              _customizedCreatorKey(a),
+              _customizedCreatorKey(b),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.assignee:
+            c = _cmpStrNullable(
+              _customizedAssigneeKey(a, state),
+              _customizedAssigneeKey(b, state),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.pic:
+            c = _cmpStrNullable(
+              _customizedPicKey(a, state),
+              _customizedPicKey(b, state),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.startDate:
+            c = _cmpDateForSort(
+              _customizedStartKey(a),
+              _customizedStartKey(b),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.dueDate:
+            c = _cmpDateForSort(
+              _customizedDueKey(a),
+              _customizedDueKey(b),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.status:
+            c = _cmpStrNullable(
+              _customizedStatusKey(a),
+              _customizedStatusKey(b),
+              asc,
+            );
+            break;
+          case TaskListSortColumn.submission:
+            c = _cmpStrNullable(
+              _customizedSubmissionKey(a),
+              _customizedSubmissionKey(b),
+              asc,
+            );
+            break;
+        }
+      }
+      if (c != 0) return c;
+      return _tieBreakCustomizedFlat(a, b);
+    });
+    return out;
+  }
+
+  Widget _customizedEntryTile(
+    BuildContext context,
+    AppState state,
+    _CustomizedFlatEntry e,
+  ) {
+    if (e.isTaskRow) {
+      return TaskListCard(
+        task: e.task,
+        taskOnly: true,
+        showCustomizedTaskTitle: true,
+        openedFromOverview: true,
+      );
+    }
+    final s = e.sub!;
+    final resolveName = (String id) => state.assigneeById(id)?.name ?? id;
+    final picKey = s.pic?.trim();
+    return FutureBuilder<String?>(
+      future: (picKey == null || picKey.isEmpty)
+          ? Future<String?>.value(null)
+          : SupabaseService.fetchStaffTeamBusinessIdForAssigneeKey(picKey),
+      builder: (context, snap) {
+        final tint = TaskListCard.cardColorForPicTeam(snap.data);
+        return SingularSubtaskRowCard(
+          subtask: s,
+          resolveName: resolveName,
+          cardMargin: const EdgeInsets.only(bottom: 12),
+          cardBackgroundColor: tint,
+          showCustomizedLayout: true,
+          parentTaskName: e.task.name,
+          onTap: () async {
+            final changed = await Navigator.of(context).push<bool>(
+              MaterialPageRoute<bool>(
+                builder: (_) => SubtaskDetailScreen(
+                  subtaskId: s.id,
+                  replaceWithParentTaskOnBack: true,
+                  openedFromOverview: true,
+                ),
+              ),
+            );
+            if (changed == true && mounted) {
+              SupabaseService.clearSubtaskListMemoryCache();
+              setState(() => _customizedFlatListRefreshSeq++);
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildCustomizedFlatFullColumn(
+    BuildContext context,
+    AppState state,
+    List<Task> filteredTasks,
+    List<Task> filteredDeletedTasks,
+  ) {
+    return FutureBuilder<Map<String, List<SingularSubtask>>>(
+      key: ValueKey(
+        '${filteredTasks.map((t) => t.id).join('|')}'
+        '_${filteredDeletedTasks.map((t) => t.id).join('|')}'
+        '_$_tasksPageIndex$_tasksPageSize$_deletedTasksPageIndex'
+        '_$_customizedFlatListRefreshSeq'
+        '_${_taskSearchController.text}'
+        '_$_filterCreateDateStart$_filterCreateDateEnd',
+      ),
+      future: _futureGroupedForCustomized(filteredTasks, filteredDeletedTasks),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final grouped = snapshot.data ?? {};
+        var activeEntries = _buildCustomizedFlatEntries(
+          filteredTasks,
+          grouped,
+          _taskSearchController.text,
+        );
+        activeEntries = _sortCustomizedFlatEntries(activeEntries, state);
+        var delEntries = _buildCustomizedFlatEntries(
+          filteredDeletedTasks,
+          grouped,
+          _taskSearchController.text,
+        );
+        delEntries = _sortCustomizedFlatEntries(delEntries, state);
+
+        if (activeEntries.isEmpty && delEntries.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'No tasks or sub-tasks match your filters '
+                '(search, create date, and other filters).',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ),
+          );
+        }
+
+        final pagedActive = _landingPageSlice(
+          activeEntries,
+          _tasksPageIndex,
+          _tasksPageSize,
+        );
+        final pagedDel = _landingPageSlice(
+          delEntries,
+          _deletedTasksPageIndex,
+          _tasksPageSize,
+        );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _kLandingTaskListMaxWidth,
+                  ),
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    children: [
+                      if (filteredTasks.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text(
+                            'Tasks & sub-tasks (${activeEntries.length})',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: PicTeamColorLegend(),
+                        ),
+                      ],
+                      ...pagedActive.map(
+                        (e) => _customizedEntryTile(context, state, e),
+                      ),
+                      if (filteredDeletedTasks.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 24, bottom: 8),
+                          child: Text(
+                            'Deleted tasks',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey,
+                                ),
+                          ),
+                        ),
+                        if (filteredTasks.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: PicTeamColorLegend(),
+                          ),
+                      ],
+                      ...pagedDel.map(
+                        (e) => _customizedEntryTile(context, state, e),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (activeEntries.isNotEmpty || delEntries.isNotEmpty)
+              Material(
+                elevation: 6,
+                shadowColor: Colors.black26,
+                color: Theme.of(context).colorScheme.surface,
+                child: SafeArea(
+                  top: false,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: _kLandingTaskListMaxWidth,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (activeEntries.isNotEmpty)
+                              _buildLandingTaskPaginationBar(
+                                context: context,
+                                totalCount: activeEntries.length,
+                                pageIndex: _tasksPageIndex,
+                                onPageChanged: (i) {
+                                  setState(() => _tasksPageIndex = i);
+                                },
+                                showPageSizeDropdown: true,
+                              ),
+                            if (activeEntries.isNotEmpty &&
+                                delEntries.isNotEmpty)
+                              const Divider(height: 12),
+                            if (delEntries.isNotEmpty)
+                              _buildLandingTaskPaginationBar(
+                                context: context,
+                                totalCount: delEntries.length,
+                                pageIndex: _deletedTasksPageIndex,
+                                onPageChanged: (i) {
+                                  setState(() => _deletedTasksPageIndex = i);
+                                },
+                                showPageSizeDropdown: false,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   String _emptyListMessage() {
     if (_taskSearchController.text.trim().isNotEmpty) {
       return 'No tasks match your search.';
@@ -785,6 +1319,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterStatusTileController = ExpansibleController();
     _filterOverdueTileController = ExpansibleController();
     _filterSubmissionTileController = ExpansibleController();
+    _filterCreateDateTileController = ExpansibleController();
     _taskSearchController.addListener(_onSearchTextChangedForPersist);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -883,6 +1418,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _taskSortColumn = TaskListSortColumn.fromStorage(data.sortColumn);
     _taskSortAscending = data.sortAscending;
     _filterOverdueOnly = data.filterOverdueOnly;
+    _filterCreateDateStart = data.filterCreateDateStartMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(data.filterCreateDateStartMs!)
+        : null;
+    _filterCreateDateEnd = data.filterCreateDateEndMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(data.filterCreateDateEndMs!)
+        : null;
   }
 
   void _applyTeamsAndAssigneesFromSaved(LandingTaskFilters data, AppState state) {
@@ -946,6 +1487,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         filterAssigneeStaffIds: _filterAssigneeMenuStaffIds.toList(),
         filterCreatorTeamId: _filterCreatorMenuTeamId,
         filterCreatorStaffIds: _filterCreatorMenuStaffIds.toList(),
+        filterCreateDateStartMs: _filterCreateDateStart?.millisecondsSinceEpoch,
+        filterCreateDateEndMs: _filterCreateDateEnd?.millisecondsSinceEpoch,
       ),
     );
   }
@@ -965,6 +1508,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterStatusTileController.dispose();
     _filterOverdueTileController.dispose();
     _filterSubmissionTileController.dispose();
+    _filterCreateDateTileController.dispose();
     _taskSearchController.dispose();
     super.dispose();
   }
@@ -1416,26 +1960,42 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     });
     filteredTasks = _applyTaskSearch(filteredTasks);
     filteredDeletedTasks = _applyTaskSearch(filteredDeletedTasks);
-    filteredTasks = _sortTasks(filteredTasks, state);
-    filteredDeletedTasks = _sortTasks(filteredDeletedTasks, state);
+    if (_filterCreateDateEngaged && !widget.customizedFlat) {
+      bool taskCreateDayOk(Task t) {
+        final day =
+            DateTime(t.createdAt.year, t.createdAt.month, t.createdAt.day);
+        return _calendarDayInCreateFilterRange(day);
+      }
+      filteredTasks = filteredTasks.where(taskCreateDayOk).toList();
+      filteredDeletedTasks =
+          filteredDeletedTasks.where(taskCreateDayOk).toList();
+    }
+    if (!widget.customizedFlat) {
+      filteredTasks = _sortTasks(filteredTasks, state);
+      filteredDeletedTasks = _sortTasks(filteredDeletedTasks, state);
+    }
 
-    final pagedTasks = _landingPageSlice(
-      filteredTasks,
-      _tasksPageIndex,
-      _tasksPageSize,
-    );
-    final pagedDeletedTasks = _landingPageSlice(
-      filteredDeletedTasks,
-      _deletedTasksPageIndex,
-      _tasksPageSize,
-    );
+    final pagedTasks = widget.customizedFlat
+        ? const <Task>[]
+        : _landingPageSlice(
+            filteredTasks,
+            _tasksPageIndex,
+            _tasksPageSize,
+          );
+    final pagedDeletedTasks = widget.customizedFlat
+        ? const <Task>[]
+        : _landingPageSlice(
+            filteredDeletedTasks,
+            _deletedTasksPageIndex,
+            _tasksPageSize,
+          );
 
     final reminders = state.getPendingRemindersForTeams(allTeams);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (reminders.isNotEmpty)
+        if (reminders.isNotEmpty && !widget.customizedFlat)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: ExpansionTile(
@@ -1489,6 +2049,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                 state,
                                 teamsSorted,
                               ),
+                              ..._landingCreateDateSection(context),
                               ..._landingStatusSubmissionSections(context),
                               const Divider(height: 16),
                               MenuItemButton(
@@ -1648,97 +2209,111 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           },
         ),
         Expanded(
-          child:               filteredInitiatives.isEmpty &&
+          child: filteredInitiatives.isEmpty &&
                   filteredTasks.isEmpty &&
                   filteredDeletedTasks.isEmpty
               ? Center(child: Text(_emptyListMessage()))
-              : Column(
-                  children: [
-                    Expanded(
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: _kLandingTaskListMaxWidth,
-                          ),
-                          child: ListView(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                            children: [
-                              if (filteredInitiatives.isNotEmpty) ...[
-                      Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 8,
-                                    bottom: 8,
-                                  ),
-                        child: Text(
-                                    'Initiatives',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                ...filteredInitiatives.map(
-                                  (init) => _buildInitiativeCard(
-                                    context,
-                                    state,
-                                    init,
-                                  ),
-                                ),
-                              ],
-                              if (filteredTasks.isNotEmpty) ...[
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 16,
-                                    bottom: 8,
-                                  ),
-                                  child: Text(
-                                    'Tasks (${filteredTasks.length})',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                const Padding(
-                                  padding: EdgeInsets.only(bottom: 12),
-                                  child: PicTeamColorLegend(),
-                                ),
-                                ...pagedTasks.map((t) => TaskListCard(task: t)),
-                              ],
-                              if (filteredDeletedTasks.isNotEmpty) ...[
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 24,
-                                    bottom: 8,
-                                  ),
-                                  child: Text(
-                                    'Deleted tasks',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                      color: Colors.grey,
+              : widget.customizedFlat
+                  ? _buildCustomizedFlatFullColumn(
+                      context,
+                      state,
+                      filteredTasks,
+                      filteredDeletedTasks,
+                    )
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: _kLandingTaskListMaxWidth,
                               ),
-                        ),
-                      ),
-                                if (filteredTasks.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.only(bottom: 12),
-                                    child: PicTeamColorLegend(),
-                                  ),
-                                ...pagedDeletedTasks.map(
-                                  (t) => TaskListCard(task: t),
-                                ),
-                              ],
-                            ],
+                              child: ListView(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                                children: [
+                                  if (filteredInitiatives.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 8,
+                                        bottom: 8,
+                                      ),
+                                      child: Text(
+                                        'Initiatives',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                    ...filteredInitiatives.map(
+                                      (init) => _buildInitiativeCard(
+                                        context,
+                                        state,
+                                        init,
+                                      ),
+                                    ),
+                                  ],
+                                  if (filteredTasks.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 16,
+                                        bottom: 8,
+                                      ),
+                                      child: Text(
+                                        'Tasks (${filteredTasks.length})',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                    const Padding(
+                                      padding: EdgeInsets.only(bottom: 12),
+                                      child: PicTeamColorLegend(),
+                                    ),
+                                    ...pagedTasks.map(
+                                      (t) => TaskListCard(task: t),
+                                    ),
+                                  ],
+                                  if (filteredDeletedTasks.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 24,
+                                        bottom: 8,
+                                      ),
+                                      child: Text(
+                                        'Deleted tasks',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.grey,
+                                            ),
+                                      ),
+                                    ),
+                                    if (filteredTasks.isEmpty)
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 12),
+                                        child: PicTeamColorLegend(),
+                                      ),
+                                    ...pagedDeletedTasks.map(
+                                      (t) => TaskListCard(task: t),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    if (filteredTasks.isNotEmpty ||
-                        filteredDeletedTasks.isNotEmpty)
-                      Material(
+                        if (filteredTasks.isNotEmpty ||
+                            filteredDeletedTasks.isNotEmpty)
+                          Material(
                         elevation: 6,
                         shadowColor: Colors.black26,
                         color: Theme.of(context).colorScheme.surface,
@@ -1922,6 +2497,111 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         ),
       ],
     );
+  }
+
+  /// Create date range — below Creator; applies to task/sub-task create dates on Customized,
+  /// and to task `createdAt` on the landing list.
+  List<Widget> _landingCreateDateSection(BuildContext context) {
+    final titleStyle = Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
+    final fmt = DateFormat.yMMMd();
+
+    Future<void> pickStart() async {
+      final now = DateTime.now();
+      final initial = _filterCreateDateStart ?? now;
+      final d = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(now.year + 5),
+      );
+      if (d == null || !mounted) return;
+      setState(() {
+        _filterCreateDateStart = d;
+        _tasksPageIndex = 0;
+        _deletedTasksPageIndex = 0;
+      });
+      _persistLandingFilters();
+    }
+
+    Future<void> pickEnd() async {
+      final now = DateTime.now();
+      final initial = _filterCreateDateEnd ?? _filterCreateDateStart ?? now;
+      final d = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(now.year + 5),
+      );
+      if (d == null || !mounted) return;
+      setState(() {
+        _filterCreateDateEnd = d;
+        _tasksPageIndex = 0;
+        _deletedTasksPageIndex = 0;
+      });
+      _persistLandingFilters();
+    }
+
+    void clearCreateDate() {
+      setState(() {
+        _filterCreateDateStart = null;
+        _filterCreateDateEnd = null;
+        _tasksPageIndex = 0;
+        _deletedTasksPageIndex = 0;
+      });
+      _persistLandingFilters();
+    }
+
+    return [
+      ExpansionTile(
+        controller: _filterCreateDateTileController,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+        title: Text('Create date', style: titleStyle),
+        onExpansionChanged: (expanded) {
+          if (expanded) _onTopLevelFilterSectionExpanded('createDate');
+        },
+        children: [
+          ListTile(
+            dense: true,
+            title: const Text('From'),
+            subtitle: Text(
+              _filterCreateDateStart == null
+                  ? '—'
+                  : fmt.format(_filterCreateDateStart!),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.edit_calendar_outlined, size: 22),
+              onPressed: pickStart,
+              tooltip: 'Set start date',
+            ),
+            onTap: pickStart,
+          ),
+          ListTile(
+            dense: true,
+            title: const Text('To'),
+            subtitle: Text(
+              _filterCreateDateEnd == null
+                  ? '—'
+                  : fmt.format(_filterCreateDateEnd!),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.edit_calendar_outlined, size: 22),
+              onPressed: pickEnd,
+              tooltip: 'Set end date',
+            ),
+            onTap: pickEnd,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: TextButton(
+              onPressed: _filterCreateDateEngaged ? clearCreateDate : null,
+              child: const Text('Clear create date range'),
+            ),
+          ),
+        ],
+      ),
+    ];
   }
 
   /// Status / Submission: expandable sections with [CheckboxMenuButton].

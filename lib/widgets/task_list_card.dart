@@ -68,7 +68,7 @@ class PicTeamColorLegend extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          "Task background colour reflect the PIC's team.",
+          "Task and sub-task background colour reflect the PIC's team.",
           style: (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
             fontSize: kLandingListCardFontSize - 2,
             color: theme.colorScheme.onSurfaceVariant,
@@ -117,9 +117,30 @@ typedef _TaskListCardData = (
 
 /// Task row for list tabs: name, assignees, status, start/due dates (matches singular + legacy tasks).
 class TaskListCard extends StatefulWidget {
-  const TaskListCard({super.key, required this.task});
+  const TaskListCard({
+    super.key,
+    required this.task,
+    /// When true (e.g. Customized dashboard), sub-tasks are always listed — no expand/collapse header.
+    this.flatSubtasksAlwaysVisible = false,
+    /// When true (Customized dashboard), only the task block is shown — sub-tasks are listed as sibling cards.
+    this.taskOnly = false,
+    /// Prefix title with **Task:** (Customized dashboard).
+    this.showCustomizedTaskTitle = false,
+    this.openedFromOverview = false,
+  });
 
   final Task task;
+
+  /// Sub-tasks shown inline without tapping expand ([flatSubtasksAlwaysVisible]) — landing uses `false`.
+  final bool flatSubtasksAlwaysVisible;
+
+  /// Task summary only; sub-tasks omitted ([taskOnly] implies no nested sub-task UI).
+  final bool taskOnly;
+
+  /// When [taskOnly], show **Task:** label before the bold task name.
+  final bool showCustomizedTaskTitle;
+
+  final bool openedFromOverview;
 
   /// Background tint from PIC's [`staff.team_id`] / [`team.team_id`] (home / initiative task lists).
   static Color? cardColorForPicTeam(String? teamBusinessId) {
@@ -437,6 +458,9 @@ class _TaskListCardState extends State<TaskListCard> {
   void initState() {
     super.initState();
     _cardDataFuture = _loadCardData();
+    if (widget.flatSubtasksAlwaysVisible && !widget.taskOnly) {
+      _subtasksExpanded = true;
+    }
   }
 
   @override
@@ -444,9 +468,15 @@ class _TaskListCardState extends State<TaskListCard> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.task.id != widget.task.id) {
       _cardDataFuture = _loadCardData();
-      _subtasksExpanded = false;
+      _subtasksExpanded =
+          widget.flatSubtasksAlwaysVisible && !widget.taskOnly;
       _activeSubtaskSort = null;
       _subtaskSortAscending = true;
+    }
+    if (!oldWidget.flatSubtasksAlwaysVisible &&
+        widget.flatSubtasksAlwaysVisible &&
+        !widget.taskOnly) {
+      _subtasksExpanded = true;
     }
   }
 
@@ -548,7 +578,10 @@ class _TaskListCardState extends State<TaskListCard> {
               InkWell(
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => TaskDetailScreen(taskId: t.id),
+                    builder: (_) => TaskDetailScreen(
+                      taskId: t.id,
+                      openedFromOverview: widget.openedFromOverview,
+                    ),
                   ),
                 ),
                 child: Padding(
@@ -565,12 +598,27 @@ class _TaskListCardState extends State<TaskListCard> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Expanded(
-                                  child: Text(
-                                    t.name,
-                                    maxLines: 3,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: taskTitleStyle,
-                                  ),
+                                  child: widget.showCustomizedTaskTitle
+                                      ? Text.rich(
+                                          TextSpan(
+                                            style: listText,
+                                            children: [
+                                              const TextSpan(text: 'Task: '),
+                                              TextSpan(
+                                                text: t.name,
+                                                style: taskTitleStyle,
+                                              ),
+                                            ],
+                                          ),
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                        )
+                                      : Text(
+                                          t.name,
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: taskTitleStyle,
+                                        ),
                                 ),
                                 if (TaskListCard._isSubmissionSubmitted(t)) ...[
                                   const SizedBox(width: 8),
@@ -678,38 +726,41 @@ class _TaskListCardState extends State<TaskListCard> {
                   ),
                 ),
               ),
-              if (subtasks.isNotEmpty) ...[
-                const Divider(height: 1),
-                InkWell(
-                  onTap: () => setState(() {
-                    _subtasksExpanded = !_subtasksExpanded;
-                  }),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _subtasksExpanded
-                              ? Icons.expand_less
-                              : Icons.expand_more,
-                          size: 22,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Sub-tasks (${subtasks.length})',
-                            style: subtasksHeaderStyle,
+              if (!widget.taskOnly && subtasks.isNotEmpty) ...[
+                if (!widget.flatSubtasksAlwaysVisible) ...[
+                  const Divider(height: 1),
+                  InkWell(
+                    onTap: () => setState(() {
+                      _subtasksExpanded = !_subtasksExpanded;
+                    }),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _subtasksExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            size: 22,
+                            color: Theme.of(context).colorScheme.primary,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Sub-tasks (${subtasks.length})',
+                              style: subtasksHeaderStyle,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                if (_subtasksExpanded) ...[
+                ] else
+                  const Divider(height: 1),
+                if (widget.flatSubtasksAlwaysVisible || _subtasksExpanded) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                     child: Align(
@@ -759,6 +810,7 @@ class _TaskListCardState extends State<TaskListCard> {
                                   builder: (_) => SubtaskDetailScreen(
                                     subtaskId: s.id,
                                     replaceWithParentTaskOnBack: true,
+                                    openedFromOverview: widget.openedFromOverview,
                                   ),
                                 ),
                               );

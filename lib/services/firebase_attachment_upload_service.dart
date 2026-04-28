@@ -33,6 +33,25 @@ class FirebaseAttachmentUploadService {
   /// Max distinct staff keys stored per object (Storage rules should mirror this count).
   static const int aclMetadataSlotCount = 10;
 
+  /// Firebase Storage custom metadata: original picked file name (for opening/saving with the right name).
+  static const String storageMetadataOriginalFileNameKey = 'originalFileName';
+
+  /// Reads [storageMetadataOriginalFileNameKey] from the object (null if missing / error).
+  static Future<String?> fetchOriginalFileNameFromMetadata(String objectPath) async {
+    if (Firebase.apps.isEmpty) return null;
+    final path = objectPath.trim();
+    if (path.isEmpty) return null;
+    try {
+      final meta = await FirebaseStorage.instance.ref(path).getMetadata();
+      final v =
+          meta.customMetadata?[storageMetadataOriginalFileNameKey]?.trim();
+      if (v != null && v.isNotEmpty) return v;
+    } catch (e, st) {
+      debugPrint('fetchOriginalFileNameFromMetadata: $e\n$st');
+    }
+    return null;
+  }
+
   /// Builds `m0`…`m9` custom metadata from non-empty, de-duplicated [keys] (order preserved).
   static Map<String, String> aclMetadataFromStaffKeys(Iterable<String?> keys) {
     final seen = <String>{};
@@ -264,6 +283,7 @@ class FirebaseAttachmentUploadService {
   static Future<void> _mergePatchAclMetadataRest({
     required String objectPath,
     required Map<String, String> aclMetadata,
+    String? originalFileName,
   }) async {
     if (aclMetadata.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
@@ -293,6 +313,10 @@ class FirebaseAttachmentUploadService {
           : <String, dynamic>{};
       for (final e in aclMetadata.entries) {
         meta[e.key] = e.value;
+      }
+      final ofn = originalFileName?.trim();
+      if (ofn != null && ofn.isNotEmpty) {
+        meta[storageMetadataOriginalFileNameKey] = ofn;
       }
       final patchResp = await http.patch(
         objectUri,
@@ -453,6 +477,7 @@ class FirebaseAttachmentUploadService {
         await _mergePatchAclMetadataRest(
           objectPath: path,
           aclMetadata: aclMetadata,
+          originalFileName: originalFilename,
         );
         final downloadUrl = await fetchStorageDownloadUrlRest(path);
         if (!_isValidStorageDownloadUrlForPersist(downloadUrl)) {
@@ -467,9 +492,11 @@ class FirebaseAttachmentUploadService {
       }
 
       final ref = FirebaseStorage.instance.ref(path);
+      final metaMap = Map<String, String>.from(aclMetadata);
+      metaMap[storageMetadataOriginalFileNameKey] = originalFilename;
       final meta = SettableMetadata(
         contentType: contentType,
-        customMetadata: aclMetadata,
+        customMetadata: metaMap,
       );
       await ref.putData(bytes, meta);
       final downloadUrl = await ref.getDownloadURL();
