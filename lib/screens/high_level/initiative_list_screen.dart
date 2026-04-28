@@ -637,58 +637,69 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     unawaited(_loadSubtaskRowDataForTasks(idsToFetch));
   }
 
+  /// Writes aggregated sub-task fields for one parent task id into landing caches.
+  void _applySubtaskPrefetchFromList(String id, List<SingularSubtask> list) {
+    final minDue = TaskListCard.minSubtaskDueForSort(list);
+    final maxDue = TaskListCard.maxSubtaskDueForSort(list);
+    final blob = _subtaskSearchBlobFromList(list);
+    final todayHk = HkTime.todayDateOnlyHk();
+    var hasOverdueSub = false;
+    for (final st in list) {
+      if (st.isDeleted) continue;
+      final ss = st.status.trim().toLowerCase();
+      if (ss == 'completed' || ss == 'complete') continue;
+      final d = st.dueDate;
+      if (d == null) continue;
+      final day = DateTime(d.year, d.month, d.day);
+      if (day.isBefore(todayHk)) {
+        hasOverdueSub = true;
+        break;
+      }
+    }
+    _subtaskMinDueByTaskId[id] = minDue;
+    _subtaskMaxDueByTaskId[id] = maxDue;
+    _subtaskSearchBlobByTaskId[id] = blob;
+    _subtaskHasOverdueByTaskId[id] = hasOverdueSub;
+  }
+
   /// Loads sub-task rows per task; updates maps **per task** so search (e.g. sub-task name "HKU")
   /// can match as soon as that task’s rows are loaded, not only after all tasks finish.
+  ///
+  /// Uses batched Supabase queries + one [setState] when possible; falls back to per-task fetch.
   ///
   /// [_subtaskFetchGeneration] is bumped when the singular-task id set changes so in-flight
   /// work after a cache clear does not call [setState].
   Future<void> _loadSubtaskRowDataForTasks(List<String> taskIds) async {
     final startGen = _subtaskFetchGeneration;
+    if (taskIds.isEmpty) return;
+    try {
+      final grouped =
+          await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(taskIds);
+      if (!mounted || startGen != _subtaskFetchGeneration) return;
+      setState(() {
+        for (final id in taskIds) {
+          _applySubtaskPrefetchFromList(id, grouped[id] ?? []);
+        }
+      });
+    } catch (_) {
+      await _loadSubtaskRowDataForTasksSequentialFallback(taskIds, startGen);
+    }
+  }
+
+  Future<void> _loadSubtaskRowDataForTasksSequentialFallback(
+    List<String> taskIds,
+    int startGen,
+  ) async {
     for (final id in taskIds) {
       if (!mounted || startGen != _subtaskFetchGeneration) return;
-      DateTime? minDue;
-      DateTime? maxDue;
-      var blob = '';
       try {
         final list = await SupabaseService.fetchSubtasksForTask(id);
         if (!mounted || startGen != _subtaskFetchGeneration) return;
-        minDue = TaskListCard.minSubtaskDueForSort(list);
-        maxDue = TaskListCard.maxSubtaskDueForSort(list);
-        blob = _subtaskSearchBlobFromList(list);
-        final todayHk = HkTime.todayDateOnlyHk();
-        var hasOverdueSub = false;
-        for (final st in list) {
-          if (st.isDeleted) continue;
-          final ss = st.status.trim().toLowerCase();
-          if (ss == 'completed' || ss == 'complete') continue;
-          final d = st.dueDate;
-          if (d == null) continue;
-          final day = DateTime(d.year, d.month, d.day);
-          if (day.isBefore(todayHk)) {
-            hasOverdueSub = true;
-            break;
-          }
-        }
-        if (!mounted || startGen != _subtaskFetchGeneration) return;
-        setState(() {
-          _subtaskMinDueByTaskId[id] = minDue;
-          _subtaskMaxDueByTaskId[id] = maxDue;
-          _subtaskSearchBlobByTaskId[id] = blob;
-          _subtaskHasOverdueByTaskId[id] = hasOverdueSub;
-        });
-        continue;
+        setState(() => _applySubtaskPrefetchFromList(id, list));
       } catch (_) {
-        minDue = null;
-        maxDue = null;
-        blob = '';
+        if (!mounted || startGen != _subtaskFetchGeneration) return;
+        setState(() => _applySubtaskPrefetchFromList(id, []));
       }
-      if (!mounted || startGen != _subtaskFetchGeneration) return;
-      setState(() {
-        _subtaskMinDueByTaskId[id] = minDue;
-        _subtaskMaxDueByTaskId[id] = maxDue;
-        _subtaskSearchBlobByTaskId[id] = blob;
-        _subtaskHasOverdueByTaskId[id] = false;
-      });
     }
   }
 
@@ -1200,6 +1211,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _subtaskMaxDueByTaskId.clear();
       _subtaskHasOverdueByTaskId.clear();
       _subtaskSearchBlobByTaskId.clear();
+      SupabaseService.clearSubtaskListMemoryCache();
       _landingSubtaskServerSearchSeq++;
       _landingSubtaskServerSearchDebounce?.cancel();
       _subtaskServerSetsByToken = null;

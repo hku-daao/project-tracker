@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -72,6 +74,35 @@ class SupabaseService {
   /// prefetch, many [TaskListCard]s, and [SingularTaskDetailView] do not stampede Supabase.
   static final Map<String, Future<List<SingularSubtask>>> _fetchSubtasksInflight = {};
 
+  /// Short-lived list cache filled by landing batch prefetch and single-task loads; avoids duplicate
+  /// HTTP when many [TaskListCard]s mount after prefetch. Cleared when the singular task set changes.
+  static final Map<String, List<SingularSubtask>> _subtaskListMemoryCache = {};
+
+  /// Clears [_subtaskListMemoryCache] (e.g. when [AppState] singular task ids change).
+  static void clearSubtaskListMemoryCache() => _subtaskListMemoryCache.clear();
+
+  static void _storeSubtaskListMemoryCache(
+    String tid,
+    List<SingularSubtask> list,
+  ) {
+    _subtaskListMemoryCache[tid] = List<SingularSubtask>.from(list);
+  }
+
+  static void _sortSingularSubtasksNewestFirst(List<SingularSubtask> out) {
+    out.sort((a, b) {
+      final ca = a.createDate;
+      final cb = b.createDate;
+      if (ca == null && cb == null) {
+        return b.subtaskName.toLowerCase().compareTo(a.subtaskName.toLowerCase());
+      }
+      if (ca == null) return 1;
+      if (cb == null) return -1;
+      final c = cb.compareTo(ca);
+      if (c != 0) return c;
+      return b.subtaskName.toLowerCase().compareTo(a.subtaskName.toLowerCase());
+    });
+  }
+
   static DateTime? _parseDate(dynamic v) {
     if (v == null) return null;
     if (v is DateTime) return v;
@@ -109,8 +140,9 @@ class SupabaseService {
   /// Status strings on singular [`task`] (e.g. Incomplete) vs legacy [`tasks`] (todo/in_progress/done).
   static TaskStatus _taskStatusFromSingularTaskDb(String? s) {
     final t = s?.trim().toLowerCase() ?? '';
-    if (t == 'done' || t == 'completed' || t == 'complete')
+    if (t == 'done' || t == 'completed' || t == 'complete') {
       return TaskStatus.done;
+    }
     if (t == 'in_progress' || t == 'in progress') return TaskStatus.inProgress;
     if (t == 'delete' || t == 'deleted') return TaskStatus.todo;
     return TaskStatus.todo;
@@ -1863,6 +1895,9 @@ class SupabaseService {
   }
 
   static Future<List<SingularSubtask>> _fetchSubtasksForTaskImpl(String tid) async {
+    final cached = _subtaskListMemoryCache[tid];
+    if (cached != null) return List<SingularSubtask>.from(cached);
+
     Map<String, String> staffMap = {};
     Map<String, String> staffNames = {};
     try {
@@ -1884,18 +1919,70 @@ class SupabaseService {
         continue;
       }
     }
-    out.sort((a, b) {
-      final ca = a.createDate;
-      final cb = b.createDate;
-      if (ca == null && cb == null) {
-        return b.subtaskName.toLowerCase().compareTo(a.subtaskName.toLowerCase());
+    _sortSingularSubtasksNewestFirst(out);
+    _storeSubtaskListMemoryCache(tid, out);
+    return List<SingularSubtask>.from(out);
+  }
+
+  /// Few HTTP calls instead of one per task — used by landing prefetch only.
+  /// Seeds [_subtaskListMemoryCache] per id so [fetchSubtasksForTask] hits memory on cards.
+  static Future<Map<String, List<SingularSubtask>>>
+      fetchSubtasksGroupedForLandingPrefetch(List<String> taskIds) async {
+    final out = <String, List<SingularSubtask>>{};
+    final ids =
+        taskIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()
+          ..sort();
+    if (ids.isEmpty) return out;
+    if (!_enabled) {
+      for (final id in ids) {
+        out[id] = [];
+        _storeSubtaskListMemoryCache(id, []);
       }
-      if (ca == null) return 1;
-      if (cb == null) return -1;
-      final c = cb.compareTo(ca);
-      if (c != 0) return c;
-      return b.subtaskName.toLowerCase().compareTo(a.subtaskName.toLowerCase());
-    });
+      return out;
+    }
+
+    Map<String, String> staffMap = {};
+    Map<String, String> staffNames = {};
+    try {
+      final maps = await _loadMaps();
+      staffMap = maps?.staffUuidToAppId ?? await _staffUuidToAppIdMapAll();
+      staffNames = maps?.staffUuidToName ?? <String, String>{};
+    } catch (_) {
+      try {
+        staffMap = await _staffUuidToAppIdMapAll();
+      } catch (_) {}
+    }
+
+    final client = Supabase.instance.client;
+    const chunkSize = 80;
+    final pendingRows = <Map<String, dynamic>>[];
+    for (var i = 0; i < ids.length; i += chunkSize) {
+      final end = min(i + chunkSize, ids.length);
+      final chunk = ids.sublist(i, end);
+      try {
+        final res = await client.from('subtask').select().inFilter('task_id', chunk);
+        for (final raw in (res as List)) {
+          pendingRows.add(Map<String, dynamic>.from(raw as Map));
+        }
+      } catch (_) {}
+    }
+
+    final byTask = <String, List<SingularSubtask>>{};
+    for (final row in pendingRows) {
+      try {
+        final st = _singularSubtaskFromRow(row, staffMap, staffNames);
+        if (st == null || st.isDeleted) continue;
+        final tid = st.taskId;
+        byTask.putIfAbsent(tid, () => []).add(st);
+      } catch (_) {}
+    }
+
+    for (final id in ids) {
+      final list = byTask[id] ?? [];
+      _sortSingularSubtasksNewestFirst(list);
+      out[id] = list;
+      _storeSubtaskListMemoryCache(id, list);
+    }
     return out;
   }
 
