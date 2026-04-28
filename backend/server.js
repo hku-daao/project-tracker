@@ -1577,21 +1577,32 @@ ${landing}`;
 }
 
 /**
- * Due-today reminder for task creator only. Subject/body format fixed for product spec.
- * Task name: bold + underlined link to app task URL; Project Tracker links to landing site.
+ * Due-today reminder for task creator only ([creator_due_today_reminder_sent_on]).
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
  */
-function buildCreatorDueTodayTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
-  const safeName = escapeHtml(displayName);
+function buildCreatorDueTodayTaskReminderEmail(
+  recipientDisplayName,
+  picDisplayName,
+  taskName,
+  taskUrl,
+  dueYmd,
+) {
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `<p>Hi ${safeName}. There is a task due.</p>
-<p><b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b></p>
-<p>Due Date: ${safeDue}</p>
-<p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
-  const text = `Hi ${displayName}. There is a task due.
+  const html = `Hi ${safeRecipient},<br><br>
+${safePic} has task due today.<br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: ${safeDue}<br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${recipientDisplayName},
+
+${picDisplayName} has task due today.
 
 ${taskName}
 ${taskUrl}
@@ -1604,49 +1615,70 @@ ${landing}`;
 }
 
 /**
- * Due-today (HK) — sub-task creator only. Subject/body format fixed for product spec.
+ * Due-today (HK) — sub-task creator only ([subtask_creator_due_today_reminder_sent_on]).
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`subtask.pic` → staff.display_name)
  */
 function buildCreatorDueTodaySubtaskReminderEmail(
-  displayName,
+  recipientDisplayName,
+  picDisplayName,
   subtaskName,
   subtaskUrl,
   dueYmd,
 ) {
-  const safeName = escapeHtml(displayName);
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
   const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `Hi ${safeName}. There is a sub-task due.<br><br>
+  const html = `Hi ${safeRecipient},<br><br>
+${safePic} has sub-task due today.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
-Due Date: ${safeDue}<br><br>
+Due Date: ${safeDue} (format: yyyy-mm-dd) <br><br>
 <a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
-  const text = `Hi ${displayName}. There is a sub-task due.
+  const text = `Hi ${recipientDisplayName},
+
+${picDisplayName} has sub-task due today.
 
 ${subtaskName}
 ${subtaskUrl}
 
-Due Date: ${dueYmd}
+Due Date: ${dueYmd} (format: yyyy-mm-dd)
 
 Project Tracker
 ${landing}`;
   return { html, text };
 }
 
-/** Overdue (HK) — task creator. Due date in red; “Project Tracker” → fixed HKU landing URL. */
-function buildCreatorOverdueTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
-  const safeName = escapeHtml(displayName);
+/**
+ * Overdue (HK) — task creator ([CreatorOverdueReminder]).
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
+ */
+function buildCreatorOverdueTaskReminderEmail(
+  recipientDisplayName,
+  picDisplayName,
+  taskName,
+  taskUrl,
+  dueYmd,
+) {
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `Hi ${safeName}. There is a task overdue.<br><br>
+  const html = `Hi ${safeRecipient},<br><br>
+${safePic} has a task overdue.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
 Due Date: <span style="color:red;">${safeDue}</span><br><br>
 <a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
-  const text = `Hi ${displayName}. There is a task overdue.
+  const text = `Hi ${recipientDisplayName},
+
+${picDisplayName} has a task overdue.
 
 ${taskName}
 ${taskUrl}
@@ -1682,24 +1714,33 @@ ${landing}`;
   return { html, text };
 }
 
-/** Overdue (HK) — sub-task creator. */
+/**
+ * Overdue (HK) — sub-task creator ([Subtask_CreatorOverdueReminder]).
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`subtask.pic` → staff.display_name)
+ */
 function buildCreatorOverdueSubtaskReminderEmail(
-  displayName,
+  recipientDisplayName,
+  picDisplayName,
   subtaskName,
   subtaskUrl,
   dueYmd,
 ) {
-  const safeName = escapeHtml(displayName);
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = OVERDUE_REMINDER_LANDING_HREF;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `Hi ${safeName}. There is a sub-task overdue.<br><br>
+  const html = `Hi ${safeRecipient},<br><br>
+${safePic} has a sub-task overdue.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
 Due Date: <span style="color:red;">${safeDue}</span><br><br>
 <a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
-  const text = `Hi ${displayName}. There is a sub-task overdue.
+  const text = `Hi ${recipientDisplayName},
+
+${picDisplayName} has a sub-task overdue.
 
 ${subtaskName}
 ${subtaskUrl}
@@ -1742,21 +1783,31 @@ ${landing}`;
 
 /**
  * 80% window — creator only. Subject/body format fixed for product spec.
+ * @param {string} recipientDisplayName — task creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
  */
-function buildCreatorUrgentTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
-  const safeName = escapeHtml(displayName);
+function buildCreatorUrgentTaskReminderEmail(
+  recipientDisplayName,
+  picDisplayName,
+  taskName,
+  taskUrl,
+  dueYmd,
+) {
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `<p>Hi ${safeName}.<br>
-There is an <b>upcoming</b> task due.</p>
-<p><b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b></p>
-<p>Due Date: ${safeDue}</p>
-<p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
-  const text = `Hi ${displayName}.
-There is an upcoming task due.
+  const html = `Hi ${safeRecipient},<br><br>
+${safePic} has an <b>upcoming</b> task due.<br><br>
+<b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
+Due Date: ${safeDue}<br><br>
+<a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
+  const text = `Hi ${recipientDisplayName},
+
+${picDisplayName} has an upcoming task due.
 
 ${taskName}
 ${taskUrl}
@@ -1769,24 +1820,32 @@ ${landing}`;
 }
 
 /**
- * 80% window — sub-task creator only. Subject/body format fixed for product spec.
- * Sub-task title: bold + underlined link to app sub-task URL; Project Tracker → landing.
+ * 80% window — sub-task creator only ([runCreatorUrgentSubtaskReminderJob]).
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
+ * @param {string} picDisplayName — PIC (`subtask.pic` → staff.display_name)
  */
-function buildCreatorUrgentSubtaskReminderEmail(displayName, subtaskName, subtaskUrl, dueYmd) {
-  const safeName = escapeHtml(displayName);
+function buildCreatorUrgentSubtaskReminderEmail(
+  recipientDisplayName,
+  picDisplayName,
+  subtaskName,
+  subtaskUrl,
+  dueYmd,
+) {
+  const safeRecipient = escapeHtml(recipientDisplayName);
+  const safePic = escapeHtml(picDisplayName);
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
   const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
-  const html = `Hi ${safeName}.<br><br>
-There is an <b>upcoming</b> sub-task due.<br><br>
+  const html = `Hi ${safeRecipient}.<br><br>
+${safePic} has an <b>upcoming</b> sub-task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
 Due Date: ${safeDue}<br><br>
 <a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a>`;
-  const text = `Hi ${displayName}.
+  const text = `Hi ${recipientDisplayName}.
 
-There is an upcoming sub-task due.
+${picDisplayName} has an upcoming sub-task due.
 
 ${subtaskName}
 ${subtaskUrl}
@@ -2146,20 +2205,39 @@ async function runCreatorUrgentSubtaskReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (row.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorUrgentSubtaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       subtaskName,
       subtaskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('An upcoming sub-task due'),
+      subject: mailSubjectSingleLine(
+        `${picDisplayName} has an upcoming sub-task due`,
+      ),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
@@ -2409,20 +2487,37 @@ async function runCreatorUrgentTaskReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (taskRow.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorUrgentTaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       taskName,
       taskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('An upcoming task due'),
+      subject: mailSubjectSingleLine(`${picDisplayName}'s upcoming task due`),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
@@ -2766,20 +2861,37 @@ async function runCreatorDueTodayReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (taskRow.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorDueTodayTaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       taskName,
       taskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('A task due today'),
+      subject: mailSubjectSingleLine(`${picDisplayName}'s task due today`),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
@@ -2895,20 +3007,39 @@ async function runCreatorDueTodaySubtaskReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (row.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorDueTodaySubtaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       subtaskName,
       subtaskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('A sub-task due today'),
+      subject: mailSubjectSingleLine(
+        `${picDisplayName}'s sub-task due today`,
+      ),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
@@ -3025,20 +3156,37 @@ async function runCreatorOverdueTaskReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (taskRow.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorOverdueTaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       taskName,
       taskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('A task overdue'),
+      subject: mailSubjectSingleLine(`${picDisplayName}'s task overdue`),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
@@ -3276,20 +3424,39 @@ async function runCreatorOverdueSubtaskReminderJob() {
       );
       continue;
     }
-    const displayName =
+    const recipientDisplayName =
       (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
+    const picId = (row.pic || '').toString().trim();
+    let picDisplayName = 'PIC';
+    if (picId) {
+      const { data: picStaff } = await supabase
+        .from('staff')
+        .select('display_name, name')
+        .eq('id', picId)
+        .maybeSingle();
+      if (picStaff) {
+        picDisplayName =
+          (picStaff.display_name || '').trim() ||
+          (picStaff.name || '').trim() ||
+          picDisplayName;
+      }
+    }
+
     const { html, text } = buildCreatorOverdueSubtaskReminderEmail(
-      displayName,
+      recipientDisplayName,
+      picDisplayName,
       subtaskName,
       subtaskUrl,
       dueYmd,
     );
     const r = await sendMailgun({
       to,
-      subject: mailSubjectSingleLine('A sub-task overdue'),
+      subject: mailSubjectSingleLine(
+        `${picDisplayName}'s sub-task overdue`,
+      ),
       text,
       html,
       from: MAILGUN_NOTIFICATION_FROM,
