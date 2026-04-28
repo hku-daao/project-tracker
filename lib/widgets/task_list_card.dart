@@ -68,7 +68,7 @@ class PicTeamColorLegend extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          "Task and sub-task background colour reflect the PIC's team.",
+          "Task background colour reflect the PIC's team.",
           style: (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
             fontSize: kLandingListCardFontSize - 2,
             color: theme.colorScheme.onSurfaceVariant,

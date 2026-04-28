@@ -129,7 +129,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// Subset of [_submissionPending]…[_submissionReturned]. Empty = all (label "All submission").
   final Set<String> _selectedSubmissionFilters = {};
 
-  /// When true, only tasks with an overdue task due date and/or an overdue incomplete sub-task (HK calendar).
+  /// When true, only rows where [`Task.overdue`] or a sub-task's [`SingularSubtask.overdue`] is `Yes` (DB).
   bool _filterOverdueOnly = false;
   final TextEditingController _taskSearchController = TextEditingController();
   final MenuController _filterMenuController = MenuController();
@@ -307,6 +307,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   bool get _filterCreateDateEngaged =>
       _filterCreateDateStart != null || _filterCreateDateEnd != null;
 
+  /// Rolling window matching [_dateWithinLastRollingMonth] (HK calendar; inclusive).
+  (DateTime start, DateTime end) _defaultCreateDateRangeHk() {
+    final end = HkTime.todayDateOnlyHk();
+    final start = end.subtract(const Duration(days: 30));
+    return (start, end);
+  }
+
+  String _defaultCreateDateRangeSummary(DateFormat fmt) {
+    final r = _defaultCreateDateRangeHk();
+    return '${fmt.format(r.$1)} – ${fmt.format(r.$2)}';
+  }
+
   /// True when status / submission / assignee / creator / search are not at default (all).
   bool get _hasTeamOrStatusFilterSelections =>
       _selectedTaskStatuses.isNotEmpty ||
@@ -449,14 +461,20 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
       parts.add('Creator: ${names.join(', ')}');
     }
-    if (_filterCreateDateEngaged) {
+    {
       final fmt = DateFormat.yMMMd();
-      final a = _filterCreateDateStart != null
-          ? fmt.format(_filterCreateDateStart!)
-          : '…';
-      final b =
-          _filterCreateDateEnd != null ? fmt.format(_filterCreateDateEnd!) : '…';
-      parts.add('Create date: $a – $b');
+      if (_filterCreateDateEngaged) {
+        final a = _filterCreateDateStart != null
+            ? fmt.format(_filterCreateDateStart!)
+            : '…';
+        final b =
+            _filterCreateDateEnd != null ? fmt.format(_filterCreateDateEnd!) : '…';
+        parts.add('Create date: $a – $b');
+      } else {
+        parts.add(
+          'Create date: ${_defaultCreateDateRangeSummary(fmt)} (default)',
+        );
+      }
     }
     if (_selectedTaskStatuses.isEmpty) {
       parts.add('All status');
@@ -710,20 +728,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final minDue = TaskListCard.minSubtaskDueForSort(list);
     final maxDue = TaskListCard.maxSubtaskDueForSort(list);
     final blob = _subtaskSearchBlobFromList(list);
-    final todayHk = HkTime.todayDateOnlyHk();
     var hasOverdueSub = false;
     for (final st in list) {
       if (st.isDeleted) continue;
       if (st.overdue == 'Yes') {
-        hasOverdueSub = true;
-        break;
-      }
-      final ss = st.status.trim().toLowerCase();
-      if (ss == 'completed' || ss == 'complete') continue;
-      final d = st.dueDate;
-      if (d == null) continue;
-      final day = DateTime(d.year, d.month, d.day);
-      if (day.isBefore(todayHk)) {
         hasOverdueSub = true;
         break;
       }
@@ -904,6 +912,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     for (final t in tasks) {
       if (!t.isSingularTableRow) {
+        if (_filterOverdueOnly) {
+          if (t.overdue != 'Yes') continue;
+          if (!searchActive) {
+            if (_rowPassesCreateDateForCustomized(t, null)) {
+              out.add(_CustomizedFlatEntry.task(t));
+            }
+          } else if (_taskTextMatchesAllTokens(t, tokens) &&
+              _rowPassesCreateDateForCustomized(t, null)) {
+            out.add(_CustomizedFlatEntry.task(t));
+          }
+          continue;
+        }
         if (!searchActive) {
           if (_rowPassesCreateDateForCustomized(t, null)) {
             out.add(_CustomizedFlatEntry.task(t));
@@ -917,6 +937,33 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
       final subs = grouped[t.id] ?? [];
       final subsNonDeleted = subs.where((s) => !s.isDeleted).toList();
+
+      if (_filterOverdueOnly) {
+        if (t.overdue == 'Yes') {
+          if (!searchActive) {
+            if (_rowPassesCreateDateForCustomized(t, null)) {
+              out.add(_CustomizedFlatEntry.task(t));
+            }
+          } else if (_taskTextMatchesAllTokens(t, tokens) &&
+              _rowPassesCreateDateForCustomized(t, null)) {
+            out.add(_CustomizedFlatEntry.task(t));
+          }
+        } else {
+          for (final s in subsNonDeleted) {
+            if (s.overdue != 'Yes') continue;
+            if (!searchActive) {
+              if (_rowPassesCreateDateForCustomized(t, s)) {
+                out.add(_CustomizedFlatEntry.subtask(t, s));
+              }
+            } else {
+              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+              if (!_rowPassesCreateDateForCustomized(t, s)) continue;
+              out.add(_CustomizedFlatEntry.subtask(t, s));
+            }
+          }
+        }
+        continue;
+      }
 
       if (!searchActive) {
         final subsInRange = subsNonDeleted
@@ -1137,7 +1184,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         '_$_tasksPageIndex$_tasksPageSize$_deletedTasksPageIndex'
         '_$_customizedFlatListRefreshSeq'
         '_${_taskSearchController.text}'
-        '_$_filterCreateDateStart$_filterCreateDateEnd',
+        '_$_filterCreateDateStart$_filterCreateDateEnd'
+        '_$_filterOverdueOnly',
       ),
       future: _futureGroupedForCustomized(filteredTasks, filteredDeletedTasks),
       builder: (context, snapshot) {
@@ -1916,20 +1964,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           : [];
     }
 
-    bool taskEligibleForOverdueDue(Task t) {
-      if (singularDeleted(t)) return false;
-      if (t.isSingularTableRow) return !singularCompleted(t);
-      return t.status != TaskStatus.done;
-    }
-
-    bool taskDueCalendarOverdue(Task t) {
-      if (!taskEligibleForOverdueDue(t)) return false;
-      final due = t.endDate;
-      if (due == null) return false;
-      final day = DateTime(due.year, due.month, due.day);
-      return day.isBefore(HkTime.todayDateOnlyHk());
-    }
-
     bool taskMatchesOverdueFilter(Task t) {
       if (!_filterOverdueOnly) return true;
       if (t.isSingularTableRow) {
@@ -1937,7 +1971,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         if (!_subtaskHasOverdueByTaskId.containsKey(t.id)) return false;
         return _subtaskHasOverdueByTaskId[t.id] == true;
       }
-      return taskDueCalendarOverdue(t);
+      return t.overdue == 'Yes';
     }
 
     final tasksForSubtaskPrefetch = List<Task>.from(filteredTasks);
@@ -2069,31 +2103,35 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   ),
                 ],
                 builder: (context, controller, child) {
-                  return InkWell(
-                    onTap: () {
-                      if (controller.isOpen) {
-                        controller.close();
-                      } else {
-                        controller.open();
-                      }
-                    },
-                    borderRadius: BorderRadius.circular(4),
-                    child: InputDecorator(
-            decoration: const InputDecoration(
-                        labelText: 'Filters',
-              border: OutlineInputBorder(),
-                        suffixIcon: Icon(Icons.arrow_drop_down),
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 16,
+                  final summaryLine = _filterMenuSummaryLine(state);
+                  return Tooltip(
+                    message: summaryLine,
+                    child: InkWell(
+                      onTap: () {
+                        if (controller.isOpen) {
+                          controller.close();
+                        } else {
+                          controller.open();
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Filters',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.arrow_drop_down),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 16,
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        _filterMenuSummaryLine(state),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 2,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                        child: Text(
+                          summaryLine,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
                       ),
                     ),
                   );
@@ -2506,6 +2544,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           fontWeight: FontWeight.w600,
         );
     final fmt = DateFormat.yMMMd();
+    final def = _defaultCreateDateRangeHk();
 
     Future<void> pickStart() async {
       final now = DateTime.now();
@@ -2567,7 +2606,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             title: const Text('From'),
             subtitle: Text(
               _filterCreateDateStart == null
-                  ? '—'
+                  ? 'Default: ${fmt.format(def.$1)}'
                   : fmt.format(_filterCreateDateStart!),
             ),
             trailing: IconButton(
@@ -2582,7 +2621,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             title: const Text('To'),
             subtitle: Text(
               _filterCreateDateEnd == null
-                  ? '—'
+                  ? 'Default: ${fmt.format(def.$2)}'
                   : fmt.format(_filterCreateDateEnd!),
             ),
             trailing: IconButton(

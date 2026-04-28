@@ -38,7 +38,7 @@ class LandingTaskFilters {
   /// `pending` | `submitted` | `accepted` | `returned` — empty = all submissions.
   final List<String> submissionFilters;
 
-  /// When true, landing task lists only rows that are overdue on the task due date and/or a sub-task due date (HK calendar day).
+  /// When true, landing lists only tasks/sub-tasks whose DB [`overdue`] flag is `Yes`.
   final bool filterOverdueOnly;
 
   /// Inclusive calendar-day bounds (local); null = not set. Applies to task create date (and sub-task rows on Customized).
