@@ -196,14 +196,95 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   static const _submissionAccepted = 'accepted';
   static const _submissionReturned = 'returned';
 
-  /// Normalizes [Task.submission] to a landing filter key (defaults to pending when empty/unknown).
-  static String _submissionFilterKey(Task t) {
-    final raw = t.submission?.trim().toLowerCase() ?? '';
+  /// Normalizes task/sub-task `submission` to a landing filter key (defaults to pending).
+  static String _submissionFilterKeyRaw(String? submission) {
+    final raw = submission?.trim().toLowerCase() ?? '';
     if (raw.isEmpty || raw == 'pending') return _submissionPending;
     if (raw == 'submitted') return _submissionSubmitted;
     if (raw == 'accepted') return _submissionAccepted;
     if (raw == 'returned') return _submissionReturned;
     return _submissionPending;
+  }
+
+  /// Normalizes [Task.submission] to a landing filter key (defaults to pending when empty/unknown).
+  static String _submissionFilterKey(Task t) => _submissionFilterKeyRaw(t.submission);
+
+  static bool _singularSubtaskCompleted(SingularSubtask s) {
+    final x = s.status.trim().toLowerCase();
+    return x == 'completed' || x == 'complete';
+  }
+
+  /// Matches [singularIncomplete] closure used in build for singular [`task`] rows.
+  bool _singularTaskIncomplete(Task t) {
+    if (!t.isSingularTableRow) return false;
+    final s = t.dbStatus?.trim().toLowerCase() ?? '';
+    if (s.isEmpty) return true;
+    return s == 'incomplete';
+  }
+
+  /// Completed filter without Incomplete: flat list only Completed tasks / Completed sub-tasks.
+  bool get _overviewCompletedOnlyWithoutIncomplete =>
+      widget.customizedFlat &&
+      _selectedTaskStatuses.contains(_statusCompleted) &&
+      !_selectedTaskStatuses.contains(_statusIncomplete);
+
+  /// Overview customized flat: omit sub-task row per status/submission conflict rules.
+  bool _customizedFlatShouldOmitSubtaskRow(Task t, SingularSubtask s) {
+    if (!t.isSingularTableRow || !widget.customizedFlat) return false;
+
+    // Incomplete selected: never list Completed sub-tasks under an Incomplete parent (task row only).
+    if (_selectedTaskStatuses.contains(_statusIncomplete) &&
+        _singularTaskIncomplete(t) &&
+        _singularSubtaskCompleted(s)) {
+      return true;
+    }
+
+    // Completed only (vs Incomplete): hide non-Completed sub-tasks everywhere.
+    if (_overviewCompletedOnlyWithoutIncomplete && !_singularSubtaskCompleted(s)) {
+      return true;
+    }
+
+    if (_selectedSubmissionFilters.length == 1) {
+      final tk = _submissionFilterKey(t);
+      final sk = _submissionFilterKeyRaw(s.submission);
+      if (_selectedSubmissionFilters.contains(_submissionPending) &&
+          tk == _submissionPending &&
+          (sk == _submissionSubmitted ||
+              sk == _submissionAccepted ||
+              sk == _submissionReturned)) {
+        return true;
+      }
+      if (_selectedSubmissionFilters.contains(_submissionSubmitted) &&
+          tk == _submissionSubmitted &&
+          (sk == _submissionAccepted ||
+              sk == _submissionReturned ||
+              sk == _submissionPending)) {
+        return true;
+      }
+      if (_selectedSubmissionFilters.contains(_submissionAccepted) &&
+          tk == _submissionAccepted &&
+          (sk == _submissionSubmitted ||
+              sk == _submissionReturned ||
+              sk == _submissionPending)) {
+        return true;
+      }
+      if (_selectedSubmissionFilters.contains(_submissionReturned) &&
+          tk == _submissionReturned &&
+          (sk == _submissionSubmitted ||
+              sk == _submissionAccepted ||
+              sk == _submissionPending)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Completed without Incomplete: never show a task row for an Incomplete parent (only Completed task rows and Completed sub-task rows).
+  bool _customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(Task t) {
+    if (!t.isSingularTableRow || !widget.customizedFlat) return false;
+    if (!_overviewCompletedOnlyWithoutIncomplete) return false;
+    return _singularTaskIncomplete(t);
   }
 
   /// On my plate as assignee — dark blue chip when selected.
@@ -951,6 +1032,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         } else {
           for (final s in subsNonDeleted) {
             if (s.overdue != 'Yes') continue;
+            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
             if (!searchActive) {
               if (_rowPassesCreateDateForCustomized(t, s)) {
                 out.add(_CustomizedFlatEntry.subtask(t, s));
@@ -968,10 +1050,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       if (!searchActive) {
         final subsInRange = subsNonDeleted
             .where((s) => _rowPassesCreateDateForCustomized(t, s))
+            .where((s) => !_customizedFlatShouldOmitSubtaskRow(t, s))
             .toList();
         final taskInRange = _rowPassesCreateDateForCustomized(t, null);
         if (!taskInRange && subsInRange.isEmpty) continue;
-        out.add(_CustomizedFlatEntry.task(t));
+        if (taskInRange &&
+            !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
+          out.add(_CustomizedFlatEntry.task(t));
+        }
         for (final s in subsInRange) {
           out.add(_CustomizedFlatEntry.subtask(t, s));
         }
@@ -983,13 +1069,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           _rowPassesCreateDateForCustomized(t, null);
 
       if (taskRowAllowed) {
-        out.add(_CustomizedFlatEntry.task(t));
+        if (!_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
+          out.add(_CustomizedFlatEntry.task(t));
+        }
         continue;
       }
 
       for (final s in subsNonDeleted) {
         if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
         if (!_rowPassesCreateDateForCustomized(t, s)) continue;
+        if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
         out.add(_CustomizedFlatEntry.subtask(t, s));
       }
     }
@@ -2009,6 +2098,29 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       filteredDeletedTasks = _sortTasks(filteredDeletedTasks, state);
     }
 
+    List<Task> customizedFlatActiveTasks = filteredTasks;
+    if (widget.customizedFlat &&
+        _selectedTaskStatuses.contains(_statusCompleted) &&
+        !_selectedTaskStatuses.contains(_statusIncomplete)) {
+      final byId = {for (final t in filteredTasks) t.id: t};
+      Iterable<Task> scopeIt = tasksNonDeleted;
+      if (filterKey == 'assigned') {
+        scopeIt = scopeIt.where(isAssignedToMe);
+      } else if (filterKey == 'created') {
+        scopeIt = scopeIt.where(isCreatedByMe);
+      }
+      for (final t in scopeIt) {
+        if (!t.isSingularTableRow || byId.containsKey(t.id)) continue;
+        if (!_singularTaskIncomplete(t)) continue;
+        if (_selectedSubmissionFilters.isNotEmpty &&
+            !taskMatchesSubmissionSelection(t)) {
+          continue;
+        }
+        byId[t.id] = t;
+      }
+      customizedFlatActiveTasks = byId.values.toList();
+    }
+
     final pagedTasks = widget.customizedFlat
         ? const <Task>[]
         : _landingPageSlice(
@@ -2255,7 +2367,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   ? _buildCustomizedFlatFullColumn(
                       context,
                       state,
-                      filteredTasks,
+                      customizedFlatActiveTasks,
                       filteredDeletedTasks,
                     )
                   : Column(

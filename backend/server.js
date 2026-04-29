@@ -1428,17 +1428,20 @@ function taskStatusBlocksUrgentReminder(statusRaw) {
 }
 
 /**
- * AssigneeOverdueReminder / Subtask_AssigneeOverdueReminder (HK calendar past due_date):
- * send daily (same cron as other HK 09:00 jobs) only while submission is Pending or Returned;
- * stop when submission is Submitted.
+ * AssigneeOverdueReminder + Subtask_AssigneeOverdueReminder — after `isCalendarPastDue`
+ * (HK **today** > due_date). Same daily cron as other jobs: **09:00 Asia/Hong_Kong** (UTC+8).
+ *
+ * Task / sub-task rows:
+ * - **Pending** (and null/empty, treated like Pending): send.
+ * - **Submitted**: do not send.
+ * - **Returned**: send.
+ * - Any other value (e.g. Accepted): do not send.
  */
 function submissionAllowsAssigneeOverdueReminder(submissionRaw) {
-  if (submissionRaw == null || String(submissionRaw).trim() === '') {
-    return true;
-  }
-  const s = String(submissionRaw).trim().toLowerCase();
+  const s =
+    submissionRaw == null ? '' : String(submissionRaw).trim().toLowerCase();
   if (s === 'submitted') return false;
-  if (s === 'pending' || s === 'returned') return true;
+  if (s === 'pending' || s === 'returned' || s === '') return true;
   return false;
 }
 
