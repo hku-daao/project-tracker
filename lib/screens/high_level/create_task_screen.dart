@@ -10,14 +10,31 @@ import '../../models/team.dart';
 import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
-import '../../utils/attachment_upload_loading_overlay.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/home_navigation.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
+import '../task_detail_screen.dart';
+
+/// Where the user opened **Create task** (for back navigation).
+enum CreateTaskEntryPoint {
+  landing,
+  overview,
+  projectDetail,
+}
 
 class CreateTaskScreen extends StatefulWidget {
-  const CreateTaskScreen({super.key});
+  const CreateTaskScreen({
+    super.key,
+    this.projectId,
+    this.entryPoint = CreateTaskEntryPoint.landing,
+  });
+
+  /// When set, new task rows get [`task.project_id`].
+  final String? projectId;
+
+  final CreateTaskEntryPoint entryPoint;
 
   @override
   State<CreateTaskScreen> createState() => _CreateTaskScreenState();
@@ -385,7 +402,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     }
 
     setState(() => _submitting = true);
-    if (mounted) showAttachmentUploadPleaseWait(context);
     try {
     final localId = state.addTask(
       name: name,
@@ -419,6 +435,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         picStaffLookupKey: picKey,
         changeDueReason:
             needsDueReason ? _changeDueReasonController.text.trim() : null,
+        projectId: widget.projectId,
       );
       cloudErr = ins.error;
       insertedTaskId = ins.taskId;
@@ -545,19 +562,39 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         duration: const Duration(seconds: 4),
       );
     } else {
+      await _reloadTasksAfterCreate();
+      if (!mounted) return;
+      if (widget.entryPoint == CreateTaskEntryPoint.projectDetail) {
+        Navigator.of(context).pop();
+        return;
+      }
+      final tid = insertedTaskId?.trim();
+      if (tid != null &&
+          tid.isNotEmpty &&
+          widget.entryPoint != CreateTaskEntryPoint.projectDetail) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => TaskDetailScreen(
+              taskId: tid,
+              openedFromOverview:
+                  widget.entryPoint == CreateTaskEntryPoint.overview,
+              openedFromProjectDetail: false,
+            ),
+          ),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          content: const Text('Task is created'),
+        const SnackBar(
+          duration: Duration(seconds: 4),
+          content: Text('Task is created'),
           backgroundColor: Colors.green,
         ),
       );
-      await _reloadTasksAfterCreate();
       if (mounted) context.read<AppState>().requestSwitchToTasksTab();
     }
     } finally {
       if (mounted) {
-        hideAttachmentUploadPleaseWait(context);
         setState(() => _submitting = false);
       }
     }
@@ -592,17 +629,21 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
 
     super.build(context);
 
-    return AbsorbPointer(
+    return Stack(
+      children: [
+        AbsorbPointer(
           absorbing: _submitting,
           child: Opacity(
             opacity: _submitting ? 0.55 : 1,
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+              child: FocusTraversalGroup(
+                policy: OrderedTraversalPolicy(),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
             if (SupabaseConfig.isConfigured) ...[
               if (_pickerLoading) ...[
                 const LinearProgressIndicator(),
@@ -787,6 +828,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
             TextFormField(
               controller: _nameController,
               readOnly: _submitting,
+              textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 labelText: 'Task name',
                 hintText: 'Task name',
@@ -908,6 +950,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
               TextFormField(
                 controller: _changeDueReasonController,
                 readOnly: _submitting,
+                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: 'Reason',
                   hintText: 'Extend timeline reason',
@@ -928,6 +971,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
             TextFormField(
               controller: _descController,
               readOnly: _submitting,
+              textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 labelText: 'Description',
                 border: OutlineInputBorder(),
@@ -939,6 +983,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
             TextFormField(
               controller: _commentsController,
               readOnly: _submitting,
+              textInputAction: TextInputAction.done,
               decoration: const InputDecoration(
                 labelText: 'Comments',
                 hintText: 'Comments',
@@ -955,11 +1000,65 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                 child: Text(_submitting ? 'Creating…' : 'Create task'),
               ),
             ),
+            if (widget.entryPoint == CreateTaskEntryPoint.projectDetail) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+                child: const Text('Back to project'),
+              ),
+            ],
+            if (widget.entryPoint == CreateTaskEntryPoint.landing) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _submitting
+                    ? null
+                    : () => navigateToHomeTasksTab(context),
+                child: const Text('Back to home'),
+              ),
+            ],
+            if (widget.entryPoint == CreateTaskEntryPoint.overview) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _submitting
+                    ? null
+                    : () {
+                        Navigator.of(context).popUntil((route) {
+                          final n = route.settings.name;
+                          return n == kOverviewDashboardRouteName || route.isFirst;
+                        });
+                      },
+                child: const Text('Back to Overview'),
+              ),
+            ],
           ],
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
+        if (_submitting)
+          Positioned.fill(
+            child: AbsorbPointer(
+              child: Material(
+                color: Colors.black26,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Please wait...',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

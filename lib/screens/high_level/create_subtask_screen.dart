@@ -8,7 +8,6 @@ import '../../models/task.dart';
 import '../../priority.dart';
 import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
-import '../../utils/attachment_upload_loading_overlay.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/home_navigation.dart';
 import '../../utils/due_span_policy.dart';
@@ -45,10 +44,12 @@ class CreateSubtaskScreen extends StatefulWidget {
     super.key,
     required this.taskId,
     this.openedFromOverview = false,
+    this.openedFromProjectDetail = false,
   });
 
   final String taskId;
   final bool openedFromOverview;
+  final bool openedFromProjectDetail;
 
   @override
   State<CreateSubtaskScreen> createState() => _CreateSubtaskScreenState();
@@ -133,6 +134,21 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     }
     final leave = await _confirmLeaveCreateSubtaskDraft(context);
     if (mounted && leave) Navigator.of(context).pop();
+  }
+
+  Future<void> _handleBackToProject() async {
+    if (!_hasUnsavedDraft()) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      return;
+    }
+    final leave = await _confirmLeaveCreateSubtaskDraft(context);
+    if (!mounted || !leave) return;
+    Navigator.of(context).pop();
+    if (!mounted) return;
+    Navigator.of(context).pop();
   }
 
   Future<void> _handleBackToHome() async {
@@ -232,7 +248,6 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     }
     if (_submitting) return;
     setState(() => _submitting = true);
-    if (mounted) showAttachmentUploadPleaseWait(context);
     try {
       final slots = <String?>[];
       for (final aid in assigneeIds.take(10)) {
@@ -301,10 +316,6 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         }
       } catch (_) {}
       if (!mounted) return;
-      hideAttachmentUploadPleaseWait(context);
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 4),
@@ -315,10 +326,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
       SupabaseService.invalidateSubtasksCacheForTask(widget.taskId);
       Navigator.of(context).pop(true);
     } finally {
-      if (mounted && _submitting) {
-        hideAttachmentUploadPleaseWait(context);
-        setState(() => _submitting = false);
-      }
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -351,17 +359,21 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         title: const Text('Create sub-task'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: AbsorbPointer(
+      body: Stack(
+        children: [
+          AbsorbPointer(
             absorbing: _submitting,
             child: Opacity(
               opacity: _submitting ? 0.55 : 1,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+                child: FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                       Text(
                         'Parent: ${task.name}',
                         style: Theme.of(context).textTheme.titleSmall,
@@ -395,6 +407,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                       ],
                       TextFormField(
                         controller: _nameController,
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'Sub-task name',
                           border: OutlineInputBorder(),
@@ -519,6 +532,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                         TextFormField(
                           controller: _changeDueReasonController,
                           readOnly: _submitting,
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(
                             labelText: 'Reason',
                             hintText: 'Extend timeline reason',
@@ -538,6 +552,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _descController,
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'Description',
                           border: OutlineInputBorder(),
@@ -548,6 +563,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _commentController,
+                        textInputAction: TextInputAction.done,
                         decoration: const InputDecoration(
                           labelText: 'Comment',
                           border: OutlineInputBorder(),
@@ -568,22 +584,50 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                           ),
                         ),
                       ),
+                      if (widget.openedFromProjectDetail) ...[
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed:
+                              _submitting ? null : () => _handleBackToProject(),
+                          child: const Text('Back to project'),
+                        ),
+                      ],
                       const SizedBox(height: 12),
-                      TextButton.icon(
+                      TextButton(
                         onPressed:
                             _submitting ? null : () => _handlePopRequest(),
-                        icon: const Icon(Icons.arrow_back),
-                        label: const Text('Back to task'),
+                        child: const Text('Back to task'),
                       ),
-                      TextButton.icon(
+                      TextButton(
                         onPressed:
                             _submitting ? null : () => _handleBackToHome(),
-                        icon: const Icon(Icons.arrow_back),
-                        label: Text(
+                        child: Text(
                           widget.openedFromOverview
                               ? 'Back to Overview'
                               : 'Back to home',
                         ),
+                      ),
+                    ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_submitting)
+          Positioned.fill(
+            child: AbsorbPointer(
+              child: Material(
+                color: Colors.black26,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Please wait...',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ],
                   ),
@@ -591,6 +635,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
               ),
             ),
           ),
+        ],
+      ),
       ),
     );
   }

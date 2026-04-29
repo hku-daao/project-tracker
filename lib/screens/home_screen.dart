@@ -13,6 +13,7 @@ import '../../web_deep_link.dart';
 import '../../widgets/project_tracker_drawer.dart';
 import '../services/startup_view_storage.dart';
 import 'high_level/initiative_list_screen.dart';
+import 'high_level/create_project_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
 
@@ -107,6 +108,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Hides the FAB while scrolling down; shows again on scroll up or when scrolling stops.
   bool _createTaskFabVisible = true;
 
+  /// Secondary actions for Create task / Create project.
+  bool _createFabExpanded = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -131,11 +135,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openCreateTaskScreen() {
+    setState(() => _createFabExpanded = false);
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
           appBar: AppBar(title: const Text('Create task')),
-          body: const CreateTaskScreen(),
+          body: const CreateTaskScreen(
+            entryPoint: CreateTaskEntryPoint.landing,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openCreateProjectScreen() {
+    setState(() => _createFabExpanded = false);
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Create project')),
+          body: const CreateProjectScreen(openedFromOverview: false),
         ),
       ),
     );
@@ -278,42 +297,48 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (!SupabaseConfig.isConfigured)
-            Card(
-              margin: const EdgeInsets.all(8),
-              color: Colors.amber.shade100,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.storage, color: Colors.amber.shade900),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Supabase URL/key not set (${AppEnvironment.label}) — nothing is saved to the cloud. '
-                        'For testing: set _testingAnonKey in supabase_config.dart or use '
-                        '--dart-define=SUPABASE_ANON_KEY=.... See docs/ENVIRONMENTS.md.',
-                        style: TextStyle(
-                          color: Colors.amber.shade900,
-                          fontSize: 13,
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          if (_createFabExpanded) setState(() => _createFabExpanded = false);
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!SupabaseConfig.isConfigured)
+              Card(
+                margin: const EdgeInsets.all(8),
+                color: Colors.amber.shade100,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.storage, color: Colors.amber.shade900),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Supabase URL/key not set (${AppEnvironment.label}) — nothing is saved to the cloud. '
+                          'For testing: set _testingAnonKey in supabase_config.dart or use '
+                          '--dart-define=SUPABASE_ANON_KEY=.... See docs/ENVIRONMENTS.md.',
+                          style: TextStyle(
+                            color: Colors.amber.shade900,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
+            Expanded(
+              child: NotificationListener<ScrollNotification>(
+                onNotification: _onLandingScrollNotification,
+                child: const InitiativeListScreen(),
+              ),
             ),
-          Expanded(
-            child: NotificationListener<ScrollNotification>(
-              onNotification: _onLandingScrollNotification,
-              child: const InitiativeListScreen(),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
       floatingActionButton: AnimatedOpacity(
         opacity: _createTaskFabVisible ? 1 : 0,
@@ -323,10 +348,37 @@ class _HomeScreenState extends State<HomeScreen> {
           ignoring: !_createTaskFabVisible,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: FloatingActionButton.extended(
-              onPressed: _openCreateTaskScreen,
-              icon: const Icon(Icons.add),
-              label: const Text('Create task'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_createFabExpanded) ...[
+                  FloatingActionButton.extended(
+                    heroTag: 'fab_create_project_home',
+                    onPressed: _openCreateProjectScreen,
+                    icon: const Icon(Icons.folder_special_outlined),
+                    label: const Text('Create project'),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton.extended(
+                    heroTag: 'fab_create_task_home_sub',
+                    onPressed: _openCreateTaskScreen,
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Create task'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                FloatingActionButton(
+                  heroTag: 'fab_create_main_home',
+                  tooltip:
+                      _createFabExpanded ? 'Close' : 'Create task or project',
+                  onPressed: () =>
+                      setState(() => _createFabExpanded = !_createFabExpanded),
+                  child: Icon(
+                    _createFabExpanded ? Icons.close : Icons.more_vert,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -347,6 +399,7 @@ class CustomizedDashboardPage extends StatefulWidget {
 
 class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
   bool _createTaskFabVisible = true;
+  bool _createFabExpanded = false;
   bool _preferCustomizedLoaded = false;
   bool _preferCustomized = false;
 
@@ -383,11 +436,26 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
   }
 
   void _openCreateTaskScreen() {
+    setState(() => _createFabExpanded = false);
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (context) => Scaffold(
           appBar: AppBar(title: const Text('Create task')),
-          body: const CreateTaskScreen(),
+          body: const CreateTaskScreen(
+            entryPoint: CreateTaskEntryPoint.overview,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openCreateProjectScreen() {
+    setState(() => _createFabExpanded = false);
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Create project')),
+          body: const CreateProjectScreen(openedFromOverview: true),
         ),
       ),
     );
@@ -509,9 +577,15 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
         ],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: NotificationListener<ScrollNotification>(
-        onNotification: _onCustomizedScrollNotification,
-        child: const InitiativeListScreen(customizedFlat: true),
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          if (_createFabExpanded) setState(() => _createFabExpanded = false);
+        },
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _onCustomizedScrollNotification,
+          child: const InitiativeListScreen(customizedFlat: true),
+        ),
       ),
       floatingActionButton: AnimatedOpacity(
         opacity: _createTaskFabVisible ? 1 : 0,
@@ -521,10 +595,37 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
           ignoring: !_createTaskFabVisible,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: FloatingActionButton.extended(
-              onPressed: _openCreateTaskScreen,
-              icon: const Icon(Icons.add),
-              label: const Text('Create task'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_createFabExpanded) ...[
+                  FloatingActionButton.extended(
+                    heroTag: 'fab_create_project_ov',
+                    onPressed: _openCreateProjectScreen,
+                    icon: const Icon(Icons.folder_special_outlined),
+                    label: const Text('Create project'),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton.extended(
+                    heroTag: 'fab_create_task_ov_sub',
+                    onPressed: _openCreateTaskScreen,
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Create task'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                FloatingActionButton(
+                  heroTag: 'fab_create_main_ov',
+                  tooltip:
+                      _createFabExpanded ? 'Close' : 'Create task or project',
+                  onPressed: () =>
+                      setState(() => _createFabExpanded = !_createFabExpanded),
+                  child: Icon(
+                    _createFabExpanded ? Icons.close : Icons.more_vert,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

@@ -8,11 +8,13 @@ import 'package:intl/intl.dart';
 import '../../app_state.dart';
 import '../../models/initiative.dart';
 import '../../models/singular_subtask.dart';
+import '../../models/project_record.dart';
 import '../../models/task.dart';
 import '../../models/assignee.dart';
 import '../../models/team.dart';
 import '../../config/supabase_config.dart';
 import '../../priority.dart';
+import '../../services/landing_list_sections_storage.dart';
 import '../../services/landing_task_filters_storage.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/hk_time.dart';
@@ -20,6 +22,7 @@ import '../../widgets/task_list_card.dart';
 import '../../widgets/singular_subtask_row_card.dart';
 import '../../utils/subtask_list_sort.dart';
 import 'initiative_detail_screen.dart';
+import 'project_detail_screen.dart';
 import 'subtask_detail_screen.dart';
 
 /// Landing task list sort column (persisted as [storageKey]).
@@ -101,6 +104,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   String? _filterAssigneeMenuTeamId;
   final Set<String> _filterAssigneeMenuStaffIds = {};
 
+  /// "Filter by PIC" — [`task.pic`] as assignee key.
+  String? _filterPicMenuTeamId;
+  final Set<String> _filterPicMenuStaffIds = {};
+
   /// "Filter by creator" submenu: roster team, then multi-select teammates (tasks by creator).
   String? _filterCreatorMenuTeamId;
   final Set<String> _filterCreatorMenuStaffIds = {};
@@ -108,6 +115,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   late final ExpansibleController _filterAssigneeRootController;
   late final ExpansibleController _filterAssigneeTeamController;
   late final ExpansibleController _filterAssigneeTeammateTileController;
+  late final ExpansibleController _filterPicRootController;
+  late final ExpansibleController _filterPicTeamController;
+  late final ExpansibleController _filterPicTeammateTileController;
   late final ExpansibleController _filterCreatorRootController;
   late final ExpansibleController _filterCreatorTeamController;
   late final ExpansibleController _filterCreatorTeammateTileController;
@@ -134,6 +144,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   final TextEditingController _taskSearchController = TextEditingController();
   final MenuController _filterMenuController = MenuController();
   bool _remindersExpanded = false;
+
+  bool _landingProjectsExpanded = true;
+  bool _landingTasksExpanded = true;
+  bool _overviewProjectsExpanded = true;
+  bool _overviewTasksSubtasksExpanded = true;
 
   /// Single-column sort for task lists on the landing page (null = default order).
   TaskListSortColumn? _taskSortColumn;
@@ -406,6 +421,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _filterOverdueOnly ||
       _selectedSubmissionFilters.isNotEmpty ||
       _filterAssigneeMenuStaffIds.isNotEmpty ||
+      _filterPicMenuStaffIds.isNotEmpty ||
       _filterCreatorMenuStaffIds.isNotEmpty ||
       _filterCreateDateEngaged ||
       _taskSearchController.text.trim().isNotEmpty;
@@ -418,6 +434,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _filterOverdueOnly = false;
       _filterAssigneeMenuTeamId = null;
       _filterAssigneeMenuStaffIds.clear();
+      _filterPicMenuTeamId = null;
+      _filterPicMenuStaffIds.clear();
       _filterCreatorMenuTeamId = null;
       _filterCreatorMenuStaffIds.clear();
       _filterCreateDateStart = null;
@@ -443,6 +461,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterAssigneeRootController.collapse();
     _filterAssigneeTeamController.collapse();
     _filterAssigneeTeammateTileController.collapse();
+    _filterPicRootController.collapse();
+    _filterPicTeamController.collapse();
+    _filterPicTeammateTileController.collapse();
     _filterCreatorRootController.collapse();
     _filterCreatorTeamController.collapse();
     _filterCreatorTeammateTileController.collapse();
@@ -484,8 +505,20 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// After changing Status or Submission from a checkbox, hide roster panels if used.
   void _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange() {
     _collapseAssigneeFilterExpansionIfEngaged();
+    _collapsePicFilterExpansionIfEngaged();
     _collapseCreatorFilterExpansionIfEngaged();
   }
+
+  void _collapsePicFilterExpansionIfEngaged() {
+    if (!_filterPicRosterEngaged) return;
+    _filterPicRootController.collapse();
+    _filterPicTeamController.collapse();
+    _filterPicTeammateTileController.collapse();
+  }
+
+  bool get _filterPicRosterEngaged =>
+      (_filterPicMenuTeamId != null && _filterPicMenuTeamId!.isNotEmpty) ||
+      _filterPicMenuStaffIds.isNotEmpty;
 
   /// Accordion: only one of Assignee / Creator / Status / Overdue / Submission stays expanded.
   void _onTopLevelFilterSectionExpanded(String openedId) {
@@ -493,6 +526,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _filterAssigneeRootController.collapse();
       _filterAssigneeTeamController.collapse();
       _filterAssigneeTeammateTileController.collapse();
+    }
+    if (openedId != 'pic') {
+      _filterPicRootController.collapse();
+      _filterPicTeamController.collapse();
+      _filterPicTeammateTileController.collapse();
     }
     if (openedId != 'creator') {
       _filterCreatorRootController.collapse();
@@ -515,7 +553,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       if (openedNestedId != 'teammate') {
         _filterAssigneeTeammateTileController.collapse();
       }
-    } else {
+    } else if (rootId == 'pic') {
+      if (openedNestedId != 'team') _filterPicTeamController.collapse();
+      if (openedNestedId != 'teammate') {
+        _filterPicTeammateTileController.collapse();
+      }
+    } else if (rootId == 'creator') {
       if (openedNestedId != 'team') _filterCreatorTeamController.collapse();
       if (openedNestedId != 'teammate') {
         _filterCreatorTeammateTileController.collapse();
@@ -526,6 +569,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// One-line summary inside the closed "Filter" control.
   String _filterMenuSummaryLine(AppState state) {
     final parts = <String>[];
+    if (_filterPicMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterPicMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('PIC: ${names.join(', ')}');
+    }
     if (_filterAssigneeMenuStaffIds.isNotEmpty) {
       final names =
           _filterAssigneeMenuStaffIds
@@ -596,8 +647,15 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (tokens.isEmpty) return false;
     final name = t.name.toLowerCase();
     final desc = t.description.toLowerCase();
+    final pn = (t.projectName ?? '').toLowerCase();
+    final pd = (t.projectDescription ?? '').toLowerCase();
     for (final tkn in tokens) {
-      if (!name.contains(tkn) && !desc.contains(tkn)) return false;
+      if (!name.contains(tkn) &&
+          !desc.contains(tkn) &&
+          !pn.contains(tkn) &&
+          !pd.contains(tkn)) {
+        return false;
+      }
     }
     return true;
   }
@@ -666,11 +724,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         serverMap != null && _subtaskServerQueryNormalized == norm;
     final name = t.name.toLowerCase();
     final desc = t.description.toLowerCase();
+    final pn = (t.projectName ?? '').toLowerCase();
+    final pd = (t.projectDescription ?? '').toLowerCase();
     final subBlob = t.isSingularTableRow
         ? (_subtaskSearchBlobByTaskId[t.id] ?? '')
         : '';
     for (final token in tokens) {
-      final inTask = name.contains(token) || desc.contains(token);
+      final inTask = name.contains(token) ||
+          desc.contains(token) ||
+          pn.contains(token) ||
+          pd.contains(token);
       final inSub = subBlob.contains(token);
       final inSubServer =
           serverReady && (serverMap[token]?.contains(t.id) ?? false);
@@ -1240,6 +1303,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           cardBackgroundColor: tint,
           showCustomizedLayout: true,
           parentTaskName: e.task.name,
+          parentProjectName: e.task.projectName,
           onTap: () async {
             final changed = await Navigator.of(context).push<bool>(
               MaterialPageRoute<bool>(
@@ -1260,16 +1324,85 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
+  List<ProjectRecord> _filterProjectsForLanding(
+    List<ProjectRecord> projects,
+    AppState state,
+    String filterKey,
+  ) {
+    final sid = state.userStaffId?.trim();
+    Iterable<ProjectRecord> it = projects;
+    if (filterKey == 'assigned') {
+      if (sid == null || sid.isEmpty) return [];
+      it = it.where((p) => p.assigneeStaffUuids.contains(sid));
+    } else if (filterKey == 'created') {
+      if (sid == null || sid.isEmpty) return [];
+      it = it.where((p) => p.createByStaffUuid == sid);
+    }
+    final list = it.toList();
+    final raw = _taskSearchController.text.trim();
+    if (raw.isEmpty) return list;
+    final q = raw.toLowerCase();
+    return list
+        .where((p) =>
+            p.name.toLowerCase().contains(q) ||
+            p.description.toLowerCase().contains(q))
+        .toList();
+  }
+
+  Widget _buildProjectSummaryCard(
+    BuildContext context,
+    ProjectRecord p,
+  ) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 1,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ProjectDetailScreen(
+                projectId: p.id,
+                openedFromLanding: !widget.customizedFlat,
+                openedFromOverview: widget.customizedFlat,
+              ),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                p.name,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                p.status,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCustomizedFlatFullColumn(
     BuildContext context,
     AppState state,
     List<Task> filteredTasks,
     List<Task> filteredDeletedTasks,
+    List<ProjectRecord> filteredProjects,
   ) {
     return FutureBuilder<Map<String, List<SingularSubtask>>>(
       key: ValueKey(
         '${filteredTasks.map((t) => t.id).join('|')}'
         '_${filteredDeletedTasks.map((t) => t.id).join('|')}'
+        '_${filteredProjects.map((p) => p.id).join('|')}'
         '_$_tasksPageIndex$_tasksPageSize$_deletedTasksPageIndex'
         '_$_customizedFlatListRefreshSeq'
         '_${_taskSearchController.text}'
@@ -1296,7 +1429,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         );
         delEntries = _sortCustomizedFlatEntries(delEntries, state);
 
-        if (activeEntries.isEmpty && delEntries.isEmpty) {
+        if (activeEntries.isEmpty &&
+            delEntries.isEmpty &&
+            filteredProjects.isEmpty) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -1333,25 +1468,55 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     children: [
-                      if (filteredTasks.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16, bottom: 8),
-                          child: Text(
-                            'Tasks & sub-tasks (${activeEntries.length})',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
+                      if (filteredProjects.isNotEmpty) ...[
+                        _collapsibleSectionHeader(
+                          context: context,
+                          title:
+                              'Projects (${filteredProjects.length})',
+                          expanded: _overviewProjectsExpanded,
+                          padding: const EdgeInsets.only(top: 8, bottom: 8),
+                          onToggle: () async {
+                            final next = !_overviewProjectsExpanded;
+                            setState(() => _overviewProjectsExpanded = next);
+                            await _persistSectionExpanded(
+                              LandingListSectionKey.overviewProjects,
+                              next,
+                            );
+                          },
+                        ),
+                        if (_overviewProjectsExpanded)
+                          ...filteredProjects.map(
+                            (p) => _buildProjectSummaryCard(context, p),
                           ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 12),
-                          child: PicTeamColorLegend(),
-                        ),
                       ],
-                      ...pagedActive.map(
-                        (e) => _customizedEntryTile(context, state, e),
-                      ),
+                      if (filteredTasks.isNotEmpty) ...[
+                        _collapsibleSectionHeader(
+                          context: context,
+                          title:
+                              'Tasks & sub-tasks (${activeEntries.length})',
+                          expanded: _overviewTasksSubtasksExpanded,
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          onToggle: () async {
+                            final next = !_overviewTasksSubtasksExpanded;
+                            setState(
+                              () => _overviewTasksSubtasksExpanded = next,
+                            );
+                            await _persistSectionExpanded(
+                              LandingListSectionKey.overviewTasksSubtasks,
+                              next,
+                            );
+                          },
+                        ),
+                        if (_overviewTasksSubtasksExpanded) ...[
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: PicTeamColorLegend(),
+                          ),
+                          ...pagedActive.map(
+                            (e) => _customizedEntryTile(context, state, e),
+                          ),
+                        ],
+                      ],
                       if (filteredDeletedTasks.isNotEmpty) ...[
                         Padding(
                           padding: const EdgeInsets.only(top: 24, bottom: 8),
@@ -1380,7 +1545,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 ),
               ),
             ),
-            if (activeEntries.isNotEmpty || delEntries.isNotEmpty)
+            if ((activeEntries.isNotEmpty && _overviewTasksSubtasksExpanded) ||
+                delEntries.isNotEmpty)
               Material(
                 elevation: 6,
                 shadowColor: Colors.black26,
@@ -1398,7 +1564,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (activeEntries.isNotEmpty)
+                            if (activeEntries.isNotEmpty &&
+                                _overviewTasksSubtasksExpanded)
                               _buildLandingTaskPaginationBar(
                                 context: context,
                                 totalCount: activeEntries.length,
@@ -1409,6 +1576,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                 showPageSizeDropdown: true,
                               ),
                             if (activeEntries.isNotEmpty &&
+                                _overviewTasksSubtasksExpanded &&
                                 delEntries.isNotEmpty)
                               const Divider(height: 12),
                             if (delEntries.isNotEmpty)
@@ -1450,6 +1618,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterAssigneeRootController = ExpansibleController();
     _filterAssigneeTeamController = ExpansibleController();
     _filterAssigneeTeammateTileController = ExpansibleController();
+    _filterPicRootController = ExpansibleController();
+    _filterPicTeamController = ExpansibleController();
+    _filterPicTeammateTileController = ExpansibleController();
     _filterCreatorRootController = ExpansibleController();
     _filterCreatorTeamController = ExpansibleController();
     _filterCreatorTeammateTileController = ExpansibleController();
@@ -1463,7 +1634,80 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _appStateListenerRef = context.read<AppState>();
       _appStateListenerRef!.addListener(_onAppStateForDeferredTeamRestore);
       _loadLandingFilters();
+      _loadListSectionPrefs();
     });
+  }
+
+  Future<void> _loadListSectionPrefs() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final lp = await LandingListSectionsStorage.loadExpanded(
+      uid: uid,
+      key: LandingListSectionKey.landingProjects,
+    );
+    final lt = await LandingListSectionsStorage.loadExpanded(
+      uid: uid,
+      key: LandingListSectionKey.landingTasks,
+    );
+    final op = await LandingListSectionsStorage.loadExpanded(
+      uid: uid,
+      key: LandingListSectionKey.overviewProjects,
+    );
+    final ot = await LandingListSectionsStorage.loadExpanded(
+      uid: uid,
+      key: LandingListSectionKey.overviewTasksSubtasks,
+    );
+    if (!mounted) return;
+    setState(() {
+      _landingProjectsExpanded = lp;
+      _landingTasksExpanded = lt;
+      _overviewProjectsExpanded = op;
+      _overviewTasksSubtasksExpanded = ot;
+    });
+  }
+
+  Future<void> _persistSectionExpanded(
+    LandingListSectionKey key,
+    bool expanded,
+  ) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    await LandingListSectionsStorage.saveExpanded(
+      uid: uid,
+      key: key,
+      expanded: expanded,
+    );
+  }
+
+  Widget _collapsibleSectionHeader({
+    required BuildContext context,
+    required String title,
+    required bool expanded,
+    required VoidCallback onToggle,
+    EdgeInsets padding = const EdgeInsets.only(top: 16, bottom: 8),
+  }) {
+    return Padding(
+      padding: padding,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+          ),
+          IconButton(
+            tooltip: expanded ? 'Collapse' : 'Expand',
+            onPressed: onToggle,
+            icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
   }
 
   void _onSearchTextChangedForPersist() {
@@ -1585,6 +1829,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _filterAssigneeMenuTeamId = null;
       _filterAssigneeMenuStaffIds.clear();
     }
+    final pt = data.filterPicTeamId?.trim();
+    if (pt != null && pt.isNotEmpty && validTeamIds.contains(pt)) {
+      _filterPicMenuTeamId = pt;
+      _filterPicMenuStaffIds.clear();
+      final picMembers = _getTeamMembers(state, pt).map((e) => e.id).toSet();
+      for (final id in data.filterPicStaffIds) {
+        if (picMembers.contains(id)) _filterPicMenuStaffIds.add(id);
+      }
+    } else {
+      _filterPicMenuTeamId = null;
+      _filterPicMenuStaffIds.clear();
+    }
     final ct = data.filterCreatorTeamId?.trim();
     if (ct != null && ct.isNotEmpty && validTeamIds.contains(ct)) {
       _filterCreatorMenuTeamId = ct;
@@ -1622,6 +1878,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         sortAscending: _taskSortAscending,
         filterAssigneeTeamId: _filterAssigneeMenuTeamId,
         filterAssigneeStaffIds: _filterAssigneeMenuStaffIds.toList(),
+        filterPicTeamId: _filterPicMenuTeamId,
+        filterPicStaffIds: _filterPicMenuStaffIds.toList(),
         filterCreatorTeamId: _filterCreatorMenuTeamId,
         filterCreatorStaffIds: _filterCreatorMenuStaffIds.toList(),
         filterCreateDateStartMs: _filterCreateDateStart?.millisecondsSinceEpoch,
@@ -1639,6 +1897,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterAssigneeRootController.dispose();
     _filterAssigneeTeamController.dispose();
     _filterAssigneeTeammateTileController.dispose();
+    _filterPicRootController.dispose();
+    _filterPicTeamController.dispose();
+    _filterPicTeammateTileController.dispose();
     _filterCreatorRootController.dispose();
     _filterCreatorTeamController.dispose();
     _filterCreatorTeammateTileController.dispose();
@@ -1843,7 +2104,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       decoration: InputDecoration(
         labelText: 'Search',
         hintText:
-            'Search task, description, sub-task, sub-task description',
+            'Project, project description, task, task description, sub-task, sub-task description',
         border: const OutlineInputBorder(),
         isDense: true,
         prefixIcon: const Icon(Icons.search),
@@ -1914,6 +2175,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       tasks = tasks
           .where((t) => t.assigneeIds.any(_filterAssigneeMenuStaffIds.contains))
           .toList();
+    }
+    if (_filterPicMenuStaffIds.isNotEmpty) {
+      tasks = tasks.where((t) {
+        final p = t.pic?.trim();
+        return p != null &&
+            p.isNotEmpty &&
+            _filterPicMenuStaffIds.contains(p);
+      }).toList();
     }
     if (_filterCreatorMenuStaffIds.isNotEmpty) {
       tasks = tasks
@@ -2119,6 +2388,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         byId[t.id] = t;
       }
       customizedFlatActiveTasks = byId.values.toList();
+    }
+
+    List<ProjectRecord> filteredProjects =
+        _filterProjectsForLanding(state.projects, state, filterKey);
+    if (_filterOverdueOnly) {
+      filteredProjects = [];
     }
 
     final pagedTasks = widget.customizedFlat
@@ -2360,6 +2635,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         ),
         Expanded(
           child: filteredInitiatives.isEmpty &&
+                  filteredProjects.isEmpty &&
                   filteredTasks.isEmpty &&
                   filteredDeletedTasks.isEmpty
               ? Center(child: Text(_emptyListMessage()))
@@ -2369,6 +2645,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                       state,
                       customizedFlatActiveTasks,
                       filteredDeletedTasks,
+                      filteredProjects,
                     )
                   : Column(
                       children: [
@@ -2406,29 +2683,67 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                       ),
                                     ),
                                   ],
+                                  if (filteredProjects.isNotEmpty) ...[
+                                    _collapsibleSectionHeader(
+                                      context: context,
+                                      title:
+                                          'Projects (${filteredProjects.length})',
+                                      expanded: _landingProjectsExpanded,
+                                      padding: EdgeInsets.only(
+                                        top: filteredInitiatives.isNotEmpty
+                                            ? 16
+                                            : 8,
+                                        bottom: 8,
+                                      ),
+                                      onToggle: () async {
+                                        final next = !_landingProjectsExpanded;
+                                        setState(
+                                          () => _landingProjectsExpanded = next,
+                                        );
+                                        await _persistSectionExpanded(
+                                          LandingListSectionKey.landingProjects,
+                                          next,
+                                        );
+                                      },
+                                    ),
+                                    if (_landingProjectsExpanded)
+                                      ...filteredProjects.map(
+                                        (p) => _buildProjectSummaryCard(
+                                          context,
+                                          p,
+                                        ),
+                                      ),
+                                  ],
                                   if (filteredTasks.isNotEmpty) ...[
-                                    Padding(
+                                    _collapsibleSectionHeader(
+                                      context: context,
+                                      title:
+                                          'Tasks (${filteredTasks.length})',
+                                      expanded: _landingTasksExpanded,
                                       padding: const EdgeInsets.only(
                                         top: 16,
                                         bottom: 8,
                                       ),
-                                      child: Text(
-                                        'Tasks (${filteredTasks.length})',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
+                                      onToggle: () async {
+                                        final next = !_landingTasksExpanded;
+                                        setState(
+                                          () => _landingTasksExpanded = next,
+                                        );
+                                        await _persistSectionExpanded(
+                                          LandingListSectionKey.landingTasks,
+                                          next,
+                                        );
+                                      },
+                                    ),
+                                    if (_landingTasksExpanded) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 12),
+                                        child: PicTeamColorLegend(),
                                       ),
-                                    ),
-                                    const Padding(
-                                      padding: EdgeInsets.only(bottom: 12),
-                                      child: PicTeamColorLegend(),
-                                    ),
-                                    ...pagedTasks.map(
-                                      (t) => TaskListCard(task: t),
-                                    ),
+                                      ...pagedTasks.map(
+                                        (t) => TaskListCard(task: t),
+                                      ),
+                                    ],
                                   ],
                                   if (filteredDeletedTasks.isNotEmpty) ...[
                                     Padding(
@@ -2461,7 +2776,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                             ),
                           ),
                         ),
-                        if (filteredTasks.isNotEmpty ||
+                        if ((filteredTasks.isNotEmpty &&
+                                _landingTasksExpanded) ||
                             filteredDeletedTasks.isNotEmpty)
                           Material(
                         elevation: 6,
@@ -2486,7 +2802,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
-                                    if (filteredTasks.isNotEmpty)
+                                    if (filteredTasks.isNotEmpty &&
+                                        _landingTasksExpanded)
                                       _buildLandingTaskPaginationBar(
                                         context: context,
                                         totalCount: filteredTasks.length,
@@ -2497,6 +2814,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         showPageSizeDropdown: true,
                                       ),
                                     if (filteredTasks.isNotEmpty &&
+                                        _landingTasksExpanded &&
                                         filteredDeletedTasks.isNotEmpty)
                                       const Divider(height: 12),
                                     if (filteredDeletedTasks.isNotEmpty)
@@ -2954,15 +3272,60 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     }
 
     final assigneeTeamField = rosterTeamIdOrNull(_filterAssigneeMenuTeamId);
+    final picTeamField = rosterTeamIdOrNull(_filterPicMenuTeamId);
     final creatorTeamField = rosterTeamIdOrNull(_filterCreatorMenuTeamId);
     final assigneeMembers = assigneeTeamField == null
         ? <Assignee>[]
         : _getTeamMembers(state, assigneeTeamField);
+    final picMembers = picTeamField == null
+        ? <Assignee>[]
+        : _getTeamMembers(state, picTeamField);
     final creatorMembers = creatorTeamField == null
         ? <Assignee>[]
         : _getTeamMembers(state, creatorTeamField);
 
     return [
+      _landingTeamStaffFilterExpansion(
+        context,
+        sectionTitle: 'PIC',
+        topSectionId: 'pic',
+        rootController: _filterPicRootController,
+        teamController: _filterPicTeamController,
+        teamsSorted: teamsSorted,
+        rosterTeamId: picTeamField,
+        teammates: picMembers,
+        staffIds: _filterPicMenuStaffIds,
+        teammateExpansionController: _filterPicTeammateTileController,
+        onSelectTeam: (teamId) {
+          setState(() {
+            _filterPicMenuTeamId = teamId;
+            _filterPicMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onClearAllStaff: () {
+          setState(() {
+            _filterPicMenuStaffIds.clear();
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+        onStaffSelectionChanged: (id, selected) {
+          setState(() {
+            if (selected) {
+              _filterPicMenuStaffIds.add(id);
+            } else {
+              _filterPicMenuStaffIds.remove(id);
+            }
+            _tasksPageIndex = 0;
+            _deletedTasksPageIndex = 0;
+          });
+          _persistLandingFilters();
+        },
+      ),
       _landingTeamStaffFilterExpansion(
         context,
         sectionTitle: 'Assignee',

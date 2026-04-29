@@ -5,6 +5,7 @@ import 'models/staff_team_lookup.dart';
 import 'models/comment.dart';
 import 'models/deleted_record.dart';
 import 'models/initiative.dart';
+import 'models/project_record.dart';
 import 'models/milestone.dart';
 import 'models/sub_task.dart';
 import 'models/task.dart';
@@ -29,6 +30,7 @@ class AppState extends ChangeNotifier {
   List<Team> get teams => List.unmodifiable(_teams);
 
   final List<Initiative> _initiatives = [];
+  final List<ProjectRecord> _projects = [];
   final List<Task> _tasks = [];
   final List<TaskComment> _comments = [];
   final List<Milestone> _milestones = [];
@@ -227,6 +229,16 @@ class AppState extends ChangeNotifier {
   List<Assignee> get assignees => List.unmodifiable(_assignees);
 
   List<Initiative> get initiatives => List.unmodifiable(_initiatives);
+
+  List<ProjectRecord> get projects => List.unmodifiable(_projects);
+
+  /// Replace projects from Supabase after fetch or create.
+  void applyProjects(List<ProjectRecord> list) {
+    _projects
+      ..clear()
+      ..addAll(list);
+    notifyListeners();
+  }
 
   /// Replace initiatives (and related sub-tasks/comments) from Supabase after fetch.
   void applyInitiativesFromSupabase(InitiativesLoadResult result) {

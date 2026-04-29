@@ -15,6 +15,8 @@ class LandingTaskFilters {
     this.sortAscending = true,
     this.filterAssigneeTeamId,
     this.filterAssigneeStaffIds = const [],
+    this.filterPicTeamId,
+    this.filterPicStaffIds = const [],
     this.filterCreatorTeamId,
     this.filterCreatorStaffIds = const [],
     this.filterOverdueOnly = false,
@@ -30,6 +32,10 @@ class LandingTaskFilters {
   /// Team roster for "Filter by assignee" submenu; staff ids filter tasks/initiatives.
   final String? filterAssigneeTeamId;
   final List<String> filterAssigneeStaffIds;
+
+  /// Team roster for "Filter by PIC"; staff ids match [`task.pic`].
+  final String? filterPicTeamId;
+  final List<String> filterPicStaffIds;
 
   /// Team roster for "Filter by creator" submenu; staff ids filter tasks by [Task.createByAssigneeKey].
   final String? filterCreatorTeamId;
@@ -64,6 +70,8 @@ class LandingTaskFilters {
         'sortAscending': sortAscending,
         'filterAssigneeTeamId': filterAssigneeTeamId,
         'filterAssigneeStaffIds': filterAssigneeStaffIds,
+        'filterPicTeamId': filterPicTeamId,
+        'filterPicStaffIds': filterPicStaffIds,
         'filterCreatorTeamId': filterCreatorTeamId,
         'filterCreatorStaffIds': filterCreatorStaffIds,
         'filterCreateDateStartMs': filterCreateDateStartMs,
@@ -87,6 +95,10 @@ class LandingTaskFilters {
       filterAssigneeTeamId: j['filterAssigneeTeamId'] as String?,
       filterAssigneeStaffIds: List<String>.from(
         j['filterAssigneeStaffIds'] as List? ?? const [],
+      ),
+      filterPicTeamId: j['filterPicTeamId'] as String?,
+      filterPicStaffIds: List<String>.from(
+        j['filterPicStaffIds'] as List? ?? const [],
       ),
       filterCreatorTeamId: j['filterCreatorTeamId'] as String?,
       filterCreatorStaffIds: List<String>.from(

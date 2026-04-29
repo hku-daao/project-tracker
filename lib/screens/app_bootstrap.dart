@@ -120,6 +120,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
       if (appIdToTeamId.isNotEmpty) {
         state.setStaffAppIdToTeamIdMap(appIdToTeamId);
       }
+      final projects = await SupabaseService.fetchAllProjectsFromSupabase();
+      if (!mounted) return;
+      state.applyProjects(projects);
     } catch (e) {
       debugPrint('AppBootstrap: load tasks/deleted from Supabase: $e');
     }

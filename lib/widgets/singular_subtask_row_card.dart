@@ -18,6 +18,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
     /// Customized: **Sub-task:** + name, **Parent:** line, **Creator:** line.
     this.showCustomizedLayout = false,
     this.parentTaskName,
+    this.parentProjectName,
   });
 
   final SingularSubtask subtask;
@@ -27,6 +28,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
   final Color? cardBackgroundColor;
   final bool showCustomizedLayout;
   final String? parentTaskName;
+  final String? parentProjectName;
 
   @override
   Widget build(BuildContext context) {
@@ -89,6 +91,17 @@ class SingularSubtaskRowCard extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 'Parent: ${parentTaskName!.trim()}',
+                style: secondaryStyle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (showCustomizedLayout &&
+                (parentProjectName != null &&
+                    parentProjectName!.trim().isNotEmpty)) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Project: ${parentProjectName!.trim()}',
                 style: secondaryStyle,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,

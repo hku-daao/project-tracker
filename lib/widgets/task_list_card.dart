@@ -127,9 +127,13 @@ class TaskListCard extends StatefulWidget {
     /// Prefix title with **Task:** (Customized dashboard).
     this.showCustomizedTaskTitle = false,
     this.openedFromOverview = false,
+    this.onTaskTap,
   });
 
   final Task task;
+
+  /// When set, called instead of pushing [TaskDetailScreen] (e.g. project detail).
+  final VoidCallback? onTaskTap;
 
   /// Sub-tasks shown inline without tapping expand ([flatSubtasksAlwaysVisible]) — landing uses `false`.
   final bool flatSubtasksAlwaysVisible;
@@ -576,14 +580,15 @@ class _TaskListCardState extends State<TaskListCard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               InkWell(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => TaskDetailScreen(
-                      taskId: t.id,
-                      openedFromOverview: widget.openedFromOverview,
-                    ),
-                  ),
-                ),
+                onTap: widget.onTaskTap ??
+                    () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => TaskDetailScreen(
+                              taskId: t.id,
+                              openedFromOverview: widget.openedFromOverview,
+                            ),
+                          ),
+                        ),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                   child: Row(
@@ -643,6 +648,15 @@ class _TaskListCardState extends State<TaskListCard> {
                                 ],
                               ],
                             ),
+                            if ((t.projectName ?? '').trim().isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Project: ${t.projectName!.trim()}',
+                                style: listTextW500,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             if (officerNames.isNotEmpty)
                               Padding(

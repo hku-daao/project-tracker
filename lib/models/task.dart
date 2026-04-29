@@ -69,6 +69,15 @@ class Task {
   /// `Yes` / `No` from DB (`task.overdue`); aligns with [overdueDay] > 0.
   final String overdue;
 
+  /// Singular `task.project_id` → [`project`].
+  final String? projectId;
+
+  /// [`project.name`] when joined at load time (search / cards).
+  final String? projectName;
+
+  /// [`project.description`] when joined at load time (landing search).
+  final String? projectDescription;
+
   const Task({
     required this.id,
     this.teamId,
@@ -96,6 +105,9 @@ class Task {
     this.changeDueReason,
     this.overdueDay = 0,
     this.overdue = 'No',
+    this.projectId,
+    this.projectName,
+    this.projectDescription,
   });
 
   Task copyWith({
@@ -127,6 +139,10 @@ class Task {
     Object? changeDueReason = _unsetChangeDueReason,
     int? overdueDay,
     String? overdue,
+    String? projectId,
+    String? projectName,
+    String? projectDescription,
+    bool clearProject = false,
   }) {
     return Task(
       id: id ?? this.id,
@@ -159,6 +175,10 @@ class Task {
           : changeDueReason as String?,
       overdueDay: overdueDay ?? this.overdueDay,
       overdue: overdue ?? this.overdue,
+      projectId: clearProject ? null : (projectId ?? this.projectId),
+      projectName: clearProject ? null : (projectName ?? this.projectName),
+      projectDescription:
+          clearProject ? null : (projectDescription ?? this.projectDescription),
     );
   }
 

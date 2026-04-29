@@ -44,11 +44,19 @@ class TaskDetailScreen extends StatefulWidget {
   /// Pushed from Overview ([InitiativeListScreen.customizedFlat]) vs landing/home lists.
   final bool openedFromOverview;
 
+  /// When opened under [ProjectDetailScreen], show **Back to project** under Delete.
+  final bool openedFromProjectDetail;
+
+  /// Parent project id for navigation label (optional).
+  final String? projectIdForBack;
+
   const TaskDetailScreen({
     super.key,
     required this.taskId,
     this.commentAuthorAssigneeId,
     this.openedFromOverview = false,
+    this.openedFromProjectDetail = false,
+    this.projectIdForBack,
   });
 
   @override
@@ -87,6 +95,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         taskId: widget.taskId,
         commentAuthorAssigneeId: widget.commentAuthorAssigneeId,
         openedFromOverview: widget.openedFromOverview,
+        openedFromProjectDetail: widget.openedFromProjectDetail,
+        projectIdForBack: widget.projectIdForBack,
       );
     }
     return _LegacyTaskDetailView(
@@ -115,12 +125,16 @@ class SingularTaskDetailView extends StatefulWidget {
   final String taskId;
   final String? commentAuthorAssigneeId;
   final bool openedFromOverview;
+  final bool openedFromProjectDetail;
+  final String? projectIdForBack;
 
   const SingularTaskDetailView({
     super.key,
     required this.taskId,
     this.commentAuthorAssigneeId,
     this.openedFromOverview = false,
+    this.openedFromProjectDetail = false,
+    this.projectIdForBack,
   });
 
   @override
@@ -2133,7 +2147,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(task.name),
+        title: Text('Task: ${task.name}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Stack(
@@ -2146,9 +2160,11 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                 padding: const EdgeInsets.all(16),
                 child: Form(
                   key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+                  child: FocusTraversalGroup(
+                    policy: OrderedTraversalPolicy(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                       Card(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2173,6 +2189,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                   if (_isCreator(state, task)) ...[
                                     TextField(
                                       controller: _nameController,
+                                      textInputAction: TextInputAction.next,
                                       readOnly: _saving ||
                                           !_canEditSingularTaskMetadata(
                                             state,
@@ -2189,6 +2206,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     const SizedBox(height: 12),
                                     TextField(
                                       controller: _descController,
+                                      textInputAction: TextInputAction.next,
                                       readOnly: _saving ||
                                           !_canEditSingularTaskMetadata(
                                             state,
@@ -2231,6 +2249,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     const SizedBox(height: 12),
                                     TextField(
                                       controller: _nameController,
+                                      textInputAction: TextInputAction.next,
                                       readOnly: true,
                                       enableInteractiveSelection:
                                           _isTaskAssignee(state, task),
@@ -2242,6 +2261,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     const SizedBox(height: 12),
                                     TextField(
                                       controller: _descController,
+                                      textInputAction: TextInputAction.next,
                                       readOnly: true,
                                       enableInteractiveSelection:
                                           _isTaskAssignee(state, task),
@@ -2649,6 +2669,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     controller: _changeDueReasonController,
                                     focusNode: _changeDueReasonFocusNode,
                                     readOnly: _saving,
+                                    textInputAction: TextInputAction.next,
                                     decoration: const InputDecoration(
                                       labelText: 'Reason',
                                       hintText: 'Extend timeline reason',
@@ -2825,6 +2846,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                       children: [
                                         TextField(
                                           controller: e.descController,
+                                          textInputAction: TextInputAction.next,
                                           readOnly: _saving || !canEdit,
                                           decoration: const InputDecoration(
                                             labelText:
@@ -2837,6 +2859,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                         if (canEdit)
                                           TextField(
                                             controller: e.urlController,
+                                            textInputAction: TextInputAction.next,
                                             readOnly: _saving,
                                             decoration: InputDecoration(
                                               labelText: 'Attachment link',
@@ -2956,6 +2979,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                           taskId: widget.taskId,
                                           openedFromOverview:
                                               widget.openedFromOverview,
+                                          openedFromProjectDetail:
+                                              widget.openedFromProjectDetail,
                                         ),
                                       ),
                                     );
@@ -3032,6 +3057,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                       subtaskId: s.id,
                                       openedFromOverview:
                                           widget.openedFromOverview,
+                                      openedFromProjectDetail:
+                                          widget.openedFromProjectDetail,
                                     ),
                                   ),
                                 );
@@ -3053,6 +3080,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       TextField(
                         controller: _commentController,
                         readOnly: _saving || !_canWriteComments(state, task),
+                        textInputAction: TextInputAction.done,
                         textAlignVertical: TextAlignVertical.top,
                         minLines: 3,
                         maxLines: 6,
@@ -3184,27 +3212,35 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           ),
                         ),
                       const SizedBox(height: 24),
-                      TextButton.icon(
-                        onPressed: _saving
-                            ? null
-                            : () {
-                                if (widget.openedFromOverview) {
-                                  popUntilOverviewOrHome(context);
-                                } else {
-                                  Navigator.of(context).popUntil(
-                                    (route) => route.isFirst,
-                                  );
-                                }
-                              },
-                        icon: const Icon(Icons.arrow_back),
-                        label: Text(
-                          widget.openedFromOverview
-                              ? 'Back to Overview'
-                              : 'Back to home',
+                      if (widget.openedFromProjectDetail)
+                        TextButton(
+                          onPressed: _saving
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                          child: const Text('Back to project'),
+                        )
+                      else
+                        TextButton(
+                          onPressed: _saving
+                              ? null
+                              : () {
+                                  if (widget.openedFromOverview) {
+                                    popUntilOverviewOrHome(context);
+                                  } else {
+                                    Navigator.of(context).popUntil(
+                                      (route) => route.isFirst,
+                                    );
+                                  }
+                                },
+                          child: Text(
+                            widget.openedFromOverview
+                                ? 'Back to Overview'
+                                : 'Back to home',
+                          ),
                         ),
-                      ),
                     ],
                   ),
+                ),
                 ),
               ),
             ),
@@ -3260,7 +3296,7 @@ class _LegacyTaskDetailViewState extends State<_LegacyTaskDetailView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(task.name),
+        title: Text('Task: ${task.name}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: SingleChildScrollView(

@@ -47,6 +47,7 @@ class SubtaskDetailScreen extends StatefulWidget {
     required this.subtaskId,
     this.replaceWithParentTaskOnBack = false,
     this.openedFromOverview = false,
+    this.openedFromProjectDetail = false,
   });
 
   final String subtaskId;
@@ -57,6 +58,9 @@ class SubtaskDetailScreen extends StatefulWidget {
 
   /// Pushed from Overview vs other lists.
   final bool openedFromOverview;
+
+  /// Under [ProjectDetailScreen] flow — **Back to project** below Delete.
+  final bool openedFromProjectDetail;
 
   @override
   State<SubtaskDetailScreen> createState() => _SubtaskDetailScreenState();
@@ -1311,6 +1315,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
               controller: _editCommentController,
               maxLines: 5,
               minLines: 2,
+              textInputAction: TextInputAction.done,
               textAlignVertical: TextAlignVertical.top,
               enabled: !_saving,
               decoration: const InputDecoration(
@@ -1476,7 +1481,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(st.subtaskName),
+        title: Text('Sub-task: ${st.subtaskName}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -1487,10 +1492,12 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         children: [
           SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Card(
+            child: FocusTraversalGroup(
+              policy: OrderedTraversalPolicy(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
@@ -1559,6 +1566,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                         if (creator)
                           TextField(
                             controller: _nameController,
+                            textInputAction: TextInputAction.next,
                             readOnly: _saving,
                             enableInteractiveSelection: true,
                             decoration: const InputDecoration(
@@ -1584,6 +1592,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                         if (creator)
                           TextField(
                             controller: _descController,
+                            textInputAction: TextInputAction.next,
                             readOnly: _saving,
                             enableInteractiveSelection: true,
                             textAlignVertical: TextAlignVertical.top,
@@ -1722,6 +1731,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                             TextFormField(
                               controller: _changeDueReasonController,
                               readOnly: _saving,
+                              textInputAction: TextInputAction.next,
                               decoration: const InputDecoration(
                                 labelText: 'Reason',
                                 hintText: 'Extend timeline reason',
@@ -1896,6 +1906,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                   canEdit
                                       ? TextField(
                                           controller: e.descController,
+                                          textInputAction: TextInputAction.next,
                                           readOnly: _saving,
                                           enableInteractiveSelection: true,
                                           decoration: const InputDecoration(
@@ -1925,6 +1936,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                   if (canEdit)
                                     TextField(
                                       controller: e.urlController,
+                                      textInputAction: TextInputAction.next,
                                       readOnly: _saving,
                                       enableInteractiveSelection: true,
                                       decoration: InputDecoration(
@@ -2014,6 +2026,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 TextField(
                   controller: _commentController,
                   readOnly: _saving || !(assignee || creator),
+                  textInputAction: TextInputAction.done,
                   enableInteractiveSelection: true,
                   textAlignVertical: TextAlignVertical.top,
                   minLines: 2,
@@ -2143,26 +2156,33 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                     ),
                   ),
                 ],
+                if (widget.openedFromProjectDetail) ...[
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed:
+                        _saving ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Back to project'),
+                  ),
+                ],
                 const SizedBox(height: 24),
-                TextButton.icon(
+                TextButton(
                   onPressed: _saving ? null : _onBackToTask,
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('Back to task'),
+                  child: const Text('Back to task'),
                 ),
-                TextButton.icon(
+                TextButton(
                   onPressed: _saving
                       ? null
                       : () => widget.openedFromOverview
                           ? popUntilOverviewOrHome(context)
                           : navigateToHomeTasksTab(context),
-                  icon: const Icon(Icons.arrow_back),
-                  label: Text(
+                  child: Text(
                     widget.openedFromOverview
                         ? 'Back to Overview'
                         : 'Back to home',
                   ),
                 ),
               ],
+            ),
             ),
           ),
           if (_saving)

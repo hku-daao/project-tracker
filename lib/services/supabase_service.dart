@@ -13,6 +13,7 @@ import '../models/deleted_record.dart';
 import '../models/singular_comment.dart';
 import '../models/singular_subtask.dart';
 import '../models/staff_for_assignment.dart';
+import '../models/project_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
 import '../utils/hk_time.dart';
@@ -319,11 +320,17 @@ class SupabaseService {
         staffUuidToAppId = maps.staffUuidToAppId;
         staffUuidToName = maps.staffUuidToName;
       }
+      final pid = row['project_id']?.toString().trim();
+      Map<String, ({String name, String description})>? summaries;
+      if (pid != null && pid.isNotEmpty) {
+        summaries = await fetchProjectSummariesByIds({pid});
+      }
       return _taskFromSingularTaskRow(
         row,
         staffUuidToAppId,
         teamUuidToAppId,
         staffUuidToName,
+        projectSummaries: summaries,
       );
     } catch (_) {
       return null;
@@ -381,6 +388,10 @@ class SupabaseService {
 
     /// Clears `task.completion_date` (e.g. **Return**).
     bool clearCompletionDate = false,
+
+    /// Sets or clears `task.project_id`.
+    String? projectId,
+    bool clearProjectId = false,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
@@ -435,6 +446,14 @@ class SupabaseService {
       }
       if (stampSubmitDateNow) {
         map['submit_date'] = HkTime.timestampForDb();
+      }
+      if (clearProjectId) {
+        map['project_id'] = null;
+      } else {
+        final p = projectId?.trim();
+        if (p != null && p.isNotEmpty) {
+          map['project_id'] = p;
+        }
       }
       if (map.isEmpty) return null;
       await Supabase.instance.client.from('task').update(map).eq('id', taskId);
@@ -569,8 +588,9 @@ class SupabaseService {
     Map<String, dynamic> row,
     Map<String, String> staffUuidToAppId,
     Map<String, String> teamUuidToAppId,
-    Map<String, String> staffUuidToName,
-  ) {
+    Map<String, String> staffUuidToName, {
+    Map<String, ({String name, String description})>? projectSummaries,
+  }) {
     final id = row['id']?.toString() ?? row['task_id']?.toString();
     if (id == null || id.isEmpty) return null;
     final statusRaw = row['status']?.toString().trim() ?? '';
@@ -589,6 +609,19 @@ class SupabaseService {
     String? teamAppId;
     if (teamUuid != null && teamUuid.isNotEmpty) {
       teamAppId = teamUuidToAppId[teamUuid];
+    }
+
+    final pidRaw = row['project_id']?.toString().trim();
+    final String? projectId =
+        (pidRaw != null && pidRaw.isNotEmpty) ? pidRaw : null;
+    String? projectName;
+    String? projectDescription;
+    if (projectId != null && projectSummaries != null) {
+      final m = projectSummaries[projectId];
+      if (m != null) {
+        projectName = m.name;
+        projectDescription = m.description;
+      }
     }
 
     return Task(
@@ -620,7 +653,288 @@ class SupabaseService {
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
       overdueDay: (row['overdue_day'] as num?)?.toInt() ?? 0,
       overdue: _overdueYnFromRow(row['overdue']),
+      projectId: projectId,
+      projectName: projectName,
+      projectDescription: projectDescription,
     );
+  }
+
+  /// Loads `project.name` / `project.description` for singular-task rows.
+  static Future<Map<String, ({String name, String description})>>
+      fetchProjectSummariesByIds(Set<String> ids) async {
+    final out = <String, ({String name, String description})>{};
+    if (!_enabled || ids.isEmpty) return out;
+    final clean = ids.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    if (clean.isEmpty) return out;
+    try {
+      final res = await Supabase.instance.client
+          .from('project')
+          .select('id,name,description')
+          .inFilter('id', clean.toList());
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final id = row['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final name = row['name']?.toString() ?? '';
+        final desc = row['description']?.toString() ?? '';
+        out[id] = (name: name, description: desc);
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  static ProjectRecord? _projectRecordFromMaps(
+    Map<String, dynamic> row,
+    Map<String, String> staffUuidToAppId,
+    Map<String, String> staffUuidToName,
+  ) {
+    final id = row['id']?.toString();
+    if (id == null || id.isEmpty) return null;
+    final assignees = <String>[];
+    for (var i = 1; i <= 10; i++) {
+      final key = 'assignee_${i.toString().padLeft(2, '0')}';
+      final v = row[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) assignees.add(v);
+    }
+    final cb = row['create_by']?.toString().trim();
+    final ub = row['update_by']?.toString().trim();
+    return ProjectRecord(
+      id: id,
+      name: row['name'] as String? ?? '',
+      assigneeStaffUuids: assignees,
+      description: row['description'] as String? ?? '',
+      startDate: _parseDate(row['start_date']),
+      endDate: _parseDate(row['end_date']),
+      status: row['status'] as String? ?? 'Not started',
+      createByStaffUuid: cb?.isNotEmpty == true ? cb : null,
+      createByDisplayName:
+          cb != null && cb.isNotEmpty ? (staffUuidToName[cb] ?? cb) : null,
+      createDate: _parseDateTimeNullable(row['create_date']),
+      updateByStaffUuid: ub?.isNotEmpty == true ? ub : null,
+      updateByDisplayName:
+          ub != null && ub.isNotEmpty ? (staffUuidToName[ub] ?? ub) : null,
+      updateDate: _parseDateTimeNullable(row['update_date']),
+    );
+  }
+
+  /// All [`project`] rows visible under RLS, newest first.
+  static Future<List<ProjectRecord>> fetchAllProjectsFromSupabase() async {
+    if (!_enabled) return [];
+    try {
+      Map<String, String> staffUuidToAppId = {};
+      Map<String, String> staffUuidToName = {};
+      try {
+        final maps = await _loadMaps();
+        staffUuidToAppId = maps?.staffUuidToAppId ?? {};
+        staffUuidToName = maps?.staffUuidToName ?? {};
+      } catch (_) {}
+      final res = await Supabase.instance.client
+          .from('project')
+          .select()
+          .order('create_date', ascending: false);
+      final out = <ProjectRecord>[];
+      for (final raw in (res as List)) {
+        final r = _projectRecordFromMaps(
+          Map<String, dynamic>.from(raw as Map),
+          staffUuidToAppId,
+          staffUuidToName,
+        );
+        if (r != null) out.add(r);
+      }
+      return out;
+    } catch (e) {
+      debugPrint('fetchAllProjectsFromSupabase: $e');
+      return [];
+    }
+  }
+
+  static Future<ProjectRecord?> fetchProjectById(String projectId) async {
+    if (!_enabled) return null;
+    final id = projectId.trim();
+    if (id.isEmpty) return null;
+    try {
+      Map<String, String> staffUuidToAppId = {};
+      Map<String, String> staffUuidToName = {};
+      try {
+        final maps = await _loadMaps();
+        staffUuidToAppId = maps?.staffUuidToAppId ?? {};
+        staffUuidToName = maps?.staffUuidToName ?? {};
+      } catch (_) {}
+      final res = await Supabase.instance.client
+          .from('project')
+          .select()
+          .eq('id', id)
+          .maybeSingle();
+      if (res == null) return null;
+      return _projectRecordFromMaps(
+        Map<String, dynamic>.from(res as Map),
+        staffUuidToAppId,
+        staffUuidToName,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<Task>> fetchSingularTasksForProject(String projectId) async {
+    if (!_enabled) return [];
+    final pid = projectId.trim();
+    if (pid.isEmpty) return [];
+    try {
+      var teamUuidToAppId = <String, String>{};
+      var staffUuidToAppId = <String, String>{};
+      var staffUuidToName = <String, String>{};
+      try {
+        final maps = await _loadMaps();
+        if (maps != null) {
+          teamUuidToAppId = maps.teamUuidToAppId;
+          staffUuidToAppId = maps.staffUuidToAppId;
+          staffUuidToName = maps.staffUuidToName;
+        }
+      } catch (_) {}
+      final res =
+          await Supabase.instance.client.from('task').select().eq('project_id', pid);
+      final summaries = await fetchProjectSummariesByIds({pid});
+      final out = <Task>[];
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final t = _taskFromSingularTaskRow(
+          row,
+          staffUuidToAppId,
+          teamUuidToAppId,
+          staffUuidToName,
+          projectSummaries: summaries,
+        );
+        if (t != null) out.add(t);
+      }
+      out.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Inserts [`project`] row; [assignees] are `staff.id` uuid strings (up to 10).
+  static Future<({String? error, String? projectId})> insertProjectRow({
+    required String name,
+    List<String?> assignees = const [],
+    String? description,
+    DateTime? startDate,
+    DateTime? endDate,
+    String status = 'Not started',
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return (error: 'Supabase not configured', projectId: null);
+    final n = name.trim();
+    if (n.isEmpty) return (error: 'Project name is required', projectId: null);
+    try {
+      var padded = List<String?>.from(assignees);
+      while (padded.length < 10) {
+        padded.add(null);
+      }
+      if (padded.length > 10) padded = padded.sublist(0, 10);
+      final map = <String, dynamic>{
+        'name': n,
+        'description': description?.trim() ?? '',
+        'status': status.trim().isEmpty ? 'Not started' : status.trim(),
+      };
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['create_by'] = staffId;
+          map['create_date'] = HkTime.timestampForDb();
+        }
+      }
+      if (startDate != null) {
+        map['start_date'] = HkTime.dateOnlyHkMidnightForDb(startDate);
+      }
+      if (endDate != null) {
+        map['end_date'] = HkTime.dateOnlyHkMidnightForDb(endDate);
+      }
+      for (var i = 0; i < 10; i++) {
+        final raw = padded[i]?.trim();
+        if (raw != null && raw.isNotEmpty) {
+          map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
+        }
+      }
+      final ins = await Supabase.instance.client
+          .from('project')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      final newId = ins?['id']?.toString();
+      return (error: null, projectId: newId);
+    } catch (e) {
+      return (error: e.toString(), projectId: null);
+    }
+  }
+
+  static Future<String?> updateProjectRow({
+    required String projectId,
+    String? name,
+    String? description,
+    List<String?>? assigneeSlots,
+    DateTime? startDate,
+    DateTime? endDate,
+    bool clearStartDate = false,
+    bool clearEndDate = false,
+    String? status,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    try {
+      final map = <String, dynamic>{};
+      if (name != null) map['name'] = name;
+      if (description != null) map['description'] = description;
+      if (assigneeSlots != null) {
+        for (var i = 0; i < 10; i++) {
+          final key = 'assignee_${(i + 1).toString().padLeft(2, '0')}';
+          final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
+          map[key] = (v == null || v.isEmpty) ? null : v;
+        }
+      }
+      if (clearStartDate) {
+        map['start_date'] = null;
+      } else if (startDate != null) {
+        map['start_date'] = HkTime.dateOnlyHkMidnightForDb(startDate);
+      }
+      if (clearEndDate) {
+        map['end_date'] = null;
+      } else if (endDate != null) {
+        map['end_date'] = HkTime.dateOnlyHkMidnightForDb(endDate);
+      }
+      if (status != null) map['status'] = status;
+      final lookup = updateByStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+          map['update_date'] = HkTime.timestampForDb();
+        }
+      }
+      if (map.isEmpty) return null;
+      await Supabase.instance.client
+          .from('project')
+          .update(map)
+          .eq('id', projectId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Deletes a [`project`] row (RLS may restrict to creator/admin).
+  static Future<String?> deleteProjectRow(String projectId) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = projectId.trim();
+    if (id.isEmpty) return 'Invalid project';
+    try {
+      await Supabase.instance.client.from('project').delete().eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   /// DB stores `Yes` / `No` for singular task/subtask overdue flags.
@@ -1071,13 +1385,25 @@ class SupabaseService {
             singularRes = await supabase.from('task').select();
           }
         }
+        final singularRawRows = <Map<String, dynamic>>[];
         for (final raw in (singularRes as List)) {
-          final row = Map<String, dynamic>.from(raw as Map);
+          singularRawRows.add(Map<String, dynamic>.from(raw as Map));
+        }
+        final projectIds = <String>{};
+        for (final row in singularRawRows) {
+          final p = row['project_id']?.toString().trim();
+          if (p != null && p.isNotEmpty) projectIds.add(p);
+        }
+        final projectSummaries =
+            await fetchProjectSummariesByIds(projectIds);
+        for (final row in singularRawRows) {
           final t = _taskFromSingularTaskRow(
             row,
             staffUuidToAppId,
             teamUuidToAppId,
             staffUuidToName,
+            projectSummaries:
+                projectSummaries.isEmpty ? null : projectSummaries,
           );
           if (t != null) singularTasks.add(t);
         }
@@ -1238,6 +1564,10 @@ class SupabaseService {
     return u;
   }
 
+  /// Public alias for permission checks (e.g. project creator).
+  static Future<String?> resolveStaffRowIdForAssigneeKey(String key) =>
+      _staffRowIdForAssigneeKey(key);
+
   static Future<String?> _staffRowIdForAssigneeKey(String key) async {
     final k = key.trim();
     if (k.isEmpty) return null;
@@ -1313,6 +1643,9 @@ class SupabaseService {
 
     /// When due span exceeds policy for priority.
     String? changeDueReason,
+
+    /// Optional [`project.id`] (uuid).
+    String? projectId,
   }) async {
     if (!_enabled) return (error: 'Supabase not configured', taskId: null);
     final name = taskName.trim();
@@ -1333,6 +1666,10 @@ class SupabaseService {
         'description': description,
         'status': s,
       };
+      final p = projectId?.trim();
+      if (p != null && p.isNotEmpty) {
+        map['project_id'] = p;
+      }
       final lookup = creatorStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
         final staffId = await _staffRowIdForAssigneeKey(lookup);
