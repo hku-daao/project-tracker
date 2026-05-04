@@ -1923,6 +1923,54 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     );
   }
 
+  bool _canUndoAcceptOrReturnTask(Task task) {
+    final s = task.submission?.trim().toLowerCase() ?? '';
+    return s == 'accepted' || s == 'returned';
+  }
+
+  /// After **Accept** / **Return** / **Mark as Completed**: reset to Incomplete + Pending.
+  Future<void> _undoAcceptOrReturnTask(AppState state, Task task) async {
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured');
+      return;
+    }
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final err = await SupabaseService.updateSingularTaskRow(
+        taskId: task.id,
+        status: 'Incomplete',
+        submission: 'Pending',
+        updateByStaffLookupKey: state.userStaffAppId,
+        clearCompletionDate: true,
+      );
+      if (err != null) {
+        if (mounted) {
+          showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        }
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _localStatus = 'Incomplete');
+      state.replaceTask(
+        task.copyWith(
+          dbStatus: 'Incomplete',
+          status: TaskStatus.todo,
+          submission: 'Pending',
+          clearCompletionDate: true,
+          updateDate: DateTime.now(),
+        ),
+      );
+      showCopyableSnackBar(
+        context,
+        'Submission reset to Pending',
+        backgroundColor: Colors.green,
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _acceptSubmission(
     AppState state,
     Task task, {
@@ -3194,6 +3242,19 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             foregroundColor: Colors.white,
                           ),
                           child: const Text('Mark as Completed'),
+                        ),
+                      ],
+                      if (_isCreator(state, task) &&
+                          _canUndoAcceptOrReturnTask(task)) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: _saving
+                              ? null
+                              : () => _undoAcceptOrReturnTask(state, task),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: const Text('Undo'),
                         ),
                       ],
                       if (_isCommentOnlyAssignee(state, task)) ...[

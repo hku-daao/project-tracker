@@ -1106,6 +1106,49 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     );
   }
 
+  bool _canUndoAcceptOrReturnSubtask(SingularSubtask st) {
+    final s = st.submission?.trim().toLowerCase() ?? '';
+    return s == 'accepted' || s == 'returned';
+  }
+
+  /// After **Accept** / **Return** / **Mark as Completed**: reset to Incomplete + Pending.
+  Future<void> _undoAcceptOrReturn(AppState state, SingularSubtask st) async {
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured');
+      return;
+    }
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final subCreator = _isCreator(state, st);
+      final err = await SupabaseService.updateSubtaskRow(
+        subtaskId: st.id,
+        status: 'Incomplete',
+        submission: 'Pending',
+        updaterStaffLookupKey:
+            subCreator ? state.userStaffAppId : null,
+        clearCompletionDate: true,
+        bumpSubtaskRowAuditFields: subCreator,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        return;
+      }
+      await _load(rebindAttachments: false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 4),
+          content: Text('Submission reset to Pending'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _accept(
     AppState state,
     SingularSubtask st, {
@@ -2158,6 +2201,18 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                       foregroundColor: Colors.white,
                     ),
                     child: const Text('Mark as Completed'),
+                  ),
+                ],
+                if (creator && _canUndoAcceptOrReturnSubtask(st)) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: _saving
+                        ? null
+                        : () => _undoAcceptOrReturn(state, st),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('Undo'),
                   ),
                 ],
                 if (pic && _canPicSubmit(st)) ...[
