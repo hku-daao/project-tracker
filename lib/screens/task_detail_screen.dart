@@ -34,7 +34,9 @@ import '../widgets/attachment_source_bottom_sheet.dart';
 import '../widgets/outlook_attachment_chip.dart';
 import '../widgets/singular_subtask_row_card.dart';
 import '../widgets/staff_assignee_picker_panel.dart';
+import '../widgets/flow_bottom_nav_four.dart' show FlowBottomNavThree;
 import '../widgets/flow_navigation_bar.dart';
+import 'high_level/project_detail_screen.dart';
 import '../widgets/subtask_meta_line.dart';
 import '../widgets/subtask_sort_column_chip.dart';
 
@@ -2233,6 +2235,18 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       appBar: AppBar(
         title: Text('Task: ${task.name}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _saving
+              ? null
+              : () {
+                  if (kIsWeb) {
+                    webHistoryBack();
+                  } else {
+                    _singularFlowBack();
+                  }
+                },
+        ),
       ),
       body: Stack(
         children: [
@@ -3363,11 +3377,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             ),
         ],
       ),
-      bottomNavigationBar: FlowHomeBackBar(
-        onBack: _singularFlowBack,
-        onHome: () {
-          _singularFlowHome();
-        },
+      bottomNavigationBar: FlowBottomNavThree(
+        onBack: _barBack,
+        midLabel: 'Project',
+        midIcon: Icons.folder_outlined,
+        onMid: () => _barOpenProject(task),
+        onHome: _singularFlowHome,
         enabled: !_saving,
       ),
     );
@@ -3384,6 +3399,37 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     } else {
       Navigator.of(context).popUntil((route) => route.isFirst);
     }
+  }
+
+  void _barBack() {
+    if (_saving) return;
+    if (kIsWeb) {
+      webHistoryBack();
+    } else {
+      _singularFlowBack();
+    }
+  }
+
+  void _barOpenProject(Task task) {
+    if (_saving) return;
+    final pid = task.projectId?.trim();
+    if (pid == null || pid.isEmpty) {
+      showCopyableSnackBar(
+        context,
+        'No project linked to this task.',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProjectDetailScreen(
+          projectId: pid,
+          openedFromLanding: false,
+          openedFromOverview: widget.openedFromOverview,
+        ),
+      ),
+    );
   }
 
   Future<void> _singularFlowHome() async {
@@ -3430,6 +3476,16 @@ class _LegacyTaskDetailViewState extends State<_LegacyTaskDetailView> {
       appBar: AppBar(
         title: Text('Task: ${task.name}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (kIsWeb) {
+              webHistoryBack();
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),

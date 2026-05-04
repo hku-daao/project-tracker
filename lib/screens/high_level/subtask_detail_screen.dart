@@ -15,6 +15,7 @@ import '../../services/supabase_service.dart';
 import '../../utils/attachment_save_reminder_snackbar.dart';
 import '../../utils/attachment_upload_loading_overlay.dart';
 import '../../utils/home_navigation.dart';
+import '../../widgets/flow_bottom_nav_four.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/copyable_snackbar.dart';
@@ -25,6 +26,7 @@ import '../../widgets/attachment_add_link_dialog.dart';
 import '../../widgets/attachment_edit_dialog.dart';
 import '../../widgets/attachment_source_bottom_sheet.dart';
 import '../../widgets/outlook_attachment_chip.dart';
+import 'project_detail_screen.dart';
 import '../task_detail_screen.dart';
 
 class _SubtaskAttachmentEntry {
@@ -1566,7 +1568,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(true),
+          onPressed: _saving
+              ? null
+              : () {
+                  if (kIsWeb) {
+                    webHistoryBack();
+                  } else {
+                    Navigator.of(context).pop(true);
+                  }
+                },
         ),
       ),
       body: Stack(
@@ -2285,11 +2295,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: FlowHomeBackBar(
-        onBack: _subtaskFlowBack,
-        onHome: () {
-          _subtaskFlowHome();
-        },
+      bottomNavigationBar: FlowBottomNavFour(
+        onBack: _subtaskBarBack,
+        mid1Label: 'Task',
+        mid1Icon: Icons.assignment_outlined,
+        onMid1: _barOpenParentTask,
+        mid2Label: 'Project',
+        mid2Icon: Icons.folder_outlined,
+        onMid2: _barOpenProject,
+        onHome: _subtaskFlowHome,
         enabled: !_saving,
       ),
     );
@@ -2298,6 +2312,66 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   void _subtaskFlowBack() {
     if (_saving) return;
     _onBackToTask();
+  }
+
+  void _subtaskBarBack() {
+    if (_saving) return;
+    if (kIsWeb) {
+      webHistoryBack();
+    } else {
+      _subtaskFlowBack();
+    }
+  }
+
+  void _barOpenProject() {
+    if (_saving) return;
+    final pid = _parentTask?.projectId?.trim();
+    if (pid == null || pid.isEmpty) {
+      if (mounted) {
+        showCopyableSnackBar(
+          context,
+          'No project linked to this task.',
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
+    }
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProjectDetailScreen(
+          projectId: pid,
+          openedFromLanding: false,
+          openedFromOverview: widget.openedFromOverview,
+        ),
+      ),
+    );
+  }
+
+  void _barOpenParentTask() {
+    if (_saving) return;
+    final tid = _parentTask?.id ?? _sub?.taskId;
+    if (tid == null || tid.isEmpty) {
+      if (mounted) {
+        showCopyableSnackBar(
+          context,
+          'Parent task is not available.',
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
+    }
+    final p = _parentTask;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => TaskDetailScreen(
+          taskId: tid,
+          openedFromOverview: widget.openedFromOverview,
+          openedFromProjectDetail: widget.openedFromProjectDetail,
+          openedFromProjectDashboard: widget.openedFromProjectDashboard,
+          projectIdForBack: p?.projectId,
+        ),
+      ),
+    );
   }
 
   Future<void> _subtaskFlowHome() async {

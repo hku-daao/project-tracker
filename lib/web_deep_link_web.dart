@@ -312,3 +312,8 @@ void _replaceQueryParams(void Function(Map<String, String> q) mutate) {
   );
   html.window.history.replaceState(null, '', newUri.toString());
 }
+
+/// Browser back — previous entry in the tab history.
+void webHistoryBack() {
+  html.window.history.back();
+}

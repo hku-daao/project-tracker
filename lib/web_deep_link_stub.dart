@@ -37,3 +37,6 @@ void syncWebLocationForProjectDashboard() {}
 void syncWebLocationForLanding() {}
 
 void syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask() {}
+
+/// No-op on non-web; use [webHistoryBack] on web.
+void webHistoryBack() {}
