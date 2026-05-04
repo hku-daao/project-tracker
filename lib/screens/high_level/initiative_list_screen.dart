@@ -3075,17 +3075,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               );
             }
 
-            /// Overview: search field centered; Default: left with filters.
+            /// Default + Overview: search field centered (wide web).
             Widget bandSearch(Widget child) {
-              if (widget.customizedFlat) {
-                return Center(
-                  child: ConstrainedBox(
-                    constraints: constrained,
-                    child: child,
-                  ),
-                );
-              }
-              return bandFiltersLeft(child);
+              return Center(
+                child: ConstrainedBox(
+                  constraints: constrained,
+                  child: child,
+                ),
+              );
             }
 
             return Column(
