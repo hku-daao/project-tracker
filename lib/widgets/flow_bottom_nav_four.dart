@@ -14,7 +14,7 @@ class FlowBottomNavThree extends StatelessWidget {
 
   final VoidCallback onBack;
   final String midLabel;
-  final IconData midIcon;
+  final Widget midIcon;
   final VoidCallback? onMid;
   final VoidCallback onHome;
   final bool enabled;
@@ -22,7 +22,7 @@ class FlowBottomNavThree extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    Widget slot(VoidCallback? onTap, IconData icon, String label) {
+    Widget slot(VoidCallback? onTap, Widget icon, String label) {
       return TextButton(
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
@@ -32,7 +32,7 @@ class FlowBottomNavThree extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18),
+            icon,
             const SizedBox(height: 2),
             Text(
               label,
@@ -64,7 +64,7 @@ class FlowBottomNavThree extends StatelessWidget {
               Expanded(
                 child: slot(
                   enabled ? onBack : null,
-                  Icons.arrow_back,
+                  const Icon(Icons.arrow_back, size: 18),
                   'Back',
                 ),
               ),
@@ -78,7 +78,7 @@ class FlowBottomNavThree extends StatelessWidget {
               Expanded(
                 child: slot(
                   enabled ? onHome : null,
-                  Icons.home_outlined,
+                  const Icon(Icons.home_outlined, size: 18),
                   'Home',
                 ),
               ),
@@ -107,10 +107,10 @@ class FlowBottomNavFour extends StatelessWidget {
 
   final VoidCallback onBack;
   final String mid1Label;
-  final IconData mid1Icon;
+  final Widget mid1Icon;
   final VoidCallback? onMid1;
   final String mid2Label;
-  final IconData mid2Icon;
+  final Widget mid2Icon;
   final VoidCallback? onMid2;
   final VoidCallback onHome;
   final bool enabled;
@@ -118,7 +118,7 @@ class FlowBottomNavFour extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    Widget slot(VoidCallback? onTap, IconData icon, String label) {
+    Widget slot(VoidCallback? onTap, Widget icon, String label) {
       return TextButton(
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
@@ -128,7 +128,7 @@ class FlowBottomNavFour extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18),
+            icon,
             const SizedBox(height: 2),
             Text(
               label,
@@ -160,7 +160,7 @@ class FlowBottomNavFour extends StatelessWidget {
               Expanded(
                 child: slot(
                   enabled ? onBack : null,
-                  Icons.arrow_back,
+                  const Icon(Icons.arrow_back, size: 18),
                   'Back',
                 ),
               ),
@@ -181,7 +181,7 @@ class FlowBottomNavFour extends StatelessWidget {
               Expanded(
                 child: slot(
                   enabled ? onHome : null,
-                  Icons.home_outlined,
+                  const Icon(Icons.home_outlined, size: 18),
                   'Home',
                 ),
               ),

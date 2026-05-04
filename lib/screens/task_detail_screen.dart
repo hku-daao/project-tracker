@@ -3380,7 +3380,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       bottomNavigationBar: FlowBottomNavThree(
         onBack: _barBack,
         midLabel: 'Project',
-        midIcon: Icons.folder_outlined,
+        midIcon: const Icon(Icons.folder_outlined, size: 18),
         onMid: () => _barOpenProject(task),
         onHome: _singularFlowHome,
         enabled: !_saving,

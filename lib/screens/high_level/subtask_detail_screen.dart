@@ -2298,10 +2298,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
       bottomNavigationBar: FlowBottomNavFour(
         onBack: _subtaskBarBack,
         mid1Label: 'Task',
-        mid1Icon: Icons.assignment_outlined,
+        mid1Icon: const Icon(Icons.assignment_outlined, size: 18),
         onMid1: _barOpenParentTask,
         mid2Label: 'Project',
-        mid2Icon: Icons.folder_outlined,
+        mid2Icon: const Icon(Icons.folder_outlined, size: 18),
         onMid2: _barOpenProject,
         onHome: _subtaskFlowHome,
         enabled: !_saving,
