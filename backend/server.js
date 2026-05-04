@@ -4371,7 +4371,24 @@ async function handleNotifyTaskUpdated(req, res) {
       sendJson(req, res, 404, { error: 'Task not found' });
       return;
     }
-    const updaterId = (taskRow.update_by || '').toString().trim();
+    const taskCommentId = (body.taskCommentId || '').trim();
+    let taskCommentRow = null;
+    if (taskCommentId) {
+      const { data: cRow, error: cErr } = await supabase
+        .from('comment')
+        .select('*')
+        .eq('id', taskCommentId)
+        .maybeSingle();
+      if (cErr || !cRow || String(cRow.task_id || '').trim() !== taskId) {
+        sendJson(req, res, 400, { error: 'taskCommentId does not match task' });
+        return;
+      }
+      taskCommentRow = cRow;
+    }
+    let updaterId = (taskRow.update_by || '').toString().trim();
+    if (!updaterId && taskCommentRow) {
+      updaterId = (taskCommentRow.create_by || '').toString().trim();
+    }
     if (!updaterId) {
       sendJson(req, res, 400, { error: 'Task has no update_by' });
       return;
@@ -4400,7 +4417,10 @@ async function handleNotifyTaskUpdated(req, res) {
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `Task updated - ${taskTitleForSubject}`;
     const taskUrl = taskWebAppUrl(taskId);
-    const updatedAtLine = formatUpdateDateTimeYmdHm(taskRow.update_date);
+    const taskRowHasUpdater = Boolean((taskRow.update_by || '').toString().trim());
+    const updatedAtLine = taskCommentRow && !taskRowHasUpdater
+      ? formatUpdateDateTimeYmdHm(taskCommentRow.create_date)
+      : formatUpdateDateTimeYmdHm(taskRow.update_date);
 
     const changeLinesHtmlParts = [];
     const changeLinesTextParts = [];
@@ -4617,7 +4637,24 @@ async function handleNotifySubtaskUpdated(req, res) {
       sendJson(req, res, 404, { error: 'Sub-task not found' });
       return;
     }
-    const updaterId = (row.update_by || '').toString().trim();
+    const subtaskCommentId = (body.subtaskCommentId || '').trim();
+    let subtaskCommentRow = null;
+    if (subtaskCommentId) {
+      const { data: scRow, error: scErr } = await supabase
+        .from('subtask_comment')
+        .select('*')
+        .eq('id', subtaskCommentId)
+        .maybeSingle();
+      if (scErr || !scRow || String(scRow.subtask_id || '').trim() !== subtaskId) {
+        sendJson(req, res, 400, { error: 'subtaskCommentId does not match sub-task' });
+        return;
+      }
+      subtaskCommentRow = scRow;
+    }
+    let updaterId = (row.update_by || '').toString().trim();
+    if (!updaterId && subtaskCommentRow) {
+      updaterId = (subtaskCommentRow.create_by || '').toString().trim();
+    }
     if (!updaterId) {
       sendJson(req, res, 400, { error: 'Sub-task has no update_by' });
       return;
@@ -4676,7 +4713,10 @@ async function handleNotifySubtaskUpdated(req, res) {
     const subject = `Sub-task updated - ${subtaskTitleForSubject}`;
     const subtaskRowId = (row.id || subtaskId || '').toString().trim();
     const subtaskUrl = subtaskWebAppUrl(subtaskRowId);
-    const updatedAtLine = formatUpdateDateTimeYmdHm(row.update_date);
+    const rowHasUpdater = Boolean((row.update_by || '').toString().trim());
+    const updatedAtLine = subtaskCommentRow && !rowHasUpdater
+      ? formatUpdateDateTimeYmdHm(subtaskCommentRow.create_date)
+      : formatUpdateDateTimeYmdHm(row.update_date);
 
     const dash = SUBTASK_COMMENT_ADDED_LINE_EN_DASH;
     const changeLinesHtmlParts = [];
@@ -4712,8 +4752,8 @@ async function handleNotifySubtaskUpdated(req, res) {
         c = `${c.slice(0, TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN)}…`;
       }
       const safeC = escapeHtml(c);
-      commentLineHtml = `Sub-task comment is added ${dash} ${safeC}`;
-      commentLineText = `Sub-task comment is added ${dash} ${c}`;
+      commentLineHtml = `<span style="color:#000000;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;">Comment is added ${dash} ${safeC}</span>`;
+      commentLineText = `Comment is added ${dash} ${c}`;
     }
     const changeLinesHtml = changeLinesHtmlParts.join('<br><br>');
     const changeLinesText = changeLinesTextParts.join('\n\n');

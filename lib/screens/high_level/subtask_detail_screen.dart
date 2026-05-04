@@ -689,21 +689,22 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     }
   }
 
-  /// Returns `true` if a comment row was inserted. [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
+  /// Returns `(ok: true, commentId: id)` when a row was inserted.
+  /// [suppressSuccessSnack] avoids a green snackbar (e.g. combined Update flow).
   ///
   /// After insert, notifies the sub-task creator via [BackendApi.notifySubtaskCommentAdded] when the
   /// poster is **not** the sub-task creator (server checks assignee on sub-task or parent task and
   /// skips self-mail).
-  Future<bool> _postComment(
+  Future<({bool ok, String? commentId})> _postComment(
     AppState state,
     SingularSubtask st, {
     bool suppressSuccessSnack = false,
   }) async {
     if (!_isAssignee(state, st) && !_isCreator(state, st)) {
-      return false;
+      return (ok: false, commentId: null);
     }
     final t = _commentController.text.trim();
-    if (t.isEmpty) return false;
+    if (t.isEmpty) return (ok: false, commentId: null);
     setState(() => _saving = true);
     try {
       final ins = await SupabaseService.insertSubtaskCommentRow(
@@ -711,10 +712,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         description: t,
         creatorStaffLookupKey: state.userStaffAppId,
       );
-      if (!mounted) return false;
+      if (!mounted) return (ok: false, commentId: null);
       if (ins.error != null) {
         showCopyableSnackBar(context, ins.error!, backgroundColor: Colors.orange);
-        return false;
+        return (ok: false, commentId: null);
       }
       final newCommentId = ins.commentId?.trim();
       if (newCommentId != null &&
@@ -731,7 +732,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           ),
         );
       }
-      return true;
+      return (ok: true, commentId: newCommentId);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1268,6 +1269,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     String subtaskId, {
     List<Map<String, String>>? changes,
     String? commentAddedText,
+    String? subtaskCommentId,
   }) async {
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
@@ -1277,6 +1279,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         subtaskId: subtaskId,
         changes: changes,
         commentAddedText: commentAddedText,
+        subtaskCommentId: subtaskCommentId,
       );
       if (err != null && mounted) {
         if (err == BackendApi.notifySubtaskUpdatedBackendNotDeployed) {
@@ -1591,17 +1594,14 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                             ),
                           )
                         else
-                          InputDecorator(
+                          TextField(
+                            controller: _nameController,
+                            textInputAction: TextInputAction.next,
+                            readOnly: true,
+                            enableInteractiveSelection: assignee,
                             decoration: const InputDecoration(
                               labelText: 'Sub-task name',
                               border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            child: SelectableText(
-                              _nameController.text.isEmpty
-                                  ? '—'
-                                  : _nameController.text,
-                              style: Theme.of(context).textTheme.bodyLarge,
                             ),
                           ),
                         const SizedBox(height: 12),
@@ -1621,19 +1621,18 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                             maxLines: 8,
                           )
                         else
-                          InputDecorator(
+                          TextField(
+                            controller: _descController,
+                            textInputAction: TextInputAction.next,
+                            readOnly: true,
+                            enableInteractiveSelection: assignee,
+                            textAlignVertical: TextAlignVertical.top,
                             decoration: const InputDecoration(
                               labelText: 'Description',
                               alignLabelWithHint: true,
                               border: OutlineInputBorder(),
-                              isDense: true,
                             ),
-                            child: SelectableText(
-                              _descController.text.isEmpty
-                                  ? '—'
-                                  : _descController.text,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
+                            maxLines: 4,
                           ),
                         const SizedBox(height: 12),
                         Text(
@@ -2088,24 +2087,26 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                             suppressSuccessSnack: true,
                             willSaveCommentAfter: hadComment,
                           );
-                          var commentOk = false;
+                          var commentPost = (ok: false, commentId: null as String?);
                           if (hadComment) {
-                            commentOk = await _postComment(
+                            commentPost = await _postComment(
                               state,
                               st,
                               suppressSuccessSnack: true,
                             );
                           }
                           if (!mounted) return;
-                          if (metaOk || commentOk) {
+                          if (metaOk || commentPost.ok) {
                             // Row `update_by` / `update_date` are set only inside creator `_saveMetadata`
                             // → `updateSubtaskRow` (not for comment-only saves; each comment has its own time).
-                            if (creator && (metaOk || commentOk)) {
+                            if (creator && (metaOk || commentPost.ok)) {
                               await _notifySubtaskUpdatedEmail(
                                 st.id,
                                 changes: metaOk ? changesForEmail : const [],
-                                commentAddedText:
-                                    commentOk ? pendingCommentSnap : null,
+                                commentAddedText: commentPost.ok
+                                    ? pendingCommentSnap
+                                    : null,
+                                subtaskCommentId: commentPost.commentId,
                               );
                             }
                             ScaffoldMessenger.of(context).showSnackBar(

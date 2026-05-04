@@ -11,6 +11,7 @@ import '../services/startup_view_storage.dart';
 import '../utils/home_navigation.dart';
 import '../utils/pinned_dashboard_registry.dart';
 import '../web_deep_link.dart';
+import 'high_level/project_detail_screen.dart';
 import 'high_level/subtask_detail_screen.dart';
 import 'home_screen.dart';
 import 'task_detail_screen.dart';
@@ -165,7 +166,39 @@ class _AppBootstrapState extends State<AppBootstrap> {
       );
       return;
     }
-    syncWebLocationForLanding();
+    final projectId = readProjectIdFromUrlOrSession();
+    if (projectId != null && projectId.isNotEmpty) {
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ProjectDetailScreen(
+            projectId: projectId,
+            openedFromLanding: true,
+            openedFromOverview: false,
+          ),
+        ),
+      );
+      return;
+    }
+    final viewTag = readDashboardViewFromUrlOrSession();
+    if (viewTag == 'overview') {
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: kOverviewDashboardRouteName),
+          builder: (context) => buildOverviewDashboardPage(),
+        ),
+      );
+      return;
+    }
+    if (viewTag == 'project') {
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: kProjectDashboardRouteName),
+          builder: (context) => buildProjectDashboardPage(),
+        ),
+      );
+      return;
+    }
+    syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
   }
 
   @override
@@ -247,6 +280,14 @@ class _StartupShellState extends State<_StartupShell> {
     final taskId = readTaskIdFromUrlOrSession();
     if (subId != null && subId.isNotEmpty) return;
     if (taskId != null && taskId.isNotEmpty) return;
+    final projectId = readProjectIdFromUrlOrSession();
+    if (projectId != null && projectId.isNotEmpty) return;
+    final urlView = readDashboardViewFromUrlOrSession();
+    if (urlView == 'overview' ||
+        urlView == 'project' ||
+        urlView == 'default') {
+      return;
+    }
 
     final tag = await StartupViewStorage.getPreferredViewTag();
     if (!mounted || !context.mounted) return;

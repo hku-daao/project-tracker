@@ -1375,15 +1375,15 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   }
 
   /// Saves non-empty [_commentController] as an active `comment` row. Clears the field on success.
-  /// Returns `false` if an insert was attempted and failed (snackbar shown). Empty text returns `true`.
-  Future<bool> _insertPendingCommentFromController(
+  /// Empty text returns `(ok: true, newCommentId: null)`.
+  Future<({bool ok, String? newCommentId})> _insertPendingCommentFromController(
     AppState state,
     Task task, {
     String commentSaveErrorPrefix = 'Task updated, but comment was not saved:',
     bool suppressNotificationEmail = false,
   }) async {
     final commentBody = _commentController.text.trim();
-    if (commentBody.isEmpty) return true;
+    if (commentBody.isEmpty) return (ok: true, newCommentId: null);
     final cResult = await SupabaseService.insertSingularCommentRow(
       taskId: task.id,
       description: commentBody,
@@ -1398,9 +1398,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           backgroundColor: Colors.orange,
         );
       }
-      return false;
+      return (ok: false, newCommentId: null);
     }
-    if (!mounted) return false;
+    if (!mounted) return (ok: false, newCommentId: null);
     _commentController.clear();
     await _loadTableComments();
     final newCommentId = cResult.commentId?.trim();
@@ -1438,7 +1438,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         }
       }
     }
-    return true;
+    return (ok: true, newCommentId: newCommentId);
   }
 
   /// Assignees who are not the creator post comments without using **Update**.
@@ -1467,13 +1467,13 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
     setState(() => _saving = true);
     try {
-      final ok = await _insertPendingCommentFromController(
+      final ins = await _insertPendingCommentFromController(
         state,
         task,
         commentSaveErrorPrefix: 'Comment was not saved:',
       );
       if (!mounted) return;
-      if (ok) {
+      if (ins.ok) {
         showCopyableSnackBar(
           context,
           'Task is updated',
@@ -1660,7 +1660,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (!mounted) return;
 
-      final commentInsertedOk = await _insertPendingCommentFromController(
+      final commentIns = await _insertPendingCommentFromController(
         state,
         task,
         suppressNotificationEmail: token != null,
@@ -1668,7 +1668,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       if (!mounted) return;
 
       final String? commentForEmail =
-          pendingCommentSnap.isNotEmpty && commentInsertedOk
+          pendingCommentSnap.isNotEmpty && commentIns.ok
               ? pendingCommentSnap
               : null;
 
@@ -1679,6 +1679,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             taskId: task.id,
             changes: changesForEmail,
             commentAddedText: commentForEmail,
+            taskCommentId: commentIns.newCommentId,
           );
           if (notifyErr != null && mounted) {
             showCopyableSnackBar(
@@ -1770,12 +1771,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         if (mounted) await _reloadTaskAttachmentsFromDb();
       }
       if (pendingComment) {
-        final commentOk = await _insertPendingCommentFromController(
+        final commentIns = await _insertPendingCommentFromController(
           state,
           task,
           commentSaveErrorPrefix: 'Comment was not saved:',
         );
-        if (!commentOk) return;
+        if (!commentIns.ok) return;
       }
       if (mounted) {
         showCopyableSnackBar(
@@ -1913,12 +1914,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final commentOk = await _insertPendingCommentFromController(
+      final commentIns = await _insertPendingCommentFromController(
         state,
         task,
         commentSaveErrorPrefix: 'Comment was not saved:',
       );
-      if (!commentOk) return;
+      if (!commentIns.ok) return;
 
       final completedAt = task.submitDate ?? DateTime.now().toUtc();
       final err = await SupabaseService.updateSingularTaskRow(
@@ -1979,12 +1980,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final commentOk = await _insertPendingCommentFromController(
+      final commentIns = await _insertPendingCommentFromController(
         state,
         task,
         commentSaveErrorPrefix: 'Comment was not saved:',
       );
-      if (!commentOk) return;
+      if (!commentIns.ok) return;
 
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,

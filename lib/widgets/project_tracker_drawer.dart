@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// Navigation drawer shared by [HomeScreen], Overview, and Project views.
@@ -104,7 +103,7 @@ class ProjectTrackerDrawer extends StatelessWidget {
               title: const Text('Important Notice'),
               onTap: onImportantNotice,
             ),
-            if (showSignOut && kIsWeb)
+            if (showSignOut)
               ListTile(
                 leading: const Icon(Icons.logout),
                 title: const Text('Sign out'),

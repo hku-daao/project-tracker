@@ -123,6 +123,11 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
     _loadPinPreference();
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        syncWebLocationForDefaultHome();
+      });
+    }
   }
 
   Future<void> _loadPinPreference() async {
@@ -290,16 +295,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _closeDrawerThenSignOut() async {
     Navigator.of(context).pop();
-    if (!mounted) return;
-    final appState = context.read<AppState>();
-    if (appState.hasCreateTaskUnsavedDraft) {
-      final leave = await _confirmLeaveCreateTaskDraft(context);
-      if (!mounted || !leave) return;
-    }
-    if (kIsWeb) {
-      syncWebLocationForLanding();
-    }
-    await FirebaseAuth.instance.signOut();
+    // Run after the drawer route is gone so navigator/context stay valid for draft dialog + sign-out.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final appState = context.read<AppState>();
+      if (appState.hasCreateTaskUnsavedDraft) {
+        final leave = await _confirmLeaveCreateTaskDraft(context);
+        if (!mounted || !leave) return;
+      }
+      if (kIsWeb) {
+        syncWebLocationForLanding();
+      }
+      await FirebaseAuth.instance.signOut();
+    });
   }
 
   @override
@@ -481,6 +489,11 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
     super.initState();
     StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
     _loadPinPreference();
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        syncWebLocationForOverviewDashboard();
+      });
+    }
   }
 
   @override
@@ -631,18 +644,20 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
             );
           });
         },
-        onSignOut: () async {
+        onSignOut: () {
           Navigator.of(context).pop();
-          if (!context.mounted) return;
-          final appState = context.read<AppState>();
-          if (appState.hasCreateTaskUnsavedDraft) {
-            final leave = await _confirmLeaveCreateTaskDraft(context);
-            if (!context.mounted || !leave) return;
-          }
-          if (kIsWeb) {
-            syncWebLocationForLanding();
-          }
-          await FirebaseAuth.instance.signOut();
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!context.mounted) return;
+            final appState = context.read<AppState>();
+            if (appState.hasCreateTaskUnsavedDraft) {
+              final leave = await _confirmLeaveCreateTaskDraft(context);
+              if (!context.mounted || !leave) return;
+            }
+            if (kIsWeb) {
+              syncWebLocationForLanding();
+            }
+            await FirebaseAuth.instance.signOut();
+          });
         },
       ),
       appBar: AppBar(
@@ -760,6 +775,11 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
     super.initState();
     StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
     _loadPinPreference();
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        syncWebLocationForProjectDashboard();
+      });
+    }
   }
 
   @override
@@ -910,18 +930,20 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
             );
           });
         },
-        onSignOut: () async {
+        onSignOut: () {
           Navigator.of(context).pop();
-          if (!context.mounted) return;
-          final appState = context.read<AppState>();
-          if (appState.hasCreateTaskUnsavedDraft) {
-            final leave = await _confirmLeaveCreateTaskDraft(context);
-            if (!context.mounted || !leave) return;
-          }
-          if (kIsWeb) {
-            syncWebLocationForLanding();
-          }
-          await FirebaseAuth.instance.signOut();
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!context.mounted) return;
+            final appState = context.read<AppState>();
+            if (appState.hasCreateTaskUnsavedDraft) {
+              final leave = await _confirmLeaveCreateTaskDraft(context);
+              if (!context.mounted || !leave) return;
+            }
+            if (kIsWeb) {
+              syncWebLocationForLanding();
+            }
+            await FirebaseAuth.instance.signOut();
+          });
         },
       ),
       appBar: AppBar(

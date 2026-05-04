@@ -504,6 +504,8 @@ class BackendApi {
     required String taskId,
     List<Map<String, String>>? changes,
     String? commentAddedText,
+    /// Singular `comment.id` when the update email should use comment audit fields.
+    String? taskCommentId,
   }) async {
     try {
       final payload = <String, dynamic>{'taskId': taskId};
@@ -513,6 +515,10 @@ class BackendApi {
       final c = commentAddedText?.trim();
       if (c != null && c.isNotEmpty) {
         payload['commentAddedText'] = c;
+      }
+      final tc = taskCommentId?.trim();
+      if (tc != null && tc.isNotEmpty) {
+        payload['taskCommentId'] = tc;
       }
       final response = await http
           .post(
@@ -550,6 +556,8 @@ class BackendApi {
     required String subtaskId,
     List<Map<String, String>>? changes,
     String? commentAddedText,
+    /// `subtask_comment.id` when only a creator comment was saved (no subtask `update_by`).
+    String? subtaskCommentId,
   }) async {
     try {
       final payload = <String, dynamic>{'subtaskId': subtaskId};
@@ -559,6 +567,10 @@ class BackendApi {
       final c = commentAddedText?.trim();
       if (c != null && c.isNotEmpty) {
         payload['commentAddedText'] = c;
+      }
+      final sc = subtaskCommentId?.trim();
+      if (sc != null && sc.isNotEmpty) {
+        payload['subtaskCommentId'] = sc;
       }
       final response = await http
           .post(

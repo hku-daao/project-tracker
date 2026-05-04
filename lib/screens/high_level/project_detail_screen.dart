@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +17,7 @@ import '../../widgets/flow_navigation_bar.dart';
 import '../../utils/project_task_sort.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
 import '../../widgets/task_list_card.dart';
+import '../../web_deep_link.dart';
 import '../task_detail_screen.dart';
 import 'create_task_screen.dart';
 
@@ -72,11 +74,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) {
+      syncWebLocationForProjectDetail(widget.projectId);
+    }
     _reload();
   }
 
   @override
   void dispose() {
+    if (kIsWeb) {
+      clearWebProjectDetailFromLocation();
+    }
     _nameController.dispose();
     _descController.dispose();
     super.dispose();
@@ -314,21 +322,22 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     required String label,
     required bool selected,
     required Color selectedBg,
-    required bool enabled,
+    required bool interactive,
     required VoidCallback? onTap,
   }) {
     return Expanded(
-      child: Opacity(
-        opacity: enabled ? 1 : 0.45,
-        child: FilledButton(
-          onPressed: enabled && !_saving ? onTap : null,
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            backgroundColor: selected ? selectedBg : Colors.white,
-            foregroundColor: selected ? Colors.white : Colors.black87,
-          ),
-          child: Text(label),
+      child: FilledButton(
+        onPressed: interactive && !_saving ? onTap : null,
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          backgroundColor: selected ? selectedBg : Colors.white,
+          foregroundColor: selected ? Colors.white : Colors.black87,
+          // Assignees use onPressed: null; without these, M3 greys out chips and hides status colours.
+          disabledBackgroundColor: selected ? selectedBg : Colors.white,
+          disabledForegroundColor: selected ? Colors.white : Colors.black87,
+          surfaceTintColor: Colors.transparent,
         ),
+        child: Text(label),
       ),
     );
   }
@@ -516,9 +525,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                               border: OutlineInputBorder(),
                             ),
                           )
-                        : SelectableText(
-                            p.name,
-                            style: Theme.of(context).textTheme.bodyLarge,
+                        : TextField(
+                            controller: _nameController,
+                            readOnly: true,
+                            enableInteractiveSelection: assigneeViewer,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                            ),
                           ),
                     const SizedBox(height: 12),
                     Text(
@@ -537,9 +550,16 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                               alignLabelWithHint: true,
                             ),
                           )
-                        : SelectableText(
-                            p.description.isEmpty ? '—' : p.description,
-                            style: Theme.of(context).textTheme.bodyMedium,
+                        : TextField(
+                            controller: _descController,
+                            readOnly: true,
+                            minLines: 3,
+                            maxLines: 8,
+                            enableInteractiveSelection: assigneeViewer,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              alignLabelWithHint: true,
+                            ),
                           ),
                     const SizedBox(height: 12),
                     if (!creator) ...[
@@ -621,7 +641,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                           label: 'Not started',
                           selected: effectiveStatus == 'Not started',
                           selectedBg: _kGreySel,
-                          enabled: creator,
+                          interactive: creator,
                           onTap: () =>
                               setState(() => _draftStatus = 'Not started'),
                         ),
@@ -630,7 +650,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                           label: 'In progress',
                           selected: effectiveStatus == 'In progress',
                           selectedBg: _kBlue,
-                          enabled: creator,
+                          interactive: creator,
                           onTap: () =>
                               setState(() => _draftStatus = 'In progress'),
                         ),
@@ -639,7 +659,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                           label: 'Completed',
                           selected: effectiveStatus == 'Completed',
                           selectedBg: _kGreen,
-                          enabled: creator,
+                          interactive: creator,
                           onTap: () =>
                               setState(() => _draftStatus = 'Completed'),
                         ),
