@@ -314,14 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final revampLookup = context.watch<AppState>().revampStaffLookup;
     final welcomeName = _welcomeDisplayName(revampLookup);
-    final titleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.bold,
-          fontSize: 22,
-        ) ??
-        const TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.bold,
-        );
     return Scaffold(
       drawer: ProjectTrackerDrawer(
         welcomeName: welcomeName,
@@ -334,45 +326,6 @@ class _HomeScreenState extends State<HomeScreen> {
         onSignOut: () async {
           await _closeDrawerThenSignOut();
         },
-      ),
-      appBar: AppBar(
-        centerTitle: true,
-        titleSpacing: 0,
-        title: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            'Project Tracker',
-            style: titleStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        actions: [
-          if (FirebaseAuth.instance.currentUser?.email?.toLowerCase() ==
-              AdminConfig.systemAdminEmail.toLowerCase())
-            IconButton(
-              icon: const Icon(Icons.admin_panel_settings_outlined),
-              tooltip: 'System Admin',
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (context) => const SystemAdminScreen(),
-                  ),
-                );
-              },
-            ),
-          if (_preferLandingLoaded)
-            IconButton(
-              tooltip: _preferLanding
-                  ? 'Unpin default view'
-                  : 'Pin Default as home page',
-              icon: Icon(
-                _preferLanding ? Icons.push_pin : Icons.push_pin_outlined,
-              ),
-              onPressed: _togglePinLandingView,
-            ),
-        ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
@@ -411,7 +364,41 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: NotificationListener<ScrollNotification>(
                 onNotification: _onLandingScrollNotification,
-                child: const InitiativeListScreen(),
+                child: InitiativeListScreen(
+                  dashboardScrollAppBar: DashboardScrollAppBarConfig(
+                    title: 'Project Tracker',
+                    showDrawerMenuLeading: true,
+                    actions: [
+                      if (FirebaseAuth.instance.currentUser?.email
+                                  ?.toLowerCase() ==
+                              AdminConfig.systemAdminEmail.toLowerCase())
+                        IconButton(
+                          icon: const Icon(Icons.admin_panel_settings_outlined),
+                          tooltip: 'System Admin',
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (context) =>
+                                    const SystemAdminScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      if (_preferLandingLoaded)
+                        IconButton(
+                          tooltip: _preferLanding
+                              ? 'Unpin default view'
+                              : 'Pin Default as home page',
+                          icon: Icon(
+                            _preferLanding
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                          ),
+                          onPressed: _togglePinLandingView,
+                        ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ],
@@ -579,14 +566,6 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
   Widget build(BuildContext context) {
     final revampLookup = context.watch<AppState>().revampStaffLookup;
     final welcomeName = _welcomeDisplayName(revampLookup);
-    final overviewTitleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.bold,
-          fontSize: 22,
-        ) ??
-        const TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.bold,
-        );
     return Scaffold(
       drawer: ProjectTrackerDrawer(
         welcomeName: welcomeName,
@@ -660,40 +639,6 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
           });
         },
       ),
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        centerTitle: true,
-        titleSpacing: 0,
-        leading: Builder(
-          builder: (ctx) => IconButton(
-            icon: const Icon(Icons.menu),
-            tooltip: 'Menu',
-            onPressed: () => Scaffold.of(ctx).openDrawer(),
-          ),
-        ),
-        title: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            'Overview',
-            style: overviewTitleStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        actions: [
-          if (_preferCustomizedLoaded)
-            IconButton(
-              tooltip: _preferCustomized
-                  ? 'Unpin default view'
-                  : 'Pin Overview as home page',
-              icon: Icon(
-                _preferCustomized ? Icons.push_pin : Icons.push_pin_outlined,
-              ),
-              onPressed: _togglePinDefaultView,
-            ),
-        ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
@@ -701,7 +646,27 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
         },
         child: NotificationListener<ScrollNotification>(
           onNotification: _onCustomizedScrollNotification,
-          child: const InitiativeListScreen(customizedFlat: true),
+          child: InitiativeListScreen(
+            customizedFlat: true,
+            dashboardScrollAppBar: DashboardScrollAppBarConfig(
+              title: 'Overview',
+              showDrawerMenuLeading: true,
+              actions: [
+                if (_preferCustomizedLoaded)
+                  IconButton(
+                    tooltip: _preferCustomized
+                        ? 'Unpin default view'
+                        : 'Pin Overview as home page',
+                    icon: Icon(
+                      _preferCustomized
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                    ),
+                    onPressed: _togglePinDefaultView,
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
       floatingActionButton: AnimatedOpacity(
@@ -865,14 +830,6 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
   Widget build(BuildContext context) {
     final revampLookup = context.watch<AppState>().revampStaffLookup;
     final welcomeName = _welcomeDisplayName(revampLookup);
-    final titleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.bold,
-          fontSize: 22,
-        ) ??
-        const TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.bold,
-        );
     return Scaffold(
       drawer: ProjectTrackerDrawer(
         welcomeName: welcomeName,
@@ -946,40 +903,6 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
           });
         },
       ),
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        centerTitle: true,
-        titleSpacing: 0,
-        leading: Builder(
-          builder: (ctx) => IconButton(
-            icon: const Icon(Icons.menu),
-            tooltip: 'Menu',
-            onPressed: () => Scaffold.of(ctx).openDrawer(),
-          ),
-        ),
-        title: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            'Project',
-            style: titleStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        actions: [
-          if (_preferLoaded)
-            IconButton(
-              tooltip: _preferProject
-                  ? 'Unpin default view'
-                  : 'Pin Project as home page',
-              icon: Icon(
-                _preferProject ? Icons.push_pin : Icons.push_pin_outlined,
-              ),
-              onPressed: _togglePinDefaultView,
-            ),
-        ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
@@ -987,7 +910,27 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
         },
         child: NotificationListener<ScrollNotification>(
           onNotification: _onScrollNotification,
-          child: const InitiativeListScreen(projectsOnlyDashboard: true),
+          child: InitiativeListScreen(
+            projectsOnlyDashboard: true,
+            dashboardScrollAppBar: DashboardScrollAppBarConfig(
+              title: 'Project',
+              showDrawerMenuLeading: true,
+              actions: [
+                if (_preferLoaded)
+                  IconButton(
+                    tooltip: _preferProject
+                        ? 'Unpin default view'
+                        : 'Pin Project as home page',
+                    icon: Icon(
+                      _preferProject
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                    ),
+                    onPressed: _togglePinDefaultView,
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
       floatingActionButton: AnimatedOpacity(

@@ -106,6 +106,60 @@ class _CustomizedFlatEntry {
   bool get isTaskRow => sub == null;
 }
 
+/// [SliverAppBar] for Default / Overview / Project when [InitiativeListScreen.dashboardScrollAppBar] is set.
+class DashboardScrollAppBarConfig {
+  const DashboardScrollAppBarConfig({
+    required this.title,
+    this.showDrawerMenuLeading = false,
+    this.actions = const <Widget>[],
+  });
+
+  final String title;
+  final bool showDrawerMenuLeading;
+  final List<Widget> actions;
+}
+
+/// Keeps filters / chips / sort / search height stable while sliding off-screen on scroll down
+/// and floating back on scroll up ([SliverPersistentHeader.floating]).
+class _OverviewFiltersFloatingHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _OverviewFiltersFloatingHeaderDelegate({
+    required this.extent,
+    required this.child,
+  });
+
+  final double extent;
+  final Widget child;
+
+  @override
+  double get minExtent => extent;
+
+  @override
+  double get maxExtent => extent;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: overlapsContent ? 2 : 0,
+      shadowColor: Colors.black26,
+      clipBehavior: Clip.hardEdge,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: child,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _OverviewFiltersFloatingHeaderDelegate oldDelegate) {
+    return extent != oldDelegate.extent || child != oldDelegate.child;
+  }
+}
+
 class InitiativeListScreen extends StatefulWidget {
   const InitiativeListScreen({
     super.key,
@@ -113,6 +167,8 @@ class InitiativeListScreen extends StatefulWidget {
     this.customizedFlat = false,
     /// Views → Project: projects only (no tasks/sub-tasks); do not combine with [customizedFlat].
     this.projectsOnlyDashboard = false,
+    /// Default / Overview / Project: [SliverAppBar] (floating, pinned, snap) in the same scroll view as content.
+    this.dashboardScrollAppBar,
   });
 
   /// When true, initiatives are hidden and each [TaskListCard] shows sub-tasks without expand/collapse.
@@ -120,6 +176,9 @@ class InitiativeListScreen extends StatefulWidget {
 
   /// When true, only project cards (search/filter/sort for projects).
   final bool projectsOnlyDashboard;
+
+  /// When non-null, embeds a Material [SliverAppBar] + floating filter headers with list content.
+  final DashboardScrollAppBarConfig? dashboardScrollAppBar;
 
   @override
   State<InitiativeListScreen> createState() => _InitiativeListScreenState();
@@ -131,6 +190,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
   /// Max width for team / status filter fields (readable on wide layouts).
   static const double _filterFieldMaxWidth = 420;
+
+  /// Task landing / Overview floating filters header height.
+  final GlobalKey _taskDashboardFiltersMeasureKey = GlobalKey();
+  double _taskDashboardFiltersSliverExtent = 380;
+
+  /// Project dashboard floating filters header height.
+  final GlobalKey _projectDashboardFiltersMeasureKey = GlobalKey();
+  double _projectDashboardFiltersSliverExtent = 400;
 
   /// "Filter by assignee" submenu: roster team, then multi-select teammates (tasks/initiatives).
   String? _filterAssigneeMenuTeamId;
@@ -1564,12 +1631,350 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
+  /// Filters field, clear-all, scope chips, sort, and search (shared by landing and Overview sliver scroll).
+  Widget _buildLandingFiltersSortSearchSection(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted,
+    String filterKey,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
+
+              final wideFilterWidth = min(
+                280.0,
+                constraints.maxWidth * 0.38,
+              ).clamp(120.0, _filterFieldMaxWidth);
+
+              final filterMenu = MenuAnchor(
+                controller: _filterMenuController,
+                onClose: _onFilterMenuAnchorClosed,
+                menuChildren: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: SizedBox(
+                      width: 320,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: menuMaxHeight),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ..._landingFilterMenuSections(
+                                context,
+                                state,
+                                teamsSorted,
+                              ),
+                              ..._landingCreateDateSection(context),
+                              ..._landingStatusSubmissionSections(context),
+                              const Divider(height: 16),
+                              MenuItemButton(
+                                closeOnActivate: false,
+                                onPressed: _clearTeamAndStatusFilters,
+                                leadingIcon: const Icon(
+                                  Icons.clear_all,
+                                  size: 20,
+                                ),
+                                child: const Text('Clear all'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                builder: (context, controller, child) {
+                  final summaryLine = _filterMenuSummaryLine(state);
+                  return Tooltip(
+                    message: summaryLine,
+                    child: InkWell(
+                      onTap: () {
+                        if (controller.isOpen) {
+                          controller.close();
+                        } else {
+                          controller.open();
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Filters',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.arrow_drop_down),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 16,
+                          ),
+                        ),
+                        child: Text(
+                          summaryLine,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+
+              final filterWidth = constraints.maxWidth < 600
+                  ? min(_filterFieldMaxWidth, constraints.maxWidth)
+                  : wideFilterWidth;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: filterWidth),
+                      child: filterMenu,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        if (_hasTeamOrStatusFilterSelections)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _clearTeamAndStatusFilters,
+                child: const Text('Clear all'),
+              ),
+            ),
+          ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final listColumnMaxWidth = min(
+              _kLandingTaskListMaxWidth,
+              constraints.maxWidth,
+            );
+            final constrained = BoxConstraints(maxWidth: listColumnMaxWidth);
+            Widget bandFiltersLeft(Widget child) {
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: constrained,
+                  child: child,
+                ),
+              );
+            }
+
+            Widget bandSearch(Widget child) {
+              return Center(
+                child: ConstrainedBox(
+                  constraints: constrained,
+                  child: child,
+                ),
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                bandFiltersLeft(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        primary: false,
+                        physics: const ClampingScrollPhysics(),
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            _buildTaskFilterChip(
+                              value: 'all',
+                              label: 'All',
+                              selected: filterKey == 'all',
+                              selectedBg: null,
+                              selectedLabelColor: null,
+                              leading: null,
+                            ),
+                            _buildTaskFilterChip(
+                              value: 'assigned',
+                              label: 'Assigned to me',
+                              selected: filterKey == 'assigned',
+                              selectedBg: const Color(0xFF0D47A1),
+                              selectedLabelColor: Colors.white,
+                              leading: _assignedToMeFilterIcon(
+                                filterKey == 'assigned',
+                              ),
+                            ),
+                            _buildTaskFilterChip(
+                              value: 'created',
+                              label: widget.customizedFlat
+                                  ? 'My created...'
+                                  : 'My created tasks',
+                              selected: filterKey == 'created',
+                              selectedBg: Colors.lightBlue.shade200,
+                              selectedLabelColor: Colors.black87,
+                              leading: _myCreatedTasksFilterIcon(
+                                filterKey == 'created',
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: SizedBox(
+                                height: 32,
+                                child: VerticalDivider(
+                                  width: 1,
+                                  thickness: 1,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Text(
+                                'Sort',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleSmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ),
+                            _buildTaskSortDropdown(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                bandSearch(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: _buildLandingTaskSearchField(),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  TextStyle _dashboardSliverAppBarTitleStyle(BuildContext context) {
+    return Theme.of(context).textTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.bold,
+          fontSize: 22,
+        ) ??
+        const TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+        );
+  }
+
+  List<Widget> _buildDashboardScrollPrefixSlivers(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted, {
+    required DashboardScrollAppBarConfig appBarConfig,
+    required String filterKey,
+    required double filtersHeaderExtent,
+    required GlobalKey filtersMeasureKey,
+    required Widget filtersHeaderChild,
+  }) {
+    final titleStyle = _dashboardSliverAppBarTitleStyle(context);
+    return <Widget>[
+      SliverAppBar(
+        floating: true,
+        pinned: true,
+        snap: true,
+        automaticallyImplyLeading: false,
+        centerTitle: true,
+        titleSpacing: 0,
+        leading: appBarConfig.showDrawerMenuLeading
+            ? Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.menu),
+                  tooltip: 'Menu',
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                ),
+              )
+            : null,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            appBarConfig.title,
+            style: titleStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        actions: appBarConfig.actions,
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      SliverPersistentHeader(
+        pinned: false,
+        floating: true,
+        delegate: _OverviewFiltersFloatingHeaderDelegate(
+          extent: filtersHeaderExtent,
+          child: KeyedSubtree(
+            key: filtersMeasureKey,
+            child: filtersHeaderChild,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  void _measureTaskDashboardFiltersSliverExtent() {
+    final box =
+        _taskDashboardFiltersMeasureKey.currentContext?.findRenderObject()
+            as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final h = box.size.height;
+    if (h <= 0) return;
+    if ((h - _taskDashboardFiltersSliverExtent).abs() < 0.5) return;
+    setState(() => _taskDashboardFiltersSliverExtent = h);
+  }
+
+  void _measureProjectDashboardFiltersSliverExtent() {
+    final box =
+        _projectDashboardFiltersMeasureKey.currentContext?.findRenderObject()
+            as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final h = box.size.height;
+    if (h <= 0) return;
+    if ((h - _projectDashboardFiltersSliverExtent).abs() < 0.5) return;
+    setState(() => _projectDashboardFiltersSliverExtent = h);
+  }
+
   Widget _buildCustomizedFlatFullColumn(
     BuildContext context,
     AppState state,
     List<Task> filteredTasks,
-    List<Task> filteredDeletedTasks,
-  ) {
+    List<Task> filteredDeletedTasks, {
+    List<Widget>? dashboardScrollPrefixSlivers,
+  }) {
     return FutureBuilder<
         ({
           Map<String, List<SingularSubtask>> grouped,
@@ -1587,8 +1992,27 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       ),
       future: _futureGroupedForCustomized(filteredTasks, filteredDeletedTasks),
       builder: (context, snapshot) {
+        final prefix = dashboardScrollPrefixSlivers;
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
+          if (prefix != null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: CustomScrollView(
+                    slivers: [
+                      ...prefix,
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
           return const Center(child: CircularProgressIndicator());
         }
         final payload = snapshot.data;
@@ -1619,6 +2043,34 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         );
 
         if (activeEntries.isEmpty && delEntries.isEmpty) {
+          if (prefix != null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: CustomScrollView(
+                    slivers: [
+                      ...prefix,
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Center(
+                            child: Text(
+                              'No tasks or sub-tasks match your filters '
+                              '(search, created date, and other filters).',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -1643,79 +2095,62 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           _tasksPageSize,
         );
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: _kLandingTaskListMaxWidth,
-                  ),
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    children: [
-                      if (filteredTasks.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16, bottom: 8),
-                          child: Text(
-                            'Tasks & sub-tasks (${activeEntries.length})',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 12),
-                          child: PicTeamColorLegend(),
-                        ),
-                        ...pagedActive.map(
-                          (e) => _customizedEntryTile(
-                            context,
-                            state,
-                            e,
-                            taskCommentActivity: taskCommentActivity,
-                            subtaskCommentActivity: subtaskCommentActivity,
-                          ),
-                        ),
-                      ],
-                      if (filteredDeletedTasks.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 24, bottom: 8),
-                          child: Text(
-                            'Deleted tasks',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey,
-                                ),
-                          ),
-                        ),
-                        if (filteredTasks.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 12),
-                            child: PicTeamColorLegend(),
-                          ),
-                      ],
-                      ...pagedDel.map(
-                        (e) => _customizedEntryTile(
-                          context,
-                          state,
-                          e,
-                          taskCommentActivity: taskCommentActivity,
-                          subtaskCommentActivity: subtaskCommentActivity,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+        final listChildren = <Widget>[
+          if (filteredTasks.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 16, bottom: 8),
+              child: Text(
+                'Tasks & sub-tasks (${activeEntries.length})',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
-            if (activeEntries.isNotEmpty || delEntries.isNotEmpty)
-              Material(
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: PicTeamColorLegend(),
+            ),
+            ...pagedActive.map(
+              (e) => _customizedEntryTile(
+                context,
+                state,
+                e,
+                taskCommentActivity: taskCommentActivity,
+                subtaskCommentActivity: subtaskCommentActivity,
+              ),
+            ),
+          ],
+          if (filteredDeletedTasks.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 24, bottom: 8),
+              child: Text(
+                'Deleted tasks',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+              ),
+            ),
+            if (filteredTasks.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: PicTeamColorLegend(),
+              ),
+          ],
+          ...pagedDel.map(
+            (e) => _customizedEntryTile(
+              context,
+              state,
+              e,
+              taskCommentActivity: taskCommentActivity,
+              subtaskCommentActivity: subtaskCommentActivity,
+            ),
+          ),
+        ];
+
+        final paginationBar = (activeEntries.isNotEmpty || delEntries.isNotEmpty)
+            ? Material(
                 elevation: 6,
                 shadowColor: Colors.black26,
                 color: Theme.of(context).colorScheme.surface,
@@ -1761,7 +2196,58 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     ),
                   ),
                 ),
+              )
+            : null;
+
+        if (prefix != null) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: CustomScrollView(
+                  slivers: [
+                    ...prefix,
+                    SliverToBoxAdapter(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: _kLandingTaskListMaxWidth,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: listChildren,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              ?paginationBar,
+            ],
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _kLandingTaskListMaxWidth,
+                  ),
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    children: listChildren,
+                  ),
+                ),
+              ),
+            ),
+            ?paginationBar,
           ],
         );
       },
@@ -2662,29 +3148,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
-  Widget _buildProjectsOnlyDashboard(
+  Widget _buildProjectDashboardFiltersAndLegendSection(
     BuildContext context,
     AppState state,
-    List<Team> teamsSorted,
-  ) {
-    final projects = _filteredSortedProjectsForDashboard(state);
-    final pagedProjects = _landingPageSlice(
-      projects,
-      _tasksPageIndex,
-      _tasksPageSize,
-    );
-    final filterKey = _filterType == 'my' ? 'all' : _filterType;
+    List<Team> teamsSorted, {
+    required List<ProjectRecord> projects,
+    required String filterKey,
+    required bool hasProjFilters,
+  }) {
     final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
-
-    bool hasProjFilters =
-        _filterAssigneeMenuStaffIds.isNotEmpty ||
-        _filterCreatorMenuStaffIds.isNotEmpty ||
-        _filterCreateDateEngaged ||
-        _selectedProjectStatusFilters.isNotEmpty ||
-        _taskSearchController.text.trim().isNotEmpty;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -2725,7 +3200,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               MenuItemButton(
                                 closeOnActivate: false,
                                 onPressed: _clearTeamAndStatusFilters,
-                                leadingIcon: const Icon(Icons.clear_all, size: 20),
+                                leadingIcon:
+                                    const Icon(Icons.clear_all, size: 20),
                                 child: const Text('Clear all'),
                               ),
                             ],
@@ -2906,6 +3382,41 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             );
           },
         ),
+      ],
+    );
+  }
+
+  Widget _buildProjectsOnlyDashboard(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted,
+  ) {
+    final projects = _filteredSortedProjectsForDashboard(state);
+    final pagedProjects = _landingPageSlice(
+      projects,
+      _tasksPageIndex,
+      _tasksPageSize,
+    );
+    final filterKey = _filterType == 'my' ? 'all' : _filterType;
+
+    final hasProjFilters =
+        _filterAssigneeMenuStaffIds.isNotEmpty ||
+        _filterCreatorMenuStaffIds.isNotEmpty ||
+        _filterCreateDateEngaged ||
+        _selectedProjectStatusFilters.isNotEmpty ||
+        _taskSearchController.text.trim().isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildProjectDashboardFiltersAndLegendSection(
+          context,
+          state,
+          teamsSorted,
+          projects: projects,
+          filterKey: filterKey,
+          hasProjFilters: hasProjFilters,
+        ),
         Expanded(
           child: projects.isEmpty
               ? Center(
@@ -2989,6 +3500,144 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     );
   }
 
+  Widget _buildProjectsOnlyDashboardWithSliver(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted,
+  ) {
+    final cfg = widget.dashboardScrollAppBar!;
+    final projects = _filteredSortedProjectsForDashboard(state);
+    final pagedProjects = _landingPageSlice(
+      projects,
+      _tasksPageIndex,
+      _tasksPageSize,
+    );
+    final filterKey = _filterType == 'my' ? 'all' : _filterType;
+    final hasProjFilters =
+        _filterAssigneeMenuStaffIds.isNotEmpty ||
+        _filterCreatorMenuStaffIds.isNotEmpty ||
+        _filterCreateDateEngaged ||
+        _selectedProjectStatusFilters.isNotEmpty ||
+        _taskSearchController.text.trim().isNotEmpty;
+
+    final prefixSlivers = _buildDashboardScrollPrefixSlivers(
+      context,
+      state,
+      teamsSorted,
+      appBarConfig: cfg,
+      filterKey: filterKey,
+      filtersHeaderExtent: _projectDashboardFiltersSliverExtent,
+      filtersMeasureKey: _projectDashboardFiltersMeasureKey,
+      filtersHeaderChild: _buildProjectDashboardFiltersAndLegendSection(
+        context,
+        state,
+        teamsSorted,
+        projects: projects,
+        filterKey: filterKey,
+        hasProjFilters: hasProjFilters,
+      ),
+    );
+
+    if (projects.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                ...prefixSlivers,
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Text(
+                        _taskSearchController.text.trim().isNotEmpty
+                            ? 'No projects match your search.'
+                            : hasProjFilters
+                                ? 'No projects for this filter.'
+                                : 'No projects yet.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final paginationBar = Material(
+      elevation: 6,
+      shadowColor: Colors.black26,
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: _kLandingTaskListMaxWidth,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildLandingTaskPaginationBar(
+                    context: context,
+                    totalCount: projects.length,
+                    pageIndex: _tasksPageIndex,
+                    onPageChanged: (i) {
+                      setState(() => _tasksPageIndex = i);
+                    },
+                    showPageSizeDropdown: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: CustomScrollView(
+            slivers: [
+              ...prefixSlivers,
+              SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: _kLandingTaskListMaxWidth,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final p in pagedProjects)
+                            _buildProjectDashboardCard(context, p),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        paginationBar,
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_filterType == 'my') {
@@ -3000,11 +3649,28 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       });
     }
     final state = context.watch<AppState>();
+    if (widget.dashboardScrollAppBar != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (widget.projectsOnlyDashboard) {
+          _measureProjectDashboardFiltersSliverExtent();
+        } else {
+          _measureTaskDashboardFiltersSliverExtent();
+        }
+      });
+    }
     final teamsSorted = [...state.teams]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     if (widget.projectsOnlyDashboard) {
       if (!_staffMapsReady) {
         return const Center(child: CircularProgressIndicator());
+      }
+      if (widget.dashboardScrollAppBar != null) {
+        return _buildProjectsOnlyDashboardWithSliver(
+          context,
+          state,
+          teamsSorted,
+        );
       }
       return _buildProjectsOnlyDashboard(context, state, teamsSorted);
     }
@@ -3272,6 +3938,267 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     final reminders = state.getPendingRemindersForTeams(allTeams);
 
+    final dashCfg = widget.dashboardScrollAppBar;
+
+    if (dashCfg != null &&
+        !widget.customizedFlat &&
+        !widget.projectsOnlyDashboard) {
+      final prefixSlivers = _buildDashboardScrollPrefixSlivers(
+        context,
+        state,
+        teamsSorted,
+        appBarConfig: dashCfg,
+        filterKey: filterKey,
+        filtersHeaderExtent: _taskDashboardFiltersSliverExtent,
+        filtersMeasureKey: _taskDashboardFiltersMeasureKey,
+        filtersHeaderChild: _buildLandingFiltersSortSearchSection(
+          context,
+          state,
+          teamsSorted,
+          filterKey,
+        ),
+      );
+
+      final reminderSlivers = <Widget>[
+        if (reminders.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: ExpansionTile(
+                title: const Text('Reminders (would send to Directors)'),
+                initiallyExpanded: _remindersExpanded,
+                onExpansionChanged: (v) =>
+                    setState(() => _remindersExpanded = v),
+                children: reminders
+                    .map(
+                      (r) => ListTile(
+                        title: Text(r.itemName),
+                        subtitle: Text(
+                          '${r.reminderType} → ${r.recipientNames.join(", ")}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ),
+      ];
+
+      if (filteredInitiatives.isEmpty &&
+          filteredTasks.isEmpty &&
+          filteredDeletedTasks.isEmpty) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  ...prefixSlivers,
+                  ...reminderSlivers,
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: Text(_emptyListMessage())),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      }
+
+      final landingListChildren = <Widget>[
+        if (filteredInitiatives.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 8),
+            child: Text(
+              'Initiatives',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+          ),
+          ...filteredInitiatives.map(
+            (init) => _buildInitiativeCard(context, state, init),
+          ),
+        ],
+        if (filteredTasks.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 16, bottom: 8),
+            child: Text(
+              'Tasks (${filteredTasks.length})',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: PicTeamColorLegend(),
+          ),
+          ...pagedTasks.map((t) => TaskListCard(task: t)),
+        ],
+        if (filteredDeletedTasks.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 24, bottom: 8),
+            child: Text(
+              'Deleted tasks',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+            ),
+          ),
+          if (filteredTasks.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: PicTeamColorLegend(),
+            ),
+          ...pagedDeletedTasks.map((t) => TaskListCard(task: t)),
+        ],
+      ];
+
+      final landingPaginationBar =
+          (filteredTasks.isNotEmpty || filteredDeletedTasks.isNotEmpty)
+              ? Material(
+                  elevation: 6,
+                  shadowColor: Colors.black26,
+                  color: Theme.of(context).colorScheme.surface,
+                  child: SafeArea(
+                    top: false,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: _kLandingTaskListMaxWidth,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (filteredTasks.isNotEmpty)
+                                _buildLandingTaskPaginationBar(
+                                  context: context,
+                                  totalCount: filteredTasks.length,
+                                  pageIndex: _tasksPageIndex,
+                                  onPageChanged: (i) {
+                                    setState(() => _tasksPageIndex = i);
+                                  },
+                                  showPageSizeDropdown: true,
+                                ),
+                              if (filteredTasks.isNotEmpty &&
+                                  filteredDeletedTasks.isNotEmpty)
+                                const Divider(height: 12),
+                              if (filteredDeletedTasks.isNotEmpty)
+                                _buildLandingTaskPaginationBar(
+                                  context: context,
+                                  totalCount: filteredDeletedTasks.length,
+                                  pageIndex: _deletedTasksPageIndex,
+                                  onPageChanged: (i) {
+                                    setState(
+                                      () => _deletedTasksPageIndex = i,
+                                    );
+                                  },
+                                  showPageSizeDropdown: false,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : null;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                ...prefixSlivers,
+                ...reminderSlivers,
+                SliverToBoxAdapter(
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: _kLandingTaskListMaxWidth,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: landingListChildren,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ?landingPaginationBar,
+        ],
+      );
+    }
+
+    if (widget.customizedFlat && dashCfg != null) {
+      final prefixSlivers = _buildDashboardScrollPrefixSlivers(
+        context,
+        state,
+        teamsSorted,
+        appBarConfig: dashCfg,
+        filterKey: filterKey,
+        filtersHeaderExtent: _taskDashboardFiltersSliverExtent,
+        filtersMeasureKey: _taskDashboardFiltersMeasureKey,
+        filtersHeaderChild: _buildLandingFiltersSortSearchSection(
+          context,
+          state,
+          teamsSorted,
+          filterKey,
+        ),
+      );
+
+      if (filteredInitiatives.isEmpty &&
+          filteredTasks.isEmpty &&
+          filteredDeletedTasks.isEmpty) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  ...prefixSlivers,
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: Text(_emptyListMessage())),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _buildCustomizedFlatFullColumn(
+              context,
+              state,
+              customizedFlatActiveTasks,
+              filteredDeletedTasks,
+              dashboardScrollPrefixSlivers: prefixSlivers,
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -3295,242 +4222,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   .toList(),
             ),
           ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
-
-              final wideFilterWidth = min(
-                280.0,
-                constraints.maxWidth * 0.38,
-              ).clamp(120.0, _filterFieldMaxWidth);
-
-              final filterMenu = MenuAnchor(
-                controller: _filterMenuController,
-                onClose: _onFilterMenuAnchorClosed,
-                menuChildren: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: SizedBox(
-                      width: 320,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: menuMaxHeight),
-                        child: SingleChildScrollView(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ..._landingFilterMenuSections(
-                                context,
-                                state,
-                                teamsSorted,
-                              ),
-                              ..._landingCreateDateSection(context),
-                              ..._landingStatusSubmissionSections(context),
-                              const Divider(height: 16),
-                              MenuItemButton(
-                                closeOnActivate: false,
-                                onPressed: _clearTeamAndStatusFilters,
-                                leadingIcon: const Icon(
-                                  Icons.clear_all,
-                                  size: 20,
-                                ),
-                                child: const Text('Clear all'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-                builder: (context, controller, child) {
-                  final summaryLine = _filterMenuSummaryLine(state);
-                  return Tooltip(
-                    message: summaryLine,
-                    child: InkWell(
-                      onTap: () {
-                        if (controller.isOpen) {
-                          controller.close();
-                        } else {
-                          controller.open();
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(4),
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: 'Filters',
-                          border: OutlineInputBorder(),
-                          suffixIcon: Icon(Icons.arrow_drop_down),
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 16,
-                          ),
-                        ),
-                        child: Text(
-                          summaryLine,
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 2,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              );
-
-              final filterWidth = constraints.maxWidth < 600
-                  ? min(_filterFieldMaxWidth, constraints.maxWidth)
-                  : wideFilterWidth;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: filterWidth),
-                      child: filterMenu,
-                ),
-              ),
-            ],
-              );
-            },
-          ),
-        ),
-        if (_hasTeamOrStatusFilterSelections)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: _clearTeamAndStatusFilters,
-                child: const Text('Clear all'),
-              ),
-            ),
-          ),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final listColumnMaxWidth = min(
-              _kLandingTaskListMaxWidth,
-              constraints.maxWidth,
-            );
-            final constrained = BoxConstraints(maxWidth: listColumnMaxWidth);
-            /// Default + Overview: filter chips and sort controls flush left (wide web).
-            Widget bandFiltersLeft(Widget child) {
-              return Align(
-                alignment: Alignment.centerLeft,
-                child: ConstrainedBox(
-                  constraints: constrained,
-                  child: child,
-                ),
-              );
-            }
-
-            /// Default + Overview: search field centered (wide web).
-            Widget bandSearch(Widget child) {
-              return Center(
-                child: ConstrainedBox(
-                  constraints: constrained,
-                  child: child,
-                ),
-              );
-            }
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                bandFiltersLeft(
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        primary: false,
-                        physics: const ClampingScrollPhysics(),
-                        padding: const EdgeInsets.only(right: 12),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            _buildTaskFilterChip(
-                              value: 'all',
-                              label: 'All',
-                              selected: filterKey == 'all',
-                              selectedBg: null,
-                              selectedLabelColor: null,
-                              leading: null,
-                            ),
-                            _buildTaskFilterChip(
-                              value: 'assigned',
-                              label: 'Assigned to me',
-                              selected: filterKey == 'assigned',
-                              selectedBg: const Color(0xFF0D47A1),
-                              selectedLabelColor: Colors.white,
-                              leading: _assignedToMeFilterIcon(
-                                filterKey == 'assigned',
-                              ),
-                            ),
-                            _buildTaskFilterChip(
-                              value: 'created',
-                              label: widget.customizedFlat
-                                  ? 'My created...'
-                                  : 'My created tasks',
-                              selected: filterKey == 'created',
-                              selectedBg: Colors.lightBlue.shade200,
-                              selectedLabelColor: Colors.black87,
-                              leading: _myCreatedTasksFilterIcon(
-                                filterKey == 'created',
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                              child: SizedBox(
-                                height: 32,
-                                child: VerticalDivider(
-                                  width: 1,
-                                  thickness: 1,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .outlineVariant,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Text(
-                                'Sort',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleSmall
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ),
-                            _buildTaskSortDropdown(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                bandSearch(
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: _buildLandingTaskSearchField(),
-                  ),
-                ),
-              ],
-            );
-          },
+        _buildLandingFiltersSortSearchSection(
+          context,
+          state,
+          teamsSorted,
+          filterKey,
         ),
         Expanded(
           child: filteredInitiatives.isEmpty &&
