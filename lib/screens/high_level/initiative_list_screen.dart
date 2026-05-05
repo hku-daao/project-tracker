@@ -2102,10 +2102,37 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return _dateWithinLastRollingMonth(cd);
   }
 
+  /// Project list visibility: self as creator or assignee, or a subordinate (from
+  /// Supabase [subordinate]) as creator or assignee — same app_ids as [AppState.subordinateAppIds].
+  bool _projectIsVisibleToCurrentUser(ProjectRecord p, AppState state) {
+    final mine = state.userStaffAppId?.trim();
+    if (mine == null || mine.isEmpty) return false;
+    final myUuid = state.userStaffId?.trim();
+    final cb = p.createByStaffUuid?.trim();
+    if (myUuid != null &&
+        myUuid.isNotEmpty &&
+        cb != null &&
+        cb.isNotEmpty &&
+        cb.toLowerCase() == myUuid.toLowerCase()) {
+      return true;
+    }
+    final keys = p.assigneeKeys(_staffUuidToAppId);
+    if (keys.contains(mine)) return true;
+    final subs = state.subordinateAppIds;
+    if (subs.isEmpty) return false;
+    if (cb != null && cb.isNotEmpty) {
+      final creatorApp = _staffUuidToAppId[cb] ?? cb;
+      if (subs.contains(creatorApp)) return true;
+    }
+    if (keys.any(subs.contains)) return true;
+    return false;
+  }
+
   List<ProjectRecord> _filteredSortedProjectsForDashboard(AppState state) {
     final filterKey = _filterType == 'my' ? 'all' : _filterType;
     final sid = state.userStaffId?.trim();
-    Iterable<ProjectRecord> it = state.projects;
+    Iterable<ProjectRecord> it =
+        state.projects.where((p) => _projectIsVisibleToCurrentUser(p, state));
     if (filterKey == 'assigned') {
       if (sid == null || sid.isEmpty) return [];
       it = it.where((p) => p.assigneeStaffUuids.contains(sid));
@@ -2290,6 +2317,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   } else {
                     _selectedProjectStatusFilters.remove(s);
                   }
+                  _tasksPageIndex = 0;
                 });
               },
               child: Text(s),
@@ -2371,6 +2399,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     List<Team> teamsSorted,
   ) {
     final projects = _filteredSortedProjectsForDashboard(state);
+    final pagedProjects = _landingPageSlice(
+      projects,
+      _tasksPageIndex,
+      _tasksPageSize,
+    );
     final filterKey = _filterType == 'my' ? 'all' : _filterType;
     final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
 
@@ -2577,7 +2610,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     children: [
                       TextField(
                         controller: _taskSearchController,
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (_) => setState(() => _tasksPageIndex = 0),
                         decoration: const InputDecoration(
                           labelText: 'Search',
                           hintText: 'Search project name, description',
@@ -2621,16 +2654,67 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     ),
                   ),
                 )
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: _kLandingTaskListMaxWidth),
-                    child: ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      itemCount: projects.length,
-                      itemBuilder: (context, i) =>
-                          _buildProjectDashboardCard(context, projects[i]),
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: _kLandingTaskListMaxWidth,
+                          ),
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            itemCount: pagedProjects.length,
+                            itemBuilder: (context, i) =>
+                                _buildProjectDashboardCard(
+                              context,
+                              pagedProjects[i],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    Material(
+                      elevation: 6,
+                      shadowColor: Colors.black26,
+                      color: Theme.of(context).colorScheme.surface,
+                      child: SafeArea(
+                        top: false,
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: _kLandingTaskListMaxWidth,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                16,
+                                6,
+                                16,
+                                6,
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.stretch,
+                                children: [
+                                  _buildLandingTaskPaginationBar(
+                                    context: context,
+                                    totalCount: projects.length,
+                                    pageIndex: _tasksPageIndex,
+                                    onPageChanged: (i) {
+                                      setState(() => _tasksPageIndex = i);
+                                    },
+                                    showPageSizeDropdown: true,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
         ),
       ],
