@@ -95,6 +95,13 @@ class SupabaseService {
     _subtaskCacheInvalidateListeners.remove(listener);
   }
 
+  /// Whether [fetchSubtasksForTask] would read from [_subtaskListMemoryCache] without a network round-trip.
+  static bool hasSubtaskListCached(String taskId) {
+    final tid = taskId.trim();
+    if (tid.isEmpty) return false;
+    return _subtaskListMemoryCache.containsKey(tid);
+  }
+
   /// Drops the cached sub-task list for [taskId] so the next [fetchSubtasksForTask] loads from the server.
   static void invalidateSubtasksCacheForTask(String taskId) {
     final tid = taskId.trim();

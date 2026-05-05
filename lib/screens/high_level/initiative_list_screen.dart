@@ -996,7 +996,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final needOverdue = _filterOverdueOnly;
     final needLastUpdated =
         !widget.customizedFlat && _taskSortColumn == TaskListSortColumn.lastUpdated;
-    if (!needDue && !needBlob && !needOverdue && !needLastUpdated) return;
+
     final seen = <String>{};
     final combined = <Task>[];
     for (final t in [...tasks, ...deletedTasks]) {
@@ -1005,21 +1005,39 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       combined.add(t);
     }
     final singularIds = combined.map((t) => t.id).toList()..sort();
-    final idsToFetch = singularIds.where((id) {
+
+    /// Sort/filter aggregates (due date line, search blob, overdue chip, etc.).
+    final idsForAggregates = singularIds.where((id) {
       final missingDue = needDue && !_subtaskMaxDueByTaskId.containsKey(id);
-      final missingBlob = needBlob && !_subtaskSearchBlobByTaskId.containsKey(id);
+      final missingBlob =
+          needBlob && !_subtaskSearchBlobByTaskId.containsKey(id);
       final missingOverdue =
           needOverdue && !_subtaskHasOverdueByTaskId.containsKey(id);
       return missingDue || missingBlob || missingOverdue;
     }).toList();
+
+    /// Seed [_subtaskListMemoryCache] so [TaskListCard] avoids one round-trip per card (Default + Overview).
+    final idsForCardCache = !widget.projectsOnlyDashboard
+        ? singularIds
+            .where((id) => !SupabaseService.hasSubtaskListCached(id))
+            .toList()
+        : <String>[];
+
+    final mergedToFetch = <String>{
+      ...idsForAggregates,
+      ...idsForCardCache,
+    }.toList()
+      ..sort();
+
     final idsForCommentActivity = singularIds.where((id) {
       return needLastUpdated && !_taskCommentActivityByTaskId.containsKey(id);
     }).toList();
     if (idsForCommentActivity.isNotEmpty) {
       unawaited(_loadTaskCommentActivityForTasks(idsForCommentActivity));
     }
-    if (idsToFetch.isEmpty) return;
-    unawaited(_loadSubtaskRowDataForTasks(idsToFetch));
+    if (mergedToFetch.isNotEmpty) {
+      unawaited(_loadSubtaskRowDataForTasks(mergedToFetch));
+    }
   }
 
   Future<void> _loadTaskCommentActivityForTasks(List<String> taskIds) async {
@@ -1248,12 +1266,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
     }
     subIds.sort();
+    final commentPair = await Future.wait([
+      SupabaseService.fetchMaxTaskCommentActivityByTaskIds(idList),
+      SupabaseService.fetchMaxSubtaskCommentActivityBySubtaskIds(subIds),
+    ]);
     final taskCommentActivity =
-        await SupabaseService.fetchMaxTaskCommentActivityByTaskIds(idList);
+        commentPair[0] as Map<String, DateTime?>;
     final subtaskCommentActivity =
-        await SupabaseService.fetchMaxSubtaskCommentActivityBySubtaskIds(
-      subIds,
-    );
+        commentPair[1] as Map<String, DateTime?>;
     return (
       grouped: grouped,
       taskCommentActivity: taskCommentActivity,
@@ -3082,69 +3102,96 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     ];
   }
 
-  Widget _buildProjectDashboardCard(BuildContext context, ProjectRecord p) {
+  String? _firstAssigneeKeyForProject(ProjectRecord p) {
+    final keys = p.assigneeKeys(_staffUuidToAppId);
+    if (keys.isEmpty) return null;
+    return keys.first;
+  }
+
+  /// Parallel team lookups for one page of project cards (avoids one FutureBuilder + query per row).
+  Future<Map<String, String?>> _fetchProjectCardTeamTints(
+    List<ProjectRecord> pageProjects,
+  ) async {
+    final keys = <String>{};
+    for (final p in pageProjects) {
+      final k = _firstAssigneeKeyForProject(p);
+      if (k != null && k.isNotEmpty) keys.add(k);
+    }
+    if (keys.isEmpty) return {};
+    final list = keys.toList();
+    final entries = await Future.wait(
+      list.map(
+        (k) async => MapEntry(
+          k,
+          await SupabaseService.fetchStaffTeamBusinessIdForAssigneeKey(k),
+        ),
+      ),
+    );
+    return Map<String, String?>.fromEntries(entries);
+  }
+
+  Widget _buildProjectDashboardCard(
+    BuildContext context,
+    ProjectRecord p,
+    Map<String, String?> teamTintByAssigneeKey,
+  ) {
     final state = context.read<AppState>();
     final keys = p.assigneeKeys(_staffUuidToAppId);
-    final firstAppId = keys.isNotEmpty ? keys.first : null;
+    final firstKey = _firstAssigneeKeyForProject(p);
     final assigneeLine = keys
         .map((k) => state.assigneeById(k)?.name ?? k)
         .join(', ');
     final fmt = DateFormat('yyyy-MM-dd');
+    final teamBiz =
+        firstKey != null ? teamTintByAssigneeKey[firstKey] : null;
+    final tint = TaskListCard.cardColorForPicTeam(teamBiz);
 
-    return FutureBuilder<String?>(
-      future: firstAppId == null || firstAppId.isEmpty
-          ? Future<String?>.value(null)
-          : SupabaseService.fetchStaffTeamBusinessIdForAssigneeKey(firstAppId),
-      builder: (context, snap) {
-        final tint = TaskListCard.cardColorForPicTeam(snap.data);
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          elevation: 1,
-          color: tint,
-          child: InkWell(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => ProjectDetailScreen(
-                    projectId: p.id,
-                    openedFromLanding: false,
-                    openedFromOverview: false,
-                  ),
-                ),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    p.name,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Assignee(s): ${assigneeLine.isNotEmpty ? assigneeLine : '—'}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Creator: ${p.createByDisplayName?.trim().isNotEmpty == true ? p.createByDisplayName!.trim() : '—'}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${p.status} · Start ${p.startDate != null ? fmt.format(p.startDate!) : '—'} · End ${p.endDate != null ? fmt.format(p.endDate!) : '—'}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 1,
+      color: tint,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ProjectDetailScreen(
+                projectId: p.id,
+                openedFromLanding: false,
+                openedFromOverview: false,
               ),
             ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                p.name,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Assignee(s): ${assigneeLine.isNotEmpty ? assigneeLine : '—'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Creator: ${p.createByDisplayName?.trim().isNotEmpty == true ? p.createByDisplayName!.trim() : '—'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${p.status} · Start ${p.startDate != null ? fmt.format(p.startDate!) : '—'} · End ${p.endDate != null ? fmt.format(p.endDate!) : '—'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -3437,21 +3484,33 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            maxWidth: _kLandingTaskListMaxWidth,
-                          ),
-                          child: ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                            itemCount: pagedProjects.length,
-                            itemBuilder: (context, i) =>
-                                _buildProjectDashboardCard(
-                              context,
-                              pagedProjects[i],
-                            ),
-                          ),
+                      child: FutureBuilder<Map<String, String?>>(
+                        key: ValueKey(
+                          '${pagedProjects.map((e) => e.id).join('|')}'
+                          '_$_tasksPageIndex',
                         ),
+                        future: _fetchProjectCardTeamTints(pagedProjects),
+                        builder: (context, snap) {
+                          final tintMap = snap.data ?? {};
+                          return Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: _kLandingTaskListMaxWidth,
+                              ),
+                              child: ListView.builder(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                                itemCount: pagedProjects.length,
+                                itemBuilder: (context, i) =>
+                                    _buildProjectDashboardCard(
+                                  context,
+                                  pagedProjects[i],
+                                  tintMap,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                     Material(
@@ -3612,22 +3671,36 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             slivers: [
               ...prefixSlivers,
               SliverToBoxAdapter(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: _kLandingTaskListMaxWidth,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final p in pagedProjects)
-                            _buildProjectDashboardCard(context, p),
-                        ],
-                      ),
-                    ),
+                child: FutureBuilder<Map<String, String?>>(
+                  key: ValueKey(
+                    '${pagedProjects.map((e) => e.id).join('|')}'
+                    '_$_tasksPageIndex',
                   ),
+                  future: _fetchProjectCardTeamTints(pagedProjects),
+                  builder: (context, snap) {
+                    final tintMap = snap.data ?? {};
+                    return Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: _kLandingTaskListMaxWidth,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final p in pagedProjects)
+                                _buildProjectDashboardCard(
+                                  context,
+                                  p,
+                                  tintMap,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
