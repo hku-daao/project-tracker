@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../app_state.dart';
 import '../config/supabase_config.dart';
 import '../models/assignee.dart';
+import '../models/project_record.dart';
 import '../models/task.dart';
 import '../models/comment.dart';
 import '../models/singular_comment.dart';
@@ -201,8 +202,90 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   bool _appListenerRegistered = false;
   bool _staffDirectorFlag = false;
 
+  /// Creator-only: link task to a project you created ([_myCreatedProjects]) or keep current link.
+  String? _selectedProjectId;
+  List<ProjectRecord> _myCreatedProjects = [];
+  bool _myProjectsLoading = false;
+
   static const int _maxAssignees = 10;
   static const Color _selGreen = Color(0xFF1B5E20);
+
+  static String? _normProjectId(String? raw) {
+    final t = raw?.trim();
+    if (t == null || t.isEmpty) return null;
+    return t;
+  }
+
+  Future<void> _loadMyCreatedProjectsForEdit(Task task) async {
+    if (!SupabaseConfig.isConfigured) return;
+    if (!mounted) return;
+    setState(() => _myProjectsLoading = true);
+    try {
+      final all = await SupabaseService.fetchAllProjectsFromSupabase();
+      if (!mounted) return;
+      final appId = context.read<AppState>().userStaffAppId?.trim();
+      if (appId == null || appId.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _myProjectsLoading = false;
+            _myCreatedProjects = [];
+          });
+        }
+        return;
+      }
+      final uuid = await SupabaseService.resolveStaffRowIdForAssigneeKey(appId);
+      final me = uuid?.trim();
+      if (me == null || me.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _myProjectsLoading = false;
+            _myCreatedProjects = [];
+          });
+        }
+        return;
+      }
+      bool eligible(ProjectRecord p) {
+        final s = p.status.trim();
+        return s == 'Not started' || s == 'In progress';
+      }
+
+      final created = all
+          .where((p) => p.createByStaffUuid?.trim() == me)
+          .where(eligible)
+          .toList();
+
+      final pid = task.projectId?.trim();
+      if (pid != null &&
+          pid.isNotEmpty &&
+          !created.any((p) => p.id == pid)) {
+        final extra = await SupabaseService.fetchProjectById(pid);
+        if (extra != null) created.add(extra);
+      }
+
+      created.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+      if (!mounted) return;
+      setState(() {
+        _myProjectsLoading = false;
+        _myCreatedProjects = created;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _myProjectsLoading = false;
+          _myCreatedProjects = [];
+        });
+      }
+    }
+  }
+
+  String? _projectDropdownFieldValue() {
+    final s = _normProjectId(_selectedProjectId);
+    if (s == null) return null;
+    if (_myCreatedProjects.any((p) => p.id == s)) return s;
+    return null;
+  }
 
   @override
   void didChangeDependencies() {
@@ -222,6 +305,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       setState(() => _myStaffUuid = id);
       final a = _appStateRef;
       if (a != null) await _refreshResolvedPic(a);
+      if (a != null && mounted && _loadedForm) {
+        final t = a.taskById(widget.taskId);
+        if (t != null &&
+            SupabaseConfig.isConfigured &&
+            _isCreator(a, t)) {
+          await _loadMyCreatedProjectsForEdit(t);
+        }
+      }
       if (id == null || id.isEmpty) return;
       final dir = await SupabaseService.fetchStaffDirectorByStaffUuid(id);
       if (mounted) setState(() => _staffDirectorFlag = dir);
@@ -238,6 +329,14 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         if (!mounted) return;
         setState(() => _myStaffUuid = id);
         await _refreshResolvedPic(a);
+        if (mounted && _loadedForm) {
+          final t = a.taskById(widget.taskId);
+          if (t != null &&
+              SupabaseConfig.isConfigured &&
+              _isCreator(a, t)) {
+            await _loadMyCreatedProjectsForEdit(t);
+          }
+        }
         if (id == null || id.isEmpty) return;
         final dir = await SupabaseService.fetchStaffDirectorByStaffUuid(id);
         if (mounted) setState(() => _staffDirectorFlag = dir);
@@ -937,6 +1036,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final curR = _changeDueReasonController.text.trim();
     final oldR = (task.changeDueReason ?? '').trim();
     if (curR != oldR) return true;
+    if (_normProjectId(_selectedProjectId) != _normProjectId(task.projectId)) {
+      return true;
+    }
     if (_taskAttachmentsDirty()) return true;
     return false;
   }
@@ -1231,6 +1333,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       _changeDueReasonController.text = task.changeDueReason ?? '';
       _localPriority = task.priority.clamp(1, 2);
       _localStatus = _normalizeLocalStatus(task.dbStatus);
+      _selectedProjectId = _normProjectId(task.projectId);
     }
 
     if (!SupabaseConfig.isConfigured) {
@@ -1364,6 +1467,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         _loadedForm = true;
       });
       _captureTaskAttachmentBaseline();
+      final tAfter = state.taskById(widget.taskId);
+      if (tAfter != null && _isCreator(state, tAfter)) {
+        await _loadMyCreatedProjectsForEdit(tAfter);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1608,6 +1715,12 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
       final priorityLabel = priorityToDisplayName(_localPriority);
 
+      final selProj = _normProjectId(_selectedProjectId);
+      final curProj = _normProjectId(task.projectId);
+      final clearProjectId = selProj == null && curProj != null;
+      final String? projectIdForRow =
+          !clearProjectId && selProj != null ? selProj : null;
+
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
         taskName: _nameController.text.trim(),
@@ -1623,6 +1736,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         updateChangeDueReason: true,
         changeDueReason:
             needsDueReason ? _changeDueReasonController.text.trim() : null,
+        clearProjectId: clearProjectId,
+        projectId: projectIdForRow,
       );
       if (!mounted) return;
 
@@ -1711,6 +1826,17 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       }
       if (!mounted) return;
 
+      String? newProjectName;
+      if (selProj != null) {
+        for (final pr in _myCreatedProjects) {
+          if (pr.id == selProj) {
+            newProjectName = pr.name.trim().isNotEmpty ? pr.name.trim() : pr.id;
+            break;
+          }
+        }
+        newProjectName ??= task.projectName;
+      }
+
       state.replaceTask(
         task.copyWith(
           name: _nameController.text.trim(),
@@ -1727,6 +1853,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
           pic: picKey,
           changeDueReason:
               needsDueReason ? _changeDueReasonController.text.trim() : null,
+          projectId: selProj,
+          projectName: newProjectName,
+          clearProject: selProj == null,
         ),
       );
       showCopyableSnackBar(
@@ -2279,18 +2408,64 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  Text(
-                                    'Project: ${_taskProjectDisplayLine(task)}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant,
+                                  if (_isCreator(state, task) &&
+                                      SupabaseConfig.isConfigured) ...[
+                                    if (_myProjectsLoading)
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8),
+                                        child: LinearProgressIndicator(),
+                                      )
+                                    else
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 8),
+                                        child: DropdownButtonFormField<String?>(
+                                          value: _projectDropdownFieldValue(),
+                                          decoration: const InputDecoration(
+                                            labelText: 'Project',
+                                            border: OutlineInputBorder(),
+                                          ),
+                                          items: [
+                                            const DropdownMenuItem<String?>(
+                                              value: null,
+                                              child: Text('— No project —'),
+                                            ),
+                                            ..._myCreatedProjects.map(
+                                              (p) =>
+                                                  DropdownMenuItem<String?>(
+                                                value: p.id,
+                                                child: Text(
+                                                  p.name.trim().isNotEmpty
+                                                      ? p.name.trim()
+                                                      : p.id,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                          onChanged: _saving
+                                              ? null
+                                              : (v) => setState(
+                                                    () =>
+                                                        _selectedProjectId = v,
+                                                  ),
                                         ),
-                                  ),
-                                  const SizedBox(height: 8),
+                                      ),
+                                  ] else ...[
+                                    Text(
+                                      'Project: ${_taskProjectDisplayLine(task)}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
                                   Text(
                                     'Task creator: ${_taskCreatorDisplayLine(task, state)}',
                                     style: Theme.of(context)
