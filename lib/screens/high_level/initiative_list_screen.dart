@@ -1770,17 +1770,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             },
           ),
         ),
-        if (_hasTeamOrStatusFilterSelections)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: _clearTeamAndStatusFilters,
-                child: const Text('Clear all'),
-              ),
-            ),
-          ),
         LayoutBuilder(
           builder: (context, constraints) {
             final listColumnMaxWidth = min(
@@ -3295,7 +3284,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                         child: Text(
                           summaryLine,
                           overflow: TextOverflow.ellipsis,
-                          maxLines: 3,
+                          maxLines: 1,
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ),
@@ -3323,17 +3312,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             },
           ),
         ),
-        if (hasProjFilters)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: _clearTeamAndStatusFilters,
-                child: const Text('Clear all'),
-              ),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
           child: Align(
