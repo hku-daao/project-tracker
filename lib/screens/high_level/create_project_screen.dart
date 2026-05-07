@@ -11,6 +11,7 @@ import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
+import '../../widgets/pic_multi_dropdown_text_field.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
 import 'project_detail_screen.dart';
 
@@ -52,6 +53,8 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final Set<String> _selectedAssigneeIds = {};
+  /// Subset of [_selectedAssigneeIds] — PIC rows ([`project.pic`]).
+  final Set<String> _selectedPicIds = {};
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   bool _pickerLoading = false;
@@ -153,6 +156,24 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
           backgroundColor: Colors.orange);
       return;
     }
+    if (_selectedPicIds.isEmpty) {
+      showCopyableSnackBar(
+        context,
+        'Select at least one PIC from the assignee list',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    for (final id in _selectedPicIds) {
+      if (!_selectedAssigneeIds.contains(id)) {
+        showCopyableSnackBar(
+          context,
+          'Each PIC must be one of the selected assignees',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+    }
     if (!SupabaseConfig.isConfigured) {
       showCopyableSnackBar(context, 'Supabase not configured');
       return;
@@ -170,9 +191,24 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     setState(() => _submitting = true);
     try {
       final slots = await SupabaseService.assigneeSlotsForTask(directorIds);
+      final picUuids = <String>[];
+      for (final key in _selectedPicIds) {
+        final u = await SupabaseService.resolveStaffRowIdForAssigneeKey(key);
+        if (u != null && u.trim().isNotEmpty) picUuids.add(u.trim());
+      }
+      if (picUuids.isEmpty) {
+        if (!mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Could not resolve PIC staff ids — check Supabase staff rows',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
       final ins = await SupabaseService.insertProjectRow(
         name: _nameController.text.trim(),
         assignees: slots,
+        picStaffUuids: picUuids,
         description: _descController.text.trim(),
         startDate: _startDate,
         endDate: _endDate,
@@ -216,6 +252,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     if (_nameController.text.trim().isNotEmpty) return true;
     if (_descController.text.trim().isNotEmpty) return true;
     if (_selectedAssigneeIds.isNotEmpty) return true;
+    if (_selectedPicIds.isNotEmpty) return true;
     return false;
   }
 
@@ -252,6 +289,9 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
     final pickerTeams = _pickerTeamsForRole();
     final usePicker =
         SupabaseConfig.isConfigured && pickerStaff.isNotEmpty && !_pickerLoading;
+    final picCandidates = pickerStaff
+        .where((s) => _selectedAssigneeIds.contains(s.assigneeId))
+        .toList();
 
     return Stack(
       children: [
@@ -295,6 +335,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                       _selectedAssigneeIds
                         ..clear()
                         ..addAll(s);
+                      _selectedPicIds.removeWhere((id) => !s.contains(id));
                     }),
                   )
                 else if (!SupabaseConfig.isConfigured)
@@ -302,6 +343,25 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                     'Supabase not configured — cannot load assignees.',
                     style: TextStyle(color: Colors.orange),
                   ),
+                if (usePicker) ...[
+                  const SizedBox(height: 16),
+                  PicMultiDropdownTextField(
+                    key: ValueKey(
+                      '${(_selectedAssigneeIds.toList()..sort()).join(',')}|'
+                      '${(_selectedPicIds.toList()..sort()).join(',')}',
+                    ),
+                    label: 'PIC(s)',
+                    hint: 'Choose from assignees above',
+                    candidates: picCandidates,
+                    selectedIds: _selectedPicIds,
+                    enabled: !_submitting,
+                    onSelectionChanged: (next) => setState(() {
+                      _selectedPicIds
+                        ..clear()
+                        ..addAll(next);
+                    }),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _nameController,
@@ -316,9 +376,10 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _descController,
-                  textInputAction: TextInputAction.next,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
                   minLines: 3,
-                  maxLines: 8,
+                  maxLines: 12,
                   decoration: const InputDecoration(
                     labelText: 'Description',
                     alignLabelWithHint: true,

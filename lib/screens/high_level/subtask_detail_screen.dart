@@ -52,6 +52,7 @@ class SubtaskDetailScreen extends StatefulWidget {
     this.openedFromOverview = false,
     this.openedFromProjectDetail = false,
     this.openedFromProjectDashboard = false,
+    this.onParentTaskListRefresh,
   });
 
   final String subtaskId;
@@ -68,6 +69,9 @@ class SubtaskDetailScreen extends StatefulWidget {
 
   /// Opened from task detail when parent task was reached from Project dashboard flow.
   final bool openedFromProjectDashboard;
+
+  /// After delete/undo writes succeed — refresh parent [TaskDetailScreen] sub-task lists.
+  final Future<void> Function()? onParentTaskListRefresh;
 
   @override
   State<SubtaskDetailScreen> createState() => _SubtaskDetailScreenState();
@@ -345,7 +349,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   }
 
   bool _canEditSubtaskAttachments(AppState state, SingularSubtask st) =>
-      _isCreator(state, st) || _isPic(state, st) || _isAssignee(state, st);
+      !st.isDeleted &&
+      (_isCreator(state, st) || _isPic(state, st) || _isAssignee(state, st));
 
   /// When [rebindAttachments] is false, existing attachment text fields are left unchanged
   /// (use after Update/Submit when rows were just written — avoids empty SELECT wiping the UI).
@@ -1109,6 +1114,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   }
 
   bool _canUndoAcceptOrReturnSubtask(SingularSubtask st) {
+    if (st.isDeleted) return false;
     final s = st.submission?.trim().toLowerCase() ?? '';
     return s == 'accepted' || s == 'returned';
   }
@@ -1137,7 +1143,12 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      SupabaseService.invalidateSubtasksCacheForTask(st.taskId);
       await _load(rebindAttachments: false);
+      if (mounted) {
+        final hook = widget.onParentTaskListRefresh;
+        if (hook != null) await hook();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1193,7 +1204,13 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
         }
       } catch (_) {}
+      SupabaseService.invalidateSubtasksCacheForTask(st.taskId);
       await _load(rebindAttachments: false);
+      if (mounted) {
+        final hook = widget.onParentTaskListRefresh;
+        if (hook != null) await hook();
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 4),
@@ -1243,7 +1260,13 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           }
         }
       } catch (_) {}
+      SupabaseService.invalidateSubtasksCacheForTask(st.taskId);
       await _load(rebindAttachments: false);
+      if (mounted) {
+        final hook = widget.onParentTaskListRefresh;
+        if (hook != null) await hook();
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(duration: const Duration(seconds: 4), content: Text('Returned'), backgroundColor: Colors.green),
       );
@@ -1396,9 +1419,10 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
           children: [
             TextField(
               controller: _editCommentController,
-              maxLines: 5,
-              minLines: 2,
-              textInputAction: TextInputAction.done,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              maxLines: 12,
+              minLines: 3,
               textAlignVertical: TextAlignVertical.top,
               enabled: !_saving,
               decoration: const InputDecoration(
@@ -1525,7 +1549,55 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
-      if (mounted) Navigator.of(context).pop(true);
+      SupabaseService.invalidateSubtasksCacheForTask(st.taskId);
+      await _load(rebindAttachments: false);
+      if (!mounted) return;
+      final hook = widget.onParentTaskListRefresh;
+      if (hook != null) await hook();
+      if (!mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Sub-task marked as deleted',
+        backgroundColor: Colors.green,
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _undoSubtaskDeleted(AppState state, SingularSubtask st) async {
+    if (!_isCreator(state, st) && !_director) return;
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured');
+      return;
+    }
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final subCreator = _isCreator(state, st);
+      final err = await SupabaseService.updateSubtaskRow(
+        subtaskId: st.id,
+        status: 'Incomplete',
+        updaterStaffLookupKey:
+            subCreator ? state.userStaffAppId : null,
+        bumpSubtaskRowAuditFields: subCreator,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        return;
+      }
+      SupabaseService.invalidateSubtasksCacheForTask(st.taskId);
+      await _load(rebindAttachments: false);
+      if (!mounted) return;
+      final hook = widget.onParentTaskListRefresh;
+      if (hook != null) await hook();
+      if (!mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Sub-task restored to Incomplete',
+        backgroundColor: Colors.green,
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1555,7 +1627,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     final canDel = creator || _director;
     final canSetPic = _canEditSubtaskPic(state, st, parent);
     final multiTaskAssignees = parent.assigneeIds.length > 1;
-    final showPicDropdown = canSetPic && multiTaskAssignees;
+    final showPicDropdown =
+        canSetPic && multiTaskAssignees && !st.isDeleted;
     final ymd = DateFormat('yyyy-MM-dd');
     final picDropdownValue =
         _picEditKey != null && parent.assigneeIds.contains(_picEditKey)
@@ -1670,7 +1743,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           TextField(
                             controller: _nameController,
                             textInputAction: TextInputAction.next,
-                            readOnly: _saving,
+                            readOnly: _saving || st.isDeleted,
                             enableInteractiveSelection: true,
                             decoration: const InputDecoration(
                               labelText: 'Sub-task name',
@@ -1692,8 +1765,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                         if (creator)
                           TextField(
                             controller: _descController,
-                            textInputAction: TextInputAction.next,
-                            readOnly: _saving,
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
+                            readOnly: _saving || st.isDeleted,
                             enableInteractiveSelection: true,
                             textAlignVertical: TextAlignVertical.top,
                             decoration: const InputDecoration(
@@ -1701,13 +1775,14 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               alignLabelWithHint: true,
                               border: OutlineInputBorder(),
                             ),
-                            minLines: 4,
-                            maxLines: 8,
+                            minLines: 3,
+                            maxLines: 12,
                           )
                         else
                           TextField(
                             controller: _descController,
-                            textInputAction: TextInputAction.next,
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
                             readOnly: true,
                             enableInteractiveSelection: assignee,
                             textAlignVertical: TextAlignVertical.top,
@@ -1716,7 +1791,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               alignLabelWithHint: true,
                               border: OutlineInputBorder(),
                             ),
-                            maxLines: 4,
+                            minLines: 3,
+                            maxLines: 12,
                           ),
                         const SizedBox(height: 12),
                         Text(
@@ -1734,7 +1810,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               selected: creator
                                   ? (_editPriority == priorityStandard)
                                   : (st.priority == priorityStandard),
-                              enabled: creator && !_saving,
+                              enabled: creator && !_saving && !st.isDeleted,
                               onTap: () => setState(
                                 () => _editPriority = priorityStandard,
                               ),
@@ -1745,7 +1821,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                               selected: creator
                                   ? (_editPriority == priorityUrgent)
                                   : (st.priority == priorityUrgent),
-                              enabled: creator && !_saving,
+                              enabled: creator && !_saving && !st.isDeleted,
                               onTap: () => setState(
                                 () => _editPriority = priorityUrgent,
                               ),
@@ -1753,7 +1829,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        if (creator) ...[
+                        if (creator && !st.isDeleted) ...[
                           Row(
                             children: [
                               Expanded(
@@ -2124,12 +2200,15 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: _commentController,
-                  readOnly: _saving || !(assignee || creator),
-                  textInputAction: TextInputAction.done,
+                  readOnly: _saving ||
+                      st.isDeleted ||
+                      !(assignee || creator),
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
                   enableInteractiveSelection: true,
                   textAlignVertical: TextAlignVertical.top,
-                  minLines: 2,
-                  maxLines: 4,
+                  minLines: 3,
+                  maxLines: 12,
                   decoration: InputDecoration(
                     hintText: (assignee || creator)
                         ? 'Comments'
@@ -2147,6 +2226,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 const SizedBox(height: 24),
                 FilledButton(
                   onPressed: _saving ||
+                          st.isDeleted ||
                           (!creator &&
                               !assignee &&
                               !(canSetPic && multiTaskAssignees))
@@ -2202,7 +2282,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                         },
                   child: Text(_saving ? 'Saving…' : 'Update'),
                 ),
-                if (creator && _canCreatorMarkSubtaskComplete(st)) ...[
+                if (creator &&
+                    !st.isDeleted &&
+                    _canCreatorMarkSubtaskComplete(st)) ...[
                   const SizedBox(height: 12),
                   FilledButton(
                     onPressed: _saving
@@ -2227,7 +2309,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                     child: const Text('Undo'),
                   ),
                 ],
-                if (pic && _canPicSubmit(st)) ...[
+                if (pic && !st.isDeleted && _canPicSubmit(st)) ...[
                   const SizedBox(height: 12),
                   FilledButton(
                     onPressed: _saving ? null : () => _submit(state, st),
@@ -2243,6 +2325,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                   ),
                 ],
                 if (creator &&
+                    !st.isDeleted &&
                     (st.submission?.trim().toLowerCase() == 'submitted')) ...[
                   const SizedBox(height: 12),
                   Row(
@@ -2273,14 +2356,27 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                 ],
                 if (canDel) ...[
                   const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _saving ? null : () => _deleteSubtask(state, st),
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.error,
+                  if (st.isDeleted)
+                    OutlinedButton(
+                      onPressed: _saving
+                          ? null
+                          : () => _undoSubtaskDeleted(state, st),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('Undo'),
+                    )
+                  else
+                    OutlinedButton.icon(
+                      onPressed: _saving
+                          ? null
+                          : () => _deleteSubtask(state, st),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.error,
+                      ),
                     ),
-                  ),
                 ],
               ],
             ),

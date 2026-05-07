@@ -182,7 +182,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   List<SingularCommentRowDisplay> _tableComments = [];
   bool _loadingTableComments = false;
   List<SingularSubtask> _subtasks = [];
+  List<SingularSubtask> _deletedSubtasks = [];
   bool _loadingSubtasks = false;
+  bool _deletedSubtasksExpanded = false;
 
   /// `null` = default: [SingularSubtask.createDate] descending (same as landing [TaskListCard]).
   SubtaskListSortColumn? _subtaskSortColumn;
@@ -376,6 +378,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       if (mounted) {
         setState(() {
           _subtasks = [];
+          _deletedSubtasks = [];
           _loadingSubtasks = false;
         });
       }
@@ -383,16 +386,19 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     }
     if (mounted) setState(() => _loadingSubtasks = true);
     try {
-      final list = await SupabaseService.fetchSubtasksForTask(widget.taskId);
+      final list =
+          await SupabaseService.fetchAllSubtasksForTaskForDetail(widget.taskId);
       if (!mounted) return;
       setState(() {
-        _subtasks = list;
+        _subtasks = list.where((s) => !s.isDeleted).toList();
+        _deletedSubtasks = list.where((s) => s.isDeleted).toList();
         _loadingSubtasks = false;
       });
     } catch (_) {
       if (mounted) {
         setState(() {
           _subtasks = [];
+          _deletedSubtasks = [];
           _loadingSubtasks = false;
         });
       }
@@ -554,11 +560,19 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
   /// Name, description, assignees, PIC, priority, start/due — creator only.
   bool _canEditSingularTaskMetadata(AppState state, Task task) =>
-      _isCreator(state, task);
+      _isCreator(state, task) && !_singularTaskRowDeleted(task);
 
   /// May use the comment box (creator or any assignee).
   bool _canWriteComments(AppState state, Task task) =>
-      _isCreator(state, task) || _isTaskAssignee(state, task);
+      (_isCreator(state, task) || _isTaskAssignee(state, task)) &&
+      !_singularTaskRowDeleted(task);
+
+  /// Soft-deleted task row — use [Task.dbStatus] / [task] from [AppState] (kept in sync with [_localStatus]).
+  bool _singularTaskRowDeleted(Task task) {
+    final fromState = (task.dbStatus ?? '').trim().toLowerCase() == 'deleted';
+    final fromLocal = _localStatus.trim().toLowerCase() == 'deleted';
+    return fromState || fromLocal;
+  }
 
   /// PIC may submit until status is [Submitted]; [Returned] allows resubmit.
   static bool _canPicSubmit(Task task) {
@@ -595,10 +609,15 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         title: const Text('Edit comment'),
         content: TextField(
           controller: controller,
-          maxLines: 4,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          textAlignVertical: TextAlignVertical.top,
+          minLines: 3,
+          maxLines: 12,
           decoration: const InputDecoration(
             border: OutlineInputBorder(),
             labelText: 'Comment',
+            alignLabelWithHint: true,
           ),
         ),
         actions: [
@@ -2039,6 +2058,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   }
 
   bool _canUndoAcceptOrReturnTask(Task task) {
+    if (_singularTaskRowDeleted(task)) return false;
     final s = task.submission?.trim().toLowerCase() ?? '';
     return s == 'accepted' || s == 'returned';
   }
@@ -2229,7 +2249,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Confirm to delete task'),
-        content: Text('“${task.name}” will be deleted.'),
+        content: Text(
+          '“${task.name}” will be deleted. Sub-tasks will be marked deleted as well.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -2259,13 +2281,61 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
         showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
         return;
       }
+      final cascadeErr = await SupabaseService.markSubtasksDeletedForParentTask(
+        taskId: task.id,
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (cascadeErr != null) {
+        showCopyableSnackBar(
+          context,
+          'Task deleted; sub-tasks: $cascadeErr',
+          backgroundColor: Colors.orange,
+        );
+      }
       setState(() => _localStatus = 'Deleted');
       state.replaceTask(
         task.copyWith(dbStatus: 'Deleted', status: TaskStatus.todo),
       );
+      await _loadSubtasks();
+      if (!mounted) return;
       showCopyableSnackBar(
         context,
         'Task marked as deleted',
+        backgroundColor: Colors.green,
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _undoSingularTaskDeleted(AppState state, Task task) async {
+    if (!SupabaseConfig.isConfigured) {
+      showCopyableSnackBar(context, 'Supabase not configured');
+      return;
+    }
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final err = await SupabaseService.updateSingularTaskRow(
+        taskId: task.id,
+        status: 'Incomplete',
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        return;
+      }
+      setState(() => _localStatus = 'Incomplete');
+      state.replaceTask(
+        task.copyWith(dbStatus: 'Incomplete', status: TaskStatus.todo),
+      );
+      await _loadSubtasks();
+      if (!mounted) return;
+      showCopyableSnackBar(
+        context,
+        'Task restored to Incomplete',
         backgroundColor: Colors.green,
       );
     } finally {
@@ -2482,7 +2552,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     const SizedBox(height: 12),
                                     TextField(
                                       controller: _descController,
-                                      textInputAction: TextInputAction.next,
+                                      keyboardType: TextInputType.multiline,
+                                      textInputAction: TextInputAction.newline,
+                                      textAlignVertical: TextAlignVertical.top,
                                       readOnly: _saving ||
                                           !_canEditSingularTaskMetadata(
                                             state,
@@ -2496,7 +2568,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                         border: OutlineInputBorder(),
                                         alignLabelWithHint: true,
                                       ),
-                                      maxLines: 4,
+                                      minLines: 3,
+                                      maxLines: 12,
                                     ),
                                   ] else ...[
                                     Text(
@@ -2537,7 +2610,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                     const SizedBox(height: 12),
                                     TextField(
                                       controller: _descController,
-                                      textInputAction: TextInputAction.next,
+                                      keyboardType: TextInputType.multiline,
+                                      textInputAction: TextInputAction.newline,
+                                      textAlignVertical: TextAlignVertical.top,
                                       readOnly: true,
                                       enableInteractiveSelection:
                                           _isTaskAssignee(state, task),
@@ -2546,7 +2621,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                         border: OutlineInputBorder(),
                                         alignLabelWithHint: true,
                                       ),
-                                      maxLines: 4,
+                                      minLines: 3,
+                                      maxLines: 12,
                                     ),
                                   ],
                                 ],
@@ -3035,8 +3111,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             ?.copyWith(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 8),
-                      if (_isCreator(state, task) ||
-                          _isPicEffective(state, task))
+                      if (!_singularTaskRowDeleted(task) &&
+                          (_isCreator(state, task) ||
+                              _isPicEffective(state, task)))
                         Align(
                           alignment: Alignment.centerLeft,
                           child: OutlinedButton.icon(
@@ -3064,8 +3141,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       const SizedBox(height: 8),
                       ...List.generate(_taskAttachments.length, (i) {
                         final e = _taskAttachments[i];
-                        final canEdit = _isCreator(state, task) ||
-                            _isPicEffective(state, task);
+                        final canEdit = !_singularTaskRowDeleted(task) &&
+                            (_isCreator(state, task) ||
+                                _isPicEffective(state, task));
                         final hasLink =
                             e.urlController.text.trim().isNotEmpty;
                         final chipLabel = attachmentChipLabel(
@@ -3239,7 +3317,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
-                      if (_isCreator(state, task)) ...[
+                      if ((_isCreator(state, task) ||
+                              _isPicEffective(state, task)) &&
+                          !_singularTaskRowDeleted(task)) ...[
                         Align(
                           alignment: Alignment.centerLeft,
                           child: OutlinedButton.icon(
@@ -3328,6 +3408,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                                           widget.openedFromProjectDetail,
                                       openedFromProjectDashboard:
                                           widget.openedFromProjectDashboard,
+                                      onParentTaskListRefresh: () async {
+                                        if (mounted) await _loadSubtasks();
+                                      },
                                     ),
                                   ),
                                 );
@@ -3338,6 +3421,87 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                             );
                           },
                         ),
+                        if (_deletedSubtasks.isNotEmpty) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: InkWell(
+                              onTap: () => setState(() {
+                                _deletedSubtasksExpanded =
+                                    !_deletedSubtasksExpanded;
+                              }),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _deletedSubtasksExpanded
+                                          ? Icons.expand_less
+                                          : Icons.expand_more,
+                                      color: Colors.grey.shade700,
+                                      size: 22,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Deleted (${_deletedSubtasks.length})',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.grey,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (_deletedSubtasksExpanded)
+                            ...SubtaskListSort.sort(
+                              _deletedSubtasks,
+                              resolveName: (id) =>
+                                  state.assigneeById(id)?.name ?? id,
+                              activeColumn: _subtaskSortColumn,
+                              ascending: _subtaskSortAscending,
+                            ).map(
+                              (s) {
+                                return SingularSubtaskRowCard(
+                                  subtask: s,
+                                  resolveName: (id) =>
+                                      state.assigneeById(id)?.name ?? id,
+                                  onTap: () async {
+                                    final changed =
+                                        await Navigator.of(context).push<bool>(
+                                      MaterialPageRoute<bool>(
+                                        builder: (_) => SubtaskDetailScreen(
+                                          subtaskId: s.id,
+                                          openedFromOverview:
+                                              widget.openedFromOverview,
+                                          openedFromProjectDetail:
+                                              widget.openedFromProjectDetail,
+                                          openedFromProjectDashboard:
+                                              widget
+                                                  .openedFromProjectDashboard,
+                                          onParentTaskListRefresh:
+                                              () async {
+                                            if (mounted) {
+                                              await _loadSubtasks();
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    );
+                                    if (changed == true && mounted) {
+                                      await _loadSubtasks();
+                                    }
+                                  },
+                                );
+                              },
+                            ),
+                        ],
                       ],
                       const SizedBox(height: 16),
                       Text(
@@ -3349,14 +3513,13 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       TextField(
                         controller: _commentController,
                         readOnly: _saving || !_canWriteComments(state, task),
-                        textInputAction: TextInputAction.done,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
                         textAlignVertical: TextAlignVertical.top,
                         minLines: 3,
-                        maxLines: 6,
+                        maxLines: 12,
                         decoration: InputDecoration(
-                          hintText: _canWriteComments(state, task)
-                              ? 'Comments'
-                              : 'Only task creator and task assignees can add comments',
+                          hintText: 'Comments',
                           hintStyle: TextStyle(color: Colors.grey.shade600),
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.all(12),
@@ -3372,8 +3535,9 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                       else
                         ..._singularCommentTiles(context, state),
                       const SizedBox(height: 24),
-                      if (_isCreator(state, task) ||
-                          _isPicEffective(state, task))
+                      if (!_singularTaskRowDeleted(task) &&
+                          (_isCreator(state, task) ||
+                              _isPicEffective(state, task)))
                         FilledButton(
                           onPressed: _saving
                               ? null
@@ -3393,6 +3557,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           child: Text(_saving ? 'Saving…' : 'Update'),
                         ),
                       if (_isCreator(state, task) &&
+                          !_singularTaskRowDeleted(task) &&
                           _canCreatorMarkTaskComplete(task)) ...[
                         const SizedBox(height: 12),
                         FilledButton(
@@ -3423,7 +3588,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                           child: const Text('Undo'),
                         ),
                       ],
-                      if (_isCommentOnlyAssignee(state, task)) ...[
+                      if (!_singularTaskRowDeleted(task) &&
+                          _isCommentOnlyAssignee(state, task)) ...[
                         const SizedBox(height: 12),
                         FilledButton(
                           onPressed: _saving
@@ -3436,6 +3602,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         ),
                       ],
                       if (_isPicEffective(state, task) &&
+                          !_singularTaskRowDeleted(task) &&
                           _canPicSubmit(task)) ...[
                         const SizedBox(height: 12),
                         FilledButton(
@@ -3457,6 +3624,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         ),
                       ],
                       if (_isCreator(state, task) &&
+                          !_singularTaskRowDeleted(task) &&
                           (task.submission?.trim() == 'Submitted')) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -3496,21 +3664,33 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
                         ),
                       ],
                       const SizedBox(height: 24),
-                      if (_canMarkTaskDeleted(state))
-                        OutlinedButton.icon(
-                          onPressed: _saving
-                              ? null
-                              : () => _confirmMarkSingularTaskDeleted(
-                                  state,
-                                  task,
-                                ),
-                          icon: const Icon(Icons.delete_outline),
-                          label: const Text('Delete'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            foregroundColor: Colors.red.shade800,
+                      if (_canMarkTaskDeleted(state)) ...[
+                        if (_singularTaskRowDeleted(task))
+                          OutlinedButton(
+                            onPressed: _saving
+                                ? null
+                                : () => _undoSingularTaskDeleted(state, task),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                            child: const Text('Undo'),
+                          )
+                        else
+                          OutlinedButton.icon(
+                            onPressed: _saving
+                                ? null
+                                : () => _confirmMarkSingularTaskDeleted(
+                                      state,
+                                      task,
+                                    ),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              foregroundColor: Colors.red.shade800,
+                            ),
                           ),
-                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -3776,11 +3956,16 @@ class _LegacyTaskDetailViewState extends State<_LegacyTaskDetailView> {
             const SizedBox(height: 8),
             TextField(
               controller: _commentController,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              textAlignVertical: TextAlignVertical.top,
               decoration: const InputDecoration(
                 hintText: 'Add a comment or progress update...',
                 border: OutlineInputBorder(),
+                alignLabelWithHint: true,
               ),
-              maxLines: 2,
+              minLines: 3,
+              maxLines: 12,
             ),
             const SizedBox(height: 8),
             FilledButton(

@@ -269,6 +269,15 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// Bumped after editing a sub-task on the Customized page so grouped fetch refreshes.
   int _customizedFlatListRefreshSeq = 0;
 
+  /// Default landing only: parent [`task.id`] values known to have ≥1 deleted sub-task (for **Deleted** filter).
+  final Set<String> _landingParentIdsWithDeletedSubs = {};
+
+  /// Avoids redundant [fetchDeletedSubtasksGroupedForLandingPrefetch] when filters unchanged.
+  String _landingDeletedParentsDiscoverySig = '';
+
+  /// Default landing: sum of deleted sub-task rows under scoped tasks (for section title count).
+  int _landingDeletedSubtasksTotalCount = 0;
+
   /// Min / max sub-task `due_date` per parent task id (singular tasks only); used for [TaskListSortColumn.dueDate].
   final Map<String, DateTime?> _subtaskMinDueByTaskId = {};
   final Map<String, DateTime?> _subtaskMaxDueByTaskId = {};
@@ -316,6 +325,15 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   static const _statusCompleted = 'completed';
   static const _statusDeleted = 'deleted';
 
+  /// Overview entity tabs (persisted).
+  static const String _kOverviewTabAll = 'all';
+  static const String _kOverviewTabProject = 'project';
+  static const String _kOverviewTabTask = 'task';
+  static const String _kOverviewTabSubtask = 'subtask';
+
+  /// Overview: All | Project | Task | Sub-task (persisted; [_kOverviewTab*]).
+  String _overviewEntityTab = _kOverviewTabAll;
+
   static const _submissionPending = 'pending';
   static const _submissionSubmitted = 'submitted';
   static const _submissionAccepted = 'accepted';
@@ -339,6 +357,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return x == 'completed' || x == 'complete';
   }
 
+  /// Status chips (Incomplete / Completed / Deleted) gate which sub-task rows appear on Overview.
+  bool _subtaskPassesSelectedStatusChips(SingularSubtask s) {
+    if (_selectedTaskStatuses.isEmpty) return true;
+    final wantInc = _selectedTaskStatuses.contains(_statusIncomplete);
+    final wantComp = _selectedTaskStatuses.contains(_statusCompleted);
+    final wantDel = _selectedTaskStatuses.contains(_statusDeleted);
+    if (!wantInc && !wantComp && !wantDel) return true;
+    if (s.isDeleted) return wantDel;
+    if (_singularSubtaskCompleted(s)) return wantComp;
+    return wantInc;
+  }
+
   /// Matches [singularIncomplete] closure used in build for singular [`task`] rows.
   bool _singularTaskIncomplete(Task t) {
     if (!t.isSingularTableRow) return false;
@@ -357,8 +387,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   bool _customizedFlatShouldOmitSubtaskRow(Task t, SingularSubtask s) {
     if (!t.isSingularTableRow || !widget.customizedFlat) return false;
 
-    // Incomplete selected: never list Completed sub-tasks under an Incomplete parent (task row only).
+    if (s.isDeleted) {
+      if (!_selectedTaskStatuses.contains(_statusDeleted)) return true;
+      return false;
+    }
+
+    // Incomplete-only (no Completed chip): hide Completed sub-tasks under an Incomplete parent.
     if (_selectedTaskStatuses.contains(_statusIncomplete) &&
+        !_selectedTaskStatuses.contains(_statusCompleted) &&
         _singularTaskIncomplete(t) &&
         _singularSubtaskCompleted(s)) {
       return true;
@@ -1195,12 +1231,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   bool _taskCreatedWithinLastMonth(Task t) =>
       _dateWithinLastRollingMonth(t.createdAt);
 
-  bool _subtaskCreatedWithinLastMonth(SingularSubtask s) {
-    final cd = s.createDate;
-    if (cd == null) return false;
-    return _dateWithinLastRollingMonth(cd);
-  }
-
   static DateTime _dateOnlyCal(DateTime d) =>
       DateTime(d.year, d.month, d.day);
 
@@ -1229,7 +1259,74 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       return _calendarDayInCreateFilterRange(day);
     }
     if (sub == null) return _taskCreatedWithinLastMonth(t);
-    return _subtaskCreatedWithinLastMonth(sub);
+    // Use the same [day] as above — null sub-task create_date falls back to parent task.
+    return _dateWithinLastRollingMonth(day);
+  }
+
+  /// **Completed** sub-task rows on Overview: when that chip is selected, bypass the default
+  /// rolling create-date window so merged incomplete parents still list old completed subs.
+  /// Deleted sub-tasks use the same date rules as active subs (no exemption).
+  bool _rowPassesCreateDateForCustomizedSubtask(
+    Task t,
+    SingularSubtask s,
+  ) {
+    if (_singularSubtaskCompleted(s) &&
+        _selectedTaskStatuses.contains(_statusCompleted)) {
+      return true;
+    }
+    return _rowPassesCreateDateForCustomized(t, s);
+  }
+
+  Future<void> _discoverLandingParentsWithDeletedSubs({
+    required List<Task> tasksNonDeleted,
+    required String filterKey,
+    required bool Function(Task) isAssignedToMe,
+    required bool Function(Task) isCreatedByMe,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return;
+    Iterable<Task> scopeIt =
+        tasksNonDeleted.where((t) => t.isSingularTableRow);
+    if (filterKey == 'assigned') {
+      scopeIt = scopeIt.where(isAssignedToMe);
+    } else if (filterKey == 'created') {
+      scopeIt = scopeIt.where(isCreatedByMe);
+    }
+    final ids = scopeIt.map((t) => t.id).toList();
+    if (ids.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _landingParentIdsWithDeletedSubs.clear();
+          _landingDeletedSubtasksTotalCount = 0;
+        });
+      }
+      return;
+    }
+    try {
+      final grouped =
+          await SupabaseService.fetchDeletedSubtasksGroupedForLandingPrefetch(
+            ids,
+          );
+      if (!mounted) return;
+      final next = grouped.entries
+          .where((e) => e.value.isNotEmpty)
+          .map((e) => e.key)
+          .toSet();
+      final subTotal =
+          grouped.values.fold<int>(0, (sum, list) => sum + list.length);
+      setState(() {
+        _landingParentIdsWithDeletedSubs
+          ..clear()
+          ..addAll(next);
+        _landingDeletedSubtasksTotalCount = subTotal;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _landingParentIdsWithDeletedSubs.clear();
+          _landingDeletedSubtasksTotalCount = 0;
+        });
+      }
+    }
   }
 
   /// Sub-tasks for Overview flat list plus comment-activity maps for **Last updated** sort + meta line.
@@ -1240,14 +1337,20 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         Map<String, DateTime?> subtaskCommentActivity,
       })> _futureGroupedForCustomized(
     List<Task> active,
-    List<Task> deleted,
-  ) async {
+    List<Task> deleted, {
+    List<Task>? includeExtraSingularParentsForSubtaskPrefetch,
+  }) async {
     final ids = <String>{};
     for (final t in active) {
       if (t.isSingularTableRow) ids.add(t.id);
     }
     for (final t in deleted) {
       if (t.isSingularTableRow) ids.add(t.id);
+    }
+    if (includeExtraSingularParentsForSubtaskPrefetch != null) {
+      for (final t in includeExtraSingularParentsForSubtaskPrefetch) {
+        if (t.isSingularTableRow) ids.add(t.id);
+      }
     }
     if (ids.isEmpty) {
       return (
@@ -1259,6 +1362,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final idList = ids.toList();
     final grouped =
         await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(idList);
+    if (_selectedTaskStatuses.contains(_statusDeleted)) {
+      final delGrouped =
+          await SupabaseService.fetchDeletedSubtasksGroupedForLandingPrefetch(
+            idList,
+          );
+      for (final e in delGrouped.entries) {
+        grouped.putIfAbsent(e.key, () => []).addAll(e.value);
+      }
+      for (final list in grouped.values) {
+        SupabaseService.sortSingularSubtasksNewestFirstInPlace(list);
+      }
+    }
     final subIds = <String>[];
     for (final list in grouped.values) {
       for (final s in list) {
@@ -1370,7 +1485,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
 
       final subs = grouped[t.id] ?? [];
-      final subsNonDeleted = subs.where((s) => !s.isDeleted).toList();
+      final subsFiltered =
+          subs.where(_subtaskPassesSelectedStatusChips).toList();
+      final subsNonDeleted =
+          subsFiltered.where((s) => !s.isDeleted).toList();
+      final subsDeleted = _selectedTaskStatuses.contains(_statusDeleted)
+          ? subsFiltered.where((s) => s.isDeleted).toList()
+          : <SingularSubtask>[];
 
       if (_filterOverdueOnly) {
         if (t.overdue == 'Yes') {
@@ -1387,12 +1508,29 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             if (s.overdue != 'Yes') continue;
             if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
             if (!searchActive) {
-              if (_rowPassesCreateDateForCustomized(t, s)) {
+              if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
                 out.add(_CustomizedFlatEntry.subtask(t, s));
               }
             } else {
               if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-              if (!_rowPassesCreateDateForCustomized(t, s)) continue;
+              if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+              out.add(_CustomizedFlatEntry.subtask(t, s));
+            }
+          }
+          for (final s in subsDeleted) {
+            if (_filterOverdueOnly) {
+              final exempt =
+                  s.isDeleted && _selectedTaskStatuses.contains(_statusDeleted);
+              if (!exempt && s.overdue != 'Yes') continue;
+            }
+            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+            if (!searchActive) {
+              if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                out.add(_CustomizedFlatEntry.subtask(t, s));
+              }
+            } else {
+              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+              if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
               out.add(_CustomizedFlatEntry.subtask(t, s));
             }
           }
@@ -1402,16 +1540,31 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
       if (!searchActive) {
         final subsInRange = subsNonDeleted
-            .where((s) => _rowPassesCreateDateForCustomized(t, s))
+            .where((s) => _rowPassesCreateDateForCustomizedSubtask(t, s))
+            .where((s) => !_customizedFlatShouldOmitSubtaskRow(t, s))
+            .toList();
+        final subsDeletedInRange = subsDeleted
+            .where((s) => _rowPassesCreateDateForCustomizedSubtask(t, s))
             .where((s) => !_customizedFlatShouldOmitSubtaskRow(t, s))
             .toList();
         final taskInRange = _rowPassesCreateDateForCustomized(t, null);
-        if (!taskInRange && subsInRange.isEmpty) continue;
-        if (taskInRange &&
-            !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
+        if (!taskInRange &&
+            subsInRange.isEmpty &&
+            subsDeletedInRange.isEmpty) {
+          continue;
+        }
+        final hasVisibleSubRows =
+            subsInRange.isNotEmpty || subsDeletedInRange.isNotEmpty;
+        final showSingularTaskRow = taskInRange &&
+            !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t) &&
+            !(widget.customizedFlat && hasVisibleSubRows);
+        if (showSingularTaskRow) {
           out.add(_CustomizedFlatEntry.task(t));
         }
         for (final s in subsInRange) {
+          out.add(_CustomizedFlatEntry.subtask(t, s));
+        }
+        for (final s in subsDeletedInRange) {
           out.add(_CustomizedFlatEntry.subtask(t, s));
         }
         continue;
@@ -1422,15 +1575,40 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           _rowPassesCreateDateForCustomized(t, null);
 
       if (taskRowAllowed) {
-        if (!_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
-          out.add(_CustomizedFlatEntry.task(t));
+        final mark = out.length;
+        if (_selectedTaskStatuses.contains(_statusDeleted)) {
+          for (final s in subsDeleted) {
+            if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+            if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+            out.add(_CustomizedFlatEntry.subtask(t, s));
+          }
+        }
+        for (final s in subsNonDeleted) {
+          if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+          if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+          if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+          out.add(_CustomizedFlatEntry.subtask(t, s));
+        }
+        final subsAdded = out.length - mark;
+        final showSingularTaskRow =
+            !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t) &&
+            (!widget.customizedFlat || subsAdded == 0);
+        if (showSingularTaskRow) {
+          out.insert(mark, _CustomizedFlatEntry.task(t));
         }
         continue;
       }
 
       for (final s in subsNonDeleted) {
         if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-        if (!_rowPassesCreateDateForCustomized(t, s)) continue;
+        if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+        if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+        out.add(_CustomizedFlatEntry.subtask(t, s));
+      }
+      for (final s in subsDeleted) {
+        if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+        if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
         if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
         out.add(_CustomizedFlatEntry.subtask(t, s));
       }
@@ -1910,6 +2088,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     required double filtersHeaderExtent,
     required GlobalKey filtersMeasureKey,
     required Widget filtersHeaderChild,
+    Widget? overviewEntityTabBar,
   }) {
     final titleStyle = _dashboardSliverAppBarTitleStyle(context);
     return <Widget>[
@@ -1941,6 +2120,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         actions: appBarConfig.actions,
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
+      if (overviewEntityTabBar != null)
+        SliverToBoxAdapter(
+          child: Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: overviewEntityTabBar,
+          ),
+        ),
       SliverPersistentHeader(
         pinned: false,
         floating: true,
@@ -1987,12 +2173,190 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     setState(() => _projectDashboardFiltersSliverExtent = h);
   }
 
+  Widget _buildOverviewEntityTabBar(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _kLandingTaskListMaxWidth),
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment<String>(
+                value: _kOverviewTabAll,
+                label: Text('All'),
+              ),
+              ButtonSegment<String>(
+                value: _kOverviewTabProject,
+                label: Text('Project'),
+              ),
+              ButtonSegment<String>(
+                value: _kOverviewTabTask,
+                label: Text('Task'),
+              ),
+              ButtonSegment<String>(
+                value: _kOverviewTabSubtask,
+                label: Text('Sub-task'),
+              ),
+            ],
+            selected: <String>{_overviewEntityTab},
+            onSelectionChanged: (set) {
+              final v = set.first;
+              if (v == _overviewEntityTab) return;
+              setState(() {
+                _overviewEntityTab = v;
+                _tasksPageIndex = 0;
+                _deletedTasksPageIndex = 0;
+              });
+              _persistLandingFilters();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Overview → Project segment: one row per project (same cards as Projects dashboard).
+  Widget _buildOverviewProjectTabColumn(
+    BuildContext context,
+    AppState state,
+    List<Widget> prefixSlivers,
+  ) {
+    final projects = _filteredSortedProjectsForDashboard(state);
+    final pagedProjects = _landingPageSlice(
+      projects,
+      _tasksPageIndex,
+      _tasksPageSize,
+    );
+    final hasProjFilters =
+        _filterAssigneeMenuStaffIds.isNotEmpty ||
+        _filterCreatorMenuStaffIds.isNotEmpty ||
+        _filterCreateDateEngaged ||
+        _selectedProjectStatusFilters.isNotEmpty ||
+        _taskSearchController.text.trim().isNotEmpty;
+
+    if (projects.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                ...prefixSlivers,
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Text(
+                        _taskSearchController.text.trim().isNotEmpty
+                            ? 'No projects match your search.'
+                            : hasProjFilters
+                                ? 'No projects for this filter.'
+                                : 'No projects yet.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final paginationBar = Material(
+      elevation: 6,
+      shadowColor: Colors.black26,
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: _kLandingTaskListMaxWidth,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildLandingTaskPaginationBar(
+                    context: context,
+                    totalCount: projects.length,
+                    pageIndex: _tasksPageIndex,
+                    onPageChanged: (i) {
+                      setState(() => _tasksPageIndex = i);
+                    },
+                    showPageSizeDropdown: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: CustomScrollView(
+            slivers: [
+              ...prefixSlivers,
+              SliverToBoxAdapter(
+                child: FutureBuilder<Map<String, String?>>(
+                  key: ValueKey(
+                    '${pagedProjects.map((e) => e.id).join('|')}'
+                    '_$_tasksPageIndex$_overviewEntityTab',
+                  ),
+                  future: _fetchProjectCardTeamTints(pagedProjects),
+                  builder: (context, snap) {
+                    final tintMap = snap.data ?? {};
+                    return Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: _kLandingTaskListMaxWidth,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final pr in pagedProjects)
+                                _buildProjectDashboardCard(
+                                  context,
+                                  pr,
+                                  tintMap,
+                                  openedFromOverview: true,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        paginationBar,
+      ],
+    );
+  }
+
   Widget _buildCustomizedFlatFullColumn(
     BuildContext context,
     AppState state,
     List<Task> filteredTasks,
     List<Task> filteredDeletedTasks, {
     List<Widget>? dashboardScrollPrefixSlivers,
+    List<Task>? extraSingularParentsForFlatSubtaskPrefetch,
   }) {
     return FutureBuilder<
         ({
@@ -2003,13 +2367,21 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       key: ValueKey(
         '${filteredTasks.map((t) => t.id).join('|')}'
         '_${filteredDeletedTasks.map((t) => t.id).join('|')}'
+        '_${extraSingularParentsForFlatSubtaskPrefetch?.map((t) => t.id).join('|') ?? ''}'
+        '_${_selectedTaskStatuses.toList()..sort()}'
         '_$_tasksPageIndex$_tasksPageSize$_deletedTasksPageIndex'
         '_$_customizedFlatListRefreshSeq'
         '_${_taskSearchController.text}'
         '_$_filterCreateDateStart$_filterCreateDateEnd'
-        '_$_filterOverdueOnly',
+        '_$_filterOverdueOnly'
+        '_$_overviewEntityTab',
       ),
-      future: _futureGroupedForCustomized(filteredTasks, filteredDeletedTasks),
+      future: _futureGroupedForCustomized(
+        filteredTasks,
+        filteredDeletedTasks,
+        includeExtraSingularParentsForSubtaskPrefetch:
+            extraSingularParentsForFlatSubtaskPrefetch,
+      ),
       builder: (context, snapshot) {
         final prefix = dashboardScrollPrefixSlivers;
         if (snapshot.connectionState == ConnectionState.waiting &&
@@ -2038,8 +2410,54 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         final grouped = payload?.grouped ?? {};
         final taskCommentActivity = payload?.taskCommentActivity ?? {};
         final subtaskCommentActivity = payload?.subtaskCommentActivity ?? {};
+        var activeTasksForEntries = filteredTasks;
+        if (_selectedTaskStatuses.contains(_statusDeleted)) {
+          final have =
+              activeTasksForEntries.map((t) => t.id).toSet();
+          for (final tid in grouped.keys) {
+            final sl = grouped[tid] ?? [];
+            if (!sl.any((s) => s.isDeleted)) continue;
+            if (have.contains(tid)) continue;
+            final task = state.taskById(tid);
+            if (task == null || !task.isSingularTableRow) continue;
+            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+            if (ds == 'delete' || ds == 'deleted') continue;
+            activeTasksForEntries = [...activeTasksForEntries, task];
+            have.add(tid);
+          }
+        }
+        if (_selectedTaskStatuses.contains(_statusCompleted)) {
+          final have =
+              activeTasksForEntries.map((t) => t.id).toSet();
+          for (final tid in grouped.keys) {
+            final sl = grouped[tid] ?? [];
+            if (!sl.any((s) => _singularSubtaskCompleted(s))) continue;
+            if (have.contains(tid)) continue;
+            final task = state.taskById(tid);
+            if (task == null || !task.isSingularTableRow) continue;
+            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+            if (ds == 'delete' || ds == 'deleted') continue;
+            activeTasksForEntries = [...activeTasksForEntries, task];
+            have.add(tid);
+          }
+        }
+        var delTasksForEntries = filteredDeletedTasks;
+        if (_selectedTaskStatuses.contains(_statusDeleted)) {
+          final haveDel = delTasksForEntries.map((t) => t.id).toSet();
+          for (final tid in grouped.keys) {
+            final sl = grouped[tid] ?? [];
+            if (!sl.any((s) => s.isDeleted)) continue;
+            if (haveDel.contains(tid)) continue;
+            final task = state.taskById(tid);
+            if (task == null || !task.isSingularTableRow) continue;
+            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+            if (ds != 'delete' && ds != 'deleted') continue;
+            delTasksForEntries = [...delTasksForEntries, task];
+            haveDel.add(tid);
+          }
+        }
         var activeEntries = _buildCustomizedFlatEntries(
-          filteredTasks,
+          activeTasksForEntries,
           grouped,
           _taskSearchController.text,
         );
@@ -2050,7 +2468,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           subtaskCommentActivity: subtaskCommentActivity,
         );
         var delEntries = _buildCustomizedFlatEntries(
-          filteredDeletedTasks,
+          delTasksForEntries,
           grouped,
           _taskSearchController.text,
         );
@@ -2061,7 +2479,31 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           subtaskCommentActivity: subtaskCommentActivity,
         );
 
-        if (activeEntries.isEmpty && delEntries.isEmpty) {
+        if (widget.customizedFlat) {
+          if (_overviewEntityTab == _kOverviewTabTask) {
+            activeEntries =
+                activeEntries.where((e) => e.isTaskRow).toList();
+            delEntries = delEntries.where((e) => e.isTaskRow).toList();
+          } else if (_overviewEntityTab == _kOverviewTabSubtask) {
+            activeEntries =
+                activeEntries.where((e) => !e.isTaskRow).toList();
+            delEntries =
+                delEntries.where((e) => !e.isTaskRow).toList();
+          }
+        }
+
+        final projectsForOverviewAll = widget.customizedFlat &&
+                _overviewEntityTab == _kOverviewTabAll
+            ? _filteredSortedProjectsForDashboard(state)
+            : const <ProjectRecord>[];
+
+        final listHasNoTaskRows =
+            activeEntries.isEmpty && delEntries.isEmpty;
+        final allTabHasProjects = widget.customizedFlat &&
+            _overviewEntityTab == _kOverviewTabAll &&
+            projectsForOverviewAll.isNotEmpty;
+
+        if (listHasNoTaskRows && !allTabHasProjects) {
           if (prefix != null) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2103,6 +2545,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           );
         }
 
+        final pagedProjectsForAll = _landingPageSlice(
+          projectsForOverviewAll,
+          _tasksPageIndex,
+          _tasksPageSize,
+        );
+
         final pagedActive = _landingPageSlice(
           activeEntries,
           _tasksPageIndex,
@@ -2114,10 +2562,57 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           _tasksPageSize,
         );
 
+        final deletedTasksAndSubtasksTitleCountOverview =
+            delEntries.where((e) => e.isTaskRow).length +
+                activeEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length +
+                delEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length;
+
+        final showProjectsOnAll = widget.customizedFlat &&
+            _overviewEntityTab == _kOverviewTabAll &&
+            projectsForOverviewAll.isNotEmpty;
+
         final listChildren = <Widget>[
-          if (filteredTasks.isNotEmpty) ...[
+          if (showProjectsOnAll) ...[
             Padding(
               padding: const EdgeInsets.only(top: 16, bottom: 8),
+              child: Text(
+                'Projects (${projectsForOverviewAll.length})',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            FutureBuilder<Map<String, String?>>(
+              key: ValueKey(
+                '${pagedProjectsForAll.map((e) => e.id).join('|')}'
+                '_$_tasksPageIndex$_overviewEntityTab',
+              ),
+              future: _fetchProjectCardTeamTints(pagedProjectsForAll),
+              builder: (context, snap) {
+                final tintMap = snap.data ?? {};
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final pr in pagedProjectsForAll)
+                      _buildProjectDashboardCard(
+                        context,
+                        pr,
+                        tintMap,
+                        openedFromOverview: true,
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (activeEntries.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.only(
+                top: showProjectsOnAll ? 8 : 16,
+                bottom: 8,
+              ),
               child: Text(
                 'Tasks & sub-tasks (${activeEntries.length})',
                 style: Theme.of(context)
@@ -2140,18 +2635,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               ),
             ),
           ],
-          if (filteredDeletedTasks.isNotEmpty) ...[
+          if (delEntries.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.only(top: 24, bottom: 8),
               child: Text(
-                'Deleted tasks',
+                'Deleted tasks and sub-tasks '
+                '($deletedTasksAndSubtasksTitleCountOverview)',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Colors.grey,
                     ),
               ),
             ),
-            if (filteredTasks.isEmpty)
+            if (activeEntries.isEmpty)
               const Padding(
                 padding: EdgeInsets.only(bottom: 12),
                 child: PicTeamColorLegend(),
@@ -2168,7 +2664,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           ),
         ];
 
-        final paginationBar = (activeEntries.isNotEmpty || delEntries.isNotEmpty)
+        final primaryPagerTotal = widget.customizedFlat &&
+                _overviewEntityTab == _kOverviewTabAll
+            ? max(projectsForOverviewAll.length, activeEntries.length)
+            : activeEntries.length;
+
+        final paginationBar = (activeEntries.isNotEmpty ||
+                delEntries.isNotEmpty ||
+                (showProjectsOnAll &&
+                    activeEntries.isEmpty &&
+                    delEntries.isEmpty))
             ? Material(
                 elevation: 6,
                 shadowColor: Colors.black26,
@@ -2186,17 +2691,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (activeEntries.isNotEmpty)
+                            if (activeEntries.isNotEmpty || showProjectsOnAll)
                               _buildLandingTaskPaginationBar(
                                 context: context,
-                                totalCount: activeEntries.length,
+                                totalCount: primaryPagerTotal,
                                 pageIndex: _tasksPageIndex,
                                 onPageChanged: (i) {
                                   setState(() => _tasksPageIndex = i);
                                 },
                                 showPageSizeDropdown: true,
                               ),
-                            if (activeEntries.isNotEmpty &&
+                            if ((activeEntries.isNotEmpty || showProjectsOnAll) &&
                                 delEntries.isNotEmpty)
                               const Divider(height: 12),
                             if (delEntries.isNotEmpty)
@@ -2305,6 +2810,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       if (widget.projectsOnlyDashboard) {
         unawaited(_loadStaffMapsForProjectsDashboard());
         return;
+      }
+      if (widget.customizedFlat) {
+        unawaited(_loadStaffMapsForProjectsDashboard());
       }
       _appStateListenerRef = context.read<AppState>();
       _appStateListenerRef!.addListener(_onAppStateForDeferredTeamRestore);
@@ -2427,6 +2935,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterCreateDateEnd = data.filterCreateDateEndMs != null
         ? DateTime.fromMillisecondsSinceEpoch(data.filterCreateDateEndMs!)
         : null;
+    if (widget.customizedFlat) {
+      final o = data.overviewEntityTab?.trim().toLowerCase();
+      if (o == _kOverviewTabAll ||
+          o == _kOverviewTabProject ||
+          o == _kOverviewTabTask ||
+          o == _kOverviewTabSubtask) {
+        _overviewEntityTab = o!;
+      } else {
+        _overviewEntityTab = _kOverviewTabAll;
+      }
+    }
   }
 
   void _applyTeamsAndAssigneesFromSaved(LandingTaskFilters data, AppState state) {
@@ -2507,6 +3026,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         filterCreatorStaffIds: _filterCreatorMenuStaffIds.toList(),
         filterCreateDateStartMs: _filterCreateDateStart?.millisecondsSinceEpoch,
         filterCreateDateEndMs: _filterCreateDateEnd?.millisecondsSinceEpoch,
+        overviewEntityTab:
+            widget.customizedFlat ? _overviewEntityTab : null,
       ),
     );
   }
@@ -3132,8 +3653,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   Widget _buildProjectDashboardCard(
     BuildContext context,
     ProjectRecord p,
-    Map<String, String?> teamTintByAssigneeKey,
-  ) {
+    Map<String, String?> teamTintByAssigneeKey, {
+    bool openedFromOverview = false,
+  }) {
     final state = context.read<AppState>();
     final keys = p.assigneeKeys(_staffUuidToAppId);
     final firstKey = _firstAssigneeKeyForProject(p);
@@ -3156,7 +3678,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               builder: (_) => ProjectDetailScreen(
                 projectId: p.id,
                 openedFromLanding: false,
-                openedFromOverview: false,
+                openedFromOverview: openedFromOverview,
               ),
             ),
           );
@@ -3924,8 +4446,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       return t.overdue == 'Yes';
     }
 
-    final tasksForSubtaskPrefetch = List<Task>.from(filteredTasks);
+    var tasksForSubtaskPrefetch = List<Task>.from(filteredTasks);
     final deletedForSubtaskPrefetch = List<Task>.from(filteredDeletedTasks);
+    if (_selectedTaskStatuses.contains(_statusDeleted) ||
+        _selectedTaskStatuses.contains(_statusCompleted)) {
+      final have = tasksForSubtaskPrefetch.map((t) => t.id).toSet();
+      for (final t in tasksNonDeleted) {
+        if (!t.isSingularTableRow) continue;
+        if (have.contains(t.id)) continue;
+        tasksForSubtaskPrefetch.add(t);
+        have.add(t.id);
+      }
+    }
     if (_filterOverdueOnly) {
       filteredInitiatives = [];
       filteredTasks = filteredTasks.where(taskMatchesOverdueFilter).toList();
@@ -3941,6 +4473,36 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _scheduleSubtaskRowDataPrefetch(prefetchTasks, prefetchDeleted);
+      if (!widget.customizedFlat &&
+          _selectedTaskStatuses.contains(_statusDeleted)) {
+        final sig =
+            '$filterKey|${_taskSearchController.text}|'
+            '${_filterCreateDateStart?.millisecondsSinceEpoch}|'
+            '${_filterCreateDateEnd?.millisecondsSinceEpoch}|'
+            '$_filterOverdueOnly|'
+            '${_selectedTaskStatuses.join(',')}|'
+            '$_cachedSingularTaskIdsSig';
+        if (sig != _landingDeletedParentsDiscoverySig) {
+          _landingDeletedParentsDiscoverySig = sig;
+          unawaited(
+            _discoverLandingParentsWithDeletedSubs(
+              tasksNonDeleted: tasksNonDeleted,
+              filterKey: filterKey,
+              isAssignedToMe: isAssignedToMe,
+              isCreatedByMe: isCreatedByMe,
+            ),
+          );
+        }
+      } else {
+        _landingDeletedParentsDiscoverySig = '';
+        if (_landingParentIdsWithDeletedSubs.isNotEmpty ||
+            _landingDeletedSubtasksTotalCount != 0) {
+          setState(() {
+            _landingParentIdsWithDeletedSubs.clear();
+            _landingDeletedSubtasksTotalCount = 0;
+          });
+        }
+      }
     });
     filteredTasks = _applyTaskSearch(filteredTasks);
     filteredDeletedTasks = _applyTaskSearch(filteredDeletedTasks);
@@ -3953,6 +4515,29 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       filteredTasks = filteredTasks.where(taskCreateDayOk).toList();
       filteredDeletedTasks =
           filteredDeletedTasks.where(taskCreateDayOk).toList();
+    }
+    if (!widget.customizedFlat &&
+        _selectedTaskStatuses.contains(_statusDeleted) &&
+        _landingParentIdsWithDeletedSubs.isNotEmpty) {
+      final have = filteredTasks.map((t) => t.id).toSet();
+      final toAdd = <Task>[];
+      for (final id in _landingParentIdsWithDeletedSubs) {
+        if (have.contains(id)) continue;
+        final t = state.taskById(id);
+        if (t == null || !t.isSingularTableRow) continue;
+        if (singularDeleted(t)) continue;
+        if (!taskMatchesOverdueFilter(t)) continue;
+        if (_applyTaskSearch([t]).isEmpty) continue;
+        if (_filterCreateDateEngaged) {
+          final day =
+              DateTime(t.createdAt.year, t.createdAt.month, t.createdAt.day);
+          if (!_calendarDayInCreateFilterRange(day)) continue;
+        }
+        toAdd.add(t);
+      }
+      if (toAdd.isNotEmpty) {
+        filteredTasks = [...filteredTasks, ...toAdd];
+      }
     }
     if (!widget.customizedFlat) {
       filteredTasks = _sortTasks(filteredTasks, state);
@@ -3981,6 +4566,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
       customizedFlatActiveTasks = byId.values.toList();
     }
+
+    final extraSingularParentsForFlatSubtaskPrefetch =
+        widget.customizedFlat &&
+                (_selectedTaskStatuses.contains(_statusDeleted) ||
+                    _selectedTaskStatuses.contains(_statusCompleted))
+            ? tasksNonDeleted.where((t) => t.isSingularTableRow).toList()
+            : null;
 
     final pagedTasks = widget.customizedFlat
         ? const <Task>[]
@@ -4099,13 +4691,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             padding: EdgeInsets.only(bottom: 12),
             child: PicTeamColorLegend(),
           ),
-          ...pagedTasks.map((t) => TaskListCard(task: t)),
+          ...pagedTasks.map(
+            (t) => TaskListCard(
+              task: t,
+              includeDeletedSubtasks:
+                  _selectedTaskStatuses.contains(_statusDeleted),
+            ),
+          ),
         ],
         if (filteredDeletedTasks.isNotEmpty) ...[
           Padding(
             padding: const EdgeInsets.only(top: 24, bottom: 8),
             child: Text(
-              'Deleted tasks',
+              'Deleted tasks and sub-tasks',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
@@ -4117,7 +4715,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               padding: EdgeInsets.only(bottom: 12),
               child: PicTeamColorLegend(),
             ),
-          ...pagedDeletedTasks.map((t) => TaskListCard(task: t)),
+          ...pagedDeletedTasks.map(
+            (t) => TaskListCard(
+              task: t,
+              includeDeletedSubtasks:
+                  _selectedTaskStatuses.contains(_statusDeleted),
+            ),
+          ),
         ],
       ];
 
@@ -4221,11 +4825,39 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           teamsSorted,
           filterKey,
         ),
+        overviewEntityTabBar: _buildOverviewEntityTabBar(context),
       );
 
-      if (filteredInitiatives.isEmpty &&
-          filteredTasks.isEmpty &&
-          filteredDeletedTasks.isEmpty) {
+      final needsProjectCards = _overviewEntityTab == _kOverviewTabAll ||
+          _overviewEntityTab == _kOverviewTabProject;
+      if (needsProjectCards && !_staffMapsReady) {
+        return const Center(child: CircularProgressIndicator());
+      }
+
+      if (_overviewEntityTab == _kOverviewTabProject) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _buildOverviewProjectTabColumn(
+                context,
+                state,
+                prefixSlivers,
+              ),
+            ),
+          ],
+        );
+      }
+
+      final hasAnyTasks = filteredInitiatives.isNotEmpty ||
+          filteredTasks.isNotEmpty ||
+          filteredDeletedTasks.isNotEmpty;
+      final scopeProjects = _filteredSortedProjectsForDashboard(state);
+      final showOverviewEmpty = !hasAnyTasks &&
+          !(_overviewEntityTab == _kOverviewTabAll &&
+              scopeProjects.isNotEmpty);
+
+      if (showOverviewEmpty) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -4254,6 +4886,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               customizedFlatActiveTasks,
               filteredDeletedTasks,
               dashboardScrollPrefixSlivers: prefixSlivers,
+              extraSingularParentsForFlatSubtaskPrefetch:
+                  extraSingularParentsForFlatSubtaskPrefetch,
             ),
           ),
         ],
@@ -4300,6 +4934,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                       state,
                       customizedFlatActiveTasks,
                       filteredDeletedTasks,
+                      extraSingularParentsForFlatSubtaskPrefetch:
+                          extraSingularParentsForFlatSubtaskPrefetch,
                     )
                   : Column(
                       children: [
@@ -4358,7 +4994,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                       child: PicTeamColorLegend(),
                                     ),
                                     ...pagedTasks.map(
-                                      (t) => TaskListCard(task: t),
+                                      (t) => TaskListCard(
+                                        task: t,
+                                        includeDeletedSubtasks:
+                                            _selectedTaskStatuses
+                                                .contains(_statusDeleted),
+                                      ),
                                     ),
                                   ],
                                   if (filteredDeletedTasks.isNotEmpty) ...[
@@ -4368,7 +5009,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         bottom: 8,
                                       ),
                                       child: Text(
-                                        'Deleted tasks',
+                                        'Deleted tasks and sub-tasks',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleMedium
@@ -4384,7 +5025,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                         child: PicTeamColorLegend(),
                                       ),
                                     ...pagedDeletedTasks.map(
-                                      (t) => TaskListCard(task: t),
+                                      (t) => TaskListCard(
+                                        task: t,
+                                        includeDeletedSubtasks:
+                                            _selectedTaskStatuses
+                                                .contains(_statusDeleted),
+                                      ),
                                     ),
                                   ],
                                 ],
@@ -4678,7 +5324,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: TextButton(
               onPressed: _filterCreateDateEngaged ? clearCreateDate : null,
-              child: const Text('Clear created date range'),
+              child: const Text('Reset to default date range'),
             ),
           ),
         ],

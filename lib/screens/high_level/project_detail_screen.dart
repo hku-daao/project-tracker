@@ -14,6 +14,7 @@ import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
+import '../../widgets/pic_multi_dropdown_text_field.dart';
 import '../../utils/project_task_sort.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
 import '../../widgets/task_list_card.dart';
@@ -45,6 +46,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   String? _loadErr;
   bool _saving = false;
 
+  /// Collapsible **Deleted tasks** section (singular [`task.status`] deleted).
+  bool _deletedTasksExpanded = false;
+
   ProjectDetailTaskSortColumn? _taskSortColumn;
   /// For **Created date (default)** (`_taskSortColumn == null`): `false` = descending (newest first).
   bool _taskSortAscending = false;
@@ -54,6 +58,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   bool _pickerLoading = false;
   final Map<String, String> _staffAssigneeToTeamId = {};
   final Set<String> _editAssigneeIds = {};
+  /// Editable PIC assignee keys (project creator only); subset of [_editAssigneeIds].
+  final Set<String> _editPicIds = {};
+  /// Assignee keys for [`project.pic`] (read-only display for non-editors).
+  List<String> _picDisplayKeys = [];
 
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
@@ -64,9 +72,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   String? _draftStatus;
 
   String? _myStaffUuid;
-
-  /// From [`staff.director`] for the logged-in user's staff row.
-  bool _staffDirector = false;
 
   static const Color _kGreen = Color(0xFF298A00);
   static const Color _kBlue = Color(0xFF0B0094);
@@ -104,11 +109,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     } else {
       _myStaffUuid = null;
     }
-    var staffDirector = false;
-    final sid = _myStaffUuid?.trim();
-    if (sid != null && sid.isNotEmpty) {
-      staffDirector = await SupabaseService.fetchStaffDirectorByStaffUuid(sid);
-    }
     try {
       final p = await SupabaseService.fetchProjectById(widget.projectId);
       final tasks =
@@ -118,7 +118,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         setState(() {
           _loading = false;
           _loadErr = 'Project not found';
-          _staffDirector = false;
         });
         return;
       }
@@ -131,13 +130,46 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         final k = await SupabaseService.assigneeListKeyFromStaffUuid(u);
         _editAssigneeIds.add(k);
       }
+      _picDisplayKeys = [];
+      _editPicIds.clear();
+      for (final u in p.picStaffUuids) {
+        final k = await SupabaseService.assigneeListKeyFromStaffUuid(u);
+        _picDisplayKeys.add(k);
+        _editPicIds.add(k);
+      }
+      var effectiveProject = p;
+      if (effectiveProject.picStaffUuids.isEmpty &&
+          effectiveProject.assigneeStaffUuids.length == 1) {
+        final sole = effectiveProject.assigneeStaffUuids.first.trim();
+        if (sole.isNotEmpty) {
+          final k = await SupabaseService.assigneeListKeyFromStaffUuid(sole);
+          _picDisplayKeys.add(k);
+          _editPicIds.add(k);
+          final soleCreator = effectiveProject.createByStaffUuid?.trim() ==
+              _myStaffUuid?.trim();
+          if (soleCreator &&
+              mine != null &&
+              mine.isNotEmpty &&
+              SupabaseConfig.isConfigured) {
+            final err = await SupabaseService.updateProjectRow(
+              projectId: widget.projectId,
+              picStaffUuids: [sole],
+              updateByStaffLookupKey: mine,
+            );
+            if (err == null && mounted) {
+              final refreshed =
+                  await SupabaseService.fetchProjectById(widget.projectId);
+              if (refreshed != null) effectiveProject = refreshed;
+            }
+          }
+        }
+      }
       await _loadPickerIfNeeded();
       if (!mounted) return;
       setState(() {
-        _project = p;
+        _project = effectiveProject;
         _tasks = tasks;
         _draftStatus = null;
-        _staffDirector = staffDirector;
         _loading = false;
       });
     } catch (e) {
@@ -145,7 +177,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       setState(() {
         _loading = false;
         _loadErr = e.toString();
-        _staffDirector = false;
       });
     }
   }
@@ -181,13 +212,28 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     return cb == me;
   }
 
-  bool _canDeleteProject(ProjectRecord p) =>
-      _isCreator(p) || _staffDirector;
+  bool _canDeleteProject(ProjectRecord p) => _isCreator(p);
 
   bool _viewerIsProjectAssignee() {
     final mine = context.read<AppState>().userStaffAppId?.trim();
     if (mine == null || mine.isEmpty) return false;
     return _editAssigneeIds.contains(mine);
+  }
+
+  bool _viewerIsProjectPic(ProjectRecord p) {
+    final me = _myStaffUuid?.trim();
+    if (me == null || me.isEmpty) return false;
+    for (final u in p.picStaffUuids) {
+      if (u.trim() == me) return true;
+    }
+    return false;
+  }
+
+  String _picNamesLine(AppState state) {
+    if (_picDisplayKeys.isEmpty) return '—';
+    return _picDisplayKeys
+        .map((k) => state.assigneeById(k)?.name ?? k)
+        .join(', ');
   }
 
   List<StaffForAssignment> _pickerStaffForRole() =>
@@ -221,6 +267,27 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           backgroundColor: Colors.orange);
       return;
     }
+    if (_editPicIds.isEmpty && _editAssigneeIds.length == 1) {
+      _editPicIds.add(_editAssigneeIds.first);
+    }
+    if (_editPicIds.isEmpty) {
+      showCopyableSnackBar(
+        context,
+        'Select at least one PIC from assignees',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+    for (final id in _editPicIds) {
+      if (!_editAssigneeIds.contains(id)) {
+        showCopyableSnackBar(
+          context,
+          'Each PIC must be one of the project assignees',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
+    }
     final teamId = _inferTeamId(_editAssigneeIds.toList());
     if (teamId.isEmpty && SupabaseConfig.isConfigured) {
       showCopyableSnackBar(
@@ -234,11 +301,26 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     try {
       final slots =
           await SupabaseService.assigneeSlotsForTask(_editAssigneeIds.toList());
+      final picUuids = <String>[];
+      for (final key in _editPicIds) {
+        final u = await SupabaseService.resolveStaffRowIdForAssigneeKey(key);
+        if (u != null && u.trim().isNotEmpty) picUuids.add(u.trim());
+      }
+      if (picUuids.isEmpty) {
+        if (!mounted) return;
+        showCopyableSnackBar(
+          context,
+          'Could not resolve PIC staff ids',
+          backgroundColor: Colors.orange,
+        );
+        return;
+      }
       final err = await SupabaseService.updateProjectRow(
         projectId: widget.projectId,
         name: _nameController.text.trim(),
         description: _descController.text.trim(),
         assigneeSlots: slots,
+        picStaffUuids: picUuids,
         startDate: _editStart,
         endDate: _editEnd,
         clearStartDate: _editStart == null,
@@ -467,7 +549,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     final p = _project!;
     final creator = _isCreator(p);
     final assigneeViewer = _viewerIsProjectAssignee();
-    final canCreateTask = creator;
+    final picViewer = _viewerIsProjectPic(p);
+    final canCreateTask = creator || assigneeViewer || picViewer;
     final ymd = DateFormat('yyyy-MM-dd');
     final effectiveStatus = _draftStatus ?? p.status;
     final sortedTasks = ProjectTaskSort.sortTasks(
@@ -477,11 +560,26 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       state,
     );
 
+    bool singularTaskDeleted(Task t) {
+      if (!t.isSingularTableRow) return false;
+      final s = t.dbStatus?.trim().toLowerCase() ?? '';
+      return s == 'delete' || s == 'deleted';
+    }
+
+    final activeProjectTasks =
+        sortedTasks.where((t) => !singularTaskDeleted(t)).toList();
+    final deletedProjectTasks =
+        sortedTasks.where(singularTaskDeleted).toList();
+
     final pickerTeams = _pickerTeamsForRole();
     final pickerStaff = _pickerStaffForRole();
     final usePicker = creator &&
         SupabaseConfig.isConfigured &&
         pickerStaff.isNotEmpty;
+    final showPicEditor = creator && usePicker;
+    final picCandidates = pickerStaff
+        .where((s) => _editAssigneeIds.contains(s.assigneeId))
+        .toList();
 
     return Scaffold(
       appBar: AppBar(title: Text('Project: ${p.name}')),
@@ -508,6 +606,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 12),
+                    if (!showPicEditor) ...[
+                      Text(
+                        'PIC(s): ${_picNamesLine(state)}',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     if (creator && _pickerLoading) ...[
                       const LinearProgressIndicator(),
                       const SizedBox(height: 16),
@@ -521,8 +626,27 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                   _editAssigneeIds
                                     ..clear()
                                     ..addAll(s);
+                                  _editPicIds
+                                      .removeWhere((id) => !s.contains(id));
                                 })
                             : (_) {},
+                      ),
+                      const SizedBox(height: 16),
+                      PicMultiDropdownTextField(
+                        key: ValueKey(
+                          '${(_editAssigneeIds.toList()..sort()).join(',')}|'
+                          '${(_editPicIds.toList()..sort()).join(',')}',
+                        ),
+                        label: 'PIC(s)',
+                        hint: 'Choose from assignees above',
+                        candidates: picCandidates,
+                        selectedIds: _editPicIds,
+                        enabled: !_saving,
+                        onSelectionChanged: (next) => setState(() {
+                          _editPicIds
+                            ..clear()
+                            ..addAll(next);
+                        }),
                       ),
                       const SizedBox(height: 16),
                     ] else if ((assigneeViewer && !creator) ||
@@ -718,6 +842,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   onPressed: _saving
                       ? null
                       : () {
+                          final appState = context.read<AppState>();
                           Navigator.of(context)
                               .push(
                             MaterialPageRoute<void>(
@@ -734,10 +859,11 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                           )
                               .then((_) async {
                             await _reload();
+                            if (!mounted) return;
                             final data =
                                 await SupabaseService.fetchTasksFromSupabase();
                             if (!mounted || data == null) return;
-                            context.read<AppState>().applyTasksFromSupabase(data);
+                            appState.applyTasksFromSupabase(data);
                           });
                         },
                   icon: const Icon(Icons.add_task_outlined),
@@ -767,13 +893,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 ),
               ),
             ],
-            for (final t in sortedTasks) ...[
+            for (final t in activeProjectTasks) ...[
               const SizedBox(height: 12),
               TaskListCard(
                 task: t,
                 openedFromOverview: widget.openedFromOverview,
                 onTaskTap: () {
-                  Navigator.of(context).push(
+                  final appState = context.read<AppState>();
+                  Navigator.of(context)
+                      .push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => TaskDetailScreen(
                         taskId: t.id,
@@ -782,9 +910,82 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                         projectIdForBack: widget.projectId,
                       ),
                     ),
-                  );
+                  )
+                      .then((_) async {
+                    if (!mounted) return;
+                    await _reload();
+                    if (!mounted) return;
+                    final data =
+                        await SupabaseService.fetchTasksFromSupabase();
+                    if (!mounted || data == null) return;
+                    appState.applyTasksFromSupabase(data);
+                  });
                 },
               ),
+            ],
+            if (deletedProjectTasks.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: () => setState(() {
+                  _deletedTasksExpanded = !_deletedTasksExpanded;
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _deletedTasksExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        color: Colors.grey.shade700,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Deleted tasks (${deletedProjectTasks.length})',
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey,
+                                  ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_deletedTasksExpanded)
+                for (final t in deletedProjectTasks) ...[
+                  const SizedBox(height: 12),
+                  TaskListCard(
+                    task: t,
+                    openedFromOverview: widget.openedFromOverview,
+                    onTaskTap: () {
+                      final appState = context.read<AppState>();
+                      Navigator.of(context)
+                          .push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => TaskDetailScreen(
+                            taskId: t.id,
+                            openedFromOverview: widget.openedFromOverview,
+                            openedFromProjectDetail: true,
+                            projectIdForBack: widget.projectId,
+                          ),
+                        ),
+                      )
+                          .then((_) async {
+                        if (!mounted) return;
+                        await _reload();
+                        if (!mounted) return;
+                        final data =
+                            await SupabaseService.fetchTasksFromSupabase();
+                        if (!mounted || data == null) return;
+                        appState.applyTasksFromSupabase(data);
+                      });
+                    },
+                  ),
+                ],
             ],
             if (creator) ...[
               const SizedBox(height: 12),

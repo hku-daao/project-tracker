@@ -77,7 +77,7 @@ class CreateTaskScreen extends StatefulWidget {
 
   final CreateTaskEntryPoint entryPoint;
 
-  /// When true (FAB flows), user picks one of their created projects from a dropdown.
+  /// When true (FAB flows), user picks a linked project (creator, assignee, or PIC).
   final bool showProjectPicker;
 
   @override
@@ -176,8 +176,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
         return s == 'Not started' || s == 'In progress';
       }
 
-      final created = all
-          .where((p) => p.createByStaffUuid?.trim() == me)
+      final linked = all
+          .where((p) => p.staffMayLinkTasks(me))
           .where(eligible)
           .toList()
         ..sort(
@@ -187,10 +187,10 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
       final selected = _selectedProjectId?.trim();
       final selectedStillValid = selected == null ||
           selected.isEmpty ||
-          created.any((p) => p.id == selected);
+          linked.any((p) => p.id == selected);
       setState(() {
         _myProjectsLoading = false;
-        _myCreatedProjects = created;
+        _myCreatedProjects = linked;
         if (!selectedStillValid) {
           _selectedProjectId = null;
         }
@@ -1210,26 +1210,32 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
             TextFormField(
               controller: _descController,
               readOnly: _submitting,
-              textInputAction: TextInputAction.next,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              textAlignVertical: TextAlignVertical.top,
+              minLines: 3,
+              maxLines: 12,
               decoration: const InputDecoration(
                 labelText: 'Description',
                 border: OutlineInputBorder(),
                 alignLabelWithHint: true,
               ),
-              maxLines: 4,
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _commentsController,
               readOnly: _submitting,
-              textInputAction: TextInputAction.done,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              textAlignVertical: TextAlignVertical.top,
+              minLines: 3,
+              maxLines: 12,
               decoration: const InputDecoration(
                 labelText: 'Comments',
                 hintText: 'Comments',
                 border: OutlineInputBorder(),
                 alignLabelWithHint: true,
               ),
-              maxLines: 3,
             ),
             const SizedBox(height: 24),
             FilledButton(

@@ -74,7 +74,10 @@ class SingularSubtask {
   /// `Yes` / `No` (`subtask.overdue`).
   final String overdue;
 
-  bool get isDeleted => status.trim().toLowerCase() == 'deleted';
+  bool get isDeleted {
+    final x = status.trim().toLowerCase();
+    return x == 'deleted' || x == 'delete';
+  }
 
   /// Comma-separated staff names (same order as `assignee_01`… in DB).
   String assigneeNamesDisplayLine(String Function(String assigneeKey) nameFor) {
@@ -168,5 +171,8 @@ class SubtaskCommentRowDisplay {
   final DateTime? createTimestampUtc;
   final DateTime? updateTimestampUtc;
 
-  bool get isDeleted => status.trim().toLowerCase() == 'deleted';
+  bool get isDeleted {
+    final x = status.trim().toLowerCase();
+    return x == 'deleted' || x == 'delete';
+  }
 }

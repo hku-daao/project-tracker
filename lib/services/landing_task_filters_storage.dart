@@ -22,6 +22,8 @@ class LandingTaskFilters {
     this.filterOverdueOnly = false,
     this.filterCreateDateStartMs,
     this.filterCreateDateEndMs,
+    /// Overview (`InitiativeListScreen.customizedFlat`): `all` | `project` | `task` | `subtask`.
+    this.overviewEntityTab,
   });
 
   final String filterType;
@@ -50,6 +52,9 @@ class LandingTaskFilters {
   /// Inclusive calendar-day bounds (local); null = not set. Applies to task create date (and sub-task rows on Customized).
   final int? filterCreateDateStartMs;
   final int? filterCreateDateEndMs;
+
+  /// Persisted Overview segment tab (browser return visit).
+  final String? overviewEntityTab;
   final String search;
 
   /// `creator` | `assignee` | `startDate` | `dueDate` | `status` | `submission`, or null.
@@ -76,6 +81,7 @@ class LandingTaskFilters {
         'filterCreatorStaffIds': filterCreatorStaffIds,
         'filterCreateDateStartMs': filterCreateDateStartMs,
         'filterCreateDateEndMs': filterCreateDateEndMs,
+        'overviewEntityTab': overviewEntityTab,
       };
 
   static LandingTaskFilters? fromJson(Map<String, dynamic>? j) {
@@ -106,6 +112,7 @@ class LandingTaskFilters {
       ),
       filterCreateDateStartMs: j['filterCreateDateStartMs'] as int?,
       filterCreateDateEndMs: j['filterCreateDateEndMs'] as int?,
+      overviewEntityTab: j['overviewEntityTab'] as String?,
     );
   }
 }

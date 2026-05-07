@@ -120,6 +120,7 @@ typedef _TaskListCardData = (
   Map<String, String> names,
   String? picTeam,
   List<SingularSubtask> subtasks,
+  List<SingularSubtask> deletedSubtasks,
 );
 
 /// Task row for list tabs: name, assignees, status, start/due dates (matches singular + legacy tasks).
@@ -137,6 +138,8 @@ class TaskListCard extends StatefulWidget {
     /// Overview meta line: `yyyy-MM-dd` from task update vs comment activity.
     this.overviewLastUpdatedYmd,
     this.onTaskTap,
+    /// When the landing filter includes **Deleted**, list deleted sub-tasks under a grey header.
+    this.includeDeletedSubtasks = false,
   });
 
   final Task task;
@@ -157,6 +160,9 @@ class TaskListCard extends StatefulWidget {
   final bool showCustomizedTaskTitle;
 
   final bool openedFromOverview;
+
+  /// See landing status filter (Deleted).
+  final bool includeDeletedSubtasks;
 
   /// Background tint from PIC's [`staff.team_id`] / [`team.team_id`] (home / initiative task lists).
   static Color? cardColorForPicTeam(String? teamBusinessId) {
@@ -519,6 +525,9 @@ class _TaskListCardState extends State<TaskListCard> {
     _cardDataFuture = _loadCardData();
     if (widget.flatSubtasksAlwaysVisible && !widget.taskOnly) {
       _subtasksExpanded = true;
+    } else if (widget.includeDeletedSubtasks) {
+      // Landing **Deleted** filter: show deleted sub-tasks without an extra expand tap.
+      _subtasksExpanded = true;
     }
   }
 
@@ -550,19 +559,34 @@ class _TaskListCardState extends State<TaskListCard> {
         !widget.taskOnly) {
       _subtasksExpanded = true;
     }
+    if (oldWidget.includeDeletedSubtasks != widget.includeDeletedSubtasks) {
+      _cardDataFuture = _loadCardData();
+      if (widget.includeDeletedSubtasks) {
+        _subtasksExpanded = true;
+      }
+    }
   }
 
   Future<_TaskListCardData> _loadCardData() async {
     final t = widget.task;
     final picKey = t.pic?.trim();
-    final subtasks = t.isSingularTableRow
-        ? await SupabaseService.fetchSubtasksForTask(t.id)
-        : <SingularSubtask>[];
+    List<SingularSubtask> subtasks = <SingularSubtask>[];
+    List<SingularSubtask> deletedSubtasks = <SingularSubtask>[];
+    if (t.isSingularTableRow) {
+      if (widget.includeDeletedSubtasks) {
+        final all =
+            await SupabaseService.fetchAllSubtasksForTaskForDetail(t.id);
+        subtasks = all.where((s) => !s.isDeleted).toList();
+        deletedSubtasks = all.where((s) => s.isDeleted).toList();
+      } else {
+        subtasks = await SupabaseService.fetchSubtasksForTask(t.id);
+      }
+    }
     final keys = <String>{
       ...t.assigneeIds,
       if (picKey != null && picKey.isNotEmpty) picKey,
     };
-    for (final st in subtasks) {
+    for (final st in [...subtasks, ...deletedSubtasks]) {
       keys.addAll(st.assigneeIds);
       final p = st.pic?.trim();
       if (p != null && p.isNotEmpty) keys.add(p);
@@ -570,7 +594,7 @@ class _TaskListCardState extends State<TaskListCard> {
     final names = await SupabaseService.staffDisplayNamesForKeys(keys.toList());
     final picTeam =
         await SupabaseService.fetchStaffTeamBusinessIdForAssigneeKey(picKey);
-    return (names, picTeam, subtasks);
+    return (names, picTeam, subtasks, deletedSubtasks);
   }
 
   Future<void> _reloadAfterSubtaskReturn() async {
@@ -603,6 +627,8 @@ class _TaskListCardState extends State<TaskListCard> {
         final nameMap = snapshot.data?.$1 ?? {};
         final picTeamId = snapshot.data?.$2;
         final subtasks = snapshot.data?.$3 ?? <SingularSubtask>[];
+        final deletedSubtasks =
+            snapshot.data?.$4 ?? <SingularSubtask>[];
         final officerNames = t.assigneeIds
             .map((id) => nameMap[id] ?? state.assigneeById(id)?.name ?? id)
             .toList()
@@ -795,7 +821,8 @@ class _TaskListCardState extends State<TaskListCard> {
                   ),
                 ),
               ),
-              if (!widget.taskOnly && subtasks.isNotEmpty) ...[
+              if (!widget.taskOnly &&
+                  (subtasks.isNotEmpty || deletedSubtasks.isNotEmpty)) ...[
                 if (!widget.flatSubtasksAlwaysVisible) ...[
                   const Divider(height: 1),
                   InkWell(
@@ -879,6 +906,46 @@ class _TaskListCardState extends State<TaskListCard> {
                               }
                             },
                           ),
+                        if (deletedSubtasks.isNotEmpty) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, bottom: 8),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Deleted (${deletedSubtasks.length})',
+                                style: subtasksHeaderStyle.copyWith(
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                          ),
+                          for (final s in SubtaskListSort.sort(
+                            deletedSubtasks,
+                            resolveName: resolveName,
+                            activeColumn: _activeSubtaskSort,
+                            ascending: _subtaskSortAscending,
+                          ))
+                            SingularSubtaskRowCard(
+                              subtask: s,
+                              resolveName: resolveName,
+                              onTap: () async {
+                                final changed =
+                                    await Navigator.of(context).push<bool>(
+                                  MaterialPageRoute<bool>(
+                                    builder: (_) => SubtaskDetailScreen(
+                                      subtaskId: s.id,
+                                      replaceWithParentTaskOnBack: true,
+                                      openedFromOverview:
+                                          widget.openedFromOverview,
+                                    ),
+                                  ),
+                                );
+                                if (changed == true && mounted) {
+                                  await _reloadAfterSubtaskReturn();
+                                }
+                              },
+                            ),
+                        ],
                       ],
                     ),
                   ),

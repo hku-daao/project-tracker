@@ -120,6 +120,11 @@ class SupabaseService {
   }
 
   static void _sortSingularSubtasksNewestFirst(List<SingularSubtask> out) {
+    sortSingularSubtasksNewestFirstInPlace(out);
+  }
+
+  /// Same ordering as landing cards / task detail sub-task lists.
+  static void sortSingularSubtasksNewestFirstInPlace(List<SingularSubtask> out) {
     out.sort((a, b) {
       final ca = a.createDate;
       final cb = b.createDate;
@@ -486,6 +491,40 @@ class SupabaseService {
     }
   }
 
+  /// When the parent [task] is marked Deleted, set every non-deleted [subtask] under it to Deleted.
+  static Future<String?> markSubtasksDeletedForParentTask({
+    required String taskId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final tid = taskId.trim();
+    if (tid.isEmpty) return 'task id required';
+    try {
+      final rows = await _fetchSubtaskRawRowsForTask(tid);
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      };
+      final lookup = updateByStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      for (final row in rows) {
+        if (!_subtaskRowStatusNotDeleted(row)) continue;
+        final sid = row['id']?.toString().trim();
+        if (sid == null || sid.isEmpty) continue;
+        await Supabase.instance.client.from('subtask').update(map).eq('id', sid);
+      }
+      invalidateSubtasksCacheForTask(tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// All attachment rows for a singular task.
   ///
   /// Selects only `id`, `content`, `description` and orders by `id` so schemas that use
@@ -616,7 +655,7 @@ class SupabaseService {
   }) {
     final id = row['id']?.toString() ?? row['task_id']?.toString();
     if (id == null || id.isEmpty) return null;
-    final statusRaw = row['status']?.toString().trim() ?? '';
+    final statusRaw = _dbStatusRawFromRow(row['status']);
 
     final assigneeIds = <String>[];
     for (var i = 1; i <= 10; i++) {
@@ -657,7 +696,9 @@ class SupabaseService {
       startDate: _parseDate(row['start_date']),
       endDate: _parseDate(row['due_date']) ?? _parseDate(row['end_date']),
       createdAt: _parseDateTime(row['created_at'] ?? row['create_date']),
-      status: _taskStatusFromSingularTaskDb(row['status'] as String?),
+      status: _taskStatusFromSingularTaskDb(
+        statusRaw.isEmpty ? null : statusRaw,
+      ),
       progressPercent: (row['progress_percent'] as num?)?.toInt() ?? 0,
       isSingularTableRow: true,
       dbStatus: statusRaw.isEmpty ? null : statusRaw,
@@ -720,12 +761,21 @@ class SupabaseService {
       final v = row[key]?.toString().trim();
       if (v != null && v.isNotEmpty) assignees.add(v);
     }
+    final picUuids = <String>[];
+    final rawPic = row['pic'];
+    if (rawPic is List) {
+      for (final e in rawPic) {
+        final s = e?.toString().trim();
+        if (s != null && s.isNotEmpty) picUuids.add(s);
+      }
+    }
     final cb = row['create_by']?.toString().trim();
     final ub = row['update_by']?.toString().trim();
     return ProjectRecord(
       id: id,
       name: row['name'] as String? ?? '',
       assigneeStaffUuids: assignees,
+      picStaffUuids: picUuids,
       description: row['description'] as String? ?? '',
       startDate: _parseDate(row['start_date']),
       endDate: _parseDate(row['end_date']),
@@ -842,6 +892,8 @@ class SupabaseService {
   static Future<({String? error, String? projectId})> insertProjectRow({
     required String name,
     List<String?> assignees = const [],
+    /// [`staff.id`] uuids; persisted as JSON array in [`project.pic`].
+    List<String> picStaffUuids = const [],
     String? description,
     DateTime? startDate,
     DateTime? endDate,
@@ -882,6 +934,12 @@ class SupabaseService {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
         }
       }
+      final picJson = <String>[];
+      for (final u in picStaffUuids) {
+        final t = u.trim();
+        if (t.isNotEmpty) picJson.add(t);
+      }
+      map['pic'] = picJson;
       final ins = await Supabase.instance.client
           .from('project')
           .insert(map)
@@ -899,6 +957,8 @@ class SupabaseService {
     String? name,
     String? description,
     List<String?>? assigneeSlots,
+    /// When non-null, replaces [`project.pic`] JSON array (`staff.id` uuids).
+    List<String>? picStaffUuids,
     DateTime? startDate,
     DateTime? endDate,
     bool clearStartDate = false,
@@ -917,6 +977,14 @@ class SupabaseService {
           final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
           map[key] = (v == null || v.isEmpty) ? null : v;
         }
+      }
+      if (picStaffUuids != null) {
+        final picJson = <String>[];
+        for (final u in picStaffUuids) {
+          final t = u.trim();
+          if (t.isNotEmpty) picJson.add(t);
+        }
+        map['pic'] = picJson;
       }
       if (clearStartDate) {
         map['start_date'] = null;
@@ -2138,6 +2206,18 @@ class SupabaseService {
     return m;
   }
 
+  /// Normalizes `task.status` / `subtask.status` from Supabase (string, Postgres enum, or `{value: …}` JSON).
+  static String _dbStatusRawFromRow(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw.trim();
+    if (raw is Map) {
+      final dynamic v =
+          raw['value'] ?? raw['Value'] ?? raw['name'] ?? raw['label'];
+      if (v != null) return v.toString().trim();
+    }
+    return raw.toString().trim();
+  }
+
   static SingularSubtask? _singularSubtaskFromRow(
     Map<String, dynamic> row,
     Map<String, String> staffUuidToAppId,
@@ -2175,7 +2255,10 @@ class SupabaseService {
       priority: _priorityFromFlexible(row['priority']),
       startDate: _parseDate(row['start_date']),
       dueDate: _parseDate(row['due_date']),
-      status: row['status'] as String? ?? 'Incomplete',
+      status: () {
+        final raw = _dbStatusRawFromRow(row['status']);
+        return raw.isEmpty ? 'Incomplete' : raw;
+      }(),
       submission: row['submission'] as String?,
       submitDate: _parseDateTimeNullable(row['submit_date']),
       completionDate: _parseDateTimeNullable(row['completion_date']),
@@ -2232,8 +2315,103 @@ class SupabaseService {
   }
 
   static bool _subtaskRowStatusNotDeleted(Map<String, dynamic> row) {
-    final s = (row['status'] as String? ?? '').trim().toLowerCase();
-    return s != 'deleted';
+    final s = _dbStatusRawFromRow(row['status']).toLowerCase();
+    return s != 'deleted' && s != 'delete';
+  }
+
+  static bool _subtaskRowIsDeleted(Map<String, dynamic> row) {
+    final s = _dbStatusRawFromRow(row['status']).toLowerCase();
+    return s == 'deleted' || s == 'delete';
+  }
+
+  /// All sub-task rows for [taskId] (including **Deleted**) — for task detail / filters.
+  /// Does not use [_subtaskListMemoryCache].
+  static Future<List<SingularSubtask>> fetchAllSubtasksForTaskForDetail(
+    String taskId,
+  ) async {
+    if (!_enabled) return [];
+    final tid = taskId.trim();
+    if (tid.isEmpty) return [];
+    Map<String, String> staffMap = {};
+    Map<String, String> staffNames = {};
+    try {
+      final maps = await _loadMaps();
+      staffMap = maps?.staffUuidToAppId ?? await _staffUuidToAppIdMapAll();
+      staffNames = maps?.staffUuidToName ?? <String, String>{};
+    } catch (_) {
+      try {
+        staffMap = await _staffUuidToAppIdMapAll();
+      } catch (_) {}
+    }
+    final rawRows = await _fetchSubtaskRawRowsForTask(tid);
+    final out = <SingularSubtask>[];
+    for (final row in rawRows) {
+      try {
+        final st = _singularSubtaskFromRow(row, staffMap, staffNames);
+        if (st != null) out.add(st);
+      } catch (_) {}
+    }
+    _sortSingularSubtasksNewestFirst(out);
+    return out;
+  }
+
+  /// Deleted sub-tasks only, grouped by parent `task_id` (landing Overview/Default filters).
+  static Future<Map<String, List<SingularSubtask>>>
+      fetchDeletedSubtasksGroupedForLandingPrefetch(
+    List<String> taskIds,
+  ) async {
+    final out = <String, List<SingularSubtask>>{};
+    final ids =
+        taskIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()
+          ..sort();
+    if (ids.isEmpty) return out;
+    if (!_enabled) return out;
+
+    Map<String, String> staffMap = {};
+    Map<String, String> staffNames = {};
+    try {
+      final maps = await _loadMaps();
+      staffMap = maps?.staffUuidToAppId ?? await _staffUuidToAppIdMapAll();
+      staffNames = maps?.staffUuidToName ?? <String, String>{};
+    } catch (_) {
+      try {
+        staffMap = await _staffUuidToAppIdMapAll();
+      } catch (_) {}
+    }
+
+    final client = Supabase.instance.client;
+    const chunkSize = 80;
+    final pendingRows = <Map<String, dynamic>>[];
+    for (var i = 0; i < ids.length; i += chunkSize) {
+      final end = min(i + chunkSize, ids.length);
+      final chunk = ids.sublist(i, end);
+      try {
+        final res = await client
+            .from('subtask')
+            .select()
+            .inFilter('task_id', chunk);
+        for (final raw in (res as List)) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          if (!_subtaskRowIsDeleted(row)) continue;
+          pendingRows.add(row);
+        }
+      } catch (_) {}
+    }
+
+    for (final row in pendingRows) {
+      if (!_subtaskRowIsDeleted(row)) continue;
+      try {
+        final st = _singularSubtaskFromRow(row, staffMap, staffNames);
+        if (st == null) continue;
+        final tid = st.taskId;
+        out.putIfAbsent(tid, () => []).add(st);
+      } catch (_) {}
+    }
+
+    for (final e in out.entries) {
+      sortSingularSubtasksNewestFirstInPlace(e.value);
+    }
+    return out;
   }
 
   /// Parent singular [`task.id`] values that have at least one **non-deleted** subtask whose
