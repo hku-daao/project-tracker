@@ -195,6 +195,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   final GlobalKey _taskDashboardFiltersMeasureKey = GlobalKey();
   double _taskDashboardFiltersSliverExtent = 460;
 
+  /// Overview shows one prefix stack per tab; each filter header needs its own key.
+  final List<GlobalKey> _overviewTaskDashboardFiltersMeasureKeys =
+      List<GlobalKey>.generate(3, (_) => GlobalKey());
+
   /// Project dashboard floating filters header height.
   final GlobalKey _projectDashboardFiltersMeasureKey = GlobalKey();
   double _projectDashboardFiltersSliverExtent = 440;
@@ -331,8 +335,65 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   static const String _kOverviewTabTask = 'task';
   static const String _kOverviewTabSubtask = 'subtask';
 
-  /// Overview: All | Project | Task | Sub-task (persisted; [_kOverviewTab*]).
+  /// Overview: All | Tasks | Projects (persisted; [_kOverviewTab*]).
   String _overviewEntityTab = _kOverviewTabAll;
+
+  /// Set when Overview uses [DefaultTabController] (bind once in [Builder]).
+  TabController? _overviewTabControllerRef;
+
+  static int _overviewTabIndexFromEntity(String tab) {
+    switch (tab) {
+      case _kOverviewTabTask:
+        return 1;
+      case _kOverviewTabProject:
+        return 2;
+      case _kOverviewTabSubtask:
+        return 0; // Sub-tasks tab removed; map legacy preference to All.
+      default:
+        return 0;
+    }
+  }
+
+  static String _overviewEntityTabFromIndex(int index) {
+    switch (index) {
+      case 1:
+        return _kOverviewTabTask;
+      case 2:
+        return _kOverviewTabProject;
+      default:
+        return _kOverviewTabAll;
+    }
+  }
+
+  void _bindOverviewDefaultTabControllerListener(TabController tc) {
+    if (_overviewTabControllerRef == tc) return;
+    _overviewTabControllerRef?.removeListener(_onOverviewTabControllerTick);
+    _overviewTabControllerRef = tc;
+    tc.addListener(_onOverviewTabControllerTick);
+  }
+
+  void _syncOverviewTabControllerFromEntity() {
+    if (!widget.customizedFlat) return;
+    final tc = _overviewTabControllerRef;
+    if (tc == null) return;
+    final want = _overviewTabIndexFromEntity(_overviewEntityTab);
+    if (tc.index != want) {
+      tc.index = want;
+    }
+  }
+
+  void _onOverviewTabControllerTick() {
+    final tc = _overviewTabControllerRef;
+    if (tc == null || tc.indexIsChanging) return;
+    final next = _overviewEntityTabFromIndex(tc.index);
+    if (next == _overviewEntityTab) return;
+    setState(() {
+      _overviewEntityTab = next;
+      _tasksPageIndex = 0;
+      _deletedTasksPageIndex = 0;
+    });
+    _persistLandingFilters();
+  }
 
   static const _submissionPending = 'pending';
   static const _submissionSubmitted = 'submitted';
@@ -1453,11 +1514,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   List<_CustomizedFlatEntry> _buildCustomizedFlatEntries(
     List<Task> tasks,
     Map<String, List<SingularSubtask>> grouped,
-    String searchRaw,
-  ) {
+    String searchRaw, {
+    String? overviewListScope,
+  }) {
     final tokens = _landingSearchTokens(searchRaw);
     final searchActive = tokens.isNotEmpty;
     final out = <_CustomizedFlatEntry>[];
+    final overviewTasksTab = widget.customizedFlat &&
+        overviewListScope == _kOverviewTabTask;
 
     for (final t in tasks) {
       if (!t.isSingularTableRow) {
@@ -1504,34 +1568,79 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             out.add(_CustomizedFlatEntry.task(t));
           }
         } else {
-          for (final s in subsNonDeleted) {
-            if (s.overdue != 'Yes') continue;
-            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
-            if (!searchActive) {
-              if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+          if (overviewTasksTab) {
+            var wantParent = false;
+            for (final s in subsNonDeleted) {
+              if (s.overdue != 'Yes') continue;
+              if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+              if (!searchActive) {
+                if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                  wantParent = true;
+                  break;
+                }
+              } else {
+                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+                if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+                wantParent = true;
+                break;
+              }
+            }
+            if (!wantParent) {
+              for (final s in subsDeleted) {
+                if (_filterOverdueOnly) {
+                  final exempt = s.isDeleted &&
+                      _selectedTaskStatuses.contains(_statusDeleted);
+                  if (!exempt && s.overdue != 'Yes') continue;
+                }
+                if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+                if (!searchActive) {
+                  if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                    wantParent = true;
+                    break;
+                  }
+                } else {
+                  if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+                  if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+                  wantParent = true;
+                  break;
+                }
+              }
+            }
+            if (wantParent &&
+                !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(
+                    t)) {
+              out.add(_CustomizedFlatEntry.task(t));
+            }
+          } else {
+            for (final s in subsNonDeleted) {
+              if (s.overdue != 'Yes') continue;
+              if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+              if (!searchActive) {
+                if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                  out.add(_CustomizedFlatEntry.subtask(t, s));
+                }
+              } else {
+                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+                if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
                 out.add(_CustomizedFlatEntry.subtask(t, s));
               }
-            } else {
-              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-              if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
-              out.add(_CustomizedFlatEntry.subtask(t, s));
             }
-          }
-          for (final s in subsDeleted) {
-            if (_filterOverdueOnly) {
-              final exempt =
-                  s.isDeleted && _selectedTaskStatuses.contains(_statusDeleted);
-              if (!exempt && s.overdue != 'Yes') continue;
-            }
-            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
-            if (!searchActive) {
-              if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+            for (final s in subsDeleted) {
+              if (_filterOverdueOnly) {
+                final exempt =
+                    s.isDeleted && _selectedTaskStatuses.contains(_statusDeleted);
+                if (!exempt && s.overdue != 'Yes') continue;
+              }
+              if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+              if (!searchActive) {
+                if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                  out.add(_CustomizedFlatEntry.subtask(t, s));
+                }
+              } else {
+                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+                if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
                 out.add(_CustomizedFlatEntry.subtask(t, s));
               }
-            } else {
-              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-              if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
-              out.add(_CustomizedFlatEntry.subtask(t, s));
             }
           }
         }
@@ -1555,6 +1664,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         }
         final hasVisibleSubRows =
             subsInRange.isNotEmpty || subsDeletedInRange.isNotEmpty;
+
+        if (overviewTasksTab) {
+          final showSingularTaskRow =
+              (taskInRange || hasVisibleSubRows) &&
+                  !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(
+                      t);
+          if (showSingularTaskRow) {
+            out.add(_CustomizedFlatEntry.task(t));
+          }
+          continue;
+        }
+
         final showSingularTaskRow = taskInRange &&
             !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t) &&
             !(widget.customizedFlat && hasVisibleSubRows);
@@ -1575,6 +1696,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           _rowPassesCreateDateForCustomized(t, null);
 
       if (taskRowAllowed) {
+        if (overviewTasksTab) {
+          out.add(_CustomizedFlatEntry.task(t));
+          continue;
+        }
         final mark = out.length;
         if (_selectedTaskStatuses.contains(_statusDeleted)) {
           for (final s in subsDeleted) {
@@ -1596,6 +1721,31 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             (!widget.customizedFlat || subsAdded == 0);
         if (showSingularTaskRow) {
           out.insert(mark, _CustomizedFlatEntry.task(t));
+        }
+        continue;
+      }
+
+      if (overviewTasksTab) {
+        var anySub = false;
+        for (final s in subsNonDeleted) {
+          if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+          if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+          if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+          anySub = true;
+          break;
+        }
+        if (!anySub) {
+          for (final s in subsDeleted) {
+            if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+            if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+            anySub = true;
+            break;
+          }
+        }
+        if (anySub &&
+            !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
+          out.add(_CustomizedFlatEntry.task(t));
         }
         continue;
       }
@@ -1769,6 +1919,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _CustomizedFlatEntry e, {
     required Map<String, DateTime?> taskCommentActivity,
     required Map<String, DateTime?> subtaskCommentActivity,
+    bool overviewTasksTabExpandSubtasks = false,
   }) {
     if (e.isTaskRow) {
       final lu = _lastUpdatedYmdFromInstant(
@@ -1777,6 +1928,18 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           taskCommentActivityOverride: taskCommentActivity,
         ),
       );
+      if (overviewTasksTabExpandSubtasks) {
+        return TaskListCard(
+          task: e.task,
+          taskOnly: false,
+          flatSubtasksAlwaysVisible: false,
+          showCustomizedTaskTitle: true,
+          openedFromOverview: true,
+          overviewLastUpdatedYmd: lu,
+          includeDeletedSubtasks:
+              _selectedTaskStatuses.contains(_statusDeleted),
+        );
+      }
       return TaskListCard(
         task: e.task,
         taskOnly: true,
@@ -2146,9 +2309,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// the header max height, so [size.height] never grows and the search field
   /// stays squashed. [getMaxIntrinsicHeight] returns the full natural height.
   void _measureTaskDashboardFiltersSliverExtent() {
-    final box =
-        _taskDashboardFiltersMeasureKey.currentContext?.findRenderObject()
-            as RenderBox?;
+    final GlobalKey measureKey = widget.customizedFlat
+        ? _overviewTaskDashboardFiltersMeasureKeys[
+            _overviewTabIndexFromEntity(_overviewEntityTab)]
+        : _taskDashboardFiltersMeasureKey;
+    final box = measureKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
     final maxW = box.constraints.maxWidth;
     if (maxW <= 0 || !maxW.isFinite) return;
@@ -2174,42 +2339,27 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   Widget _buildOverviewEntityTabBar(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: _kLandingTaskListMaxWidth),
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment<String>(
-                value: _kOverviewTabAll,
-                label: Text('All'),
-              ),
-              ButtonSegment<String>(
-                value: _kOverviewTabProject,
-                label: Text('Project'),
-              ),
-              ButtonSegment<String>(
-                value: _kOverviewTabTask,
-                label: Text('Task'),
-              ),
-              ButtonSegment<String>(
-                value: _kOverviewTabSubtask,
-                label: Text('Sub-task'),
-              ),
-            ],
-            selected: <String>{_overviewEntityTab},
-            onSelectionChanged: (set) {
-              final v = set.first;
-              if (v == _overviewEntityTab) return;
-              setState(() {
-                _overviewEntityTab = v;
-                _tasksPageIndex = 0;
-                _deletedTasksPageIndex = 0;
-              });
-              _persistLandingFilters();
-            },
+          child: Material(
+            color: theme.colorScheme.surface,
+            child: TabBar(
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              // Avoid a full-width M3 divider; keep the underline on the labels only.
+              dividerHeight: 0,
+              indicatorSize: TabBarIndicatorSize.label,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 12),
+              tabs: const [
+                Tab(text: 'All tasks & sub-tasks'),
+                Tab(text: 'Tasks'),
+                Tab(text: 'Projects'),
+              ],
+            ),
           ),
         ),
       ),
@@ -2309,6 +2459,35 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             slivers: [
               ...prefixSlivers,
               SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: _kLandingTaskListMaxWidth,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Projects (${projects.length})',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          const PicTeamColorLegend(
+                            caption:
+                                "Project background colour reflect the PIC's team.",
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
                 child: FutureBuilder<Map<String, String?>>(
                   key: ValueKey(
                     '${pagedProjects.map((e) => e.id).join('|')}'
@@ -2357,6 +2536,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     List<Task> filteredDeletedTasks, {
     List<Widget>? dashboardScrollPrefixSlivers,
     List<Task>? extraSingularParentsForFlatSubtaskPrefetch,
+    /// When non-null (Overview [TabBarView] children), overrides [_overviewEntityTab] for this column.
+    String? overviewTabScope,
   }) {
     return FutureBuilder<
         ({
@@ -2374,7 +2555,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         '_${_taskSearchController.text}'
         '_$_filterCreateDateStart$_filterCreateDateEnd'
         '_$_filterOverdueOnly'
-        '_$_overviewEntityTab',
+        '_${_overviewEntityTab}_${overviewTabScope ?? ''}',
       ),
       future: _futureGroupedForCustomized(
         filteredTasks,
@@ -2460,6 +2641,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           activeTasksForEntries,
           grouped,
           _taskSearchController.text,
+          overviewListScope: overviewTabScope,
         );
         activeEntries = _sortCustomizedFlatEntries(
           activeEntries,
@@ -2471,6 +2653,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           delTasksForEntries,
           grouped,
           _taskSearchController.text,
+          overviewListScope: overviewTabScope,
         );
         delEntries = _sortCustomizedFlatEntries(
           delEntries,
@@ -2479,31 +2662,20 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           subtaskCommentActivity: subtaskCommentActivity,
         );
 
-        if (widget.customizedFlat) {
-          if (_overviewEntityTab == _kOverviewTabTask) {
-            activeEntries =
-                activeEntries.where((e) => e.isTaskRow).toList();
-            delEntries = delEntries.where((e) => e.isTaskRow).toList();
-          } else if (_overviewEntityTab == _kOverviewTabSubtask) {
-            activeEntries =
-                activeEntries.where((e) => !e.isTaskRow).toList();
-            delEntries =
-                delEntries.where((e) => !e.isTaskRow).toList();
-          }
-        }
+        final effectiveTab = overviewTabScope ?? _overviewEntityTab;
 
-        final projectsForOverviewAll = widget.customizedFlat &&
-                _overviewEntityTab == _kOverviewTabAll
-            ? _filteredSortedProjectsForDashboard(state)
-            : const <ProjectRecord>[];
+    if (widget.customizedFlat) {
+      if (effectiveTab == _kOverviewTabTask) {
+        activeEntries =
+            activeEntries.where((e) => e.isTaskRow).toList();
+        delEntries = delEntries.where((e) => e.isTaskRow).toList();
+      }
+    }
 
         final listHasNoTaskRows =
             activeEntries.isEmpty && delEntries.isEmpty;
-        final allTabHasProjects = widget.customizedFlat &&
-            _overviewEntityTab == _kOverviewTabAll &&
-            projectsForOverviewAll.isNotEmpty;
 
-        if (listHasNoTaskRows && !allTabHasProjects) {
+        if (listHasNoTaskRows) {
           if (prefix != null) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2545,12 +2717,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           );
         }
 
-        final pagedProjectsForAll = _landingPageSlice(
-          projectsForOverviewAll,
-          _tasksPageIndex,
-          _tasksPageSize,
-        );
-
         final pagedActive = _landingPageSlice(
           activeEntries,
           _tasksPageIndex,
@@ -2567,63 +2733,56 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 activeEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length +
                 delEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length;
 
-        final showProjectsOnAll = widget.customizedFlat &&
-            _overviewEntityTab == _kOverviewTabAll &&
-            projectsForOverviewAll.isNotEmpty;
+        final taskRowCount =
+            activeEntries.where((e) => e.isTaskRow).length;
+
+        final String primarySectionTitle;
+        final Widget primaryLegend;
+        if (widget.customizedFlat) {
+          switch (effectiveTab) {
+            case _kOverviewTabAll:
+              primarySectionTitle =
+                  'All tasks & sub-tasks (${activeEntries.length})';
+              primaryLegend = const PicTeamColorLegend(
+                caption:
+                    "Task and sub-task background colour reflect the PIC's team.",
+              );
+              break;
+            case _kOverviewTabTask:
+              primarySectionTitle = 'Tasks ($taskRowCount)';
+              primaryLegend = const PicTeamColorLegend(
+                caption: "Task background colour reflect the PIC's team.",
+              );
+              break;
+            default:
+              primarySectionTitle =
+                  'Tasks & sub-tasks (${activeEntries.length})';
+              primaryLegend = const PicTeamColorLegend();
+          }
+        } else {
+          primarySectionTitle =
+              'Tasks & sub-tasks (${activeEntries.length})';
+          primaryLegend = const PicTeamColorLegend();
+        }
+
+        final expandSubsInTasksTab = widget.customizedFlat &&
+            effectiveTab == _kOverviewTabTask;
 
         final listChildren = <Widget>[
-          if (showProjectsOnAll) ...[
+          if (activeEntries.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.only(top: 16, bottom: 8),
               child: Text(
-                'Projects (${projectsForOverviewAll.length})',
+                primarySectionTitle,
                 style: Theme.of(context)
                     .textTheme
                     .titleMedium
                     ?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
-            FutureBuilder<Map<String, String?>>(
-              key: ValueKey(
-                '${pagedProjectsForAll.map((e) => e.id).join('|')}'
-                '_$_tasksPageIndex$_overviewEntityTab',
-              ),
-              future: _fetchProjectCardTeamTints(pagedProjectsForAll),
-              builder: (context, snap) {
-                final tintMap = snap.data ?? {};
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final pr in pagedProjectsForAll)
-                      _buildProjectDashboardCard(
-                        context,
-                        pr,
-                        tintMap,
-                        openedFromOverview: true,
-                      ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (activeEntries.isNotEmpty) ...[
             Padding(
-              padding: EdgeInsets.only(
-                top: showProjectsOnAll ? 8 : 16,
-                bottom: 8,
-              ),
-              child: Text(
-                'Tasks & sub-tasks (${activeEntries.length})',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
-              child: PicTeamColorLegend(),
+              padding: const EdgeInsets.only(bottom: 12),
+              child: primaryLegend,
             ),
             ...pagedActive.map(
               (e) => _customizedEntryTile(
@@ -2632,6 +2791,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 e,
                 taskCommentActivity: taskCommentActivity,
                 subtaskCommentActivity: subtaskCommentActivity,
+                overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
               ),
             ),
           ],
@@ -2648,9 +2808,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               ),
             ),
             if (activeEntries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: PicTeamColorLegend(),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: primaryLegend,
               ),
           ],
           ...pagedDel.map(
@@ -2660,20 +2820,15 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               e,
               taskCommentActivity: taskCommentActivity,
               subtaskCommentActivity: subtaskCommentActivity,
+              overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
             ),
           ),
         ];
 
-        final primaryPagerTotal = widget.customizedFlat &&
-                _overviewEntityTab == _kOverviewTabAll
-            ? max(projectsForOverviewAll.length, activeEntries.length)
-            : activeEntries.length;
+        final primaryPagerTotal = activeEntries.length;
 
         final paginationBar = (activeEntries.isNotEmpty ||
-                delEntries.isNotEmpty ||
-                (showProjectsOnAll &&
-                    activeEntries.isEmpty &&
-                    delEntries.isEmpty))
+                delEntries.isNotEmpty)
             ? Material(
                 elevation: 6,
                 shadowColor: Colors.black26,
@@ -2691,7 +2846,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (activeEntries.isNotEmpty || showProjectsOnAll)
+                            if (activeEntries.isNotEmpty)
                               _buildLandingTaskPaginationBar(
                                 context: context,
                                 totalCount: primaryPagerTotal,
@@ -2701,7 +2856,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                                 },
                                 showPageSizeDropdown: true,
                               ),
-                            if ((activeEntries.isNotEmpty || showProjectsOnAll) &&
+                            if (activeEntries.isNotEmpty &&
                                 delEntries.isNotEmpty)
                               const Divider(height: 12),
                             if (delEntries.isNotEmpty)
@@ -2937,14 +3092,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         : null;
     if (widget.customizedFlat) {
       final o = data.overviewEntityTab?.trim().toLowerCase();
-      if (o == _kOverviewTabAll ||
+      if (o == _kOverviewTabSubtask) {
+        _overviewEntityTab = _kOverviewTabAll;
+      } else if (o == _kOverviewTabAll ||
           o == _kOverviewTabProject ||
-          o == _kOverviewTabTask ||
-          o == _kOverviewTabSubtask) {
+          o == _kOverviewTabTask) {
         _overviewEntityTab = o!;
       } else {
         _overviewEntityTab = _kOverviewTabAll;
       }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncOverviewTabControllerFromEntity();
+      });
     }
   }
 
@@ -3051,6 +3211,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _filterOverdueTileController.dispose();
     _filterSubmissionTileController.dispose();
     _filterCreateDateTileController.dispose();
+    _overviewTabControllerRef?.removeListener(_onOverviewTabControllerTick);
     _taskSearchController.dispose();
     super.dispose();
   }
@@ -4811,86 +4972,76 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     }
 
     if (widget.customizedFlat && dashCfg != null) {
-      final prefixSlivers = _buildDashboardScrollPrefixSlivers(
-        context,
-        state,
-        teamsSorted,
-        appBarConfig: dashCfg,
-        filterKey: filterKey,
-        filtersHeaderExtent: _taskDashboardFiltersSliverExtent,
-        filtersMeasureKey: _taskDashboardFiltersMeasureKey,
-        filtersHeaderChild: _buildLandingFiltersSortSearchSection(
-          context,
-          state,
-          teamsSorted,
-          filterKey,
-        ),
-        overviewEntityTabBar: _buildOverviewEntityTabBar(context),
-      );
-
-      final needsProjectCards = _overviewEntityTab == _kOverviewTabAll ||
-          _overviewEntityTab == _kOverviewTabProject;
-      if (needsProjectCards && !_staffMapsReady) {
-        return const Center(child: CircularProgressIndicator());
-      }
-
-      if (_overviewEntityTab == _kOverviewTabProject) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: _buildOverviewProjectTabColumn(
-                context,
-                state,
-                prefixSlivers,
-              ),
-            ),
-          ],
-        );
-      }
-
-      final hasAnyTasks = filteredInitiatives.isNotEmpty ||
-          filteredTasks.isNotEmpty ||
-          filteredDeletedTasks.isNotEmpty;
-      final scopeProjects = _filteredSortedProjectsForDashboard(state);
-      final showOverviewEmpty = !hasAnyTasks &&
-          !(_overviewEntityTab == _kOverviewTabAll &&
-              scopeProjects.isNotEmpty);
-
-      if (showOverviewEmpty) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: CustomScrollView(
-                slivers: [
-                  ...prefixSlivers,
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: Text(_emptyListMessage())),
+      return DefaultTabController(
+        length: 3,
+        initialIndex: _overviewTabIndexFromEntity(_overviewEntityTab),
+        child: Builder(
+          builder: (tabCtx) {
+            _bindOverviewDefaultTabControllerListener(
+              DefaultTabController.of(tabCtx),
+            );
+            // Each [TabBarView] page must get its own prefix sliver instances.
+            // Reusing one list shares one [TabBar] across multiple parents, which
+            // breaks the widget tree and prevents tabs from switching correctly.
+            List<Widget> buildOverviewPrefixSlivers(int tabIndex) =>
+                _buildDashboardScrollPrefixSlivers(
+                  tabCtx,
+                  state,
+                  teamsSorted,
+                  appBarConfig: dashCfg,
+                  filterKey: filterKey,
+                  filtersHeaderExtent: _taskDashboardFiltersSliverExtent,
+                  filtersMeasureKey:
+                      _overviewTaskDashboardFiltersMeasureKeys[tabIndex],
+                  filtersHeaderChild: _buildLandingFiltersSortSearchSection(
+                    tabCtx,
+                    state,
+                    teamsSorted,
+                    filterKey,
                   ),
-                ],
-              ),
-            ),
-          ],
-        );
-      }
+                  overviewEntityTabBar: _buildOverviewEntityTabBar(tabCtx),
+                );
 
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: _buildCustomizedFlatFullColumn(
-              context,
-              state,
-              customizedFlatActiveTasks,
-              filteredDeletedTasks,
-              dashboardScrollPrefixSlivers: prefixSlivers,
-              extraSingularParentsForFlatSubtaskPrefetch:
-                  extraSingularParentsForFlatSubtaskPrefetch,
-            ),
-          ),
-        ],
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildCustomizedFlatFullColumn(
+                        tabCtx,
+                        state,
+                        customizedFlatActiveTasks,
+                        filteredDeletedTasks,
+                        dashboardScrollPrefixSlivers: buildOverviewPrefixSlivers(0),
+                        extraSingularParentsForFlatSubtaskPrefetch:
+                            extraSingularParentsForFlatSubtaskPrefetch,
+                        overviewTabScope: _kOverviewTabAll,
+                      ),
+                      _buildCustomizedFlatFullColumn(
+                        tabCtx,
+                        state,
+                        customizedFlatActiveTasks,
+                        filteredDeletedTasks,
+                        dashboardScrollPrefixSlivers: buildOverviewPrefixSlivers(1),
+                        extraSingularParentsForFlatSubtaskPrefetch:
+                            extraSingularParentsForFlatSubtaskPrefetch,
+                        overviewTabScope: _kOverviewTabTask,
+                      ),
+                      _staffMapsReady
+                          ? _buildOverviewProjectTabColumn(
+                              tabCtx,
+                              state,
+                              buildOverviewPrefixSlivers(2),
+                            )
+                          : const Center(child: CircularProgressIndicator()),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       );
     }
 

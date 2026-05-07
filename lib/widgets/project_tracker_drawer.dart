@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 
-/// Navigation drawer shared by [HomeScreen], Overview, and Project views.
+/// Navigation drawer shared by [HomeScreen], Default dashboard, and Project views.
 class ProjectTrackerDrawer extends StatelessWidget {
   const ProjectTrackerDrawer({
     super.key,
     required this.welcomeName,
     required this.onHome,
-    required this.onViewDefault,
-    required this.onViewOverview,
-    required this.onViewProject,
     required this.onFeedback,
     required this.onImportantNotice,
     required this.onSignOut,
@@ -17,15 +14,6 @@ class ProjectTrackerDrawer extends StatelessWidget {
 
   final String welcomeName;
   final VoidCallback onHome;
-
-  /// Views → Default (landing).
-  final VoidCallback onViewDefault;
-
-  /// Views → Overview.
-  final VoidCallback onViewOverview;
-
-  /// Views → Project (projects-only dashboard).
-  final VoidCallback onViewProject;
 
   final VoidCallback onFeedback;
   final VoidCallback onImportantNotice;
@@ -71,27 +59,6 @@ class ProjectTrackerDrawer extends StatelessWidget {
               leading: const Icon(Icons.home),
               title: const Text('Home'),
               onTap: onHome,
-            ),
-            ExpansionTile(
-              leading: const Icon(Icons.view_list),
-              title: const Text('Views'),
-              children: [
-                ListTile(
-                  title: const Text('Default'),
-                  contentPadding: const EdgeInsets.only(left: 72, right: 16),
-                  onTap: onViewDefault,
-                ),
-                ListTile(
-                  title: const Text('Overview'),
-                  contentPadding: const EdgeInsets.only(left: 72, right: 16),
-                  onTap: onViewOverview,
-                ),
-                ListTile(
-                  title: const Text('Project'),
-                  contentPadding: const EdgeInsets.only(left: 72, right: 16),
-                  onTap: onViewProject,
-                ),
-              ],
             ),
             ListTile(
               leading: const Icon(Icons.feedback_outlined),

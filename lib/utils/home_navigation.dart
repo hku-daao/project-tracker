@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
-import '../services/startup_view_storage.dart';
 import 'pinned_dashboard_registry.dart';
 
-/// [MaterialPageRoute.settings.name] for [CustomizedDashboardPage] (Overview).
+/// [MaterialPageRoute.settings.name] for [CustomizedDashboardPage] (Default home).
 const String kOverviewDashboardRouteName = 'overview_dashboard';
 
 /// [MaterialPageRoute.settings.name] for [ProjectDashboardPage].
@@ -38,33 +37,16 @@ void navigateToHomeTasksTab(BuildContext context) {
   });
 }
 
-/// Pops to landing, then opens Overview or Project if that view is pinned as home.
+/// Pops to the root route, then opens the Default dashboard ([CustomizedDashboardPage]).
 Future<void> navigateToPinnedHomeFromDrawer(BuildContext context) async {
-  final tag = await StartupViewStorage.getPreferredViewTag();
-  if (!context.mounted) return;
-  final app = context.read<AppState>();
   Navigator.of(context).popUntil((route) => route.isFirst);
   if (!context.mounted) return;
-  if (tag == StartupViewStorage.viewOverview) {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: kOverviewDashboardRouteName),
-        builder: (context) => buildOverviewDashboardPage(),
-      ),
-    );
-  } else if (tag == StartupViewStorage.viewProject) {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: kProjectDashboardRouteName),
-        builder: (context) => buildProjectDashboardPage(),
-      ),
-    );
-  }
-  if (tag == StartupViewStorage.viewLanding) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (context.mounted) app.requestSwitchToTasksTab();
-    });
-  }
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      settings: const RouteSettings(name: kOverviewDashboardRouteName),
+      builder: (context) => buildOverviewDashboardPage(),
+    ),
+  );
 }
 
 /// Pops until the Project dashboard route is on top, otherwise until first route.

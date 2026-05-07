@@ -126,7 +126,8 @@ String? readProjectIdFromUrlOrSession() {
   return null;
 }
 
-/// `view` query / session: `default` | `overview` | `project` (dashboard tabs).
+/// `view` query / session: `default` (main dashboard), `original` (landing list),
+/// legacy `overview`, or `project`.
 String? readDashboardViewFromUrlOrSession() {
   final fromUrl = _paramFromLocation('view');
   if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
@@ -219,28 +220,28 @@ void clearWebProjectDetailFromLocation() {
   _replaceQueryParams((q) => q.remove('project'));
 }
 
-/// Default landing ([HomeScreen]); refresh restores this tab.
+/// Original landing list ([HomeScreen]); refresh restores this tab.
 void syncWebLocationForDefaultHome() {
   html.window.sessionStorage.remove(_kTaskKey);
   html.window.sessionStorage.remove(_kSubtaskKey);
   html.window.sessionStorage.remove(_kProjectKey);
-  html.window.sessionStorage[_kViewKey] = 'default';
+  html.window.sessionStorage[_kViewKey] = 'original';
   _replaceQueryParams((q) {
-    q['view'] = 'default';
+    q['view'] = 'original';
     q.remove('task');
     q.remove('subtask');
     q.remove('project');
   });
 }
 
-/// Overview dashboard route.
+/// Default home dashboard (flat task / Overview layout).
 void syncWebLocationForOverviewDashboard() {
   html.window.sessionStorage.remove(_kTaskKey);
   html.window.sessionStorage.remove(_kSubtaskKey);
   html.window.sessionStorage.remove(_kProjectKey);
-  html.window.sessionStorage[_kViewKey] = 'overview';
+  html.window.sessionStorage[_kViewKey] = 'default';
   _replaceQueryParams((q) {
-    q['view'] = 'overview';
+    q['view'] = 'default';
     q.remove('task');
     q.remove('subtask');
     q.remove('project');

@@ -7,7 +7,6 @@ import '../config/supabase_config.dart';
 import '../navigator_keys.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
-import '../services/startup_view_storage.dart';
 import '../utils/home_navigation.dart';
 import '../utils/pinned_dashboard_registry.dart';
 import '../web_deep_link.dart';
@@ -180,7 +179,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       return;
     }
     final viewTag = readDashboardViewFromUrlOrSession();
-    if (viewTag == 'overview') {
+    if (viewTag == 'overview' || viewTag == 'default') {
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute<void>(
           settings: const RouteSettings(name: kOverviewDashboardRouteName),
@@ -258,7 +257,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   }
 }
 
-/// After load, opens [CustomizedDashboardPage] when the user pinned it (unless a deep link wins).
+/// After load, opens [CustomizedDashboardPage] (Default) unless a deep link wins.
 class _StartupShell extends StatefulWidget {
   const _StartupShell({required this.child});
 
@@ -285,28 +284,19 @@ class _StartupShellState extends State<_StartupShell> {
     final urlView = readDashboardViewFromUrlOrSession();
     if (urlView == 'overview' ||
         urlView == 'project' ||
-        urlView == 'default') {
+        urlView == 'default' ||
+        urlView == 'original') {
       return;
     }
 
-    final tag = await StartupViewStorage.getPreferredViewTag();
     if (!mounted || !context.mounted) return;
     if (Navigator.of(context).canPop()) return;
-    if (tag == StartupViewStorage.viewOverview) {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kOverviewDashboardRouteName),
-          builder: (context) => buildOverviewDashboardPage(),
-        ),
-      );
-    } else if (tag == StartupViewStorage.viewProject) {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kProjectDashboardRouteName),
-          builder: (context) => buildProjectDashboardPage(),
-        ),
-      );
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: kOverviewDashboardRouteName),
+        builder: (context) => buildOverviewDashboardPage(),
+      ),
+    );
   }
 
   @override

@@ -12,7 +12,6 @@ import '../../navigator_keys.dart';
 import '../../utils/home_navigation.dart';
 import '../../web_deep_link.dart';
 import '../../widgets/project_tracker_drawer.dart';
-import '../services/startup_view_storage.dart';
 import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_project_screen.dart';
 import 'high_level/create_task_screen.dart';
@@ -119,51 +118,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Secondary actions for Create task / Create project.
   bool _createFabExpanded = false;
 
-  bool _preferLandingLoaded = false;
-  bool _preferLanding = false;
-
-  void _onStartupHomePinChanged() {
-    _loadPinPreference();
-  }
-
   @override
   void initState() {
     super.initState();
-    StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
-    _loadPinPreference();
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         syncWebLocationForDefaultHome();
       });
     }
-  }
-
-  Future<void> _loadPinPreference() async {
-    final tag = await StartupViewStorage.getPreferredViewTag();
-    if (!mounted) return;
-    setState(() {
-      _preferLanding = tag == StartupViewStorage.viewLanding;
-      _preferLandingLoaded = true;
-    });
-  }
-
-  Future<void> _togglePinLandingView() async {
-    final next = !_preferLanding;
-    await StartupViewStorage.setPreferredViewTag(
-      next ? StartupViewStorage.viewLanding : StartupViewStorage.viewOverview,
-    );
-    if (!mounted) return;
-    await _loadPinPreference();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          next
-              ? 'Default view will open when you start the app.'
-              : 'Overview will open when you start the app.',
-        ),
-      ),
-    );
   }
 
   @override
@@ -185,7 +147,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    StartupHomePinListenable.instance.removeListener(_onStartupHomePinChanged);
     _appState?.removeListener(_onConsumeSwitchToTasksTab);
     super.dispose();
   }
@@ -250,32 +211,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _closeDrawerThenOpenCustomizedDashboard() {
-    Navigator.of(context).pop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kOverviewDashboardRouteName),
-          builder: (context) => const CustomizedDashboardPage(),
-        ),
-      );
-    });
-  }
-
-  void _closeDrawerThenOpenProjectDashboard() {
-    Navigator.of(context).pop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kProjectDashboardRouteName),
-          builder: (context) => const ProjectDashboardPage(),
-        ),
-      );
-    });
-  }
-
   void _closeDrawerThenImportantNotice() {
     Navigator.of(context).pop();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -327,9 +262,6 @@ class _HomeScreenState extends State<HomeScreen> {
       drawer: ProjectTrackerDrawer(
         welcomeName: welcomeName,
         onHome: _closeDrawerThenGoHome,
-        onViewDefault: _closeDrawerThenGoHome,
-        onViewOverview: _closeDrawerThenOpenCustomizedDashboard,
-        onViewProject: _closeDrawerThenOpenProjectDashboard,
         onFeedback: _closeDrawerThenFeedback,
         onImportantNotice: _closeDrawerThenImportantNotice,
         onSignOut: () async {
@@ -375,7 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onNotification: _onLandingScrollNotification,
                 child: InitiativeListScreen(
                   dashboardScrollAppBar: DashboardScrollAppBarConfig(
-                    title: 'Project Tracker',
+                    title: 'Original',
                     showDrawerMenuLeading: true,
                     actions: [
                       if (FirebaseAuth.instance.currentUser?.email
@@ -392,18 +324,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             );
                           },
-                        ),
-                      if (_preferLandingLoaded)
-                        IconButton(
-                          tooltip: _preferLanding
-                              ? 'Unpin default view'
-                              : 'Pin Default as home page',
-                          icon: Icon(
-                            _preferLanding
-                                ? Icons.push_pin
-                                : Icons.push_pin_outlined,
-                          ),
-                          onPressed: _togglePinLandingView,
                         ),
                     ],
                   ),
@@ -461,7 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Overview (flat task list): drawer, pin as default view, FAB — body is
+/// Default home dashboard (flat task list): drawer + FAB — body is
 /// [InitiativeListScreen.customizedFlat].
 class CustomizedDashboardPage extends StatefulWidget {
   const CustomizedDashboardPage({super.key});
@@ -473,57 +393,15 @@ class CustomizedDashboardPage extends StatefulWidget {
 class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
   bool _createTaskFabVisible = true;
   bool _createFabExpanded = false;
-  bool _preferCustomizedLoaded = false;
-  bool _preferCustomized = false;
-
-  void _onStartupHomePinChanged() {
-    _loadPinPreference();
-  }
 
   @override
   void initState() {
     super.initState();
-    StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
-    _loadPinPreference();
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         syncWebLocationForOverviewDashboard();
       });
     }
-  }
-
-  @override
-  void dispose() {
-    StartupHomePinListenable.instance.removeListener(_onStartupHomePinChanged);
-    super.dispose();
-  }
-
-  Future<void> _loadPinPreference() async {
-    final tag = await StartupViewStorage.getPreferredViewTag();
-    if (!mounted) return;
-    setState(() {
-      _preferCustomized = tag == StartupViewStorage.viewOverview;
-      _preferCustomizedLoaded = true;
-    });
-  }
-
-  Future<void> _togglePinDefaultView() async {
-    final next = !_preferCustomized;
-    await StartupViewStorage.setPreferredViewTag(
-      next ? StartupViewStorage.viewOverview : StartupViewStorage.viewLanding,
-    );
-    if (!mounted) return;
-    await _loadPinPreference();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          next
-              ? 'Overview will open by default next time you start the app.'
-              : 'Default (landing) view will open when you start the app.',
-        ),
-      ),
-    );
   }
 
   void _openCreateTaskScreen() {
@@ -585,23 +463,6 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
             await navigateToPinnedHomeFromDrawer(context);
           });
         },
-        onViewDefault: () {
-          Navigator.of(context).pop();
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        },
-        onViewOverview: () => Navigator.of(context).pop(),
-        onViewProject: () {
-          Navigator.of(context).pop();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) return;
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute<void>(
-                settings: const RouteSettings(name: kProjectDashboardRouteName),
-                builder: (context) => const ProjectDashboardPage(),
-              ),
-            );
-          });
-        },
         onFeedback: () {
           Navigator.of(context).pop();
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -659,22 +520,8 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
           child: InitiativeListScreen(
             customizedFlat: true,
             dashboardScrollAppBar: DashboardScrollAppBarConfig(
-              title: 'Overview',
+              title: 'Project Tracker',
               showDrawerMenuLeading: true,
-              actions: [
-                if (_preferCustomizedLoaded)
-                  IconButton(
-                    tooltip: _preferCustomized
-                        ? 'Unpin default view'
-                        : 'Pin Overview as home page',
-                    icon: Icon(
-                      _preferCustomized
-                          ? Icons.push_pin
-                          : Icons.push_pin_outlined,
-                    ),
-                    onPressed: _togglePinDefaultView,
-                  ),
-              ],
             ),
           ),
         ),
@@ -727,7 +574,7 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
   }
 }
 
-/// Projects-only list: same drawer/FAB/pin pattern as [CustomizedDashboardPage].
+/// Projects-only list (still reachable via deep links / navigation helpers).
 class ProjectDashboardPage extends StatefulWidget {
   const ProjectDashboardPage({super.key});
 
@@ -738,57 +585,15 @@ class ProjectDashboardPage extends StatefulWidget {
 class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
   bool _createTaskFabVisible = true;
   bool _createFabExpanded = false;
-  bool _preferLoaded = false;
-  bool _preferProject = false;
-
-  void _onStartupHomePinChanged() {
-    _loadPinPreference();
-  }
 
   @override
   void initState() {
     super.initState();
-    StartupHomePinListenable.instance.addListener(_onStartupHomePinChanged);
-    _loadPinPreference();
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         syncWebLocationForProjectDashboard();
       });
     }
-  }
-
-  @override
-  void dispose() {
-    StartupHomePinListenable.instance.removeListener(_onStartupHomePinChanged);
-    super.dispose();
-  }
-
-  Future<void> _loadPinPreference() async {
-    final tag = await StartupViewStorage.getPreferredViewTag();
-    if (!mounted) return;
-    setState(() {
-      _preferProject = tag == StartupViewStorage.viewProject;
-      _preferLoaded = true;
-    });
-  }
-
-  Future<void> _togglePinDefaultView() async {
-    final next = !_preferProject;
-    await StartupViewStorage.setPreferredViewTag(
-      next ? StartupViewStorage.viewProject : StartupViewStorage.viewLanding,
-    );
-    if (!mounted) return;
-    await _loadPinPreference();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          next
-              ? 'Project view will open by default next time you start the app.'
-              : 'Default (landing) view will open when you start the app.',
-        ),
-      ),
-    );
   }
 
   void _openCreateTaskScreen() {
@@ -850,23 +655,6 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
             await navigateToPinnedHomeFromDrawer(context);
           });
         },
-        onViewDefault: () {
-          Navigator.of(context).pop();
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        },
-        onViewOverview: () {
-          Navigator.of(context).pop();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) return;
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute<void>(
-                settings: const RouteSettings(name: kOverviewDashboardRouteName),
-                builder: (context) => const CustomizedDashboardPage(),
-              ),
-            );
-          });
-        },
-        onViewProject: () => Navigator.of(context).pop(),
         onFeedback: () {
           Navigator.of(context).pop();
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -926,20 +714,6 @@ class _ProjectDashboardPageState extends State<ProjectDashboardPage> {
             dashboardScrollAppBar: DashboardScrollAppBarConfig(
               title: 'Project',
               showDrawerMenuLeading: true,
-              actions: [
-                if (_preferLoaded)
-                  IconButton(
-                    tooltip: _preferProject
-                        ? 'Unpin default view'
-                        : 'Pin Project as home page',
-                    icon: Icon(
-                      _preferProject
-                          ? Icons.push_pin
-                          : Icons.push_pin_outlined,
-                    ),
-                    onPressed: _togglePinDefaultView,
-                  ),
-              ],
             ),
           ),
         ),
