@@ -178,18 +178,18 @@ class SingularSubtaskRowCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 14,
-                  backgroundColor: theme.colorScheme.secondaryContainer,
+                  backgroundColor: theme.colorScheme.primaryContainer,
                   child: Text(
                     'S',
                     style: theme.textTheme.labelLarge?.copyWith(
                           fontWeight: FontWeight.w700,
-                          color: theme.colorScheme.onSecondaryContainer,
+                          color: theme.colorScheme.onPrimaryContainer,
                           fontSize: 13,
                         ) ??
                         TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
-                          color: theme.colorScheme.onSecondaryContainer,
+                          color: theme.colorScheme.onPrimaryContainer,
                         ),
                   ),
                 ),
