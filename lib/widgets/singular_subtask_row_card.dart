@@ -23,6 +23,8 @@ class SingularSubtaskRowCard extends StatelessWidget {
     this.overviewLastUpdatedYmd,
     /// Overview **All tasks & sub-tasks** tab: S badge; hide assignees and project lines.
     this.overviewAllTabStyling = false,
+    /// Overview **Tasks** tab: same S badge row as [overviewAllTabStyling]; hide Parent/Project/assignees.
+    this.overviewTasksTabStyling = false,
   });
 
   final SingularSubtask subtask;
@@ -35,6 +37,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
   final String? parentProjectName;
   final String? overviewLastUpdatedYmd;
   final bool overviewAllTabStyling;
+  final bool overviewTasksTabStyling;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +55,8 @@ class SingularSubtaskRowCard extends StatelessWidget {
         ? null
         : TaskListCard.buildSubmissionTag(s.submission);
     final showOverPreset = (s.changeDueReason ?? '').trim().isNotEmpty;
+    final overviewCompact =
+        overviewAllTabStyling || overviewTasksTabStyling;
 
     final titleColumn = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -62,7 +67,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
           children: [
             Expanded(
               child: showCustomizedLayout
-                  ? (overviewAllTabStyling
+                  ? (overviewCompact
                       ? Text(
                           s.subtaskName,
                           maxLines: 4,
@@ -96,7 +101,8 @@ class SingularSubtaskRowCard extends StatelessWidget {
             ],
           ],
         ),
-        if (showCustomizedLayout &&
+        if (!overviewTasksTabStyling &&
+            showCustomizedLayout &&
             (parentTaskName != null && parentTaskName!.trim().isNotEmpty)) ...[
           const SizedBox(height: 4),
           Text(
@@ -106,7 +112,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ],
-        if (!overviewAllTabStyling &&
+        if (!overviewCompact &&
             showCustomizedLayout &&
             (parentProjectName != null &&
                 parentProjectName!.trim().isNotEmpty)) ...[
@@ -132,7 +138,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (!overviewAllTabStyling)
+        if (!overviewCompact)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 4),
             child: Text(
@@ -165,7 +171,7 @@ class SingularSubtaskRowCard extends StatelessWidget {
       ],
     );
 
-    if (overviewAllTabStyling) {
+    if (overviewCompact) {
       return Card(
         margin: cardMargin,
         color: cardBackgroundColor,

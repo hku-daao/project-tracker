@@ -143,6 +143,8 @@ class TaskListCard extends StatefulWidget {
     /// Overview **All tasks & sub-tasks** tab: compact layout (T badge; hide assignees/project;
     /// `PIC:` line under title when [`task.pic`] is set.
     this.overviewAllTabStyling = false,
+    /// Overview **Tasks** tab only: same compact layout as [overviewAllTabStyling]; plain task title (no `Task:` prefix).
+    this.overviewTasksTabStyling = false,
   });
 
   final Task task;
@@ -169,6 +171,9 @@ class TaskListCard extends StatefulWidget {
 
   /// Overview flat list — **All tasks & sub-tasks** tab only.
   final bool overviewAllTabStyling;
+
+  /// Overview flat list — **Tasks** tab only (never combine with [overviewAllTabStyling]).
+  final bool overviewTasksTabStyling;
 
   /// Background tint from PIC's [`staff.team_id`] / [`team.team_id`] (home / initiative task lists).
   static Color? cardColorForPicTeam(String? teamBusinessId) {
@@ -639,12 +644,14 @@ class _TaskListCardState extends State<TaskListCard> {
             .map((id) => nameMap[id] ?? state.assigneeById(id)?.name ?? id)
             .toList()
           ..sort();
-        final showPicLine = !widget.overviewAllTabStyling &&
+        final overviewCompact =
+            widget.overviewAllTabStyling || widget.overviewTasksTabStyling;
+        final showPicLine = !overviewCompact &&
             t.assigneeIds.length > 1 &&
             picKey != null &&
             picKey.isNotEmpty;
-        /// Overview "All tasks & sub-tasks": show whenever [`task.pic`] is set (not only single-assignee).
-        final showOverviewAllPicLine = widget.overviewAllTabStyling &&
+        /// Overview **All** / **Tasks** tab: show whenever [`task.pic`] is set.
+        final showOverviewPicLine = overviewCompact &&
             picKey != null &&
             picKey.isNotEmpty;
         final pk = picKey;
@@ -682,7 +689,7 @@ class _TaskListCardState extends State<TaskListCard> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (widget.overviewAllTabStyling) ...[
+                      if (overviewCompact) ...[
                         CircleAvatar(
                           radius: 14,
                           backgroundColor:
@@ -713,7 +720,7 @@ class _TaskListCardState extends State<TaskListCard> {
                               children: [
                                 Expanded(
                                   child: widget.showCustomizedTaskTitle
-                                      ? (widget.overviewAllTabStyling
+                                      ? (overviewCompact
                                           ? Text(
                                               t.name,
                                               maxLines: 3,
@@ -764,7 +771,7 @@ class _TaskListCardState extends State<TaskListCard> {
                                 ],
                               ],
                             ),
-                            if (showOverviewAllPicLine && pk != null) ...[
+                            if (showOverviewPicLine && pk != null) ...[
                               const SizedBox(height: 4),
                               Text(
                                 'PIC: ${nameMap[pk] ?? state.assigneeById(pk)?.name ?? pk}',
@@ -773,7 +780,7 @@ class _TaskListCardState extends State<TaskListCard> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ],
-                            if (!widget.overviewAllTabStyling &&
+                            if (!overviewCompact &&
                                 (t.projectName ?? '').trim().isNotEmpty) ...[
                               const SizedBox(height: 6),
                               Text(
@@ -784,7 +791,7 @@ class _TaskListCardState extends State<TaskListCard> {
                               ),
                             ],
                             const SizedBox(height: 8),
-                            if (!widget.overviewAllTabStyling &&
+                            if (!overviewCompact &&
                                 officerNames.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 4),
@@ -940,7 +947,10 @@ class _TaskListCardState extends State<TaskListCard> {
                           SingularSubtaskRowCard(
                             subtask: s,
                             resolveName: resolveName,
+                            showCustomizedLayout: overviewCompact,
                             overviewAllTabStyling: widget.overviewAllTabStyling,
+                            overviewTasksTabStyling:
+                                widget.overviewTasksTabStyling,
                             onTap: () async {
                               final changed =
                                   await Navigator.of(context).push<bool>(
@@ -979,8 +989,11 @@ class _TaskListCardState extends State<TaskListCard> {
                             SingularSubtaskRowCard(
                               subtask: s,
                               resolveName: resolveName,
+                              showCustomizedLayout: overviewCompact,
                               overviewAllTabStyling:
                                   widget.overviewAllTabStyling,
+                              overviewTasksTabStyling:
+                                  widget.overviewTasksTabStyling,
                               onTap: () async {
                                 final changed =
                                     await Navigator.of(context).push<bool>(

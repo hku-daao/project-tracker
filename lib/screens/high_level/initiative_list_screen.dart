@@ -2126,6 +2126,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     bool overviewTasksTabExpandSubtasks = false,
     bool overviewAllTabLayout = false,
   }) {
+    final overviewTasksTabLayout =
+        overviewTasksTabExpandSubtasks && !overviewAllTabLayout;
     if (e.isTaskRow) {
       final lu = _lastUpdatedYmdFromInstant(
         _taskLastActivityInstant(
@@ -2144,6 +2146,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           includeDeletedSubtasks:
               _selectedTaskStatuses.contains(_statusDeleted),
           overviewAllTabStyling: overviewAllTabLayout,
+          overviewTasksTabStyling: overviewTasksTabLayout,
         );
       }
       return TaskListCard(
@@ -2153,6 +2156,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         openedFromOverview: true,
         overviewLastUpdatedYmd: lu,
         overviewAllTabStyling: overviewAllTabLayout,
+        overviewTasksTabStyling: overviewTasksTabLayout,
       );
     }
     final s = e.sub!;
@@ -2180,6 +2184,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           parentProjectName: e.task.projectName,
           overviewLastUpdatedYmd: lu,
           overviewAllTabStyling: overviewAllTabLayout,
+          overviewTasksTabStyling: overviewTasksTabLayout,
           onTap: () async {
             final changed = await Navigator.of(context).push<bool>(
               MaterialPageRoute<bool>(
