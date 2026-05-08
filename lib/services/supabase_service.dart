@@ -2414,37 +2414,42 @@ class SupabaseService {
     return out;
   }
 
-  /// Parent singular [`task.id`] values that have at least one **non-deleted** subtask whose
-  /// `subtask_name` or `description` contains [tokenLower] (case-insensitive).
-  static Future<Set<String>> fetchTaskIdsHavingSubtaskToken(String tokenLower) async {
-    if (!_enabled || tokenLower.isEmpty) return {};
-    final pattern = '%$tokenLower%';
+  /// Parent [`task.id`] values where **every** trimmed token matches (AND), using DB view + RPC
+  /// [`search_parent_task_ids_for_tokens`]: searches singular `task` (task_name, description)
+  /// and `subtask` (subtask_name, description); excludes deleted rows.
+  static Future<Set<String>> searchParentTaskIdsForTokens(
+    List<String> tokensLower,
+  ) async {
+    if (!_enabled || tokensLower.isEmpty) return {};
+    final cleaned = tokensLower
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (cleaned.isEmpty) return {};
     try {
-      final res1 = await Supabase.instance.client
-          .from('subtask')
-          .select('task_id,status')
-          .ilike('subtask_name', pattern);
-      final res2 = await Supabase.instance.client
-          .from('subtask')
-          .select('task_id,status')
-          .ilike('description', pattern);
+      final res = await Supabase.instance.client.rpc(
+        'search_parent_task_ids_for_tokens',
+        params: {'p_tokens': cleaned},
+      );
+      if (res == null) return {};
+      final list = res as List;
       final out = <String>{};
-      for (final raw in (res1 as List)) {
-        final row = Map<String, dynamic>.from(raw as Map);
-        if (!_subtaskRowStatusNotDeleted(row)) continue;
-        final id = row['task_id']?.toString().trim();
-        if (id != null && id.isNotEmpty) out.add(id);
-      }
-      for (final raw in (res2 as List)) {
-        final row = Map<String, dynamic>.from(raw as Map);
-        if (!_subtaskRowStatusNotDeleted(row)) continue;
-        final id = row['task_id']?.toString().trim();
-        if (id != null && id.isNotEmpty) out.add(id);
+      for (final e in list) {
+        final s = e?.toString().trim();
+        if (s != null && s.isNotEmpty) out.add(s);
       }
       return out;
     } catch (_) {
       return {};
     }
+  }
+
+  /// Deprecated path: use [searchParentTaskIdsForTokens] for one round-trip.
+  /// Still resolves via RPC with a single token (task + sub-task tables).
+  static Future<Set<String>> fetchTaskIdsHavingSubtaskToken(String tokenLower) async {
+    final t = tokenLower.trim();
+    if (t.isEmpty) return {};
+    return searchParentTaskIdsForTokens([t]);
   }
 
   /// Non-deleted subtasks for a parent [taskId], newest first.

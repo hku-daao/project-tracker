@@ -303,13 +303,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   /// so a new [fetchSubtasksForTask] pass runs (avoids stale empty maps blocking matches).
   String _lastSubtaskSearchQueryForBlob = '';
 
-  /// Normalized landing search string that [_subtaskServerSetsByToken] belongs to (see [_landingSearchNormalized]).
+  /// Normalized landing search string that [_rpcSearchMatchingTaskIds] belongs to (see [_landingSearchNormalized]).
   String _subtaskServerQueryNormalized = '';
 
-  /// Per search token: parent task ids with a non-deleted subtask matching that token in name/description.
-  /// Populated by debounced [SupabaseService.fetchTaskIdsHavingSubtaskToken] so landing search does not
-  /// depend only on sequential client-side sub-task prefetch.
-  Map<String, Set<String>>? _subtaskServerSetsByToken;
+  /// Parent task ids where **all** search tokens match via RPC [`search_parent_task_ids_for_tokens`]
+  /// (singular `task` + `subtask` tables). Populated by debounced [SupabaseService.searchParentTaskIdsForTokens].
+  Set<String>? _rpcSearchMatchingTaskIds;
 
   int _landingSubtaskServerSearchSeq = 0;
   Timer? _landingSubtaskServerSearchDebounce;
@@ -693,7 +692,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _subtaskSearchBlobByTaskId.clear();
       _subtaskFetchGeneration++;
       _landingSubtaskServerSearchSeq++;
-      _subtaskServerSetsByToken = null;
+      _rpcSearchMatchingTaskIds = null;
       _subtaskServerQueryNormalized = '';
       _tasksPageIndex = 0;
       _deletedTasksPageIndex = 0;
@@ -928,7 +927,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         if (!SupabaseConfig.isConfigured || norm.isEmpty) {
           if (!mounted || requestSeq != _landingSubtaskServerSearchSeq) return;
           setState(() {
-            _subtaskServerSetsByToken = null;
+            _rpcSearchMatchingTaskIds = null;
             _subtaskServerQueryNormalized = '';
           });
           return;
@@ -937,21 +936,17 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         if (tokens.isEmpty) {
           if (!mounted || requestSeq != _landingSubtaskServerSearchSeq) return;
           setState(() {
-            _subtaskServerSetsByToken = null;
+            _rpcSearchMatchingTaskIds = null;
             _subtaskServerQueryNormalized = '';
           });
           return;
         }
-        final unique = tokens.toSet().toList();
-        final map = <String, Set<String>>{};
-        for (final tok in unique) {
-          if (!mounted || requestSeq != _landingSubtaskServerSearchSeq) return;
-          map[tok] = await SupabaseService.fetchTaskIdsHavingSubtaskToken(tok);
-        }
+        if (!mounted || requestSeq != _landingSubtaskServerSearchSeq) return;
+        final ids = await SupabaseService.searchParentTaskIdsForTokens(tokens);
         if (!mounted || requestSeq != _landingSubtaskServerSearchSeq) return;
         if (_landingSearchNormalized(_taskSearchController.text) != norm) return;
         setState(() {
-          _subtaskServerSetsByToken = map;
+          _rpcSearchMatchingTaskIds = ids;
           _subtaskServerQueryNormalized = norm;
         });
       },
@@ -965,9 +960,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final tokens = _landingSearchTokens(query);
     if (tokens.isEmpty) return true;
     final norm = _landingSearchNormalized(query);
-    final serverMap = _subtaskServerSetsByToken;
+    final rpcIds = _rpcSearchMatchingTaskIds;
     final serverReady =
-        serverMap != null && _subtaskServerQueryNormalized == norm;
+        rpcIds != null && _subtaskServerQueryNormalized == norm;
+    if (serverReady && rpcIds.contains(t.id)) {
+      return true;
+    }
     final name = t.name.toLowerCase();
     final desc = t.description.toLowerCase();
     final pn = (t.projectName ?? '').toLowerCase();
@@ -981,9 +979,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           desc.contains(token) ||
           (searchProject && (pn.contains(token) || pd.contains(token)));
       final inSub = subBlob.contains(token);
-      final inSubServer =
-          serverReady && (serverMap[token]?.contains(t.id) ?? false);
-      if (!inTask && !inSub && !inSubServer) return false;
+      if (!inTask && !inSub) return false;
     }
     return true;
   }
@@ -3104,7 +3100,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _subtaskSearchBlobByTaskId.clear();
       _subtaskFetchGeneration++;
       _landingSubtaskServerSearchSeq++;
-      _subtaskServerSetsByToken = null;
+      _rpcSearchMatchingTaskIds = null;
       _subtaskServerQueryNormalized = '';
     } finally {
       _suppressFilterPersist = false;
@@ -3536,7 +3532,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                     _lastSubtaskSearchQueryForBlob = '';
                     _subtaskSearchBlobByTaskId.clear();
                     _subtaskFetchGeneration++;
-                    _subtaskServerSetsByToken = null;
+                    _rpcSearchMatchingTaskIds = null;
                     _subtaskServerQueryNormalized = '';
                     _tasksPageIndex = 0;
                     _deletedTasksPageIndex = 0;
@@ -4517,7 +4513,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       SupabaseService.clearSubtaskListMemoryCache();
       _landingSubtaskServerSearchSeq++;
       _landingSubtaskServerSearchDebounce?.cancel();
-      _subtaskServerSetsByToken = null;
+      _rpcSearchMatchingTaskIds = null;
       _subtaskServerQueryNormalized = '';
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
