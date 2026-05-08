@@ -141,7 +141,7 @@ class TaskListCard extends StatefulWidget {
     /// When the landing filter includes **Deleted**, list deleted sub-tasks under a grey header.
     this.includeDeletedSubtasks = false,
     /// Overview **All tasks & sub-tasks** tab: compact layout (T badge; hide assignees/project;
-    /// PIC(s) under title when [`task.pic`] is set).
+    /// `PIC:` line under title when [`task.pic`] is set.
     this.overviewAllTabStyling = false,
   });
 
@@ -767,7 +767,7 @@ class _TaskListCardState extends State<TaskListCard> {
                             if (showOverviewAllPicLine && pk != null) ...[
                               const SizedBox(height: 4),
                               Text(
-                                'PIC(s): ${nameMap[pk] ?? state.assigneeById(pk)?.name ?? pk}',
+                                'PIC: ${nameMap[pk] ?? state.assigneeById(pk)?.name ?? pk}',
                                 style: listTextW500,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
