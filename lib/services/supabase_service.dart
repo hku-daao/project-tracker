@@ -2414,9 +2414,10 @@ class SupabaseService {
     return out;
   }
 
-  /// Parent [`task.id`] values where **every** trimmed token matches (AND), using DB view + RPC
-  /// [`search_parent_task_ids_for_tokens`]: searches singular `task` (task_name, description)
-  /// and `subtask` (subtask_name, description); excludes deleted rows.
+  /// Parent [`task.id`] values where **every** trimmed token matches (AND). RPC
+  /// [`search_parent_task_ids_for_tokens`] scans the indexed materialized view
+  /// `task_subtask_search_mv` (pre-joined task + sub-task text). After bulk task/sub-task
+  /// changes, refresh that MV in SQL (e.g. `select refresh_task_subtask_search_mv()`) or schedule it.
   static Future<Set<String>> searchParentTaskIdsForTokens(
     List<String> tokensLower,
   ) async {
@@ -2445,7 +2446,7 @@ class SupabaseService {
   }
 
   /// Deprecated path: use [searchParentTaskIdsForTokens] for one round-trip.
-  /// Still resolves via RPC with a single token (task + sub-task tables).
+  /// Single-token query uses the same RPC and materialized view.
   static Future<Set<String>> fetchTaskIdsHavingSubtaskToken(String tokenLower) async {
     final t = tokenLower.trim();
     if (t.isEmpty) return {};
