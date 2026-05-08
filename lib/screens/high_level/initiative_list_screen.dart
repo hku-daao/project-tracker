@@ -15,6 +15,7 @@ import '../../models/team.dart';
 import '../../config/supabase_config.dart';
 import '../../priority.dart';
 import '../../services/landing_task_filters_storage.dart';
+import '../../services/overview_tasks_subtasks_flat_fetch.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/project_task_sort.dart';
@@ -1388,17 +1389,164 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     }
   }
 
+  List<_CustomizedFlatEntry> _filterEntriesByOverviewRowAllowlist(
+    List<_CustomizedFlatEntry> entries,
+    Set<String>? allowlist,
+  ) {
+    if (allowlist == null) return entries;
+    return entries.where((e) {
+      if (e.isTaskRow) {
+        return allowlist.contains(
+          OverviewTasksSubtasksFlatFetch.taskRowKey(e.task.id),
+        );
+      }
+      return allowlist.contains(
+        OverviewTasksSubtasksFlatFetch.subtaskRowKey(e.task.id, e.sub!.id),
+      );
+    }).toList();
+  }
+
   /// Sub-tasks for Overview flat list plus comment-activity maps for **Last updated** sort + meta line.
   Future<
       ({
         Map<String, List<SingularSubtask>> grouped,
         Map<String, DateTime?> taskCommentActivity,
         Map<String, DateTime?> subtaskCommentActivity,
+        Set<String>? overviewStatusRowAllowlist,
+        List<_CustomizedFlatEntry>? overdueAllTabActiveEntries,
+        List<_CustomizedFlatEntry>? overdueAllTabDelEntries,
       })> _futureGroupedForCustomized(
     List<Task> active,
     List<Task> deleted, {
     List<Task>? includeExtraSingularParentsForSubtaskPrefetch,
+    String? overviewTabScope,
   }) async {
+    final scope = overviewTabScope ?? _overviewEntityTab;
+    final useServerOverdueAll = widget.customizedFlat &&
+        _filterOverdueOnly &&
+        scope == _kOverviewTabAll;
+
+    if (useServerOverdueAll) {
+      final state = context.read<AppState>();
+      final allowedActive = <String>{};
+      final allowedDeleted = <String>{};
+      for (final t in active) {
+        if (t.isSingularTableRow) allowedActive.add(t.id);
+      }
+      for (final t in deleted) {
+        if (t.isSingularTableRow) allowedDeleted.add(t.id);
+      }
+
+      final rows = await OverviewTasksSubtasksFlatFetch.fetchFlatRows(
+        overdueOnly: true,
+        rowStatuses: _selectedTaskStatuses,
+        submissionKeys: _selectedSubmissionFilters,
+        includeDeletedLifecycleRows:
+            _selectedTaskStatuses.contains(_statusDeleted),
+      );
+
+      final filteredRows = <OverviewFlatViewRow>[];
+      for (final r in rows) {
+        final pid = r.parentTaskId;
+        if (allowedActive.contains(pid) || allowedDeleted.contains(pid)) {
+          filteredRows.add(r);
+        }
+      }
+
+      final parentIds = filteredRows.map((r) => r.parentTaskId).toSet().toList();
+
+      final grouped = parentIds.isEmpty
+          ? <String, List<SingularSubtask>>{}
+          : await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(
+              parentIds,
+            );
+      if (parentIds.isNotEmpty &&
+          _selectedTaskStatuses.contains(_statusDeleted)) {
+        final delGrouped =
+            await SupabaseService.fetchDeletedSubtasksGroupedForLandingPrefetch(
+              parentIds,
+            );
+        for (final e in delGrouped.entries) {
+          grouped.putIfAbsent(e.key, () => []).addAll(e.value);
+        }
+        for (final list in grouped.values) {
+          SupabaseService.sortSingularSubtasksNewestFirstInPlace(list);
+        }
+      }
+
+      final activeEntries = <_CustomizedFlatEntry>[];
+      final delEntries = <_CustomizedFlatEntry>[];
+
+      for (final row in filteredRows) {
+        final task = state.taskById(row.parentTaskId);
+        if (task == null || !task.isSingularTableRow) continue;
+
+        final inDeletedSection = allowedDeleted.contains(row.parentTaskId);
+
+        if (row.rowKind == 'task') {
+          final e = _CustomizedFlatEntry.task(task);
+          if (inDeletedSection) {
+            delEntries.add(e);
+          } else {
+            activeEntries.add(e);
+          }
+          continue;
+        }
+
+        if (row.rowKind != 'subtask') continue;
+        final sid = row.subtaskId;
+        if (sid == null || sid.isEmpty) continue;
+
+        SingularSubtask? sub;
+        for (final s in grouped[row.parentTaskId] ?? const <SingularSubtask>[]) {
+          if (s.id == sid) {
+            sub = s;
+            break;
+          }
+        }
+        if (sub == null) continue;
+
+        final e = _CustomizedFlatEntry.subtask(task, sub);
+        if (inDeletedSection) {
+          delEntries.add(e);
+        } else {
+          activeEntries.add(e);
+        }
+      }
+
+      final subIds = <String>[];
+      for (final list in grouped.values) {
+        for (final s in list) {
+          subIds.add(s.id);
+        }
+      }
+      subIds.sort();
+      final Map<String, DateTime?> taskCommentActivity;
+      final Map<String, DateTime?> subtaskCommentActivity;
+      if (parentIds.isEmpty) {
+        taskCommentActivity = <String, DateTime?>{};
+        subtaskCommentActivity = <String, DateTime?>{};
+      } else {
+        taskCommentActivity =
+            await SupabaseService.fetchMaxTaskCommentActivityByTaskIds(
+              parentIds,
+            );
+        subtaskCommentActivity =
+            await SupabaseService.fetchMaxSubtaskCommentActivityBySubtaskIds(
+              subIds,
+            );
+      }
+
+      return (
+        grouped: grouped,
+        taskCommentActivity: taskCommentActivity,
+        subtaskCommentActivity: subtaskCommentActivity,
+        overviewStatusRowAllowlist: null,
+        overdueAllTabActiveEntries: activeEntries,
+        overdueAllTabDelEntries: delEntries,
+      );
+    }
+
     final ids = <String>{};
     for (final t in active) {
       if (t.isSingularTableRow) ids.add(t.id);
@@ -1411,11 +1559,49 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         if (t.isSingularTableRow) ids.add(t.id);
       }
     }
+    Future<Set<String>?>? statusAllowFuture;
+    Future<Set<String>?>? submissionAllowFuture;
+    if (widget.customizedFlat && scope == _kOverviewTabAll) {
+      if (_selectedTaskStatuses.isNotEmpty) {
+        statusAllowFuture = OverviewTasksSubtasksFlatFetch.fetchRowKeysForStatuses(
+          _selectedTaskStatuses,
+        );
+      }
+      if (_selectedSubmissionFilters.isNotEmpty) {
+        submissionAllowFuture =
+            OverviewTasksSubtasksFlatFetch.fetchRowKeysForSubmissionKeys(
+          _selectedSubmissionFilters,
+          includeDeletedLifecycleRows:
+              _selectedTaskStatuses.contains(_statusDeleted),
+        );
+      }
+    }
+    final statusKeys =
+        statusAllowFuture != null ? await statusAllowFuture : null;
+    final submissionKeys =
+        submissionAllowFuture != null ? await submissionAllowFuture : null;
+    final overviewStatusRowAllowlist =
+        OverviewTasksSubtasksFlatFetch.intersectAllowlists(
+      statusKeys,
+      submissionKeys,
+    );
+    if (overviewStatusRowAllowlist != null) {
+      for (final key in overviewStatusRowAllowlist) {
+        final tid =
+            OverviewTasksSubtasksFlatFetch.parentTaskIdFromRowKey(key);
+        if (tid != null && tid.isNotEmpty) {
+          ids.add(tid);
+        }
+      }
+    }
     if (ids.isEmpty) {
       return (
         grouped: <String, List<SingularSubtask>>{},
         taskCommentActivity: <String, DateTime?>{},
         subtaskCommentActivity: <String, DateTime?>{},
+        overviewStatusRowAllowlist: overviewStatusRowAllowlist,
+        overdueAllTabActiveEntries: null,
+        overdueAllTabDelEntries: null,
       );
     }
     final idList = ids.toList();
@@ -1440,18 +1626,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
     }
     subIds.sort();
-    final commentPair = await Future.wait([
+    final commentPair = await Future.wait(<Future<Map<String, DateTime?>>>[
       SupabaseService.fetchMaxTaskCommentActivityByTaskIds(idList),
       SupabaseService.fetchMaxSubtaskCommentActivityBySubtaskIds(subIds),
     ]);
-    final taskCommentActivity =
-        commentPair[0] as Map<String, DateTime?>;
-    final subtaskCommentActivity =
-        commentPair[1] as Map<String, DateTime?>;
+    final taskCommentActivity = commentPair[0];
+    final subtaskCommentActivity = commentPair[1];
     return (
       grouped: grouped,
       taskCommentActivity: taskCommentActivity,
       subtaskCommentActivity: subtaskCommentActivity,
+      overviewStatusRowAllowlist: overviewStatusRowAllowlist,
+      overdueAllTabActiveEntries: null,
+      overdueAllTabDelEntries: null,
     );
   }
 
@@ -1524,6 +1711,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     for (final t in tasks) {
       if (!t.isSingularTableRow) {
         if (_filterOverdueOnly) {
+          if (widget.customizedFlat &&
+              overviewListScope == _kOverviewTabAll) {
+            continue;
+          }
           if (t.overdue != 'Yes') continue;
           if (!searchActive) {
             if (_rowPassesCreateDateForCustomized(t, null)) {
@@ -1556,6 +1747,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           : <SingularSubtask>[];
 
       if (_filterOverdueOnly) {
+        if (widget.customizedFlat &&
+            overviewListScope == _kOverviewTabAll) {
+          continue;
+        }
         if (t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesCreateDateForCustomized(t, null)) {
@@ -1565,11 +1760,30 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               _rowPassesCreateDateForCustomized(t, null)) {
             out.add(_CustomizedFlatEntry.task(t));
           }
-        } else {
-          if (overviewTasksTab) {
-            var wantParent = false;
-            for (final s in subsNonDeleted) {
-              if (s.overdue != 'Yes') continue;
+        } else if (overviewTasksTab) {
+          var wantParent = false;
+          for (final s in subsNonDeleted) {
+            if (s.overdue != 'Yes') continue;
+            if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
+            if (!searchActive) {
+              if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
+                wantParent = true;
+                break;
+              }
+            } else {
+              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+              if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
+              wantParent = true;
+              break;
+            }
+          }
+          if (!wantParent) {
+            for (final s in subsDeleted) {
+              if (_filterOverdueOnly) {
+                final exempt = s.isDeleted &&
+                    _selectedTaskStatuses.contains(_statusDeleted);
+                if (!exempt && s.overdue != 'Yes') continue;
+              }
               if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
               if (!searchActive) {
                 if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
@@ -1583,63 +1797,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 break;
               }
             }
-            if (!wantParent) {
-              for (final s in subsDeleted) {
-                if (_filterOverdueOnly) {
-                  final exempt = s.isDeleted &&
-                      _selectedTaskStatuses.contains(_statusDeleted);
-                  if (!exempt && s.overdue != 'Yes') continue;
-                }
-                if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
-                if (!searchActive) {
-                  if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
-                    wantParent = true;
-                    break;
-                  }
-                } else {
-                  if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-                  if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
-                  wantParent = true;
-                  break;
-                }
-              }
-            }
-            if (wantParent &&
-                !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(
-                    t)) {
-              out.add(_CustomizedFlatEntry.task(t));
-            }
-          } else {
-            for (final s in subsNonDeleted) {
-              if (s.overdue != 'Yes') continue;
-              if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
-              if (!searchActive) {
-                if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
-                  out.add(_CustomizedFlatEntry.subtask(t, s));
-                }
-              } else {
-                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-                if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
-                out.add(_CustomizedFlatEntry.subtask(t, s));
-              }
-            }
-            for (final s in subsDeleted) {
-              if (_filterOverdueOnly) {
-                final exempt =
-                    s.isDeleted && _selectedTaskStatuses.contains(_statusDeleted);
-                if (!exempt && s.overdue != 'Yes') continue;
-              }
-              if (_customizedFlatShouldOmitSubtaskRow(t, s)) continue;
-              if (!searchActive) {
-                if (_rowPassesCreateDateForCustomizedSubtask(t, s)) {
-                  out.add(_CustomizedFlatEntry.subtask(t, s));
-                }
-              } else {
-                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
-                if (!_rowPassesCreateDateForCustomizedSubtask(t, s)) continue;
-                out.add(_CustomizedFlatEntry.subtask(t, s));
-              }
-            }
+          }
+          if (wantParent &&
+              !_customizedFlatHideIncompleteParentTaskRowWhenCompletedOnly(t)) {
+            out.add(_CustomizedFlatEntry.task(t));
           }
         }
         continue;
@@ -2551,12 +2712,16 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           Map<String, List<SingularSubtask>> grouped,
           Map<String, DateTime?> taskCommentActivity,
           Map<String, DateTime?> subtaskCommentActivity,
+          Set<String>? overviewStatusRowAllowlist,
+          List<_CustomizedFlatEntry>? overdueAllTabActiveEntries,
+          List<_CustomizedFlatEntry>? overdueAllTabDelEntries,
         })>(
       key: ValueKey(
         '${filteredTasks.map((t) => t.id).join('|')}'
         '_${filteredDeletedTasks.map((t) => t.id).join('|')}'
         '_${extraSingularParentsForFlatSubtaskPrefetch?.map((t) => t.id).join('|') ?? ''}'
         '_${_selectedTaskStatuses.toList()..sort()}'
+        '_${_selectedSubmissionFilters.toList()..sort()}'
         '_$_tasksPageIndex$_tasksPageSize$_deletedTasksPageIndex'
         '_$_customizedFlatListRefreshSeq'
         '_${_taskSearchController.text}'
@@ -2569,6 +2734,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         filteredDeletedTasks,
         includeExtraSingularParentsForSubtaskPrefetch:
             extraSingularParentsForFlatSubtaskPrefetch,
+        overviewTabScope: overviewTabScope,
       ),
       builder: (context, snapshot) {
         final prefix = dashboardScrollPrefixSlivers;
@@ -2598,76 +2764,128 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         final grouped = payload?.grouped ?? {};
         final taskCommentActivity = payload?.taskCommentActivity ?? {};
         final subtaskCommentActivity = payload?.subtaskCommentActivity ?? {};
-        var activeTasksForEntries = filteredTasks;
-        if (_selectedTaskStatuses.contains(_statusDeleted)) {
-          final have =
-              activeTasksForEntries.map((t) => t.id).toSet();
-          for (final tid in grouped.keys) {
-            final sl = grouped[tid] ?? [];
-            if (!sl.any((s) => s.isDeleted)) continue;
-            if (have.contains(tid)) continue;
-            final task = state.taskById(tid);
-            if (task == null || !task.isSingularTableRow) continue;
-            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
-            if (ds == 'delete' || ds == 'deleted') continue;
-            activeTasksForEntries = [...activeTasksForEntries, task];
-            have.add(tid);
+        final overdueAct = payload?.overdueAllTabActiveEntries;
+        final overdueDel = payload?.overdueAllTabDelEntries;
+        final serverOverdueAllFlat =
+            overdueAct != null && overdueDel != null;
+
+        final overviewRowAllowlist = serverOverdueAllFlat
+            ? null
+            : (((overviewTabScope ?? _overviewEntityTab) == _kOverviewTabAll)
+                ? payload?.overviewStatusRowAllowlist
+                : null);
+
+        late List<_CustomizedFlatEntry> activeEntries;
+        late List<_CustomizedFlatEntry> delEntries;
+
+        if (serverOverdueAllFlat) {
+          activeEntries = overdueAct;
+          delEntries = overdueDel;
+        } else {
+          var activeTasksForEntries = filteredTasks;
+          if (_selectedTaskStatuses.contains(_statusDeleted)) {
+            final have =
+                activeTasksForEntries.map((t) => t.id).toSet();
+            for (final tid in grouped.keys) {
+              final sl = grouped[tid] ?? [];
+              if (!sl.any((s) => s.isDeleted)) continue;
+              if (have.contains(tid)) continue;
+              final task = state.taskById(tid);
+              if (task == null || !task.isSingularTableRow) continue;
+              final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+              if (ds == 'delete' || ds == 'deleted') continue;
+              activeTasksForEntries = [...activeTasksForEntries, task];
+              have.add(tid);
+            }
           }
-        }
-        if (_selectedTaskStatuses.contains(_statusCompleted)) {
-          final have =
-              activeTasksForEntries.map((t) => t.id).toSet();
-          for (final tid in grouped.keys) {
-            final sl = grouped[tid] ?? [];
-            if (!sl.any((s) => _singularSubtaskCompleted(s))) continue;
-            if (have.contains(tid)) continue;
-            final task = state.taskById(tid);
-            if (task == null || !task.isSingularTableRow) continue;
-            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
-            if (ds == 'delete' || ds == 'deleted') continue;
-            activeTasksForEntries = [...activeTasksForEntries, task];
-            have.add(tid);
+          if (_selectedTaskStatuses.contains(_statusCompleted)) {
+            final have =
+                activeTasksForEntries.map((t) => t.id).toSet();
+            for (final tid in grouped.keys) {
+              final sl = grouped[tid] ?? [];
+              if (!sl.any((s) => _singularSubtaskCompleted(s))) continue;
+              if (have.contains(tid)) continue;
+              final task = state.taskById(tid);
+              if (task == null || !task.isSingularTableRow) continue;
+              final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+              if (ds == 'delete' || ds == 'deleted') continue;
+              activeTasksForEntries = [...activeTasksForEntries, task];
+              have.add(tid);
+            }
           }
-        }
-        var delTasksForEntries = filteredDeletedTasks;
-        if (_selectedTaskStatuses.contains(_statusDeleted)) {
-          final haveDel = delTasksForEntries.map((t) => t.id).toSet();
-          for (final tid in grouped.keys) {
-            final sl = grouped[tid] ?? [];
-            if (!sl.any((s) => s.isDeleted)) continue;
-            if (haveDel.contains(tid)) continue;
-            final task = state.taskById(tid);
-            if (task == null || !task.isSingularTableRow) continue;
-            final ds = task.dbStatus?.trim().toLowerCase() ?? '';
-            if (ds != 'delete' && ds != 'deleted') continue;
-            delTasksForEntries = [...delTasksForEntries, task];
-            haveDel.add(tid);
+          var delTasksForEntries = filteredDeletedTasks;
+          if (_selectedTaskStatuses.contains(_statusDeleted)) {
+            final haveDel = delTasksForEntries.map((t) => t.id).toSet();
+            for (final tid in grouped.keys) {
+              final sl = grouped[tid] ?? [];
+              if (!sl.any((s) => s.isDeleted)) continue;
+              if (haveDel.contains(tid)) continue;
+              final task = state.taskById(tid);
+              if (task == null || !task.isSingularTableRow) continue;
+              final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+              if (ds != 'delete' && ds != 'deleted') continue;
+              delTasksForEntries = [...delTasksForEntries, task];
+              haveDel.add(tid);
+            }
           }
+          if (_selectedSubmissionFilters.isNotEmpty &&
+              overviewRowAllowlist != null &&
+              overviewRowAllowlist.isNotEmpty) {
+            var have = activeTasksForEntries.map((t) => t.id).toSet();
+            var haveDel = delTasksForEntries.map((t) => t.id).toSet();
+            for (final key in overviewRowAllowlist) {
+              final tid = OverviewTasksSubtasksFlatFetch.parentTaskIdFromRowKey(
+                key,
+              );
+              if (tid == null || tid.isEmpty) continue;
+              final task = state.taskById(tid);
+              if (task == null || !task.isSingularTableRow) continue;
+              final ds = task.dbStatus?.trim().toLowerCase() ?? '';
+              final isDel = ds == 'delete' || ds == 'deleted';
+              if (isDel) {
+                if (haveDel.contains(tid)) continue;
+                delTasksForEntries = [...delTasksForEntries, task];
+                haveDel.add(tid);
+              } else {
+                if (have.contains(tid)) continue;
+                activeTasksForEntries = [...activeTasksForEntries, task];
+                have.add(tid);
+              }
+            }
+          }
+          activeEntries = _buildCustomizedFlatEntries(
+            activeTasksForEntries,
+            grouped,
+            _taskSearchController.text,
+            overviewListScope: overviewTabScope,
+          );
+          activeEntries = _sortCustomizedFlatEntries(
+            activeEntries,
+            state,
+            taskCommentActivity: taskCommentActivity,
+            subtaskCommentActivity: subtaskCommentActivity,
+          );
+          activeEntries = _filterEntriesByOverviewRowAllowlist(
+            activeEntries,
+            overviewRowAllowlist,
+          );
+          delEntries = _buildCustomizedFlatEntries(
+            delTasksForEntries,
+            grouped,
+            _taskSearchController.text,
+            overviewListScope: overviewTabScope,
+          );
+          delEntries = _sortCustomizedFlatEntries(
+            delEntries,
+            state,
+            taskCommentActivity: taskCommentActivity,
+            subtaskCommentActivity: subtaskCommentActivity,
+          );
+          delEntries = _filterEntriesByOverviewRowAllowlist(
+            delEntries,
+            overviewRowAllowlist,
+          );
         }
-        var activeEntries = _buildCustomizedFlatEntries(
-          activeTasksForEntries,
-          grouped,
-          _taskSearchController.text,
-          overviewListScope: overviewTabScope,
-        );
-        activeEntries = _sortCustomizedFlatEntries(
-          activeEntries,
-          state,
-          taskCommentActivity: taskCommentActivity,
-          subtaskCommentActivity: subtaskCommentActivity,
-        );
-        var delEntries = _buildCustomizedFlatEntries(
-          delTasksForEntries,
-          grouped,
-          _taskSearchController.text,
-          overviewListScope: overviewTabScope,
-        );
-        delEntries = _sortCustomizedFlatEntries(
-          delEntries,
-          state,
-          taskCommentActivity: taskCommentActivity,
-          subtaskCommentActivity: subtaskCommentActivity,
-        );
 
         final effectiveTab = overviewTabScope ?? _overviewEntityTab;
 
@@ -2679,8 +2897,53 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
     }
 
-        final listHasNoTaskRows =
-            activeEntries.isEmpty && delEntries.isEmpty;
+        /// Deleted sub-task rows belong under **Deleted tasks and sub-tasks**, not **All tasks**.
+        if (widget.customizedFlat && effectiveTab == _kOverviewTabAll) {
+          final deletedSubsFromActive = activeEntries
+              .where((e) => !e.isTaskRow && e.sub!.isDeleted)
+              .toList();
+          if (deletedSubsFromActive.isNotEmpty) {
+            activeEntries = activeEntries
+                .where((e) => e.isTaskRow || !e.sub!.isDeleted)
+                .toList();
+            delEntries = _sortCustomizedFlatEntries(
+              [...delEntries, ...deletedSubsFromActive],
+              state,
+              taskCommentActivity: taskCommentActivity,
+              subtaskCommentActivity: subtaskCommentActivity,
+            );
+          }
+        }
+
+        /// "All" tab with **only** the Deleted status chip: one grey section listing every
+        /// deleted task row + deleted sub-task row (no separate "All tasks" block).
+        final overviewAllTabDeletedStatusOnly = widget.customizedFlat &&
+            effectiveTab == _kOverviewTabAll &&
+            _selectedTaskStatuses.contains(_statusDeleted) &&
+            !_selectedTaskStatuses.contains(_statusIncomplete) &&
+            !_selectedTaskStatuses.contains(_statusCompleted);
+
+        List<_CustomizedFlatEntry>? unifiedDeletedOverviewEntries;
+        if (overviewAllTabDeletedStatusOnly) {
+          unifiedDeletedOverviewEntries = _sortCustomizedFlatEntries(
+            delEntries,
+            state,
+            taskCommentActivity: taskCommentActivity,
+            subtaskCommentActivity: subtaskCommentActivity,
+          );
+        }
+
+        /// Incomplete+Deleted, Completed+Deleted, or all three: one pager spanning both sections.
+        final overviewAllTabUnifiedTwoSectionPager = widget.customizedFlat &&
+            effectiveTab == _kOverviewTabAll &&
+            !overviewAllTabDeletedStatusOnly &&
+            _selectedTaskStatuses.contains(_statusDeleted) &&
+            activeEntries.isNotEmpty &&
+            delEntries.isNotEmpty;
+
+        final listHasNoTaskRows = overviewAllTabDeletedStatusOnly
+            ? (unifiedDeletedOverviewEntries?.isEmpty ?? true)
+            : (activeEntries.isEmpty && delEntries.isEmpty);
 
         if (listHasNoTaskRows) {
           if (prefix != null) {
@@ -2697,8 +2960,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                           padding: const EdgeInsets.all(24),
                           child: Center(
                             child: Text(
-                              'No tasks or sub-tasks match your filters '
-                              '(search, created date, and other filters).',
+                              'No tasks or sub-tasks match your filters.',
                               textAlign: TextAlign.center,
                               style: Theme.of(context).textTheme.bodyLarge,
                             ),
@@ -2715,8 +2977,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                'No tasks or sub-tasks match your filters '
-                '(search, created date, and other filters).',
+                'No tasks or sub-tasks match your filters.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
@@ -2724,74 +2985,39 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           );
         }
 
-        final pagedActive = _landingPageSlice(
-          activeEntries,
-          _tasksPageIndex,
-          _tasksPageSize,
-        );
-        final pagedDel = _landingPageSlice(
-          delEntries,
-          _deletedTasksPageIndex,
-          _tasksPageSize,
-        );
-
-        final deletedTasksAndSubtasksTitleCountOverview =
-            delEntries.where((e) => e.isTaskRow).length +
-                activeEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length +
-                delEntries.where((e) => !e.isTaskRow && e.sub!.isDeleted).length;
-
-        final taskRowCount =
-            activeEntries.where((e) => e.isTaskRow).length;
-
-        final String primarySectionTitle;
-        final Widget primaryLegend;
-        if (widget.customizedFlat) {
-          switch (effectiveTab) {
-            case _kOverviewTabAll:
-              primarySectionTitle =
-                  'All tasks & sub-tasks (${activeEntries.length})';
-              primaryLegend = const PicTeamColorLegend(
-                caption:
-                    "Task and sub-task background colour reflect the PIC's team.",
-              );
-              break;
-            case _kOverviewTabTask:
-              primarySectionTitle = 'Tasks ($taskRowCount)';
-              primaryLegend = const PicTeamColorLegend(
-                caption: "Task background colour reflect the PIC's team.",
-              );
-              break;
-            default:
-              primarySectionTitle =
-                  'Tasks & sub-tasks (${activeEntries.length})';
-              primaryLegend = const PicTeamColorLegend();
-          }
-        } else {
-          primarySectionTitle =
-              'Tasks & sub-tasks (${activeEntries.length})';
-          primaryLegend = const PicTeamColorLegend();
-        }
-
         final expandSubsInTasksTab = widget.customizedFlat &&
             effectiveTab == _kOverviewTabTask;
 
-        final listChildren = <Widget>[
-          if (activeEntries.isNotEmpty) ...[
+        late final List<Widget> listChildren;
+        late final Widget? paginationBar;
+
+        if (overviewAllTabDeletedStatusOnly &&
+            unifiedDeletedOverviewEntries != null) {
+          final merged = unifiedDeletedOverviewEntries;
+          final pagedMerged = _landingPageSlice(
+            merged,
+            _tasksPageIndex,
+            _tasksPageSize,
+          );
+          listChildren = <Widget>[
             Padding(
               padding: const EdgeInsets.only(top: 16, bottom: 8),
               child: Text(
-                primarySectionTitle,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold),
+                'Deleted tasks and sub-tasks (${merged.length})',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
               ),
             ),
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: primaryLegend,
+              child: const PicTeamColorLegend(
+                caption:
+                    "Task and sub-task background colour reflect the PIC's team.",
+              ),
             ),
-            ...pagedActive.map(
+            ...pagedMerged.map(
               (e) => _customizedEntryTile(
                 context,
                 state,
@@ -2802,90 +3028,261 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 overviewAllTabLayout: effectiveTab == _kOverviewTabAll,
               ),
             ),
-          ],
-          if (delEntries.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 24, bottom: 8),
-              child: Text(
-                'Deleted tasks and sub-tasks '
-                '($deletedTasksAndSubtasksTitleCountOverview)',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
+          ];
+          paginationBar = merged.isNotEmpty
+              ? _overviewFlatTabPaginationFooter(
+                  context: context,
+                  paginationChildren: [
+                    _buildLandingTaskPaginationBar(
+                      context: context,
+                      totalCount: merged.length,
+                      pageIndex: _tasksPageIndex,
+                      onPageChanged: (i) {
+                        setState(() => _tasksPageIndex = i);
+                      },
+                      showPageSizeDropdown: true,
                     ),
+                  ],
+                )
+              : null;
+        } else if (overviewAllTabUnifiedTwoSectionPager) {
+          final combined = <_CustomizedFlatEntry>[
+            ...activeEntries,
+            ...delEntries,
+          ];
+          final start = _tasksPageIndex * _tasksPageSize;
+          final end = min(start + _tasksPageSize, combined.length);
+          final deletedTasksAndSubtasksTitleCountOverview =
+              delEntries.where((e) => e.isTaskRow).length +
+                  delEntries
+                      .where((e) => !e.isTaskRow && e.sub!.isDeleted)
+                      .length;
+
+          final primarySectionTitle =
+              'All tasks & sub-tasks (${activeEntries.length})';
+
+          final rowWidgets = <Widget>[];
+          for (var globalIdx = start; globalIdx < end; globalIdx++) {
+            if (globalIdx == 0 && activeEntries.isNotEmpty) {
+              rowWidgets.add(
+                Padding(
+                  padding: const EdgeInsets.only(top: 16, bottom: 8),
+                  child: Text(
+                    primarySectionTitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              );
+              rowWidgets.add(
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: PicTeamColorLegend(
+                    caption:
+                        "Task and sub-task background colour reflect the PIC's team.",
+                  ),
+                ),
+              );
+            }
+            if (globalIdx == activeEntries.length && delEntries.isNotEmpty) {
+              rowWidgets.add(
+                Padding(
+                  padding: const EdgeInsets.only(top: 24, bottom: 8),
+                  child: Text(
+                    'Deleted tasks and sub-tasks '
+                    '($deletedTasksAndSubtasksTitleCountOverview)',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                  ),
+                ),
+              );
+              if (activeEntries.isEmpty) {
+                rowWidgets.add(
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: PicTeamColorLegend(
+                      caption:
+                          "Task and sub-task background colour reflect the PIC's team.",
+                    ),
+                  ),
+                );
+              }
+            }
+            rowWidgets.add(
+              _customizedEntryTile(
+                context,
+                state,
+                combined[globalIdx],
+                taskCommentActivity: taskCommentActivity,
+                subtaskCommentActivity: subtaskCommentActivity,
+                overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
+                overviewAllTabLayout: effectiveTab == _kOverviewTabAll,
               ),
-            ),
-            if (activeEntries.isEmpty)
+            );
+          }
+          listChildren = rowWidgets;
+          paginationBar = combined.isNotEmpty
+              ? _overviewFlatTabPaginationFooter(
+                  context: context,
+                  paginationChildren: [
+                    _buildLandingTaskPaginationBar(
+                      context: context,
+                      totalCount: combined.length,
+                      pageIndex: _tasksPageIndex,
+                      onPageChanged: (i) {
+                        setState(() => _tasksPageIndex = i);
+                      },
+                      showPageSizeDropdown: true,
+                    ),
+                  ],
+                )
+              : null;
+        } else {
+          final pagedActive = _landingPageSlice(
+            activeEntries,
+            _tasksPageIndex,
+            _tasksPageSize,
+          );
+          final pagedDel = _landingPageSlice(
+            delEntries,
+            _deletedTasksPageIndex,
+            _tasksPageSize,
+          );
+
+          final deletedTasksAndSubtasksTitleCountOverview =
+              delEntries.where((e) => e.isTaskRow).length +
+                  delEntries
+                      .where((e) => !e.isTaskRow && e.sub!.isDeleted)
+                      .length;
+
+          final taskRowCount =
+              activeEntries.where((e) => e.isTaskRow).length;
+
+          final String primarySectionTitle;
+          final Widget primaryLegend;
+          if (widget.customizedFlat) {
+            switch (effectiveTab) {
+              case _kOverviewTabAll:
+                primarySectionTitle =
+                    'All tasks & sub-tasks (${activeEntries.length})';
+                primaryLegend = const PicTeamColorLegend(
+                  caption:
+                      "Task and sub-task background colour reflect the PIC's team.",
+                );
+                break;
+              case _kOverviewTabTask:
+                primarySectionTitle = 'Tasks ($taskRowCount)';
+                primaryLegend = const PicTeamColorLegend(
+                  caption: "Task background colour reflect the PIC's team.",
+                );
+                break;
+              default:
+                primarySectionTitle =
+                    'Tasks & sub-tasks (${activeEntries.length})';
+                primaryLegend = const PicTeamColorLegend();
+            }
+          } else {
+            primarySectionTitle =
+                'Tasks & sub-tasks (${activeEntries.length})';
+            primaryLegend = const PicTeamColorLegend();
+          }
+
+          listChildren = <Widget>[
+            if (activeEntries.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 16, bottom: 8),
+                child: Text(
+                  primarySectionTitle,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: primaryLegend,
               ),
-          ],
-          ...pagedDel.map(
-            (e) => _customizedEntryTile(
-              context,
-              state,
-              e,
-              taskCommentActivity: taskCommentActivity,
-              subtaskCommentActivity: subtaskCommentActivity,
-              overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
-              overviewAllTabLayout: effectiveTab == _kOverviewTabAll,
-            ),
-          ),
-        ];
-
-        final primaryPagerTotal = activeEntries.length;
-
-        final paginationBar = (activeEntries.isNotEmpty ||
-                delEntries.isNotEmpty)
-            ? Material(
-                elevation: 6,
-                shadowColor: Colors.black26,
-                color: Theme.of(context).colorScheme.surface,
-                child: SafeArea(
-                  top: false,
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: _kLandingTaskListMaxWidth,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (activeEntries.isNotEmpty)
-                              _buildLandingTaskPaginationBar(
-                                context: context,
-                                totalCount: primaryPagerTotal,
-                                pageIndex: _tasksPageIndex,
-                                onPageChanged: (i) {
-                                  setState(() => _tasksPageIndex = i);
-                                },
-                                showPageSizeDropdown: true,
-                              ),
-                            if (activeEntries.isNotEmpty &&
-                                delEntries.isNotEmpty)
-                              const Divider(height: 12),
-                            if (delEntries.isNotEmpty)
-                              _buildLandingTaskPaginationBar(
-                                context: context,
-                                totalCount: delEntries.length,
-                                pageIndex: _deletedTasksPageIndex,
-                                onPageChanged: (i) {
-                                  setState(() => _deletedTasksPageIndex = i);
-                                },
-                                showPageSizeDropdown: false,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+              ...pagedActive.map(
+                (e) => _customizedEntryTile(
+                  context,
+                  state,
+                  e,
+                  taskCommentActivity: taskCommentActivity,
+                  subtaskCommentActivity: subtaskCommentActivity,
+                  overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
+                  overviewAllTabLayout: effectiveTab == _kOverviewTabAll,
                 ),
-              )
-            : null;
+              ),
+            ],
+            if (delEntries.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 24, bottom: 8),
+                child: Text(
+                  'Deleted tasks and sub-tasks '
+                  '($deletedTasksAndSubtasksTitleCountOverview)',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                ),
+              ),
+              if (activeEntries.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: primaryLegend,
+                ),
+            ],
+            ...pagedDel.map(
+              (e) => _customizedEntryTile(
+                context,
+                state,
+                e,
+                taskCommentActivity: taskCommentActivity,
+                subtaskCommentActivity: subtaskCommentActivity,
+                overviewTasksTabExpandSubtasks: expandSubsInTasksTab,
+                overviewAllTabLayout: effectiveTab == _kOverviewTabAll,
+              ),
+            ),
+          ];
+
+          final primaryPagerTotal = activeEntries.length;
+
+          paginationBar = (activeEntries.isNotEmpty ||
+                  delEntries.isNotEmpty)
+              ? _overviewFlatTabPaginationFooter(
+                  context: context,
+                  paginationChildren: [
+                    if (activeEntries.isNotEmpty)
+                      _buildLandingTaskPaginationBar(
+                        context: context,
+                        totalCount: primaryPagerTotal,
+                        pageIndex: _tasksPageIndex,
+                        onPageChanged: (i) {
+                          setState(() => _tasksPageIndex = i);
+                        },
+                        showPageSizeDropdown: true,
+                      ),
+                    if (activeEntries.isNotEmpty && delEntries.isNotEmpty)
+                      const Divider(height: 12),
+                    if (delEntries.isNotEmpty)
+                      _buildLandingTaskPaginationBar(
+                        context: context,
+                        totalCount: delEntries.length,
+                        pageIndex: _deletedTasksPageIndex,
+                        onPageChanged: (i) {
+                          setState(() => _deletedTasksPageIndex = i);
+                        },
+                        showPageSizeDropdown: false,
+                      ),
+                  ],
+                )
+              : null;
+        }
 
         if (prefix != null) {
           return Column(
@@ -3414,6 +3811,39 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final start = p * pageSize;
     final end = min(start + pageSize, items.length);
     return items.sublist(start, end);
+  }
+
+  /// Customized Overview flat tabs — same footer alignment for every filter (Incomplete-only,
+  /// deleted-only, unified two-section, dual-section): centered max-width strip with a
+  /// stretch-[Column] so the inner [Wrap] uses the full bar width.
+  Widget _overviewFlatTabPaginationFooter({
+    required BuildContext context,
+    required List<Widget> paginationChildren,
+  }) {
+    assert(paginationChildren.isNotEmpty);
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black26,
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: _kLandingTaskListMaxWidth,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: paginationChildren,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLandingTaskPaginationBar({
@@ -4677,6 +5107,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
     bool taskMatchesOverdueFilter(Task t) {
       if (!_filterOverdueOnly) return true;
+      // Customized Overview (flat list): singular parents are not shrunk here — overdue rows for
+      // "All tasks & sub-tasks" come from Supabase [overview_tasks_subtasks_flat] with
+      // `.eq('is_overdue_row', 'Yes')`; the Tasks-only tab still uses chip/overdue logic below.
+      if (widget.customizedFlat && t.isSingularTableRow) return true;
       if (t.isSingularTableRow) {
         if (t.overdue == 'Yes') return true;
         if (!_subtaskHasOverdueByTaskId.containsKey(t.id)) return false;
@@ -5651,6 +6085,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 _filterOverdueOnly = v;
                 _tasksPageIndex = 0;
                 _deletedTasksPageIndex = 0;
+                if (widget.customizedFlat && v) {
+                  SupabaseService.clearSubtaskListMemoryCache();
+                  _customizedFlatListRefreshSeq++;
+                }
               });
               _persistLandingFilters();
               _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
@@ -5680,6 +6118,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 }
                 _tasksPageIndex = 0;
                 _deletedTasksPageIndex = 0;
+                if (widget.customizedFlat) {
+                  SupabaseService.clearSubtaskListMemoryCache();
+                  _customizedFlatListRefreshSeq++;
+                }
               });
               _persistLandingFilters();
               _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
@@ -5699,6 +6141,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 }
                 _tasksPageIndex = 0;
                 _deletedTasksPageIndex = 0;
+                if (widget.customizedFlat) {
+                  SupabaseService.clearSubtaskListMemoryCache();
+                  _customizedFlatListRefreshSeq++;
+                }
               });
               _persistLandingFilters();
               _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
@@ -5718,6 +6164,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 }
                 _tasksPageIndex = 0;
                 _deletedTasksPageIndex = 0;
+                if (widget.customizedFlat) {
+                  SupabaseService.clearSubtaskListMemoryCache();
+                  _customizedFlatListRefreshSeq++;
+                }
               });
               _persistLandingFilters();
               _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();
@@ -5737,6 +6187,10 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 }
                 _tasksPageIndex = 0;
                 _deletedTasksPageIndex = 0;
+                if (widget.customizedFlat) {
+                  SupabaseService.clearSubtaskListMemoryCache();
+                  _customizedFlatListRefreshSeq++;
+                }
               });
               _persistLandingFilters();
               _collapseRosterFilterExpansionsAfterStatusOrSubmissionChange();

@@ -91,9 +91,10 @@ class LandingTaskFilters {
       teamIds: List<String>.from(j['teamIds'] as List? ?? const []),
       assigneeIds: List<String>.from(j['assigneeIds'] as List? ?? const []),
       statuses: List<String>.from(j['statuses'] as List? ?? const []),
-      submissionFilters: List<String>.from(
-        j['submissionFilters'] as List? ?? const [],
-      ),
+      submissionFilters: <String>[
+        for (final e in (j['submissionFilters'] as List? ?? const []))
+          if (e != null) e.toString(),
+      ],
       filterOverdueOnly: j['filterOverdueOnly'] as bool? ?? false,
       search: j['search'] as String? ?? '',
       sortColumn: j['sortColumn'] as String?,

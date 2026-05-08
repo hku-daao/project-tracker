@@ -15,6 +15,23 @@ import 'high_level/subtask_detail_screen.dart';
 import 'home_screen.dart';
 import 'task_detail_screen.dart';
 
+/// Web: root shell matches `view` / session so [HomeScreen] is not painted before Overview.
+/// Mobile: unchanged — [HomeScreen]; pinned Overview still opens via [_StartupShell._maybeOpenPinnedView].
+Widget _bootstrapShellChild() {
+  if (!kIsWeb) {
+    return const HomeScreen();
+  }
+  final raw = readDashboardViewFromUrlOrSession();
+  final view = raw?.trim().toLowerCase();
+  if (view == 'original') {
+    return const HomeScreen();
+  }
+  if (view == 'project') {
+    return buildProjectDashboardPage();
+  }
+  return buildOverviewDashboardPage();
+}
+
 /// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from Supabase.
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
@@ -178,23 +195,15 @@ class _AppBootstrapState extends State<AppBootstrap> {
       );
       return;
     }
-    final viewTag = readDashboardViewFromUrlOrSession();
+    final rawView = readDashboardViewFromUrlOrSession();
+    final viewTag = rawView?.trim().toLowerCase();
+    // Shell already shows Overview / Project / Original — avoid a second route (flash of Home).
     if (viewTag == 'overview' || viewTag == 'default') {
-      rootNavigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kOverviewDashboardRouteName),
-          builder: (context) => buildOverviewDashboardPage(),
-        ),
-      );
+      syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
       return;
     }
     if (viewTag == 'project') {
-      rootNavigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: kProjectDashboardRouteName),
-          builder: (context) => buildProjectDashboardPage(),
-        ),
-      );
+      syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
       return;
     }
     syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
@@ -253,7 +262,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
         ),
       );
     }
-    return const _StartupShell(child: HomeScreen());
+    return _StartupShell(child: _bootstrapShellChild());
   }
 }
 
@@ -281,11 +290,16 @@ class _StartupShellState extends State<_StartupShell> {
     if (taskId != null && taskId.isNotEmpty) return;
     final projectId = readProjectIdFromUrlOrSession();
     if (projectId != null && projectId.isNotEmpty) return;
-    final urlView = readDashboardViewFromUrlOrSession();
+    final rawView = readDashboardViewFromUrlOrSession();
+    final urlView = rawView?.trim().toLowerCase();
     if (urlView == 'overview' ||
         urlView == 'project' ||
         urlView == 'default' ||
         urlView == 'original') {
+      return;
+    }
+    // Web: shell already defaults to Overview when view is unset — do not stack a duplicate route.
+    if (kIsWeb && (urlView == null || urlView.isEmpty)) {
       return;
     }
 

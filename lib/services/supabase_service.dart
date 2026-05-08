@@ -1042,8 +1042,24 @@ class SupabaseService {
     return s;
   }
 
+  /// Pic/creator workflow values are typically `Pending` / `Submitted` / `Accepted` / `Returned`
+  /// (any casing). Accepts String, enum-style JSON maps, and other dynamic SQL/PostgREST shapes
+  /// so sub-task rows are not dropped by a failed `as String?` in [_singularSubtaskFromRow].
   static String? _submissionFromRow(dynamic v) {
-    final s = v?.toString().trim() ?? '';
+    if (v == null) return null;
+    if (v is String) {
+      final s = v.trim();
+      return s.isEmpty ? null : s;
+    }
+    if (v is Map) {
+      final dynamic inner =
+          v['value'] ?? v['Value'] ?? v['name'] ?? v['label'];
+      if (inner != null) {
+        final s = inner.toString().trim();
+        if (s.isNotEmpty) return s;
+      }
+    }
+    final s = v.toString().trim();
     if (s.isEmpty) return null;
     return s;
   }
@@ -2259,7 +2275,7 @@ class SupabaseService {
         final raw = _dbStatusRawFromRow(row['status']);
         return raw.isEmpty ? 'Incomplete' : raw;
       }(),
-      submission: row['submission'] as String?,
+      submission: _submissionFromRow(row['submission']),
       submitDate: _parseDateTimeNullable(row['submit_date']),
       completionDate: _parseDateTimeNullable(row['completion_date']),
       assigneeIds: assigneeIds,
