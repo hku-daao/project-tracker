@@ -102,8 +102,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _loading = true;
       _loadErr = null;
     });
-    final state = context.read<AppState>();
-    final mine = state.userStaffAppId?.trim();
+    final mine = context.read<AppState>().userStaffAppId?.trim();
     if (mine != null && mine.isNotEmpty) {
       _myStaffUuid =
           await SupabaseService.resolveStaffRowIdForAssigneeKey(mine);
@@ -138,37 +137,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         _picDisplayKeys.add(k);
         _editPicIds.add(k);
       }
-      var effectiveProject = p;
-      if (effectiveProject.picStaffUuids.isEmpty &&
-          effectiveProject.assigneeStaffUuids.length == 1) {
-        final sole = effectiveProject.assigneeStaffUuids.first.trim();
-        if (sole.isNotEmpty) {
-          final k = await SupabaseService.assigneeListKeyFromStaffUuid(sole);
-          _picDisplayKeys.add(k);
-          _editPicIds.add(k);
-          final soleCreator = effectiveProject.createByStaffUuid?.trim() ==
-              _myStaffUuid?.trim();
-          if (soleCreator &&
-              mine != null &&
-              mine.isNotEmpty &&
-              SupabaseConfig.isConfigured) {
-            final err = await SupabaseService.updateProjectRow(
-              projectId: widget.projectId,
-              picStaffUuids: [sole],
-              updateByStaffLookupKey: mine,
-            );
-            if (err == null && mounted) {
-              final refreshed =
-                  await SupabaseService.fetchProjectById(widget.projectId);
-              if (refreshed != null) effectiveProject = refreshed;
-            }
-          }
-        }
-      }
       await _loadPickerIfNeeded();
       if (!mounted) return;
       setState(() {
-        _project = effectiveProject;
+        _project = p;
         _tasks = tasks;
         _draftStatus = null;
         _loading = false;

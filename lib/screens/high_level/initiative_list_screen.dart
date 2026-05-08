@@ -76,6 +76,8 @@ enum TaskListSortColumn {
 enum ProjectListSortColumn {
   creator,
   assignee,
+  pic,
+  lastUpdated,
   startDate,
   endDate,
   status;
@@ -86,6 +88,10 @@ enum ProjectListSortColumn {
         return 'Creator';
       case ProjectListSortColumn.assignee:
         return 'Assignee';
+      case ProjectListSortColumn.pic:
+        return 'PIC';
+      case ProjectListSortColumn.lastUpdated:
+        return 'Last updated';
       case ProjectListSortColumn.startDate:
         return 'Start date';
       case ProjectListSortColumn.endDate:
@@ -392,8 +398,42 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _overviewEntityTab = next;
       _tasksPageIndex = 0;
       _deletedTasksPageIndex = 0;
+      if (next == _kOverviewTabProject) {
+        _normalizeProjectSortColumnForOverviewProjectsTabIfNeeded();
+      }
     });
     _persistLandingFilters();
+  }
+
+  /// Overview → Projects tab allows only a subset of [ProjectListSortColumn] values.
+  void _normalizeProjectSortColumnForOverviewProjectsTabIfNeeded() {
+    if (!widget.customizedFlat) return;
+    if (_overviewEntityTab != _kOverviewTabProject) return;
+    const allowed = <ProjectListSortColumn?>{
+      null,
+      ProjectListSortColumn.creator,
+      ProjectListSortColumn.assignee,
+      ProjectListSortColumn.pic,
+      ProjectListSortColumn.lastUpdated,
+      ProjectListSortColumn.status,
+    };
+    if (!allowed.contains(_projectSortColumn)) {
+      _projectSortColumn = null;
+      _projectSortAscending = false;
+    }
+  }
+
+  ProjectListSortColumn? get _projectSortColumnForOverviewDropdown {
+    const allowed = <ProjectListSortColumn?>{
+      null,
+      ProjectListSortColumn.creator,
+      ProjectListSortColumn.assignee,
+      ProjectListSortColumn.pic,
+      ProjectListSortColumn.lastUpdated,
+      ProjectListSortColumn.status,
+    };
+    if (allowed.contains(_projectSortColumn)) return _projectSortColumn;
+    return null;
   }
 
   static const _submissionPending = 'pending';
@@ -2238,9 +2278,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                       },
                       borderRadius: BorderRadius.circular(4),
                       child: InputDecorator(
-                        decoration: const InputDecoration(
+            decoration: const InputDecoration(
                           labelText: 'Filters',
-                          border: OutlineInputBorder(),
+              border: OutlineInputBorder(),
                           suffixIcon: Icon(Icons.arrow_drop_down),
                           isDense: true,
                           contentPadding: EdgeInsets.symmetric(
@@ -2379,6 +2419,246 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               ),
                             ),
                             _buildTaskSortDropdown(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                bandSearch(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: _buildLandingTaskSearchField(),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Overview → **Projects** tab only: filter (Creator, Assignee, PIC, Created date, project Status)
+  /// and project sort (slim list). Other Overview tabs use [_buildLandingFiltersSortSearchSection].
+  Widget _buildOverviewProjectsFiltersSortSearchSection(
+    BuildContext context,
+    AppState state,
+    List<Team> teamsSorted,
+    String filterKey,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final menuMaxHeight = MediaQuery.sizeOf(context).height * 0.65;
+              final wideFilterWidth = min(
+                280.0,
+                constraints.maxWidth * 0.38,
+              ).clamp(120.0, _filterFieldMaxWidth);
+              final filterMenu = MenuAnchor(
+                controller: _filterMenuController,
+                onClose: _onFilterMenuAnchorClosed,
+                menuChildren: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: SizedBox(
+                      width: 320,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: menuMaxHeight),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ..._landingFilterMenuSections(
+                                context,
+                                state,
+                                teamsSorted,
+                                includePic: true,
+                              ),
+                              ..._landingCreateDateSection(context),
+                              ..._projectDashboardStatusSection(context),
+                              const Divider(height: 16),
+                              MenuItemButton(
+                                closeOnActivate: false,
+                                onPressed: _clearTeamAndStatusFilters,
+                                leadingIcon: const Icon(
+                                  Icons.clear_all,
+                                  size: 20,
+                                ),
+                                child: const Text('Clear all'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                builder: (context, controller, child) {
+                  final summaryLine =
+                      _overviewProjectsTabFilterSummaryLine(state);
+                  return Tooltip(
+                    message: summaryLine,
+                    child: InkWell(
+                      onTap: () {
+                        if (controller.isOpen) {
+                          controller.close();
+                        } else {
+                          controller.open();
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Filters',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.arrow_drop_down),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 16,
+                          ),
+                        ),
+                        child: Text(
+                          summaryLine,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+              final filterWidth = constraints.maxWidth < 600
+                  ? min(_filterFieldMaxWidth, constraints.maxWidth)
+                  : wideFilterWidth;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: filterWidth),
+                      child: filterMenu,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final listColumnMaxWidth = min(
+              _kLandingTaskListMaxWidth,
+              constraints.maxWidth,
+            );
+            final constrained = BoxConstraints(maxWidth: listColumnMaxWidth);
+            Widget bandFiltersLeft(Widget child) {
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: constrained,
+                  child: child,
+                ),
+              );
+            }
+
+            Widget bandSearch(Widget child) {
+              return Center(
+                child: ConstrainedBox(
+                  constraints: constrained,
+                  child: child,
+                ),
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                bandFiltersLeft(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        primary: false,
+                        physics: const ClampingScrollPhysics(),
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            _buildTaskFilterChip(
+                              value: 'all',
+                              label: 'All',
+                              selected: filterKey == 'all',
+                              selectedBg: null,
+                              selectedLabelColor: null,
+                              leading: null,
+                            ),
+                            _buildTaskFilterChip(
+                              value: 'assigned',
+                              label: 'Assigned to me',
+                              selected: filterKey == 'assigned',
+                              selectedBg: const Color(0xFF0D47A1),
+                              selectedLabelColor: Colors.white,
+                              leading: _assignedToMeFilterIcon(
+                                filterKey == 'assigned',
+                              ),
+                            ),
+                            _buildTaskFilterChip(
+                              value: 'created',
+                              label: widget.customizedFlat
+                                  ? 'My created...'
+                                  : 'My created tasks',
+                              selected: filterKey == 'created',
+                              selectedBg: Colors.lightBlue.shade200,
+                              selectedLabelColor: Colors.black87,
+                              leading: _myCreatedTasksFilterIcon(
+                                filterKey == 'created',
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: SizedBox(
+                                height: 32,
+                                child: VerticalDivider(
+                                  width: 1,
+                                  thickness: 1,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Text(
+                                'Sort',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleSmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ),
+                            _buildProjectSortDropdown(
+                              forOverviewProjectsTab: true,
+                            ),
                           ],
                         ),
                       ),
@@ -2549,6 +2829,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final hasProjFilters =
         _filterAssigneeMenuStaffIds.isNotEmpty ||
         _filterCreatorMenuStaffIds.isNotEmpty ||
+        _filterPicMenuStaffIds.isNotEmpty ||
         _filterCreateDateEngaged ||
         _selectedProjectStatusFilters.isNotEmpty ||
         _taskSearchController.text.trim().isNotEmpty;
@@ -3585,6 +3866,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   void _applySavedFiltersFull(LandingTaskFilters data, AppState state) {
     _applySavedFiltersPartial(data, state);
     _applyTeamsAndAssigneesFromSaved(data, state);
+    _normalizeProjectSortColumnForOverviewProjectsTabIfNeeded();
   }
 
   void _persistLandingFilters() {
@@ -4018,6 +4300,57 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     return parts.join(' · ');
   }
 
+  /// Overview → Projects tab filter chip summary (creator, assignee, PIC, created date, project status).
+  String _overviewProjectsTabFilterSummaryLine(AppState state) {
+    final parts = <String>[];
+    if (_filterCreatorMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterCreatorMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('Creator: ${names.join(', ')}');
+    }
+    if (_filterAssigneeMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterAssigneeMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('Assignee: ${names.join(', ')}');
+    }
+    if (_filterPicMenuStaffIds.isNotEmpty) {
+      final names =
+          _filterPicMenuStaffIds
+              .map((id) => state.assigneeById(id)?.name ?? id)
+              .toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      parts.add('PIC: ${names.join(', ')}');
+    }
+    final fmt = DateFormat.yMMMd();
+    if (_filterCreateDateEngaged) {
+      final a = _filterCreateDateStart != null
+          ? fmt.format(_filterCreateDateStart!)
+          : '…';
+      final b =
+          _filterCreateDateEnd != null ? fmt.format(_filterCreateDateEnd!) : '…';
+      parts.add('Created date: $a – $b');
+    } else {
+      final r = _defaultCreateDateRangeHk();
+      parts.add(
+        'Created date: ${fmt.format(r.$1)} – ${fmt.format(r.$2)} (default)',
+      );
+    }
+    if (_selectedProjectStatusFilters.isEmpty) {
+      parts.add('All status');
+    } else {
+      final sorted = _selectedProjectStatusFilters.toList()
+        ..sort();
+      parts.add('Status: ${sorted.join(', ')}');
+    }
+    return parts.join(' · ');
+  }
+
   bool _projectPassesCreateDateForDashboard(ProjectRecord p) {
     final cd = p.createDate;
     if (cd == null) return false;
@@ -4081,6 +4414,14 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         return _filterCreatorMenuStaffIds.contains(key);
       }).toList();
     }
+    if (_filterPicMenuStaffIds.isNotEmpty) {
+      list = list.where((p) {
+        final keys = p.picStaffUuids
+            .map((u) => _staffUuidToAppId[u] ?? u)
+            .where((k) => k.isNotEmpty);
+        return keys.any(_filterPicMenuStaffIds.contains);
+      }).toList();
+    }
     list = list.where(_projectPassesCreateDateForDashboard).toList();
     if (_selectedProjectStatusFilters.isNotEmpty) {
       list = list
@@ -4104,8 +4445,23 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     List<ProjectRecord> projects,
     AppState state,
   ) {
-    final asc = _projectSortAscending;
-    if (_projectSortColumn == null) {
+    var asc = _projectSortAscending;
+    var col = _projectSortColumn;
+    if (widget.customizedFlat && _overviewEntityTab == _kOverviewTabProject) {
+      const allowed = <ProjectListSortColumn?>{
+        null,
+        ProjectListSortColumn.creator,
+        ProjectListSortColumn.assignee,
+        ProjectListSortColumn.pic,
+        ProjectListSortColumn.lastUpdated,
+        ProjectListSortColumn.status,
+      };
+      if (!allowed.contains(col)) {
+        col = null;
+        asc = false;
+      }
+    }
+    if (col == null) {
       final out = List<ProjectRecord>.from(projects);
       out.sort((a, b) {
         final c =
@@ -4115,7 +4471,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       });
       return out;
     }
-    final col = _projectSortColumn!;
     final out = List<ProjectRecord>.from(projects);
     String assigneeLine(ProjectRecord p) {
       final keys = p.assigneeKeys(_staffUuidToAppId);
@@ -4126,9 +4481,21 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       return names.join(', ');
     }
 
+    String picLine(ProjectRecord p) {
+      final keys = p.picStaffUuids
+          .map((u) => _staffUuidToAppId[u] ?? u)
+          .where((k) => k.isNotEmpty);
+      final names = keys
+          .map((k) => state.assigneeById(k)?.name ?? k)
+          .toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return names.join(', ');
+    }
+
+    final sortCol = col;
     out.sort((a, b) {
       int c;
-      switch (col) {
+      switch (sortCol) {
         case ProjectListSortColumn.creator:
           c = ProjectTaskSort.cmpStrNullable(
             a.createByDisplayName,
@@ -4140,6 +4507,20 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           c = ProjectTaskSort.cmpStrNullable(
             assigneeLine(a),
             assigneeLine(b),
+            asc,
+          );
+          break;
+        case ProjectListSortColumn.pic:
+          c = ProjectTaskSort.cmpStrNullable(
+            picLine(a),
+            picLine(b),
+            asc,
+          );
+          break;
+        case ProjectListSortColumn.lastUpdated:
+          c = ProjectTaskSort.cmpDateForSort(
+            a.updateDate,
+            b.updateDate,
             asc,
           );
           break;
@@ -4160,9 +4541,101 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   }
 
   /// Project dashboard: sort column dropdown + direction toggle.
-  Widget _buildProjectSortDropdown() {
+  ///
+  /// [forOverviewProjectsTab]: Overview third tab — only Create date, Creator, Assignee, PIC,
+  /// Last updated, Status; default row label [Create date (default)].
+  Widget _buildProjectSortDropdown({bool forOverviewProjectsTab = false}) {
     final theme = Theme.of(context);
-    final hasColumn = _projectSortColumn != null;
+    final effectiveColumn = forOverviewProjectsTab
+        ? _projectSortColumnForOverviewDropdown
+        : _projectSortColumn;
+    final hasColumn = effectiveColumn != null;
+    final defaultLabel = forOverviewProjectsTab
+        ? 'Create date (default)'
+        : 'Created date (default)';
+    final items = forOverviewProjectsTab
+        ? <DropdownMenuItem<ProjectListSortColumn?>>[
+            DropdownMenuItem<ProjectListSortColumn?>(
+              value: null,
+              child: Text(
+                defaultLabel,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: effectiveColumn == null
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                ),
+              ),
+            ),
+            for (final c in const [
+              ProjectListSortColumn.creator,
+              ProjectListSortColumn.assignee,
+              ProjectListSortColumn.pic,
+              ProjectListSortColumn.lastUpdated,
+              ProjectListSortColumn.status,
+            ])
+              DropdownMenuItem<ProjectListSortColumn?>(
+                value: c,
+                child: Text(
+                  c.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: effectiveColumn == c
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+          ]
+        : <DropdownMenuItem<ProjectListSortColumn?>>[
+            DropdownMenuItem<ProjectListSortColumn?>(
+              value: null,
+              child: Text(
+                defaultLabel,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: _projectSortColumn == null
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                ),
+              ),
+            ),
+            for (final c in const [
+              ProjectListSortColumn.creator,
+              ProjectListSortColumn.assignee,
+              ProjectListSortColumn.startDate,
+              ProjectListSortColumn.endDate,
+              ProjectListSortColumn.status,
+            ])
+              DropdownMenuItem<ProjectListSortColumn?>(
+                value: c,
+                child: Text(
+                  c.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: _projectSortColumn == c
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+          ];
+    final String sortDirectionTooltip;
+    if (effectiveColumn == null) {
+      if (_projectSortAscending) {
+        sortDirectionTooltip = forOverviewProjectsTab
+            ? 'Create date: oldest first — tap for newest first'
+            : 'Created date: oldest first — tap for newest first';
+      } else {
+        sortDirectionTooltip = forOverviewProjectsTab
+            ? 'Create date: newest first — tap for oldest first'
+            : 'Created date: newest first — tap for oldest first';
+      }
+    } else {
+      sortDirectionTooltip = _projectSortAscending
+          ? 'Ascending — tap for descending'
+          : 'Descending — tap for ascending';
+    }
     return Padding(
       padding: const EdgeInsets.only(right: 4),
       child: Row(
@@ -4182,39 +4655,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                 ),
               ),
               child: DropdownButton<ProjectListSortColumn?>(
-                value: _projectSortColumn,
+                value: effectiveColumn,
                 isDense: true,
                 isExpanded: false,
                 underline: const SizedBox.shrink(),
                 borderRadius: BorderRadius.circular(8),
                 style: theme.textTheme.labelLarge,
-                items: [
-                  DropdownMenuItem<ProjectListSortColumn?>(
-                    value: null,
-                    child: Text(
-                      'Created date (default)',
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: _projectSortColumn == null
-                            ? FontWeight.w600
-                            : FontWeight.w400,
-                      ),
-                    ),
-                  ),
-                  for (final c in ProjectListSortColumn.values)
-                    DropdownMenuItem<ProjectListSortColumn?>(
-                      value: c,
-                      child: Text(
-                        c.label,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: _projectSortColumn == c
-                              ? FontWeight.w600
-                              : FontWeight.w400,
-                        ),
-                      ),
-                    ),
-                ],
+                items: items,
                 onChanged: (v) {
                   setState(() {
                     _projectSortColumn = v;
@@ -4226,13 +4673,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           ),
           const SizedBox(width: 2),
           Tooltip(
-            message: _projectSortColumn == null
-                ? (_projectSortAscending
-                    ? 'Created date: oldest first — tap for newest first'
-                    : 'Created date: newest first — tap for oldest first')
-                : (_projectSortAscending
-                    ? 'Ascending — tap for descending'
-                    : 'Descending — tap for ascending'),
+            message: sortDirectionTooltip,
             child: IconButton(
               visualDensity: VisualDensity.compact,
               padding: EdgeInsets.zero,
@@ -4331,10 +4772,96 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     final assigneeLine = keys
         .map((k) => state.assigneeById(k)?.name ?? k)
         .join(', ');
+    final picNamesLine = p.picStaffUuids
+        .map((u) {
+          final k = _staffUuidToAppId[u] ?? u;
+          return state.assigneeById(k)?.name ?? k;
+        })
+        .join(', ');
     final fmt = DateFormat('yyyy-MM-dd');
     final teamBiz =
         firstKey != null ? teamTintByAssigneeKey[firstKey] : null;
     final tint = TaskListCard.cardColorForPicTeam(teamBiz);
+    final theme = Theme.of(context);
+
+    final cardBody = openedFromOverview
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: Text(
+                  'P',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontSize: 13,
+                      ) ??
+                      TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      p.name,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'PIC(s): ${picNamesLine.isNotEmpty ? picNamesLine : '—'}',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Creator: ${p.createByDisplayName?.trim().isNotEmpty == true ? p.createByDisplayName!.trim() : '—'}',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${p.status} · Start ${p.startDate != null ? fmt.format(p.startDate!) : '—'} · End ${p.endDate != null ? fmt.format(p.endDate!) : '—'}',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                p.name,
+                style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Assignee(s): ${assigneeLine.isNotEmpty ? assigneeLine : '—'}',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Creator: ${p.createByDisplayName?.trim().isNotEmpty == true ? p.createByDisplayName!.trim() : '—'}',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${p.status} · Start ${p.startDate != null ? fmt.format(p.startDate!) : '—'} · End ${p.endDate != null ? fmt.format(p.endDate!) : '—'}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -4354,32 +4881,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         },
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                p.name,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Assignee(s): ${assigneeLine.isNotEmpty ? assigneeLine : '—'}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Creator: ${p.createByDisplayName?.trim().isNotEmpty == true ? p.createByDisplayName!.trim() : '—'}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${p.status} · Start ${p.startDate != null ? fmt.format(p.startDate!) : '—'} · End ${p.endDate != null ? fmt.format(p.endDate!) : '—'}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
-          ),
+          child: cardBody,
         ),
       ),
     );
@@ -4648,7 +5150,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Text(
+                  child: Text(
                       _taskSearchController.text.trim().isNotEmpty
                           ? 'No projects match your search.'
                           : hasProjFilters
@@ -5335,9 +5837,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
 
       final landingListChildren = <Widget>[
         if (filteredInitiatives.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 8),
-            child: Text(
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 8),
+                        child: Text(
               'Initiatives',
               style: Theme.of(context)
                   .textTheme
@@ -5350,9 +5852,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
           ),
         ],
         if (filteredTasks.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 16, bottom: 8),
-            child: Text(
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16, bottom: 8),
+                        child: Text(
               'Tasks (${filteredTasks.length})',
               style: Theme.of(context)
                   .textTheme
@@ -5377,12 +5879,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             padding: const EdgeInsets.only(top: 24, bottom: 8),
             child: Text(
               'Deleted tasks and sub-tasks',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
                     color: Colors.grey,
-                  ),
-            ),
-          ),
+                              ),
+                        ),
+                      ),
           if (filteredTasks.isEmpty)
             const Padding(
               padding: EdgeInsets.only(bottom: 12),
@@ -5479,9 +5981,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
             ),
           ),
           ?landingPaginationBar,
-        ],
-      );
-    }
+      ],
+    );
+  }
 
     if (widget.customizedFlat && dashCfg != null) {
       return DefaultTabController(
@@ -5505,12 +6007,19 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                   filtersHeaderExtent: _taskDashboardFiltersSliverExtent,
                   filtersMeasureKey:
                       _overviewTaskDashboardFiltersMeasureKeys[tabIndex],
-                  filtersHeaderChild: _buildLandingFiltersSortSearchSection(
-                    tabCtx,
-                    state,
-                    teamsSorted,
-                    filterKey,
-                  ),
+                  filtersHeaderChild: tabIndex == 2
+                      ? _buildOverviewProjectsFiltersSortSearchSection(
+                          tabCtx,
+                          state,
+                          teamsSorted,
+                          filterKey,
+                        )
+                      : _buildLandingFiltersSortSearchSection(
+                          tabCtx,
+                          state,
+                          teamsSorted,
+                          filterKey,
+                        ),
                   overviewEntityTabBar: _buildOverviewEntityTabBar(tabCtx),
                 );
 
