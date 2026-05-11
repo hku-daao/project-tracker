@@ -1,0 +1,266 @@
+﻿[
+    {
+        "holiday":  "HKU",
+        "name":  "New Year\u0027s Eve (PM - UH)",
+        "date":  "2025-12-31",
+        "fullOrPm":  "PM"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The first day of January",
+        "date":  "2026-01-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "Lunar New Year\u0027s Eve (PM - UH)",
+        "date":  "2026-02-16",
+        "fullOrPm":  "PM"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Lunar New Year’s Day",
+        "date":  "2026-02-17",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The second day of Lunar New Year",
+        "date":  "2026-02-18",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The third day of Lunar New Year",
+        "date":  "2026-02-19",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "HKU Foundation Day (UH)",
+        "date":  "2026-03-16",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Good Friday",
+        "date":  "2026-04-03",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Good Friday",
+        "date":  "2026-04-04",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Ching Ming Festival",
+        "date":  "2026-04-06",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Easter Monday",
+        "date":  "2026-04-07",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Labour Day",
+        "date":  "2026-05-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following the Birthday of the Buddha",
+        "date":  "2026-05-25",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Tuen Ng Festival",
+        "date":  "2026-06-19",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Hong Kong Special Administrative Region Establishment Day",
+        "date":  "2026-07-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following the Chinese Mid-Autumn Festival",
+        "date":  "2026-09-26",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "National Day",
+        "date":  "2026-10-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Chung Yeung Festival",
+        "date":  "2026-10-19",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "Christmas Eve (UH)",
+        "date":  "2026-12-24",
+        "fullOrPm":  "PM"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Christmas Day",
+        "date":  "2026-12-25",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The first weekday after Christmas Day",
+        "date":  "2026-12-26",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "New Year\u0027s Eve (PM - UH)",
+        "date":  "2026-12-31",
+        "fullOrPm":  "PM"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The first day of January",
+        "date":  "2027-01-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "Lunar New Year\u0027s Eve (PM - UH)",
+        "date":  "2027-02-05",
+        "fullOrPm":  "PM"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Lunar New Year’s Day",
+        "date":  "2027-02-06",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The second day of Lunar New Year",
+        "date":  "2027-02-07",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The third day of Lunar New Year",
+        "date":  "2027-02-08",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The fourth day of Lunar New Year",
+        "date":  "2027-02-09",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "HKU Foundation Day (UH)",
+        "date":  "2027-03-16",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Good Friday",
+        "date":  "2027-03-26",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Good Friday",
+        "date":  "2027-03-27",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The day following Easter Monday",
+        "date":  "2027-03-29",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Ching Ming Festival",
+        "date":  "2027-04-05",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Labour Day",
+        "date":  "2027-05-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Birthday of the Buddha",
+        "date":  "2027-05-13",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Tuen Ng Festival",
+        "date":  "2027-06-09",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Hong Kong Special Administrative Region Establishment Day",
+        "date":  "2027-07-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Mid-Autumn Festival",
+        "date":  "2027-09-16",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "National Day",
+        "date":  "2027-10-01",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Chung Yeung Festival",
+        "date":  "2027-10-08",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "Christmas Eve (UH)",
+        "date":  "2027-12-24",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "Christmas Day",
+        "date":  "2027-12-25",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HK",
+        "name":  "The first weekday after Christmas Day",
+        "date":  "2027-12-27",
+        "fullOrPm":  "Full"
+    },
+    {
+        "holiday":  "HKU",
+        "name":  "New Year\u0027s Eve (PM - UH)",
+        "date":  "2027-12-31",
+        "fullOrPm":  "PM"
+    }
+]

@@ -26,6 +26,7 @@ import '../utils/attachment_url_launch.dart';
 import '../utils/copyable_snackbar.dart';
 import '../utils/due_span_policy.dart';
 import '../utils/hk_time.dart';
+import '../utils/holiday_date_picker.dart';
 import '../utils/singular_workflow_guards.dart';
 import '../utils/subtask_list_sort.dart';
 import '../web_deep_link.dart';
@@ -2374,7 +2375,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   }
 
   Future<void> _pickStartDate() async {
-    final d = await showDatePicker(
+    final d = await showHolidayAwareDatePicker(
       context: context,
       initialDate: _startDate ?? _dueDate ?? DateTime.now(),
       firstDate: DateTime(2020),
@@ -2393,7 +2394,7 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
   }
 
   Future<void> _pickDueDate() async {
-    final d = await showDatePicker(
+    final d = await showHolidayAwareDatePicker(
       context: context,
       initialDate: _dueDate ?? _startDate ?? DateTime.now(),
       firstDate: DateTime(2020),

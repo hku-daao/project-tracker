@@ -13,6 +13,7 @@ import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/holiday_date_picker.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../widgets/pic_multi_dropdown_text_field.dart';
@@ -822,7 +823,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             onPressed: _saving
                                 ? null
                                 : () async {
-                                    final d = await showDatePicker(
+                                    final d = await showHolidayAwareDatePicker(
                                       context: context,
                                       initialDate:
                                           _editStart ?? HkTime.todayDateOnlyHk(),
@@ -848,7 +849,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             onPressed: _saving
                                 ? null
                                 : () async {
-                                    final d = await showDatePicker(
+                                    final d = await showHolidayAwareDatePicker(
                                       context: context,
                                       initialDate: _editEnd ??
                                           _editStart ??

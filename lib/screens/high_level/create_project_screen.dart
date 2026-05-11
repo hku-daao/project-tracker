@@ -10,6 +10,7 @@ import '../../services/backend_api.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/holiday_date_picker.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../widgets/pic_multi_dropdown_text_field.dart';
@@ -426,7 +427,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                       onPressed: _submitting
                           ? null
                           : () async {
-                              final d = await showDatePicker(
+                              final d = await showHolidayAwareDatePicker(
                                 context: context,
                                 initialDate: _startDate ?? HkTime.todayDateOnlyHk(),
                                 firstDate: DateTime(2020),
@@ -455,7 +456,7 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                       onPressed: _submitting
                           ? null
                           : () async {
-                              final d = await showDatePicker(
+                              final d = await showHolidayAwareDatePicker(
                                 context: context,
                                 initialDate:
                                     _endDate ?? _startDate ?? HkTime.todayDateOnlyHk(),

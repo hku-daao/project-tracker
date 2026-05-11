@@ -13,6 +13,7 @@ import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/holiday_date_picker.dart';
 import '../../utils/singular_workflow_guards.dart';
 
 /// Warn before leaving [CreateSubtaskScreen] while a draft exists (back button / system back).
@@ -446,7 +447,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                             onPressed: _submitting
                                 ? null
                                 : () async {
-                                    final d = await showDatePicker(
+                                    final d = await showHolidayAwareDatePicker(
                                       context: context,
                                       initialDate: _startDate,
                                       firstDate: DateTime(2020),
@@ -496,7 +497,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                             onPressed: _submitting
                                 ? null
                                 : () async {
-                                    final d = await showDatePicker(
+                                    final d = await showHolidayAwareDatePicker(
                                       context: context,
                                       initialDate: _endDate ??
                                           HkTime.addWorkingDaysAfter(

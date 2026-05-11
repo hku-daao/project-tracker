@@ -14,6 +14,7 @@ import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/holiday_date_picker.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
@@ -1120,7 +1121,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                       ? null
                       : () async {
                           final initial = _startDate ?? _anchorCreateDate;
-                          final d = await showDatePicker(
+                          final d = await showHolidayAwareDatePicker(
                             context: context,
                             initialDate: initial,
                             firstDate: DateTime(2020),
@@ -1170,7 +1171,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                       ? null
                       : () async {
                           final start = _startDate ?? _anchorCreateDate;
-                          final d = await showDatePicker(
+                          final d = await showHolidayAwareDatePicker(
                             context: context,
                             initialDate: _endDate ?? HkTime.addWorkingDaysAfter(start, 1),
                             firstDate: start,

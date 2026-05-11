@@ -13,6 +13,7 @@ import '../models/deleted_record.dart';
 import '../models/singular_comment.dart';
 import '../models/singular_subtask.dart';
 import '../models/staff_for_assignment.dart';
+import '../models/calendar_holiday.dart';
 import '../models/project_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
@@ -819,6 +820,31 @@ class SupabaseService {
     } catch (e) {
       debugPrint('fetchAllProjectsFromSupabase: $e');
       return [];
+    }
+  }
+
+  /// HKU / HK rows in [calendar_holiday] for date pickers (inclusive date bounds).
+  static Future<List<CalendarHoliday>> fetchCalendarHolidaysBetween(
+    DateTime fromInclusive,
+    DateTime toInclusive,
+  ) async {
+    if (!_enabled) return const [];
+    String ymd(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    try {
+      final res = await Supabase.instance.client
+          .from('calendar_holiday')
+          .select('holiday_type,name,holiday_date,full_or_pm')
+          .gte('holiday_date', ymd(fromInclusive))
+          .lte('holiday_date', ymd(toInclusive))
+          .order('holiday_date', ascending: true);
+      final list = res as List;
+      return list
+          .map((raw) => CalendarHoliday.fromMap(Map<String, dynamic>.from(raw as Map)))
+          .toList();
+    } catch (e) {
+      debugPrint('fetchCalendarHolidaysBetween: $e');
+      return const [];
     }
   }
 

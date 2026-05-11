@@ -21,6 +21,7 @@ import '../../utils/attachment_url_launch.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/holiday_date_picker.dart';
 import '../../web_deep_link.dart';
 import '../../widgets/attachment_add_link_dialog.dart';
 import '../../widgets/attachment_edit_dialog.dart';
@@ -1871,7 +1872,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                 onPressed: _saving
                                     ? null
                                     : () async {
-                                        final d = await showDatePicker(
+                                        final d = await showHolidayAwareDatePicker(
                                           context: context,
                                           initialDate:
                                               _editStart ?? DateTime.now(),
@@ -1907,7 +1908,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                     ? null
                                     : () async {
                                         final start = _editStart;
-                                        final d = await showDatePicker(
+                                        final d = await showHolidayAwareDatePicker(
                                           context: context,
                                           initialDate:
                                               _editDue ?? DateTime.now(),
