@@ -1876,10 +1876,8 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                           context: context,
                                           initialDate:
                                               _editStart ?? DateTime.now(),
-                                          firstDate: DateTime(2020),
-                                          lastDate: DateTime.now().add(
-                                            const Duration(days: 365 * 10),
-                                          ),
+                                          firstDate: kHolidayPickerWideFirstDate,
+                                          lastDate: kHolidayPickerWideLastDate,
                                         );
                                         if (d != null) {
                                           setState(() => _editStart = d);
@@ -1912,10 +1910,9 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
                                           context: context,
                                           initialDate:
                                               _editDue ?? DateTime.now(),
-                                          firstDate: start ?? DateTime(2020),
-                                          lastDate: DateTime.now().add(
-                                            const Duration(days: 365 * 10),
-                                          ),
+                                          firstDate:
+                                              start ?? kHolidayPickerWideFirstDate,
+                                          lastDate: kHolidayPickerWideLastDate,
                                         );
                                         if (d != null) {
                                           setState(() => _editDue = d);

@@ -827,9 +827,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                       context: context,
                                       initialDate:
                                           _editStart ?? HkTime.todayDateOnlyHk(),
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime.now()
-                                          .add(const Duration(days: 365 * 10)),
+                                      firstDate: kHolidayPickerWideFirstDate,
+                                      lastDate: kHolidayPickerWideLastDate,
                                     );
                                     if (d != null) setState(() => _editStart = d);
                                   },
@@ -854,9 +853,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                                       initialDate: _editEnd ??
                                           _editStart ??
                                           HkTime.todayDateOnlyHk(),
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime.now()
-                                          .add(const Duration(days: 365 * 10)),
+                                      firstDate: kHolidayPickerWideFirstDate,
+                                      lastDate: kHolidayPickerWideLastDate,
                                     );
                                     if (d != null) setState(() => _editEnd = d);
                                   },

@@ -430,9 +430,8 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                               final d = await showHolidayAwareDatePicker(
                                 context: context,
                                 initialDate: _startDate ?? HkTime.todayDateOnlyHk(),
-                                firstDate: DateTime(2020),
-                                lastDate:
-                                    DateTime.now().add(const Duration(days: 365 * 10)),
+                                firstDate: kHolidayPickerWideFirstDate,
+                                lastDate: kHolidayPickerWideLastDate,
                               );
                               if (d != null) setState(() => _startDate = d);
                             },
@@ -460,9 +459,8 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
                                 context: context,
                                 initialDate:
                                     _endDate ?? _startDate ?? HkTime.todayDateOnlyHk(),
-                                firstDate: DateTime(2020),
-                                lastDate:
-                                    DateTime.now().add(const Duration(days: 365 * 10)),
+                                firstDate: kHolidayPickerWideFirstDate,
+                                lastDate: kHolidayPickerWideLastDate,
                               );
                               if (d != null) setState(() => _endDate = d);
                             },

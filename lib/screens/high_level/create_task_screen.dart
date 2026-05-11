@@ -1124,10 +1124,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                           final d = await showHolidayAwareDatePicker(
                             context: context,
                             initialDate: initial,
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 365 * 3),
-                            ),
+                            firstDate: kHolidayPickerWideFirstDate,
+                            lastDate: kHolidayPickerWideLastDate,
                           );
                           if (d != null) setState(() => _startDate = d);
                         },
@@ -1175,8 +1173,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
                             context: context,
                             initialDate: _endDate ?? HkTime.addWorkingDaysAfter(start, 1),
                             firstDate: start,
-                            lastDate:
-                                DateTime.now().add(const Duration(days: 365 * 3)),
+                            lastDate: kHolidayPickerWideLastDate,
                           );
                           if (d != null) setState(() => _endDate = d);
                         },

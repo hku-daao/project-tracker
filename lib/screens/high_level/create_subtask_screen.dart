@@ -450,10 +450,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                                     final d = await showHolidayAwareDatePicker(
                                       context: context,
                                       initialDate: _startDate,
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime.now().add(
-                                        const Duration(days: 365 * 10),
-                                      ),
+                                      firstDate: kHolidayPickerWideFirstDate,
+                                      lastDate: kHolidayPickerWideLastDate,
                                     );
                                     if (d != null) {
                                       setState(() {
@@ -505,9 +503,7 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                                             1,
                                           ),
                                       firstDate: _startDate,
-                                      lastDate: DateTime.now().add(
-                                        const Duration(days: 365 * 10),
-                                      ),
+                                      lastDate: kHolidayPickerWideLastDate,
                                     );
                                     if (d != null) {
                                       setState(() => _endDate = d);

@@ -2378,8 +2378,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final d = await showHolidayAwareDatePicker(
       context: context,
       initialDate: _startDate ?? _dueDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 10)),
+      firstDate: kHolidayPickerWideFirstDate,
+      lastDate: kHolidayPickerWideLastDate,
     );
     if (d == null || !mounted) return;
     if (_dueDate != null && _dateOnlyCompare(d, _dueDate!) > 0) {
@@ -2397,8 +2397,8 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final d = await showHolidayAwareDatePicker(
       context: context,
       initialDate: _dueDate ?? _startDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 10)),
+      firstDate: kHolidayPickerWideFirstDate,
+      lastDate: kHolidayPickerWideLastDate,
     );
     if (d == null || !mounted) return;
     if (_startDate != null && _dateOnlyCompare(_startDate!, d) > 0) {
