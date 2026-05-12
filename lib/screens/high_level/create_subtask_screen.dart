@@ -434,6 +434,8 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                         nameController: _nameController,
                         descController: _descController,
                         readOnly: _submitting,
+                        promptLabelText:
+                            'What should this sub-task be about?',
                         extraContext: [
                           'Parent task: ${task.name}',
                           'Project: ${task.projectName?.trim().isNotEmpty == true ? task.projectName!.trim() : "—"}',

@@ -10,12 +10,16 @@ class TaskLlmAssistantPanel extends StatefulWidget {
     required this.descController,
     required this.readOnly,
     this.extraContext,
+    this.promptLabelText = 'What should this task be about?',
   });
 
   final TextEditingController nameController;
   final TextEditingController descController;
   final bool readOnly;
   final String? extraContext;
+
+  /// Label for the prompt [TextField] (e.g. task vs sub-task wording).
+  final String promptLabelText;
 
   @override
   State<TaskLlmAssistantPanel> createState() => _TaskLlmAssistantPanelState();
@@ -208,8 +212,8 @@ class _TaskLlmAssistantPanelState extends State<TaskLlmAssistantPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final configured = DeepseekService.isConfigured;
-    final suggestStyle = FilledButton.styleFrom(
-      minimumSize: const Size(double.infinity, _kTouchMin),
+    final suggestButtonStyle = FilledButton.styleFrom(
+      minimumSize: const Size(0, _kTouchMin),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       tapTargetSize: MaterialTapTargetSize.padded,
     );
@@ -260,33 +264,57 @@ class _TaskLlmAssistantPanelState extends State<TaskLlmAssistantPanel> {
                   maxLines: 8,
                   textInputAction: TextInputAction.newline,
                   keyboardType: TextInputType.multiline,
-                  decoration: const InputDecoration(
-                    labelText: 'What should this task be about?',
+                  decoration: InputDecoration(
+                    labelText: widget.promptLabelText,
                     hintText: 'Paste notes, an email snippet, or bullet goals…',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     alignLabelWithHint: true,
                     isDense: false,
-                    contentPadding: EdgeInsets.symmetric(
+                    contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 14,
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
-                FilledButton.tonalIcon(
-                  style: suggestStyle,
-                  onPressed: widget.readOnly || !configured || _busy
-                      ? null
-                      : _send,
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5),
-                        )
-                      : const Icon(Icons.send, size: 20),
-                  label: Text(
-                    _busy ? 'Please wait...' : 'Suggest name & description',
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    style: suggestButtonStyle,
+                    onPressed: widget.readOnly || !configured || _busy
+                        ? null
+                        : _send,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_busy)
+                          SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: theme.colorScheme.primary,
+                            ),
+                          )
+                        else
+                          Icon(
+                            Icons.send,
+                            size: 20,
+                            color: theme.colorScheme.primary,
+                          ),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            _busy
+                                ? 'Please wait...'
+                                : 'Suggest name & description',
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (_error != null) ...[
