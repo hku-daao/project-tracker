@@ -40,6 +40,44 @@
       "rewrites": [
         { "source": "**", "destination": "/index.html" }
       ]
+    },
+    {
+      "target": "llm",
+      "public": "build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "redirects": [
+        {
+          "source": "/favicon.ico",
+          "destination": "/favicon.png?v=20260330",
+          "type": 302
+        }
+      ],
+      "rewrites": [
+        { "source": "**", "destination": "/index.html" }
+      ]
+    },
+    {
+      "target": "daao",
+      "public": "build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "redirects": [
+        {
+          "source": "/favicon.ico",
+          "destination": "/favicon.png?v=20260330",
+          "type": 302
+        }
+      ],
+      "rewrites": [
+        { "source": "**", "destination": "/index.html" }
+      ]
     }
   ]
 }

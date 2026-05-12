@@ -18,6 +18,7 @@ import '../../utils/holiday_date_picker.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
 import '../../widgets/staff_assignee_picker_panel.dart';
+import '../../widgets/task_llm_assistant_panel.dart';
 import '../task_detail_screen.dart';
 
 Future<bool> _confirmLeaveCreateTaskDraftLocal(BuildContext context) async {
@@ -223,6 +224,23 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
     }
     final p = widget.projectId?.trim();
     return p != null && p.isNotEmpty ? p : null;
+  }
+
+  /// Optional context passed to the in-form LLM (project name when known).
+  String? _llmExtraContext() {
+    final fromDetail = _projectNameFromDetail?.trim();
+    if (fromDetail != null && fromDetail.isNotEmpty) {
+      return 'Project: $fromDetail';
+    }
+    final id = _selectedProjectId?.trim();
+    if (id == null || id.isEmpty) return null;
+    for (final p in _myCreatedProjects) {
+      if (p.id == id) {
+        final n = p.name.trim();
+        if (n.isNotEmpty) return 'Project: $n';
+      }
+    }
+    return null;
   }
 
   Future<void> _onFlowHome() async {
@@ -1107,6 +1125,13 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
               const SizedBox(height: 16),
               _buildPicSection(context, state),
             ],
+            const SizedBox(height: 16),
+            TaskLlmAssistantPanel(
+              nameController: _nameController,
+              descController: _descController,
+              readOnly: _submitting,
+              extraContext: _llmExtraContext(),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _nameController,

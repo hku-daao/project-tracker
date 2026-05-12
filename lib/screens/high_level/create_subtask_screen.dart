@@ -11,6 +11,7 @@ import '../../services/supabase_service.dart';
 import '../../utils/copyable_snackbar.dart';
 import '../../utils/home_navigation.dart';
 import '../../widgets/flow_navigation_bar.dart';
+import '../../widgets/task_llm_assistant_panel.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/holiday_date_picker.dart';
@@ -429,6 +430,16 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
                         ),
                         const SizedBox(height: 16),
                       ],
+                      TaskLlmAssistantPanel(
+                        nameController: _nameController,
+                        descController: _descController,
+                        readOnly: _submitting,
+                        extraContext: [
+                          'Parent task: ${task.name}',
+                          'Project: ${task.projectName?.trim().isNotEmpty == true ? task.projectName!.trim() : "—"}',
+                        ].join('\n'),
+                      ),
+                      const SizedBox(height: 16),
                       TextFormField(
                         controller: _nameController,
                         textInputAction: TextInputAction.next,
