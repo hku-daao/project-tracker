@@ -58,6 +58,9 @@ class TaskDetailScreen extends StatefulWidget {
   /// Parent project id for navigation label (optional).
   final String? projectIdForBack;
 
+  /// Asana landing slide panel: close control instead of stack back.
+  final VoidCallback? onAsanaPanelClose;
+
   const TaskDetailScreen({
     super.key,
     required this.taskId,
@@ -66,6 +69,7 @@ class TaskDetailScreen extends StatefulWidget {
     this.openedFromProjectDetail = false,
     this.openedFromProjectDashboard = false,
     this.projectIdForBack,
+    this.onAsanaPanelClose,
   });
 
   @override
@@ -76,14 +80,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       syncWebLocationForTaskDetail(widget.taskId);
     }
   }
 
   @override
   void dispose() {
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       clearWebTaskDetailFromLocation();
     }
     super.dispose();
@@ -107,6 +111,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         openedFromProjectDetail: widget.openedFromProjectDetail,
         openedFromProjectDashboard: widget.openedFromProjectDashboard,
         projectIdForBack: widget.projectIdForBack,
+        onAsanaPanelClose: widget.onAsanaPanelClose,
       );
     }
     return _LegacyTaskDetailView(
@@ -138,6 +143,7 @@ class SingularTaskDetailView extends StatefulWidget {
   final bool openedFromProjectDetail;
   final bool openedFromProjectDashboard;
   final String? projectIdForBack;
+  final VoidCallback? onAsanaPanelClose;
 
   const SingularTaskDetailView({
     super.key,
@@ -147,6 +153,7 @@ class SingularTaskDetailView extends StatefulWidget {
     this.openedFromProjectDetail = false,
     this.openedFromProjectDashboard = false,
     this.projectIdForBack,
+    this.onAsanaPanelClose,
   });
 
   @override
@@ -2447,23 +2454,27 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
     final hasLinkedProject =
         task.projectId != null && task.projectId!.trim().isNotEmpty;
 
+    final inAsanaPanel = widget.onAsanaPanelClose != null;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Task: ${task.name}'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _saving
-              ? null
-              : () {
-                  if (kIsWeb) {
-                    webHistoryBack();
-                  } else {
-                    _singularFlowBack();
-                  }
-                },
-        ),
-      ),
+      appBar: inAsanaPanel
+          ? null
+          : AppBar(
+              title: Text('Task: ${task.name}'),
+              backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _saving
+                    ? null
+                    : () {
+                        if (kIsWeb) {
+                          webHistoryBack();
+                        } else {
+                          _singularFlowBack();
+                        }
+                      },
+              ),
+            ),
       body: Stack(
         children: [
           AbsorbPointer(
@@ -2471,11 +2482,11 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             child: Opacity(
               opacity: _saving ? 0.55 : 1,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
+                padding: EdgeInsets.fromLTRB(
                   16,
+                  inAsanaPanel ? 8 : 16,
                   16,
-                  16,
-                  16 + kFlowNavBarScrollBottomPadding,
+                  16 + (inAsanaPanel ? 16 : kFlowNavBarScrollBottomPadding),
                 ),
                 child: Form(
                   key: _formKey,
@@ -3740,21 +3751,27 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
             ),
         ],
       ),
-      bottomNavigationBar: FlowBottomNavThree(
-        onBack: _barBack,
-        onHome: _singularFlowHome,
-        midLabel: hasLinkedProject ? 'Project' : null,
-        midIcon: hasLinkedProject
-            ? const Icon(Icons.folder_outlined, size: 18)
-            : null,
-        onMid: hasLinkedProject ? () => _barOpenProject(task) : null,
-        enabled: !_saving,
-      ),
+      bottomNavigationBar: inAsanaPanel
+          ? null
+          : FlowBottomNavThree(
+              onBack: _barBack,
+              onHome: _singularFlowHome,
+              midLabel: hasLinkedProject ? 'Project' : null,
+              midIcon: hasLinkedProject
+                  ? const Icon(Icons.folder_outlined, size: 18)
+                  : null,
+              onMid: hasLinkedProject ? () => _barOpenProject(task) : null,
+              enabled: !_saving,
+            ),
     );
   }
 
   void _singularFlowBack() {
     if (_saving) return;
+    if (widget.onAsanaPanelClose != null) {
+      widget.onAsanaPanelClose!();
+      return;
+    }
     if (widget.openedFromProjectDetail) {
       Navigator.of(context).pop();
     } else if (widget.openedFromProjectDashboard) {
@@ -3768,6 +3785,10 @@ class _SingularTaskDetailViewState extends State<SingularTaskDetailView> {
 
   void _barBack() {
     if (_saving) return;
+    if (widget.onAsanaPanelClose != null) {
+      widget.onAsanaPanelClose!();
+      return;
+    }
     if (kIsWeb) {
       webHistoryBack();
     } else {

@@ -54,6 +54,7 @@ class SubtaskDetailScreen extends StatefulWidget {
     this.openedFromProjectDetail = false,
     this.openedFromProjectDashboard = false,
     this.onParentTaskListRefresh,
+    this.onAsanaPanelClose,
   });
 
   final String subtaskId;
@@ -73,6 +74,8 @@ class SubtaskDetailScreen extends StatefulWidget {
 
   /// After delete/undo writes succeed — refresh parent [TaskDetailScreen] sub-task lists.
   final Future<void> Function()? onParentTaskListRefresh;
+
+  final VoidCallback? onAsanaPanelClose;
 
   @override
   State<SubtaskDetailScreen> createState() => _SubtaskDetailScreenState();
@@ -113,7 +116,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       syncWebLocationForSubtaskDetail(widget.subtaskId);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
@@ -121,7 +124,7 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
 
   @override
   void dispose() {
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       clearWebSubtaskDetailFromLocation(parentTaskId: _sub?.taskId);
     }
     _nameController.dispose();
@@ -1668,31 +1671,35 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
     final hasLinkedProject =
         parent.projectId != null && parent.projectId!.trim().isNotEmpty;
 
+    final inAsanaPanel = widget.onAsanaPanelClose != null;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Sub-task: ${st.subtaskName}'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _saving
-              ? null
-              : () {
-                  if (kIsWeb) {
-                    webHistoryBack();
-                  } else {
-                    Navigator.of(context).pop(true);
-                  }
-                },
-        ),
-      ),
+      appBar: inAsanaPanel
+          ? null
+          : AppBar(
+              title: Text('Sub-task: ${st.subtaskName}'),
+              backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _saving
+                    ? null
+                    : () {
+                        if (kIsWeb) {
+                          webHistoryBack();
+                        } else {
+                          Navigator.of(context).pop(true);
+                        }
+                      },
+              ),
+            ),
       body: Stack(
         children: [
           SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(
+            padding: EdgeInsets.fromLTRB(
               16,
+              inAsanaPanel ? 8 : 16,
               16,
-              16,
-              16 + kFlowNavBarScrollBottomPadding,
+              16 + (inAsanaPanel ? 16 : kFlowNavBarScrollBottomPadding),
             ),
             child: FocusTraversalGroup(
               policy: OrderedTraversalPolicy(),
@@ -2421,29 +2428,39 @@ class _SubtaskDetailScreenState extends State<SubtaskDetailScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: FlowBottomNavFour(
-        onBack: _subtaskBarBack,
-        mid1Label: 'Task',
-        mid1Icon: const Icon(Icons.assignment_outlined, size: 18),
-        onMid1: _barOpenParentTask,
-        mid2Label: hasLinkedProject ? 'Project' : null,
-        mid2Icon: hasLinkedProject
-            ? const Icon(Icons.folder_outlined, size: 18)
-            : null,
-        onMid2: hasLinkedProject ? _barOpenProject : null,
-        onHome: _subtaskFlowHome,
-        enabled: !_saving,
-      ),
+      bottomNavigationBar: inAsanaPanel
+          ? null
+          : FlowBottomNavFour(
+              onBack: _subtaskBarBack,
+              mid1Label: 'Task',
+              mid1Icon: const Icon(Icons.assignment_outlined, size: 18),
+              onMid1: _barOpenParentTask,
+              mid2Label: hasLinkedProject ? 'Project' : null,
+              mid2Icon: hasLinkedProject
+                  ? const Icon(Icons.folder_outlined, size: 18)
+                  : null,
+              onMid2: hasLinkedProject ? _barOpenProject : null,
+              onHome: _subtaskFlowHome,
+              enabled: !_saving,
+            ),
     );
   }
 
   void _subtaskFlowBack() {
     if (_saving) return;
+    if (widget.onAsanaPanelClose != null) {
+      widget.onAsanaPanelClose!();
+      return;
+    }
     _onBackToTask();
   }
 
   void _subtaskBarBack() {
     if (_saving) return;
+    if (widget.onAsanaPanelClose != null) {
+      widget.onAsanaPanelClose!();
+      return;
+    }
     if (kIsWeb) {
       webHistoryBack();
     } else {

@@ -254,7 +254,9 @@ class _CreateProjectScreenState extends State<CreateProjectScreen> {
       if (mounted) state.applyProjects(projects);
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token != null) {
-        final data = await SupabaseService.fetchTasksFromSupabase();
+        final data = await SupabaseService.fetchTasksFromSupabase(
+          visibility: state.buildTaskFetchVisibility(),
+        );
         if (data != null && mounted) {
           state.applyTasksFromSupabase(data);
         }

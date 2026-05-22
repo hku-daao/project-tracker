@@ -2,6 +2,10 @@
 
 A new Flutter project.
 
+## Local development
+
+Run in Chrome on your PC (testing Supabase + test Railway): **`docs/LOCAL_DEV.md`** — or `.\scripts\run_chrome.ps1`.
+
 ## Deploy / environments
 
 **Testing vs production** (Firebase Hosting, Supabase, Railway) is documented in **`docs/ENVIRONMENTS.md`**. Web deploy steps: **`DEPLOY.md`**.

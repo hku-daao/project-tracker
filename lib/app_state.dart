@@ -14,6 +14,7 @@ import 'models/team.dart';
 import 'priority.dart';
 import 'services/backend_api.dart';
 import 'services/supabase_service.dart';
+import 'services/task_fetch_visibility.dart';
 import 'utils/hk_time.dart';
 
 /// Global app state: initiatives (high-level), tasks (low-level), assignees, teams, comments, milestones.
@@ -48,6 +49,9 @@ class AppState extends ChangeNotifier {
   /// `staff.app_id` values from `subordinate.subordinate_id` where `supervisor_id` = current user.
   List<String> _subordinateAppIds = [];
 
+  /// `staff.id` uuids for those subordinates (resolved at login for filters + visibility).
+  List<String> _subordinateStaffUuids = [];
+
   /// Revamp step 1: staff + team lookup by login email (Supabase).
   StaffTeamLookupResult? _revampStaffLookup;
 
@@ -65,6 +69,9 @@ class AppState extends ChangeNotifier {
 
   List<String> get subordinateAppIds => List.unmodifiable(_subordinateAppIds);
 
+  List<String> get subordinateStaffUuids =>
+      List.unmodifiable(_subordinateStaffUuids);
+
   /// Logged-in user plus subordinates from `subordinate` (same `staff.app_id` keys).
   Set<String> get assigneeVisibilityAppIds {
     final mine = _userStaffAppId?.trim();
@@ -72,9 +79,70 @@ class AppState extends ChangeNotifier {
     return {mine, ..._subordinateAppIds};
   }
 
+  /// All staff keys for matching loaded tasks (app_id + uuid), aligned with Supabase fetch scope.
+  Set<String> get taskVisibilityLookupKeys {
+    final out = <String>{};
+    void add(String? v) {
+      final s = v?.trim();
+      if (s != null && s.isNotEmpty) out.add(s);
+    }
+
+    add(_userStaffAppId);
+    add(_userStaffId);
+    for (final a in _subordinateAppIds) {
+      add(a);
+    }
+    for (final u in _subordinateStaffUuids) {
+      add(u);
+    }
+    return out;
+  }
+
+  /// Scope for Supabase task fetch (me + subordinates as creator or assignee).
+  TaskFetchVisibility? buildTaskFetchVisibility() {
+    final mine = _userStaffAppId?.trim();
+    if (mine == null || mine.isEmpty) return null;
+    return TaskFetchVisibility(
+      supervisorStaffAppId: mine,
+      supervisorStaffUuid: _userStaffId,
+      subordinateStaffAppIds: _subordinateAppIds,
+      subordinateStaffUuids: _subordinateStaffUuids,
+    );
+  }
+
   void setSubordinateAppIds(List<String> ids) {
     _subordinateAppIds = List<String>.from(ids);
     notifyListeners();
+  }
+
+  void setSubordinateStaffUuids(List<String> uuids) {
+    _subordinateStaffUuids = List<String>.from(uuids);
+    notifyListeners();
+  }
+
+  static bool _visibilityKeyMatches(String value, Set<String> keys) {
+    final v = value.trim();
+    if (v.isEmpty) return false;
+    if (keys.contains(v)) return true;
+    final lower = v.toLowerCase();
+    for (final k in keys) {
+      if (k.toLowerCase() == lower) return true;
+    }
+    return false;
+  }
+
+  /// Client-side visibility: assignee or creator is self or a subordinate (uuid or app_id).
+  bool taskMatchesSupervisorScope(Task t) {
+    final keys = taskVisibilityLookupKeys;
+    if (keys.isEmpty) return false;
+    for (final id in t.assigneeIds) {
+      if (_visibilityKeyMatches(id, keys)) return true;
+    }
+    final cb = t.createByAssigneeKey?.trim();
+    if (cb != null && cb.isNotEmpty && _visibilityKeyMatches(cb, keys)) {
+      return true;
+    }
+    return false;
   }
 
   void setUserStaffContext({
@@ -252,8 +320,17 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// True when login fetch used [TaskFetchVisibility] (rows already scoped in Supabase).
+  bool _tasksLoadedWithVisibilityScope = false;
+
+  bool get tasksLoadedWithVisibilityScope => _tasksLoadedWithVisibilityScope;
+
   /// Replace tasks, task milestones, and task comments from Supabase after fetch.
-  void applyTasksFromSupabase(TasksLoadResult result) {
+  void applyTasksFromSupabase(
+    TasksLoadResult result, {
+    bool visibilityScoped = false,
+  }) {
+    _tasksLoadedWithVisibilityScope = visibilityScoped;
     final ids = result.tasks.map((t) => t.id).toSet();
     _comments.removeWhere((c) => ids.contains(c.taskId));
     _comments.addAll(result.comments);
@@ -420,18 +497,12 @@ class AppState extends ChangeNotifier {
   /// **or** the task was created by this user ([taskIsCreatedByCurrentUser]) (assignees may be outside that set).
   List<Task> tasksForTeam(String? teamId) {
     var all = tasks;
-    final scope = assigneeVisibilityAppIds;
-    if (scope.isEmpty) {
-      all = [];
-    } else {
-      // Show tasks assigned to self/subordinates, OR tasks this user created (assignee may be outside that scope).
-      all = all
-          .where(
-            (t) =>
-                t.assigneeIds.any((id) => scope.contains(id)) ||
-                taskIsCreatedByCurrentUser(t),
-          )
-          .toList();
+    if (!_tasksLoadedWithVisibilityScope) {
+      if (taskVisibilityLookupKeys.isEmpty) {
+        all = [];
+      } else {
+        all = all.where(taskMatchesSupervisorScope).toList();
+      }
     }
     if (teamId == null || teamId.isEmpty) return all;
     return all.where((t) => _taskMatchesTeamFilter(t, teamId)).toList();
@@ -582,6 +653,28 @@ class AppState extends ChangeNotifier {
     final i = _tasks.indexWhere((x) => x.id == t.id);
     if (i < 0) return;
     _tasks[i] = t;
+    notifyListeners();
+  }
+
+  /// Insert or replace a task row (e.g. after Supabase create).
+  void upsertTask(Task t) {
+    final i = _tasks.indexWhere((x) => x.id == t.id);
+    if (i >= 0) {
+      _tasks[i] = t;
+    } else {
+      _tasks.add(t);
+    }
+    notifyListeners();
+  }
+
+  /// Insert or replace a project row (e.g. after Supabase create).
+  void upsertProject(ProjectRecord p) {
+    final i = _projects.indexWhere((x) => x.id == p.id);
+    if (i >= 0) {
+      _projects[i] = p;
+    } else {
+      _projects.add(p);
+    }
     notifyListeners();
   }
 

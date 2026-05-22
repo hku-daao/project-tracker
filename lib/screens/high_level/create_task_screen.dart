@@ -566,11 +566,16 @@ class _CreateTaskScreenState extends State<CreateTaskScreen>
   Future<void> _reloadTasksAfterCreate() async {
     if (!SupabaseConfig.isConfigured) return;
     try {
-      final data = await SupabaseService.fetchTasksFromSupabase();
+      final appState = context.read<AppState>();
+      final vis = appState.buildTaskFetchVisibility();
+      final data = await SupabaseService.fetchTasksFromSupabase(
+        visibility: vis,
+      );
       if (!mounted) return;
-      context.read<AppState>().applyTasksFromSupabase(
-            data ?? TasksLoadResult.empty,
-          );
+      appState.applyTasksFromSupabase(
+        data ?? TasksLoadResult.empty,
+        visibilityScoped: vis != null && vis.isConfigured,
+      );
       final deleted = await SupabaseService.fetchDeletedTasksFromSupabase();
       if (!mounted) return;
       context.read<AppState>().applyDeletedTasksFromSupabase(deleted);

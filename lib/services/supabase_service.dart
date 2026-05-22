@@ -18,6 +18,7 @@ import '../models/project_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
 import '../utils/hk_time.dart';
+import 'task_fetch_visibility.dart';
 
 /// Row from `public.attachment` (singular task).
 class TaskAttachmentRow {
@@ -645,6 +646,15 @@ class SupabaseService {
     return 1;
   }
 
+  /// Avoid `as num?` on PostgREST values (often [String] or [int]) — casts throw and
+  /// empty the whole [fetchTasksFromSupabase] result.
+  static int _flexIntFromRow(dynamic v, {int fallback = 0}) {
+    if (v == null) return fallback;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v.trim()) ?? fallback;
+    return int.tryParse(v.toString().trim()) ?? fallback;
+  }
+
   /// Maps a row from singular [`task`] (task_name, assignee_01…) into [Task].
   /// Includes rows with status `Deleted` for the Deleted tab.
   static Task? _taskFromSingularTaskRow(
@@ -700,7 +710,7 @@ class SupabaseService {
       status: _taskStatusFromSingularTaskDb(
         statusRaw.isEmpty ? null : statusRaw,
       ),
-      progressPercent: (row['progress_percent'] as num?)?.toInt() ?? 0,
+      progressPercent: _flexIntFromRow(row['progress_percent']),
       isSingularTableRow: true,
       dbStatus: statusRaw.isEmpty ? null : statusRaw,
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
@@ -717,7 +727,7 @@ class SupabaseService {
       submitDate: _parseDateTimeNullable(row['submit_date']),
       completionDate: _parseDateTimeNullable(row['completion_date']),
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
-      overdueDay: (row['overdue_day'] as num?)?.toInt() ?? 0,
+      overdueDay: _flexIntFromRow(row['overdue_day']),
       overdue: _overdueYnFromRow(row['overdue']),
       projectId: projectId,
       projectName: projectName,
@@ -763,11 +773,23 @@ class SupabaseService {
       if (v != null && v.isNotEmpty) assignees.add(v);
     }
     final picUuids = <String>[];
+    final picNames = <String>[];
     final rawPic = row['pic'];
     if (rawPic is List) {
       for (final e in rawPic) {
         final s = e?.toString().trim();
-        if (s != null && s.isNotEmpty) picUuids.add(s);
+        if (s != null && s.isNotEmpty) {
+          picUuids.add(s);
+          final name = staffUuidToName[s]?.trim();
+          if (name != null && name.isNotEmpty) {
+            picNames.add(name);
+          } else {
+            final appId = staffUuidToAppId[s]?.trim();
+            picNames.add(
+              appId != null && appId.isNotEmpty ? appId : s,
+            );
+          }
+        }
       }
     }
     final cb = row['create_by']?.toString().trim();
@@ -777,6 +799,7 @@ class SupabaseService {
       name: row['name'] as String? ?? '',
       assigneeStaffUuids: assignees,
       picStaffUuids: picUuids,
+      picStaffDisplayNames: picNames,
       description: row['description'] as String? ?? '',
       startDate: _parseDate(row['start_date']),
       endDate: _parseDate(row['end_date']),
@@ -1311,6 +1334,128 @@ class SupabaseService {
     }
   }
 
+  /// `staff.id` (uuid) for each `staff.app_id` in [appIds].
+  static Future<List<String>> fetchStaffRowIdsForAppIds(
+    List<String> appIds,
+  ) async {
+    if (!_enabled) return [];
+    final ids = appIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (ids.isEmpty) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('staff')
+          .select('id')
+          .inFilter('app_id', ids);
+      final out = <String>[];
+      for (final row in (res as List)) {
+        final id = (row as Map)['id']?.toString().trim();
+        if (id != null && id.isNotEmpty) out.add(id);
+      }
+      return out;
+    } catch (e, st) {
+      debugPrint('fetchStaffRowIdsForAppIds: $e\n$st');
+      return [];
+    }
+  }
+
+  /// Fills missing `staff.id` uuids (supervisor + subordinates) for scoped fetch.
+  static Future<TaskFetchVisibility?> enrichTaskFetchVisibility(
+    TaskFetchVisibility? visibility,
+  ) async {
+    if (visibility == null || !visibility.isConfigured) return visibility;
+
+    var supUuid = visibility.supervisorStaffUuid?.trim();
+    if (supUuid == null || supUuid.isEmpty) {
+      final app = visibility.supervisorStaffAppId?.trim();
+      if (app != null && app.isNotEmpty) {
+        supUuid = await _staffRowIdForAssigneeKey(app);
+      }
+    }
+
+    var subUuids = List<String>.from(visibility.subordinateStaffUuids);
+    if (visibility.subordinateStaffAppIds.isNotEmpty) {
+      final resolved =
+          await fetchStaffRowIdsForAppIds(visibility.subordinateStaffAppIds);
+      final merged = <String>{
+        ...subUuids.map((e) => e.trim()).where((e) => e.isNotEmpty),
+        ...resolved,
+      };
+      subUuids = merged.toList();
+    }
+
+    return TaskFetchVisibility(
+      supervisorStaffAppId: visibility.supervisorStaffAppId,
+      supervisorStaffUuid: supUuid,
+      subordinateStaffAppIds: visibility.subordinateStaffAppIds,
+      subordinateStaffUuids: subUuids,
+    );
+  }
+
+  /// Merges singular `task` rows visible to [visibility] (creator or assignee).
+  static Future<List<Map<String, dynamic>>> _fetchSingularTaskRowsForVisibility(
+    SupabaseClient supabase,
+    TaskFetchVisibility visibility,
+  ) async {
+    final assigneeUuids = visibility.staffUuidsForAssigneeFilter.toList();
+    final createByKeys = visibility.staffKeysForCreateByFilter.toList();
+    if (assigneeUuids.isEmpty && createByKeys.isEmpty) return [];
+
+    final byId = <String, Map<String, dynamic>>{};
+
+    void absorb(dynamic res) {
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final id = row['id']?.toString() ?? row['task_id']?.toString();
+        if (id != null && id.isNotEmpty) byId[id] = row;
+      }
+    }
+
+    Future<void> runQuery(String label, Future<dynamic> Function() query) async {
+      try {
+        absorb(await query());
+      } catch (e, st) {
+        debugPrint('_fetchSingularTaskRowsForVisibility ($label): $e\n$st');
+      }
+    }
+
+    final futures = <Future<void>>[];
+
+    if (createByKeys.isNotEmpty) {
+      futures.add(
+        runQuery(
+          'create_by',
+          () => supabase.from('task').select().inFilter('create_by', createByKeys),
+        ),
+      );
+    }
+
+    if (assigneeUuids.isNotEmpty) {
+      for (var i = 1; i <= 10; i++) {
+        final col = 'assignee_${i.toString().padLeft(2, '0')}';
+        futures.add(
+          runQuery(
+            col,
+            () => supabase.from('task').select().inFilter(col, assigneeUuids),
+          ),
+        );
+      }
+    }
+
+    await Future.wait(futures);
+
+    final rows = byId.values.toList();
+    rows.sort((a, b) {
+      final ad = _parseDateTime(a['created_at'] ?? a['create_date']);
+      final bd = _parseDateTime(b['created_at'] ?? b['create_date']);
+      return bd.compareTo(ad);
+    });
+    debugPrint(
+      '_fetchSingularTaskRowsForVisibility: ${rows.length} tasks '
+      '(create_by keys=${createByKeys.length}, assignee uuids=${assigneeUuids.length})',
+    );
+    return rows;
+  }
+
   /// Rows in [subordinate] where [supervisor_id] is the supervisor's `staff.app_id`.
   static Future<List<String>> fetchSubordinateAppIdsForSupervisor(
     String supervisorAppId,
@@ -1438,9 +1583,19 @@ class SupabaseService {
     }
   }
 
-  static Future<TasksLoadResult?> fetchTasksFromSupabase() async {
+  /// Loads tasks from Supabase.
+  ///
+  /// When [visibility] is set, only singular `task` rows are fetched where
+  /// `create_by` or any `assignee_01`…`assignee_10` matches the supervisor or
+  /// a subordinate (`staff.app_id` or `staff.id`). Legacy plural `tasks` is skipped.
+  static Future<TasksLoadResult?> fetchTasksFromSupabase({
+    TaskFetchVisibility? visibility,
+  }) async {
     if (!_enabled) return null;
     try {
+      visibility = await enrichTaskFetchVisibility(visibility);
+      final scoped = visibility != null && visibility.isConfigured;
+
       var teamUuidToAppId = <String, String>{};
       var staffUuidToAppId = <String, String>{};
       var staffUuidToName = <String, String>{};
@@ -1455,14 +1610,16 @@ class SupabaseService {
       final supabase = Supabase.instance.client;
 
       final taskRows = <dynamic>[];
-      try {
-        final taskRes = await supabase
-            .from('tasks')
-            .select()
-            .order('created_at', ascending: false);
-        taskRows.addAll(taskRes as List);
-      } catch (_) {
-        // Plural `tasks` missing, RLS, or unused — still load singular `task` below.
+      if (!scoped) {
+        try {
+          final taskRes = await supabase
+              .from('tasks')
+              .select()
+              .order('created_at', ascending: false);
+          taskRows.addAll(taskRes as List);
+        } catch (_) {
+          // Plural `tasks` missing, RLS, or unused — still load singular `task` below.
+        }
       }
       final taskIds = taskRows
           .map((r) => (r as Map)['id'] as String?)
@@ -1510,19 +1667,26 @@ class SupabaseService {
       final singularTasks = <Task>[];
       try {
         dynamic singularRes;
-        try {
-          singularRes = await supabase
-              .from('task')
-              .select()
-              .order('created_at', ascending: false);
-        } catch (_) {
+        if (scoped) {
+          singularRes = await _fetchSingularTaskRowsForVisibility(
+            supabase,
+            visibility,
+          );
+        } else {
           try {
             singularRes = await supabase
                 .from('task')
                 .select()
-                .order('create_date', ascending: false);
+                .order('created_at', ascending: false);
           } catch (_) {
-            singularRes = await supabase.from('task').select();
+            try {
+              singularRes = await supabase
+                  .from('task')
+                  .select()
+                  .order('create_date', ascending: false);
+            } catch (_) {
+              singularRes = await supabase.from('task').select();
+            }
           }
         }
         final singularRawRows = <Map<String, dynamic>>[];
@@ -1536,19 +1700,39 @@ class SupabaseService {
         }
         final projectSummaries =
             await fetchProjectSummariesByIds(projectIds);
+        var parseFailures = 0;
         for (final row in singularRawRows) {
-          final t = _taskFromSingularTaskRow(
-            row,
-            staffUuidToAppId,
-            teamUuidToAppId,
-            staffUuidToName,
-            projectSummaries:
-                projectSummaries.isEmpty ? null : projectSummaries,
-          );
-          if (t != null) singularTasks.add(t);
+          try {
+            final t = _taskFromSingularTaskRow(
+              row,
+              staffUuidToAppId,
+              teamUuidToAppId,
+              staffUuidToName,
+              projectSummaries:
+                  projectSummaries.isEmpty ? null : projectSummaries,
+            );
+            if (t != null) {
+              singularTasks.add(t);
+            } else {
+              parseFailures++;
+              debugPrint(
+                'fetchTasksFromSupabase: skipped singular row (no id): '
+                'keys=${row.keys.take(8).join(",")}',
+              );
+            }
+          } catch (e, st) {
+            parseFailures++;
+            debugPrint(
+              'fetchTasksFromSupabase: singular row parse error: $e\n$st',
+            );
+          }
         }
-      } catch (_) {
-        // table missing or RLS
+        debugPrint(
+          'fetchTasksFromSupabase: ${singularTasks.length}/${singularRawRows.length} '
+          'singular rows parsed ($parseFailures skipped/failed)',
+        );
+      } catch (e, st) {
+        debugPrint('fetchTasksFromSupabase singular `task` load: $e\n$st');
       }
 
       final byId = <String, Task>{};
@@ -1562,13 +1746,15 @@ class SupabaseService {
       final merged = byId.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+      final mergedTaskIds = merged.map((t) => t.id).toList();
+
       List<Milestone> milestones = [];
-      if (taskIds.isNotEmpty) {
+      if (mergedTaskIds.isNotEmpty) {
         try {
           final mileRes = await supabase
               .from('task_milestones')
               .select()
-              .inFilter('task_id', taskIds);
+              .inFilter('task_id', mergedTaskIds);
           for (final row in (mileRes as List)) {
             milestones.add(
               Milestone(
@@ -1588,34 +1774,45 @@ class SupabaseService {
       }
 
       final comments = <TaskComment>[];
-      if (taskIds.isNotEmpty) {
-        final commRes = await supabase
-            .from('comments')
-            .select()
-            .eq('entity_type', 'task')
-            .inFilter('entity_id', taskIds)
-            .order('created_at');
-        for (final row in (commRes as List)) {
-          final authorId = row['author_id'] as String;
-          comments.add(
-            TaskComment(
-              id: row['id'] as String,
-              taskId: row['entity_id'] as String,
-              authorId: staffUuidToAppId[authorId] ?? authorId,
-              authorName: staffUuidToName[authorId] ?? authorId,
-              body: row['body'] as String? ?? '',
-              createdAt: _parseDateTime(row['created_at']),
-            ),
-          );
+      if (mergedTaskIds.isNotEmpty) {
+        try {
+          final commRes = await supabase
+              .from('comments')
+              .select()
+              .eq('entity_type', 'task')
+              .inFilter('entity_id', mergedTaskIds)
+              .order('created_at');
+          for (final row in (commRes as List)) {
+            final authorId = row['author_id']?.toString() ?? '';
+            final id = row['id']?.toString() ?? '';
+            final taskId = row['entity_id']?.toString() ?? '';
+            if (id.isEmpty || taskId.isEmpty) continue;
+            comments.add(
+              TaskComment(
+                id: id,
+                taskId: taskId,
+                authorId: staffUuidToAppId[authorId] ?? authorId,
+                authorName: staffUuidToName[authorId] ?? authorId,
+                body: row['body'] as String? ?? '',
+                createdAt: _parseDateTime(row['created_at']),
+              ),
+            );
+          }
+        } catch (e, st) {
+          debugPrint('fetchTasksFromSupabase comments (non-fatal): $e\n$st');
         }
       }
 
+      debugPrint(
+        'fetchTasksFromSupabase: returning ${merged.length} tasks to AppState',
+      );
       return TasksLoadResult(
         tasks: merged,
         milestones: milestones,
         comments: comments,
       );
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('fetchTasksFromSupabase failed: $e\n$st');
       return TasksLoadResult.empty;
     }
   }
@@ -2313,7 +2510,7 @@ class SupabaseService {
       lastUpdated: _parseDateTimeNullable(row['last_updated']),
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
-      overdueDay: (row['overdue_day'] as num?)?.toInt() ?? 0,
+      overdueDay: _flexIntFromRow(row['overdue_day']),
       overdue: _overdueYnFromRow(row['overdue']),
     );
   }

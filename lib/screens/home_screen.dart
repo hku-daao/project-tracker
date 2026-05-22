@@ -16,6 +16,7 @@ import 'high_level/initiative_list_screen.dart';
 import 'high_level/create_project_screen.dart';
 import 'high_level/create_task_screen.dart';
 import 'admin/system_admin_screen.dart';
+import 'asana_landing_screen.dart';
 
 /// Warn before leaving the create flow while a draft exists (create screen / Sign out).
 Future<bool> _confirmLeaveCreateTaskDraft(BuildContext context) async {
@@ -431,6 +432,15 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
     );
   }
 
+  void _openAsanaLandingScreen() {
+    setState(() => _createFabExpanded = false);
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const AsanaLandingScreen(),
+      ),
+    );
+  }
+
   bool _onCustomizedScrollNotification(ScrollNotification n) {
     if (n.metrics.axis != Axis.vertical) return false;
     if (n is ScrollUpdateNotification) {
@@ -522,6 +532,12 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
             dashboardScrollAppBar: DashboardScrollAppBarConfig(
               title: 'Project Tracker',
               showDrawerMenuLeading: true,
+              actions: [
+                TextButton(
+                  onPressed: _openAsanaLandingScreen,
+                  child: const Text('New UI Design'),
+                ),
+              ],
             ),
           ),
         ),

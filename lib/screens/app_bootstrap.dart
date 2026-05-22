@@ -7,6 +7,7 @@ import '../config/supabase_config.dart';
 import '../navigator_keys.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
+import '../services/task_fetch_visibility.dart';
 import '../utils/home_navigation.dart';
 import '../utils/pinned_dashboard_registry.dart';
 import '../web_deep_link.dart';
@@ -80,6 +81,24 @@ class _AppBootstrapState extends State<AppBootstrap> {
       debugPrint('AppBootstrap revamp staff/team lookup: $e');
     }
 
+    TaskFetchVisibility? taskVisibility;
+    if (mounted) {
+      taskVisibility = await SupabaseService.enrichTaskFetchVisibility(
+        state.buildTaskFetchVisibility(),
+      );
+      if (taskVisibility != null) {
+        state.setSubordinateStaffUuids(taskVisibility.subordinateStaffUuids);
+        final resolvedUuid = taskVisibility.supervisorStaffUuid?.trim();
+        if (resolvedUuid != null && resolvedUuid.isNotEmpty) {
+          state.setUserStaffContext(
+            staffAppId: state.userStaffAppId,
+            staffUuid: resolvedUuid,
+            assignableStaff: state.assignableStaffFromServer,
+          );
+        }
+      }
+    }
+
     /*
     // --- LEGACY (commented for revamp): RBAC via Railway + load teams/staff ---
     if (kIsWeb) {
@@ -119,9 +138,24 @@ class _AppBootstrapState extends State<AppBootstrap> {
       return;
     }
     try {
-      final taskData = await SupabaseService.fetchTasksFromSupabase();
+      final taskData = await SupabaseService.fetchTasksFromSupabase(
+        visibility: taskVisibility ?? state.buildTaskFetchVisibility(),
+      );
       if (!mounted) return;
-      state.applyTasksFromSupabase(taskData ?? TasksLoadResult.empty);
+      final loaded = taskData ?? TasksLoadResult.empty;
+      debugPrint(
+        'AppBootstrap: fetchTasksFromSupabase returned ${loaded.tasks.length} tasks',
+      );
+      state.applyTasksFromSupabase(
+        loaded,
+        visibilityScoped: taskVisibility != null && taskVisibility.isConfigured,
+      );
+      debugPrint(
+        'AppBootstrap: ${state.tasks.length} tasks in AppState '
+        '(visibilityScoped=${state.tasksLoadedWithVisibilityScope}, '
+        'staffAppId=${state.userStaffAppId}, '
+        'lookupKeys=${state.taskVisibilityLookupKeys.length})',
+      );
       final deletedAudit = await SupabaseService.fetchDeletedTasksFromSupabase();
       if (!mounted) return;
       state.applyDeletedTasksFromSupabase(deletedAudit);

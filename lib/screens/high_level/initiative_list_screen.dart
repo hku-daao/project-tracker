@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show max, min;
+import 'dart:math' show min;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -210,6 +210,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
   final GlobalKey _projectDashboardFiltersMeasureKey = GlobalKey();
   double _projectDashboardFiltersSliverExtent = 440;
 
+  bool _filtersSliverExtentMeasureScheduled = false;
+
   /// "Filter by assignee" submenu: roster team, then multi-select teammates (tasks/initiatives).
   String? _filterAssigneeMenuTeamId;
   final Set<String> _filterAssigneeMenuStaffIds = {};
@@ -247,11 +249,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (fk == 'created') {
       return state.taskIsCreatedByCurrentUser(t);
     }
-    final scope = state.assigneeVisibilityAppIds;
-    if (scope.isEmpty) return false;
-    if (t.assigneeIds.any(scope.contains)) return true;
-    if (state.taskIsCreatedByCurrentUser(t)) return true;
-    return false;
+    return state.taskMatchesSupervisorScope(t);
   }
 
   /// Create-date range filter (task `createdAt` / sub-task `createDate` on Customized).
@@ -421,6 +419,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       }
     });
     _persistLandingFilters();
+    if (widget.dashboardScrollAppBar != null) {
+      _scheduleFiltersSliverExtentMeasure();
+    }
   }
 
   /// Overview → Projects tab allows only a subset of [ProjectListSortColumn] values.
@@ -729,35 +730,42 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _taskSearchController.text.trim().isNotEmpty;
 
   void _clearTeamAndStatusFilters() {
+    if (_filterMenuController.isOpen) {
+      _filterMenuController.close();
+    }
     _landingSubtaskServerSearchDebounce?.cancel();
-    setState(() {
-      _selectedProjectStatusFilters.clear();
-      _selectedTaskStatuses.clear();
-      _selectedSubmissionFilters.clear();
-      _filterOverdueOnly = false;
-      _filterAssigneeMenuTeamId = null;
-      _filterAssigneeMenuStaffIds.clear();
-      _filterPicMenuTeamId = null;
-      _filterPicMenuStaffIds.clear();
-      _filterCreatorMenuTeamId = null;
-      _filterCreatorMenuStaffIds.clear();
-      _filterCreateDateStart = null;
-      _filterCreateDateEnd = null;
-      _taskSearchController.clear();
-      _lastSubtaskSearchQueryForBlob = '';
-      _subtaskMinDueByTaskId.clear();
-      _subtaskMaxDueByTaskId.clear();
-      _subtaskHasOverdueByTaskId.clear();
-      _subtaskSearchBlobByTaskId.clear();
-      _subtaskFetchGeneration++;
-      _landingSubtaskServerSearchSeq++;
-      _rpcSearchMatchingTaskIds = null;
-      _subtaskServerQueryNormalized = '';
-      _tasksPageIndex = 0;
-      _deletedTasksPageIndex = 0;
+    // Defer rebuild so MenuAnchor overlay is not torn down during sliver layout.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _selectedProjectStatusFilters.clear();
+        _selectedTaskStatuses.clear();
+        _selectedSubmissionFilters.clear();
+        _filterOverdueOnly = false;
+        _filterAssigneeMenuTeamId = null;
+        _filterAssigneeMenuStaffIds.clear();
+        _filterPicMenuTeamId = null;
+        _filterPicMenuStaffIds.clear();
+        _filterCreatorMenuTeamId = null;
+        _filterCreatorMenuStaffIds.clear();
+        _filterCreateDateStart = null;
+        _filterCreateDateEnd = null;
+        _taskSearchController.clear();
+        _lastSubtaskSearchQueryForBlob = '';
+        _subtaskMinDueByTaskId.clear();
+        _subtaskMaxDueByTaskId.clear();
+        _subtaskHasOverdueByTaskId.clear();
+        _subtaskSearchBlobByTaskId.clear();
+        _subtaskFetchGeneration++;
+        _landingSubtaskServerSearchSeq++;
+        _rpcSearchMatchingTaskIds = null;
+        _subtaskServerQueryNormalized = '';
+        _tasksPageIndex = 0;
+        _deletedTasksPageIndex = 0;
+      });
+      _persistLandingFilters();
+      _collapseAllFilterMenuExpansionTiles();
     });
-    _persistLandingFilters();
-    _collapseAllFilterMenuExpansionTiles();
   }
 
   void _collapseAllFilterMenuExpansionTiles() {
@@ -1376,9 +1384,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     if (_filterCreateDateEngaged) {
       return _calendarDayInCreateFilterRange(day);
     }
-    if (sub == null) return _taskCreatedWithinLastMonth(t);
-    // Use the same [day] as above — null sub-task create_date falls back to parent task.
-    return _dateWithinLastRollingMonth(day);
+    return true;
   }
 
   /// **Completed** sub-task rows on Overview: when that chip is selected, bypass the default
@@ -2288,7 +2294,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               ..._landingStatusSubmissionSections(context),
                               const Divider(height: 16),
                               MenuItemButton(
-                                closeOnActivate: false,
+                                closeOnActivate: true,
                                 onPressed: _clearTeamAndStatusFilters,
                                 leadingIcon: const Icon(
                                   Icons.clear_all,
@@ -2527,7 +2533,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               ..._projectDashboardStatusSection(context),
                               const Divider(height: 16),
                               MenuItemButton(
-                                closeOnActivate: false,
+                                closeOnActivate: true,
                                 onPressed: _clearTeamAndStatusFilters,
                                 leadingIcon: const Icon(
                                   Icons.clear_all,
@@ -2791,10 +2797,56 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     ];
   }
 
-  /// [SliverPersistentHeader] uses a fixed [extent]. Measuring [RenderBox.size]
-  /// alone fails when content is taller than that extent: layout is clipped to
-  /// the header max height, so [size.height] never grows and the search field
-  /// stays squashed. [getMaxIntrinsicHeight] returns the full natural height.
+  /// [SliverPersistentHeader] uses a fixed [extent]. When content is clipped to
+  /// that height, [RenderBox.size.height] equals the cap — grow [extent] and
+  /// remeasure until the laid-out height fits (cannot use intrinsic height:
+  /// filter rows use [LayoutBuilder]).
+  static const double _kFiltersSliverExtentMax = 920;
+
+  void _scheduleFiltersSliverExtentMeasure() {
+    if (_filtersSliverExtentMeasureScheduled) return;
+    _filtersSliverExtentMeasureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _filtersSliverExtentMeasureScheduled = false;
+      if (!mounted) return;
+      if (widget.projectsOnlyDashboard) {
+        _measureProjectDashboardFiltersSliverExtent();
+      } else {
+        _measureTaskDashboardFiltersSliverExtent();
+      }
+    });
+  }
+
+  void _updateFiltersSliverExtentFromBox(
+    RenderBox box, {
+    required double currentExtent,
+    required ValueChanged<double> onExtent,
+    required VoidCallback remeasure,
+  }) {
+    final h = box.size.height;
+    if (h <= 0 || !h.isFinite) return;
+
+    void applyExtent(double next) {
+      if ((next - currentExtent).abs() < 0.5) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        onExtent(next);
+      });
+    }
+
+    // Still clipped to the header cap — increase extent and measure again.
+    if (h >= currentExtent - 2 && currentExtent < _kFiltersSliverExtentMax) {
+      final next = min(currentExtent + 72, _kFiltersSliverExtentMax);
+      applyExtent(next);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) remeasure();
+      });
+      return;
+    }
+
+    applyExtent(h + 4);
+  }
+
   void _measureTaskDashboardFiltersSliverExtent() {
     final GlobalKey measureKey = widget.customizedFlat
         ? _overviewTaskDashboardFiltersMeasureKeys[
@@ -2802,13 +2854,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         : _taskDashboardFiltersMeasureKey;
     final box = measureKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
-    final maxW = box.constraints.maxWidth;
-    if (maxW <= 0 || !maxW.isFinite) return;
-    final intrinsic = box.getMaxIntrinsicHeight(maxW);
-    final h = max(box.size.height, intrinsic);
-    if (h <= 0 || !h.isFinite) return;
-    if ((h - _taskDashboardFiltersSliverExtent).abs() < 0.5) return;
-    setState(() => _taskDashboardFiltersSliverExtent = h);
+    _updateFiltersSliverExtentFromBox(
+      box,
+      currentExtent: _taskDashboardFiltersSliverExtent,
+      onExtent: (v) => setState(() => _taskDashboardFiltersSliverExtent = v),
+      remeasure: _measureTaskDashboardFiltersSliverExtent,
+    );
   }
 
   void _measureProjectDashboardFiltersSliverExtent() {
@@ -2816,13 +2867,12 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
         _projectDashboardFiltersMeasureKey.currentContext?.findRenderObject()
             as RenderBox?;
     if (box == null || !box.hasSize) return;
-    final maxW = box.constraints.maxWidth;
-    if (maxW <= 0 || !maxW.isFinite) return;
-    final intrinsic = box.getMaxIntrinsicHeight(maxW);
-    final h = max(box.size.height, intrinsic);
-    if (h <= 0 || !h.isFinite) return;
-    if ((h - _projectDashboardFiltersSliverExtent).abs() < 0.5) return;
-    setState(() => _projectDashboardFiltersSliverExtent = h);
+    _updateFiltersSliverExtentFromBox(
+      box,
+      currentExtent: _projectDashboardFiltersSliverExtent,
+      onExtent: (v) => setState(() => _projectDashboardFiltersSliverExtent = v),
+      remeasure: _measureProjectDashboardFiltersSliverExtent,
+    );
   }
 
   Widget _buildOverviewEntityTabBar(BuildContext context) {
@@ -3712,6 +3762,9 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       _appStateListenerRef = context.read<AppState>();
       _appStateListenerRef!.addListener(_onAppStateForDeferredTeamRestore);
       _loadLandingFilters();
+      if (widget.dashboardScrollAppBar != null) {
+        _scheduleFiltersSliverExtentMeasure();
+      }
     });
   }
 
@@ -3759,14 +3812,13 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _selectedSubmissionFilters
       ..clear()
       ..add(_submissionPending);
-    final r = _defaultCreateDateRangeHk();
-    _filterCreateDateStart = r.$1;
-    _filterCreateDateEnd = r.$2;
+    _filterCreateDateStart = null;
+    _filterCreateDateEnd = null;
     _taskSortColumn = TaskListSortColumn.dueDate;
     _taskSortAscending = true;
   }
 
-  /// Home **Tasks** tab (non-Overview): same default window as Overview customized.
+  /// Home **Tasks** tab (non-Overview): status/submission defaults only (no create-date window).
   void _applyLandingTasksDefaultFilters() {
     _selectedTaskStatuses
       ..clear()
@@ -3774,9 +3826,8 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
     _selectedSubmissionFilters
       ..clear()
       ..add(_submissionPending);
-    final r = _defaultCreateDateRangeHk();
-    _filterCreateDateStart = r.$1;
-    _filterCreateDateEnd = r.$2;
+    _filterCreateDateStart = null;
+    _filterCreateDateEnd = null;
   }
 
   Future<void> _loadLandingFilters() async {
@@ -5006,7 +5057,7 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
                               ..._projectDashboardStatusSection(context),
                               const Divider(height: 16),
                               MenuItemButton(
-                                closeOnActivate: false,
+                                closeOnActivate: true,
                                 onPressed: _clearTeamAndStatusFilters,
                                 leadingIcon:
                                     const Icon(Icons.clear_all, size: 20),
@@ -5472,16 +5523,6 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       });
     }
     final state = context.watch<AppState>();
-    if (widget.dashboardScrollAppBar != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (widget.projectsOnlyDashboard) {
-          _measureProjectDashboardFiltersSliverExtent();
-        } else {
-          _measureTaskDashboardFiltersSliverExtent();
-        }
-      });
-    }
     final teamsSorted = [...state.teams]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     if (widget.projectsOnlyDashboard) {
@@ -5565,7 +5606,11 @@ class _InitiativeListScreenState extends State<InitiativeListScreen> {
       if (!t.isSingularTableRow) return false;
       final s = t.dbStatus?.trim().toLowerCase() ?? '';
       if (s.isEmpty) return true;
-      return s == 'incomplete';
+      if (s == 'incomplete') return true;
+      return s != 'completed' &&
+          s != 'complete' &&
+          s != 'deleted' &&
+          s != 'delete';
     }
 
     final tasksNonDeleted = tasks.where((t) => !singularDeleted(t)).toList();

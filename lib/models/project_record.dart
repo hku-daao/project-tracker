@@ -5,6 +5,7 @@ class ProjectRecord {
     required this.name,
     required this.assigneeStaffUuids,
     this.picStaffUuids = const [],
+    this.picStaffDisplayNames = const [],
     required this.description,
     this.startDate,
     this.endDate,
@@ -25,6 +26,9 @@ class ProjectRecord {
 
   /// Non-empty `staff.id` values from [`project.pic`] JSON array (PICs ⊆ assignees).
   final List<String> picStaffUuids;
+
+  /// Resolved PIC names (parallel to [picStaffUuids] when known at fetch).
+  final List<String> picStaffDisplayNames;
 
   final String description;
   final DateTime? startDate;

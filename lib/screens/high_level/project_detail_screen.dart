@@ -31,11 +31,13 @@ class ProjectDetailScreen extends StatefulWidget {
     required this.projectId,
     this.openedFromLanding = true,
     this.openedFromOverview = false,
+    this.onAsanaPanelClose,
   });
 
   final String projectId;
   final bool openedFromLanding;
   final bool openedFromOverview;
+  final VoidCallback? onAsanaPanelClose;
 
   @override
   State<ProjectDetailScreen> createState() => _ProjectDetailScreenState();
@@ -82,7 +84,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       syncWebLocationForProjectDetail(widget.projectId);
     }
     _reload();
@@ -90,7 +92,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   @override
   void dispose() {
-    if (kIsWeb) {
+    if (kIsWeb && widget.onAsanaPanelClose == null) {
       clearWebProjectDetailFromLocation();
     }
     _nameController.dispose();
@@ -429,7 +431,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         }
       }
       if (token != null) {
-        final data = await SupabaseService.fetchTasksFromSupabase();
+        final data = await SupabaseService.fetchTasksFromSupabase(
+          visibility: state.buildTaskFetchVisibility(),
+        );
         if (data != null && mounted) state.applyTasksFromSupabase(data);
       }
       final projects = await SupabaseService.fetchAllProjectsFromSupabase();
@@ -476,7 +480,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       if (mounted) state.applyProjects(projects);
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token != null) {
-        final data = await SupabaseService.fetchTasksFromSupabase();
+        final data = await SupabaseService.fetchTasksFromSupabase(
+          visibility: state.buildTaskFetchVisibility(),
+        );
         if (data != null && mounted) state.applyTasksFromSupabase(data);
       }
       if (!mounted) return;
@@ -675,14 +681,16 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         .where((s) => _editAssigneeIds.contains(s.assigneeId))
         .toList();
 
+    final inAsanaPanel = widget.onAsanaPanelClose != null;
+
     return Scaffold(
-      appBar: AppBar(title: Text('Project: ${p.name}')),
+      appBar: inAsanaPanel ? null : AppBar(title: Text('Project: ${p.name}')),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           20,
+          inAsanaPanel ? 8 : 20,
           20,
-          20,
-          20 + kFlowNavBarScrollBottomPadding,
+          20 + (inAsanaPanel ? 16 : kFlowNavBarScrollBottomPadding),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -953,7 +961,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             await _reload();
                             if (!mounted) return;
                             final data =
-                                await SupabaseService.fetchTasksFromSupabase();
+                                await SupabaseService.fetchTasksFromSupabase(
+                              visibility:
+                                  appState.buildTaskFetchVisibility(),
+                            );
                             if (!mounted || data == null) return;
                             appState.applyTasksFromSupabase(data);
                           });
@@ -1008,7 +1019,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     await _reload();
                     if (!mounted) return;
                     final data =
-                        await SupabaseService.fetchTasksFromSupabase();
+                        await SupabaseService.fetchTasksFromSupabase(
+                      visibility: appState.buildTaskFetchVisibility(),
+                    );
                     if (!mounted || data == null) return;
                     appState.applyTasksFromSupabase(data);
                   });
@@ -1071,7 +1084,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                         await _reload();
                         if (!mounted) return;
                         final data =
-                            await SupabaseService.fetchTasksFromSupabase();
+                            await SupabaseService.fetchTasksFromSupabase(
+                          visibility: appState.buildTaskFetchVisibility(),
+                        );
                         if (!mounted || data == null) return;
                         appState.applyTasksFromSupabase(data);
                       });
@@ -1104,18 +1119,24 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: FlowHomeBackBar(
-        onBack: _projectDetailFlowBack,
-        onHome: () {
-          _projectDetailFlowHome();
-        },
-        enabled: !_saving,
-      ),
+      bottomNavigationBar: inAsanaPanel
+          ? null
+          : FlowHomeBackBar(
+              onBack: _projectDetailFlowBack,
+              onHome: () {
+                _projectDetailFlowHome();
+              },
+              enabled: !_saving,
+            ),
     );
   }
 
   void _projectDetailFlowBack() {
     if (_saving) return;
+    if (widget.onAsanaPanelClose != null) {
+      widget.onAsanaPanelClose!();
+      return;
+    }
     if (widget.openedFromOverview) {
       Navigator.of(context).popUntil((route) {
         final n = route.settings.name;

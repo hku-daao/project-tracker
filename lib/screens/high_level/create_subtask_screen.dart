@@ -48,11 +48,19 @@ class CreateSubtaskScreen extends StatefulWidget {
     required this.taskId,
     this.openedFromOverview = false,
     this.openedFromProjectDetail = false,
+    this.onAsanaPanelClose,
+    this.onAsanaSubtaskCreated,
   });
 
   final String taskId;
   final bool openedFromOverview;
   final bool openedFromProjectDetail;
+
+  /// Asana slide stack: back/close without [Navigator.pop].
+  final VoidCallback? onAsanaPanelClose;
+
+  /// Called after a sub-task is created (before panel closes).
+  final void Function(String subtaskId)? onAsanaSubtaskCreated;
 
   @override
   State<CreateSubtaskScreen> createState() => _CreateSubtaskScreenState();
@@ -137,13 +145,23 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
     );
   }
 
+  bool get _inAsanaPanel => widget.onAsanaPanelClose != null;
+
+  void _closePanelOrPop() {
+    if (_inAsanaPanel) {
+      widget.onAsanaPanelClose!();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
   Future<void> _handlePopRequest() async {
     if (!_hasUnsavedDraft()) {
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) _closePanelOrPop();
       return;
     }
     final leave = await _confirmLeaveCreateSubtaskDraft(context);
-    if (mounted && leave) Navigator.of(context).pop();
+    if (mounted && leave) _closePanelOrPop();
   }
 
   Future<void> _flowHome() async {
@@ -331,15 +349,20 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         }
       } catch (_) {}
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          content: const Text('Sub-task is created'),
-          backgroundColor: Colors.green,
-        ),
-      );
       SupabaseService.invalidateSubtasksCacheForTask(widget.taskId);
-      Navigator.of(context).pop(true);
+      widget.onAsanaSubtaskCreated?.call(ins.subtaskId!);
+      if (_inAsanaPanel) {
+        widget.onAsanaPanelClose!();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 4),
+            content: Text('Sub-task is created'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(true);
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -363,29 +386,18 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
         .map((id) => _labelForKey(id, state))
         .join(', ');
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        await _handlePopRequest();
-      },
-      child: Scaffold(
-      appBar: AppBar(
-        title: const Text('Create sub-task'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Stack(
+    final body = Stack(
         children: [
           AbsorbPointer(
             absorbing: _submitting,
             child: Opacity(
               opacity: _submitting ? 0.55 : 1,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
+                padding: EdgeInsets.fromLTRB(
                   24,
+                  _inAsanaPanel ? 12 : 24,
                   24,
-                  24,
-                  24 + kFlowNavBarScrollBottomPadding,
+                  24 + (_inAsanaPanel ? 16 : kFlowNavBarScrollBottomPadding),
                 ),
                 child: FocusTraversalGroup(
                   policy: OrderedTraversalPolicy(),
@@ -653,16 +665,29 @@ class _CreateSubtaskScreenState extends State<CreateSubtaskScreen> {
             ),
           ),
         ],
-      ),
-      bottomNavigationBar: FlowHomeBackBar(
-        onBack: () {
-          _flowBack();
-        },
-        onHome: () {
-          _flowHome();
-        },
-        enabled: !_submitting,
-      ),
+      );
+
+    if (_inAsanaPanel) {
+      return body;
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _handlePopRequest();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Create sub-task'),
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        ),
+        body: body,
+        bottomNavigationBar: FlowHomeBackBar(
+          onBack: _flowBack,
+          onHome: _flowHome,
+          enabled: !_submitting,
+        ),
       ),
     );
   }
