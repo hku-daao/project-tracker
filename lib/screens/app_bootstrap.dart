@@ -13,6 +13,8 @@ import '../utils/pinned_dashboard_registry.dart';
 import '../web_deep_link.dart';
 import 'high_level/project_detail_screen.dart';
 import 'high_level/subtask_detail_screen.dart';
+import '../config/environment_config.dart';
+import 'asana_landing_screen.dart';
 import 'home_screen.dart';
 import 'task_detail_screen.dart';
 
@@ -29,6 +31,13 @@ Widget _bootstrapShellChild() {
   }
   if (view == 'project') {
     return buildProjectDashboardPage();
+  }
+  if (view == 'asana' || view == 'newui' || view == 'new-ui') {
+    return const AsanaLandingScreen();
+  }
+  // Testing web deploy: open the new Asana-style shell by default.
+  if (AppEnvironment.isTesting) {
+    return const AsanaLandingScreen();
   }
   return buildOverviewDashboardPage();
 }
@@ -329,7 +338,10 @@ class _StartupShellState extends State<_StartupShell> {
     if (urlView == 'overview' ||
         urlView == 'project' ||
         urlView == 'default' ||
-        urlView == 'original') {
+        urlView == 'original' ||
+        urlView == 'asana' ||
+        urlView == 'newui' ||
+        urlView == 'new-ui') {
       return;
     }
     // Web: shell already defaults to Overview when view is unset — do not stack a duplicate route.

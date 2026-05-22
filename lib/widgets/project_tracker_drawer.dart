@@ -9,6 +9,7 @@ class ProjectTrackerDrawer extends StatelessWidget {
     required this.onFeedback,
     required this.onImportantNotice,
     required this.onSignOut,
+    this.onOpenNewUiDesign,
     this.showSignOut = true,
   });
 
@@ -18,6 +19,7 @@ class ProjectTrackerDrawer extends StatelessWidget {
   final VoidCallback onFeedback;
   final VoidCallback onImportantNotice;
   final VoidCallback onSignOut;
+  final VoidCallback? onOpenNewUiDesign;
   final bool showSignOut;
 
   @override
@@ -60,6 +62,12 @@ class ProjectTrackerDrawer extends StatelessWidget {
               title: const Text('Home'),
               onTap: onHome,
             ),
+            if (onOpenNewUiDesign != null)
+              ListTile(
+                leading: const Icon(Icons.auto_awesome_outlined),
+                title: const Text('New UI design'),
+                onTap: onOpenNewUiDesign,
+              ),
             ListTile(
               leading: const Icon(Icons.feedback_outlined),
               title: const Text('Feedback'),

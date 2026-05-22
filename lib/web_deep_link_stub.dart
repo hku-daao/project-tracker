@@ -30,6 +30,8 @@ void clearWebProjectDetailFromLocation() {}
 
 void syncWebLocationForDefaultHome() {}
 
+void syncWebLocationForAsanaDesign() {}
+
 void syncWebLocationForOverviewDashboard() {}
 
 void syncWebLocationForProjectDashboard() {}

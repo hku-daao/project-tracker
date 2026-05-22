@@ -179,6 +179,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openAsanaLandingScreen() {
+    setState(() => _createFabExpanded = false);
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const AsanaLandingScreen(),
+      ),
+    );
+  }
+
+  void _openAsanaFromDrawer() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      _openAsanaLandingScreen();
+    });
+  }
+
   bool _onLandingScrollNotification(ScrollNotification n) {
     if (n.metrics.axis != Axis.vertical) return false;
     if (n is ScrollUpdateNotification) {
@@ -263,6 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
       drawer: ProjectTrackerDrawer(
         welcomeName: welcomeName,
         onHome: _closeDrawerThenGoHome,
+        onOpenNewUiDesign: _openAsanaFromDrawer,
         onFeedback: _closeDrawerThenFeedback,
         onImportantNotice: _closeDrawerThenImportantNotice,
         onSignOut: () async {
@@ -311,6 +329,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: 'Original',
                     showDrawerMenuLeading: true,
                     actions: [
+                      IconButton(
+                        icon: const Icon(Icons.auto_awesome_outlined),
+                        tooltip: 'New UI design',
+                        onPressed: _openAsanaLandingScreen,
+                      ),
                       if (FirebaseAuth.instance.currentUser?.email
                                   ?.toLowerCase() ==
                               AdminConfig.systemAdminEmail.toLowerCase())
@@ -441,6 +464,14 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
     );
   }
 
+  void _openAsanaFromDrawer() {
+    Navigator.of(context).pop();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      _openAsanaLandingScreen();
+    });
+  }
+
   bool _onCustomizedScrollNotification(ScrollNotification n) {
     if (n.metrics.axis != Axis.vertical) return false;
     if (n is ScrollUpdateNotification) {
@@ -473,6 +504,7 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
             await navigateToPinnedHomeFromDrawer(context);
           });
         },
+        onOpenNewUiDesign: _openAsanaFromDrawer,
         onFeedback: () {
           Navigator.of(context).pop();
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -533,9 +565,10 @@ class _CustomizedDashboardPageState extends State<CustomizedDashboardPage> {
               title: 'Project Tracker',
               showDrawerMenuLeading: true,
               actions: [
-                TextButton(
+                IconButton(
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  tooltip: 'New UI design',
                   onPressed: _openAsanaLandingScreen,
-                  child: const Text('New UI Design'),
                 ),
               ],
             ),

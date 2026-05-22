@@ -127,7 +127,7 @@ String? readProjectIdFromUrlOrSession() {
 }
 
 /// `view` query / session: `default` (main dashboard), `original` (landing list),
-/// legacy `overview`, or `project`.
+/// `asana` (new UI shell), legacy `overview`, or `project`.
 String? readDashboardViewFromUrlOrSession() {
   final fromUrl = _paramFromLocation('view');
   if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
@@ -228,6 +228,20 @@ void syncWebLocationForDefaultHome() {
   html.window.sessionStorage[_kViewKey] = 'original';
   _replaceQueryParams((q) {
     q['view'] = 'original';
+    q.remove('task');
+    q.remove('subtask');
+    q.remove('project');
+  });
+}
+
+/// Asana-style landing shell ([AsanaLandingScreen]).
+void syncWebLocationForAsanaDesign() {
+  html.window.sessionStorage.remove(_kTaskKey);
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  html.window.sessionStorage.remove(_kProjectKey);
+  html.window.sessionStorage[_kViewKey] = 'asana';
+  _replaceQueryParams((q) {
+    q['view'] = 'asana';
     q.remove('task');
     q.remove('subtask');
     q.remove('project');

@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
+import '../web_deep_link.dart';
 import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_home_panel.dart';
@@ -315,6 +317,11 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   @override
   void initState() {
     super.initState();
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        syncWebLocationForAsanaDesign();
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (MediaQuery.sizeOf(context).width < _kSidebarAutoHideWidth) {
