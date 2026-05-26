@@ -39,6 +39,10 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
+# Local API keys (never commit)
+secrets/*
+!secrets/*.example
+
 # Firebase
 .firebase/
 # Never commit service account keys

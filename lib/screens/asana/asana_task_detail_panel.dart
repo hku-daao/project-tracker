@@ -24,6 +24,7 @@ import 'asana_assignee_picker.dart';
 import 'asana_attachment_draft_tile.dart';
 import 'asana_attachment_menu.dart';
 import 'asana_blocking_loading_overlay.dart';
+import '../../widgets/task_llm_assistant_panel.dart';
 import '../../widgets/task_list_card.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_subtask_list.dart';
@@ -1442,6 +1443,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return _buildCreateBody(context, state, chrome);
   }
 
+  String? _llmExtraContextForCreate() {
+    final id = _selectedProjectId?.trim();
+    if (id == null || id.isEmpty) return null;
+    for (final p in _myProjects) {
+      if (p.id == id) {
+        final n = p.name.trim();
+        if (n.isNotEmpty) return 'Project: $n';
+      }
+    }
+    return null;
+  }
+
   Widget _buildCreateBody(
     BuildContext context,
     AppState state,
@@ -1463,6 +1476,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          TaskLlmAssistantPanel(
+            nameController: _nameController,
+            descController: _descController,
+            readOnly: _saving,
+            extraContext: _llmExtraContextForCreate(),
+          ),
+          const SizedBox(height: 16),
           AsanaDetailLabelValue(
             label: 'Name',
             child: AsanaHoverTextField(
