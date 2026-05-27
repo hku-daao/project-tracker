@@ -92,6 +92,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   List<SingularSubtask> _subtasks = [];
   List<SingularCommentRowDisplay> _comments = [];
+  final Map<String, TextEditingController> _postedCommentControllers = {};
+  final Map<String, String> _postedCommentSavedText = {};
+  String? _savingPostedCommentId;
   final List<_AttachmentDraft> _attachments = [];
 
   bool _loadingExtras = true;
@@ -159,6 +162,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _descController.dispose();
     _reasonController.dispose();
     _commentController.dispose();
+    _disposePostedCommentControllers();
     _taskAi?.dispose();
     _commentAi?.dispose();
     _clearAttachments();
@@ -257,6 +261,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _picAssigneeId = null;
     _subtasks = [];
     _comments = [];
+    _disposePostedCommentControllers();
     _clearAttachments();
     final today = HkTime.todayDateOnlyHk();
     _anchorCreateDate =
@@ -525,8 +530,83 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (id == null || !SupabaseConfig.isConfigured) return;
     try {
       final list = await SupabaseService.fetchSingularCommentsForTask(id);
-      if (mounted) setState(() => _comments = list);
+      if (mounted) {
+        setState(() {
+          _comments = list;
+          _syncPostedCommentControllers();
+        });
+      }
     } catch (_) {}
+  }
+
+  void _disposePostedCommentControllers() {
+    for (final c in _postedCommentControllers.values) {
+      c.dispose();
+    }
+    _postedCommentControllers.clear();
+    _postedCommentSavedText.clear();
+  }
+
+  void _syncPostedCommentControllers() {
+    final ids = _comments.map((c) => c.id).toSet();
+    for (final id in _postedCommentControllers.keys.toList()) {
+      if (!ids.contains(id)) {
+        _postedCommentControllers[id]!.dispose();
+        _postedCommentControllers.remove(id);
+        _postedCommentSavedText.remove(id);
+      }
+    }
+    for (final c in _comments) {
+      if (!_postedCommentControllers.containsKey(c.id)) {
+        _postedCommentControllers[c.id] =
+            TextEditingController(text: c.description);
+        _postedCommentSavedText[c.id] = c.description;
+      } else {
+        final ctrl = _postedCommentControllers[c.id]!;
+        final saved = _postedCommentSavedText[c.id] ?? '';
+        if (ctrl.text == saved && ctrl.text != c.description) {
+          ctrl.text = c.description;
+          _postedCommentSavedText[c.id] = c.description;
+        }
+      }
+    }
+  }
+
+  Future<void> _savePostedCommentOnBlur(SingularCommentRowDisplay c) async {
+    if (_savingPostedCommentId == c.id) return;
+    final ctrl = _postedCommentControllers[c.id];
+    if (ctrl == null) return;
+
+    final newBody = ctrl.text.trim();
+    final saved = (_postedCommentSavedText[c.id] ?? c.description).trim();
+    if (newBody == saved) return;
+
+    if (newBody.isEmpty) {
+      ctrl.text = saved;
+      showCopyableSnackBar(
+        context,
+        'Comment cannot be empty',
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
+
+    final state = context.read<AppState>();
+    _savingPostedCommentId = c.id;
+    final err = await SupabaseService.updateSingularCommentRow(
+      commentId: c.id,
+      description: newBody,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    _savingPostedCommentId = null;
+    if (!mounted) return;
+    if (err != null) {
+      ctrl.text = saved;
+      showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+      return;
+    }
+    _postedCommentSavedText[c.id] = newBody;
+    await _loadComments();
   }
 
   Future<void> _loadAttachments() async {
@@ -660,11 +740,58 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return HkTime.formatInstantAsHk(stored, 'yyyy-MM-dd HH:mm');
   }
 
+  bool _isOwnComment(SingularCommentRowDisplay c) =>
+      !c.isDeleted && _uuidEquals(c.createByStaffId, _myStaffUuid);
+
+  DateTime? _commentDisplayTimestamp(SingularCommentRowDisplay c) {
+    final created = c.createTimestampUtc;
+    final updated = c.updateTimestampUtc;
+    if (updated != null &&
+        created != null &&
+        updated.isAfter(created)) {
+      return updated;
+    }
+    return created ?? updated;
+  }
+
   Widget _buildCommentDisplayTile(
     BuildContext context,
     SingularCommentRowDisplay c,
   ) {
+    if (_isOwnComment(c) && !_postedCommentControllers.containsKey(c.id)) {
+      _postedCommentControllers[c.id] =
+          TextEditingController(text: c.description);
+      _postedCommentSavedText[c.id] = c.description;
+    }
+
     final deleted = c.isDeleted;
+    final canEdit = _isOwnComment(c);
+    final postedAt = _commentDisplayTimestamp(c);
+    final edited = c.updateTimestampUtc != null &&
+        c.createTimestampUtc != null &&
+        c.updateTimestampUtc!.isAfter(c.createTimestampUtc!);
+    final body = canEdit
+        ? Focus(
+            onFocusChange: (hasFocus) {
+              if (!hasFocus) _savePostedCommentOnBlur(c);
+            },
+            child: AsanaHoverTextField(
+              controller: _postedCommentControllers[c.id]!,
+              canEdit: true,
+              readOnly: _saving || _savingPostedCommentId == c.id,
+              maxLines: 8,
+              minLines: 2,
+              style: asanaDetailMultilineValueStyle(context).copyWith(
+                color: kAsanaTextPrimary,
+              ),
+            ),
+          )
+        : Text(
+            c.description,
+            style: asanaDetailMultilineValueStyle(context).copyWith(
+              color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
+            ),
+          );
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -686,18 +813,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  c.description,
-                  style: asanaDetailMultilineValueStyle(context).copyWith(
-                    color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
-                  ),
-                ),
-                if (c.createTimestampUtc != null) ...[
+                body,
+                if (postedAt != null) ...[
                   const SizedBox(height: 6),
                   Align(
                     alignment: Alignment.centerRight,
                     child: Text(
-                      _formatCommentPostedTs(c.createTimestampUtc),
+                      edited
+                          ? 'Edited ${_formatCommentPostedTs(postedAt)}'
+                          : _formatCommentPostedTs(postedAt),
                       style: asanaDetailLabelStyle(context).copyWith(
                         fontWeight: FontWeight.normal,
                         fontSize: 11,
@@ -1518,6 +1642,19 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
+  List<({String url, String description})> _websiteAttachmentsForAi() {
+    return _attachments
+        .where((a) => a.isWebsiteLink)
+        .map(
+          (a) => (
+            url: a.urlController.text.trim(),
+            description: a.descController.text.trim(),
+          ),
+        )
+        .where((w) => w.url.isNotEmpty)
+        .toList();
+  }
+
   AsanaTaskAiFormSnapshot _aiFormSnapshot(
     AppState state, {
     required bool canSuggestAssignees,
@@ -1532,6 +1669,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return AsanaTaskAiFormSnapshot(
       name: _nameController.text.trim(),
       description: _descController.text.trim(),
+      commentDraft: _commentController.text.trim(),
       projectLabel: _projectLabelForDraft(),
       assigneesLabel: assigneesLabel,
       picLabel: picLabel,
@@ -1551,6 +1689,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       selectedAssigneeIds: Set<String>.from(_selectedAssigneeIds),
       selectedProjectId: _selectedProjectId,
       picAssigneeId: _picAssigneeId,
+      websiteAttachments: _websiteAttachmentsForAi(),
     );
   }
 
@@ -1569,6 +1708,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       applyPriority: (p) => setState(() => _localPriority = p),
       applyStartDate: (d) => setState(() => _startDate = _dateOnly(d)),
       applyDueDate: (d) => setState(() => _dueDate = _dateOnly(d)),
+      applyWebsiteLink: (url, desc) => setState(() {
+        _attachments.add(
+          _AttachmentDraft(
+            url: url,
+            desc: desc,
+            isWebsiteLink: true,
+          ),
+        );
+      }),
+      applyComment: (v) => setState(() => _commentController.text = v),
     );
   }
 
@@ -1786,6 +1935,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               editAnchorContext: context,
             ),
           ),
+          _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
           AsanaDetailLabelValue(
             label: 'Comments',
             child: AsanaHoverTextField(
@@ -1799,6 +1949,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               style: asanaDetailMultilineValueStyle(context),
             ),
           ),
+          _aiSuggestions(AsanaTaskAiFieldKey.comment),
         ],
       ),
     );
@@ -2065,6 +2216,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                             .toList(),
                       ),
                     ),
+                  if (canEdit)
+                    _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
                   AsanaDetailLabelValue(
                     label: 'Comments',
                     child: Column(
@@ -2079,7 +2232,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                             minLines: 2,
                             style: asanaDetailMultilineValueStyle(context),
                           ),
-                          if (showCommentAi)
+                          if (canEdit)
+                            _aiSuggestions(AsanaTaskAiFieldKey.comment)
+                          else if (showCommentAi)
                             _aiSuggestions(
                               AsanaTaskAiFieldKey.comment,
                               controller: _commentAi,

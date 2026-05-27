@@ -106,27 +106,35 @@ Reply with ONLY one JSON object (no markdown, no code fences).
 Schema:
 {
   "related": true or false,
-  "message": "optional short note to the user",
+  "message": "optional short note when nothing can be suggested",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/dates/websiteLinks are set)",
   "name": "string or null",
   "description": "string or null",
+  "comment": "comment body for the Comments field (posted when the user saves), or null",
   "projectName": "exact name from available projects list, or null",
   "assigneeNames": ["names from available staff list"] or [],
   "picName": "one staff name (must be in assigneeNames if assignees set), or null",
   "priority": "Standard" or "URGENT" or null,
   "startDate": "YYYY-MM-DD" or null,
-  "dueDate": "YYYY-MM-DD" or null
+  "dueDate": "YYYY-MM-DD" or null,
+  "websiteLinks": [
+    { "url": "https://...", "description": "short label for the link" }
+  ] or []
 }
 
 Rules:
 - Set "related": false only if the prompt is clearly unrelated to creating or updating a task.
 - Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
-- NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical to what is already on the form, omit that field (null). Example: if the user only describes what the task is about, suggest name and/or description only — do not output assignees, PIC, priority, dates, or project unless the user asked to change them AND the new value differs from current.
+- NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical to what is already on the form, omit that field (null). Example: if the user only describes what the task is about, suggest name and/or description only — do not output assignees, PIC, priority, dates, project, or comment unless the user asked to change them AND the new value differs from current.
+- comment: text for the Comments field (a draft posted when the user saves the task). When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
 - Use assignee and project names only from the provided staff/projects lists.
 - Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
 - PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them (e.g. "add A and B as assignees, C as PIC" → assigneeNames: A, B, C and picName: C).
 - picName must match someone in assigneeNames when both are set.
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
+- Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description (what the link is for). Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
+- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, startDate, dueDate, or websiteLinks). Summarize the intended updates in plain language; do not list unchanged fields.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
@@ -179,7 +187,8 @@ Reply with ONLY one JSON object (no markdown, no code fences).
 Schema:
 {
   "related": true or false,
-  "message": "optional short note to the user",
+  "message": "optional short note when no comment can be suggested",
+  "overallComment": "when comment is set: 1-2 sentences on how you improved the draft (required if comment is non-null)",
   "comment": "improved comment text or null"
 }
 
@@ -187,6 +196,7 @@ Rules:
 - Set "related": false only if the prompt is clearly unrelated to drafting a task comment.
 - You may ONLY suggest the comment body. Never suggest task name, description, dates, assignees, PIC, priority, or project.
 - Improve clarity and tone; keep the user's intent. Use the task name and current draft for context.
+- overallComment: required when comment is non-null; briefly explain what you changed or added.
 - You are suggesting text only; the user adopts it into the comment field. Do not mention other fields.
 ''';
 
