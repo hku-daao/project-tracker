@@ -11,6 +11,7 @@ class AsanaAssigneeFieldValue extends StatefulWidget {
     required this.canEdit,
     this.anchorLink,
     this.emptyPlaceholder = 'Select assignees',
+    this.showAddButtonWhenNotEmpty = true,
     this.onOpenPicker,
     this.onRemove,
   });
@@ -20,6 +21,7 @@ class AsanaAssigneeFieldValue extends StatefulWidget {
   final bool canEdit;
   final LayerLink? anchorLink;
   final String emptyPlaceholder;
+  final bool showAddButtonWhenNotEmpty;
   final void Function(BuildContext fieldContext)? onOpenPicker;
   final void Function(String assigneeId)? onRemove;
 
@@ -68,7 +70,9 @@ class _AsanaAssigneeFieldValueState extends State<AsanaAssigneeFieldValue> {
                         canRemove: widget.canEdit && widget.onRemove != null,
                         onRemove: () => widget.onRemove!(a.id),
                       ),
-                    if (widget.canEdit && widget.onOpenPicker != null)
+                    if (widget.canEdit &&
+                        widget.showAddButtonWhenNotEmpty &&
+                        widget.onOpenPicker != null)
                       AsanaDetailCircleAddButton(
                         tooltip: 'Add assignee',
                         onTap: (_) => widget.onOpenPicker!(context),
@@ -114,55 +118,47 @@ class _AssigneeNameChip extends StatefulWidget {
 }
 
 class _AssigneeNameChipState extends State<_AssigneeNameChip> {
-  bool _hovering = false;
-
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Padding(
-            padding: EdgeInsets.only(
-              top: 2,
-              right: widget.canRemove && _hovering ? 14 : 0,
-            ),
-            child: Text(
-              widget.name,
-              style: asanaDetailValueStyle(context),
-            ),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+            top: 2,
+            right: widget.canRemove ? 14 : 0,
           ),
-          if (widget.canRemove && _hovering)
-            Positioned(
-              top: -2,
-              right: -2,
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () {
-                    widget.onRemove();
-                  },
-                  customBorder: const CircleBorder(),
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6D6E6F),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.close,
-                      size: 11,
-                      color: Colors.white,
-                    ),
+          child: Text(
+            widget.name,
+            style: asanaDetailValueStyle(context),
+          ),
+        ),
+        if (widget.canRemove)
+          Positioned(
+            top: -2,
+            right: -2,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onRemove,
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF6D6E6F),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.close,
+                    size: 11,
+                    color: Colors.white,
                   ),
                 ),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

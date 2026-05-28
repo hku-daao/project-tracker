@@ -109,6 +109,13 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final accent = widget.accentColor;
+    final dropdownTheme = theme.copyWith(
+      canvasColor: theme.colorScheme.surface,
+      colorScheme: theme.colorScheme.copyWith(
+        surface: theme.colorScheme.surface,
+        primary: accent,
+      ),
+    );
     final today = HkTime.todayDateOnlyHk();
     final monthLabel = MaterialLocalizations.of(context)
         .formatMonthYear(DateTime(_displayYear, _displayMonth));
@@ -144,51 +151,59 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
             children: [
               Expanded(
                 child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    isExpanded: true,
-                    value: _displayYear,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: kAsanaTextPrimary,
+                  child: Theme(
+                    data: dropdownTheme,
+                    child: DropdownButton<int>(
+                      dropdownColor: theme.colorScheme.surface,
+                      isExpanded: true,
+                      value: _displayYear,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: kAsanaTextPrimary,
+                      ),
+                      items: _yearOptions
+                          .map(
+                            (y) => DropdownMenuItem(
+                              value: y,
+                              child: Text('$y'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (y) {
+                        if (y == null) return;
+                        _setDisplayMonth(y, _displayMonth);
+                      },
                     ),
-                    items: _yearOptions
-                        .map(
-                          (y) => DropdownMenuItem(
-                            value: y,
-                            child: Text('$y'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (y) {
-                      if (y == null) return;
-                      _setDisplayMonth(y, _displayMonth);
-                    },
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: DropdownButtonHideUnderline(
-                  child: DropdownButton<int>(
-                    isExpanded: true,
-                    value: _displayMonth,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: kAsanaTextPrimary,
+                  child: Theme(
+                    data: dropdownTheme,
+                    child: DropdownButton<int>(
+                      dropdownColor: theme.colorScheme.surface,
+                      isExpanded: true,
+                      value: _displayMonth,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: kAsanaTextPrimary,
+                      ),
+                      items: List.generate(12, (i) {
+                        final m = i + 1;
+                        final monthName =
+                            DateFormat.MMM().format(DateTime(2000, m));
+                        return DropdownMenuItem(
+                          value: m,
+                          child: Text(monthName),
+                        );
+                      }),
+                      onChanged: (m) {
+                        if (m == null) return;
+                        _setDisplayMonth(_displayYear, m);
+                      },
                     ),
-                    items: List.generate(12, (i) {
-                      final m = i + 1;
-                      final monthName =
-                          DateFormat.MMM().format(DateTime(2000, m));
-                      return DropdownMenuItem(
-                        value: m,
-                        child: Text(monthName),
-                      );
-                    }),
-                    onChanged: (m) {
-                      if (m == null) return;
-                      _setDisplayMonth(_displayYear, m);
-                    },
                   ),
                 ),
               ),
@@ -241,6 +256,11 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
             children: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
                 child: const Text('Cancel'),
               ),
               const SizedBox(width: 8),
@@ -252,6 +272,9 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
                   backgroundColor: accent,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor: accent.withValues(alpha: 0.35),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 child: const Text('Apply'),
               ),

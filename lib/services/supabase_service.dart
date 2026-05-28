@@ -781,10 +781,22 @@ class SupabaseService {
     final id = row['id']?.toString();
     if (id == null || id.isEmpty) return null;
     final assignees = <String>[];
+    final assigneeNames = <String>[];
     for (var i = 1; i <= 10; i++) {
       final key = 'assignee_${i.toString().padLeft(2, '0')}';
       final v = row[key]?.toString().trim();
-      if (v != null && v.isNotEmpty) assignees.add(v);
+      if (v != null && v.isNotEmpty) {
+        assignees.add(v);
+        final name = staffUuidToName[v]?.trim();
+        if (name != null && name.isNotEmpty) {
+          assigneeNames.add(name);
+        } else {
+          final appId = staffUuidToAppId[v]?.trim();
+          assigneeNames.add(
+            appId != null && appId.isNotEmpty ? appId : v,
+          );
+        }
+      }
     }
     final picUuids = <String>[];
     final picNames = <String>[];
@@ -812,6 +824,7 @@ class SupabaseService {
       id: id,
       name: row['name'] as String? ?? '',
       assigneeStaffUuids: assignees,
+      assigneeStaffDisplayNames: assigneeNames,
       picStaffUuids: picUuids,
       picStaffDisplayNames: picNames,
       description: row['description'] as String? ?? '',
@@ -1030,8 +1043,8 @@ class SupabaseService {
     String? updateByStaffLookupKey,
   }) async {
     if (!_enabled) return 'Supabase not configured';
+    final map = <String, dynamic>{};
     try {
-      final map = <String, dynamic>{};
       if (name != null) map['name'] = name;
       if (description != null) map['description'] = description;
       if (assigneeSlots != null) {
@@ -1074,18 +1087,24 @@ class SupabaseService {
           .update(map)
           .eq('id', projectId);
       return null;
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('PROJECT_UPDATE_ERROR projectId=$projectId payload=$map');
+      debugPrint('PROJECT_UPDATE_ERROR exception=$e');
+      debugPrint('PROJECT_UPDATE_ERROR stack=$st');
       return e.toString();
     }
   }
 
-  /// Deletes a [`project`] row (RLS may restrict to creator/admin).
+  /// Marks a [`project`] row as Deleted.
   static Future<String?> deleteProjectRow(String projectId) async {
     if (!_enabled) return 'Supabase not configured';
     final id = projectId.trim();
     if (id.isEmpty) return 'Invalid project';
     try {
-      await Supabase.instance.client.from('project').delete().eq('id', id);
+      await Supabase.instance.client
+          .from('project')
+          .update({'status': 'Deleted'})
+          .eq('id', id);
       return null;
     } catch (e) {
       return e.toString();
@@ -2922,6 +2941,7 @@ class SupabaseService {
     bool clearDueDate = false,
     String? status,
     String? submission,
+    List<String?>? assigneeSlots,
 
     /// Sets `subtask.pic` (staff id); omit to leave column unchanged.
     String? picStaffLookupKey,
@@ -2960,6 +2980,12 @@ class SupabaseService {
       }
       if (status != null) map['status'] = status;
       if (submission != null) map['submission'] = submission;
+      if (assigneeSlots != null) {
+        for (var i = 0; i < 10; i++) {
+          final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
+          map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = v;
+        }
+      }
       final picLookup = picStaffLookupKey?.trim();
       if (picLookup != null && picLookup.isNotEmpty) {
         final picStaffId = await _staffRowIdForAssigneeKey(picLookup);

@@ -443,6 +443,62 @@ class FirebaseAttachmentUploadService {
     );
   }
 
+  /// Uploads [bytes] to `subtask_attachments/[subtaskId]` after a create draft has an id.
+  static Future<({String? url, String? label, String? error})>
+      uploadBytesForSubtask(
+    String subtaskId, {
+    required Uint8List bytes,
+    required String originalFilename,
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+  }) async {
+    try {
+      final sid = subtaskId.trim();
+      if (sid.isEmpty) {
+        return (url: null, label: null, error: 'Missing sub-task id');
+      }
+
+      final err = _guardSync();
+      if (err != null) return (url: null, label: null, error: err);
+
+      final label = originalFilename.trim().isEmpty
+          ? 'attachment'
+          : originalFilename.trim();
+      if (bytes.isEmpty) {
+        return (url: null, label: null, error: 'Could not read file data.');
+      }
+      if (bytes.length > _maxBytes) {
+        return (url: null, label: null, error: 'File too large (max 50 MB).');
+      }
+
+      final acl = aclMetadataFromStaffKeys(aclStaffKeys);
+      if (acl.isEmpty) {
+        return (
+          url: null,
+          label: null,
+          error:
+              'Cannot upload: no staff keys for attachment access (creator / PIC / assignees).',
+        );
+      }
+
+      try {
+        onUploadPhaseStarted?.call();
+        return await _putBytes(
+          storageRelativeFolder: 'subtask_attachments/$sid',
+          originalFilename: label,
+          bytes: bytes,
+          aclMetadata: acl,
+        );
+      } finally {
+        onUploadPhaseEnded?.call();
+      }
+    } catch (e, st) {
+      debugPrint('uploadBytesForSubtask: $e\n$st');
+      return (url: null, label: null, error: e.toString());
+    }
+  }
+
   /// Same contract as [pickUploadForTask] for sub-task rows.
   static Future<({String? url, String? label, String? error})> pickUploadForSubtask(
     String subtaskId, {

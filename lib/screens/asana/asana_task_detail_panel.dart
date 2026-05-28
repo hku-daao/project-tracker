@@ -13,7 +13,6 @@ import '../../models/task.dart';
 import '../../priority.dart';
 import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
-import '../../utils/copyable_snackbar.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/holiday_date_picker.dart';
@@ -43,6 +42,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
     this.refreshToken = 0,
     this.onPushCreateSubtask,
     this.onPushSubtask,
+    this.onCreated,
   }) : assert(createMode || taskId != null);
 
   final String? taskId;
@@ -52,6 +52,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
   final VoidCallback onClose;
   final VoidCallback? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
+  final void Function(String taskId)? onCreated;
 
   @override
   State<AsanaTaskDetailPanel> createState() => _AsanaTaskDetailPanelState();
@@ -190,6 +191,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
   }
 
+  Future<void> _showInfo(String title, String content) {
+    return showAsanaInfoDialog(
+      context: context,
+      title: title,
+      content: content,
+      palette: widget.palette,
+    );
+  }
+
   Future<void> _removeAttachmentDraft(_AttachmentDraft e) async {
     final persistedId = e.id?.trim();
     if (persistedId != null &&
@@ -199,11 +209,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       final err = await SupabaseService.deleteAttachmentById(persistedId);
       if (!mounted) return;
       if (err != null) {
-        showCopyableSnackBar(
-          context,
-          err,
-          backgroundColor: Colors.orange,
-        );
+        await _showInfo('Could not remove attachment', err);
         return;
       }
     }
@@ -583,11 +589,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
     if (newBody.isEmpty) {
       ctrl.text = saved;
-      showCopyableSnackBar(
-        context,
-        'Comment cannot be empty',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Comment required', 'Comment cannot be empty.');
       return;
     }
 
@@ -602,7 +604,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (!mounted) return;
     if (err != null) {
       ctrl.text = saved;
-      showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+      await _showInfo('Could not update comment', err);
       return;
     }
     _postedCommentSavedText[c.id] = newBody;
@@ -649,21 +651,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return s == 'Not started' || s == 'In progress';
       }
 
-      final created = all
-          .where((p) => p.createByStaffUuid?.trim() == me)
+      final linkable = all
+          .where((p) => p.staffMayLinkTasks(me))
           .where(eligible)
           .toList();
       final pid = task?.projectId?.trim();
       if (pid != null &&
           pid.isNotEmpty &&
-          !created.any((p) => p.id == pid)) {
+          !linkable.any((p) => p.id == pid)) {
         final extra = await SupabaseService.fetchProjectById(pid);
-        if (extra != null) created.add(extra);
+        if (extra != null) linkable.add(extra);
       }
-      created.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      linkable.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       if (mounted) {
         setState(() {
-          _myProjects = created;
+          _myProjects = linkable;
           _rebuildProjectMenuOptions();
         });
       }
@@ -839,10 +841,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   bool _needsChangeDueReason() {
     if (_startDate == null || _dueDate == null) return false;
-    if (!widget.createMode &&
-        !allSubtasksComplyWithDueSpanPolicy(_subtasks)) {
-      return false;
-    }
     return dueDateExceedsPolicyForPriority(
       _startDate,
       _dueDate,
@@ -896,7 +894,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     if (_projectMenuOptions.isEmpty) {
       if (_myProjects.isEmpty) {
-        showCopyableSnackBar(context, 'Projects still loading…');
+        await _showInfo('Projects still loading', 'Please try again in a moment.');
         _loadProjectsIfCreator();
       }
       return;
@@ -945,11 +943,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         );
         if (!mounted) return;
         if (r?.error != null) {
-          showCopyableSnackBar(
-            context,
-            r!.error!,
-            backgroundColor: Colors.orange,
-          );
+          await _showInfo('Attachment upload failed', r!.error!);
           return;
         }
         if (r?.url == null) return;
@@ -962,11 +956,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         );
         if (!mounted) return;
         if (picked?.error != null) {
-          showCopyableSnackBar(
-            context,
-            picked!.error!,
-            backgroundColor: Colors.orange,
-          );
+          await _showInfo('Attachment upload failed', picked!.error!);
           return;
         }
         if (picked?.bytes == null) return;
@@ -993,23 +983,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
   }
 
-  bool _validateAssigneesAndPic() {
+  Future<bool> _validateAssigneesAndPic() async {
     if (_selectedAssigneeIds.isEmpty) {
-      showCopyableSnackBar(
-        context,
-        'Select at least one assignee',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Assignee required', 'Select at least one assignee.');
       return false;
     }
     if (_selectedAssigneeIds.length > 1 &&
         (_picAssigneeId == null ||
             !_selectedAssigneeIds.contains(_picAssigneeId))) {
-      showCopyableSnackBar(
-        context,
-        'Choose a PIC from the assignees',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('PIC required', 'Choose a PIC from the assignees.');
       return false;
     }
     return true;
@@ -1111,41 +1093,38 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _createTask(AppState state) async {
     if (!SupabaseConfig.isConfigured) {
-      showCopyableSnackBar(context, 'Supabase not configured');
+      await _showInfo('Supabase not configured', 'Please configure Supabase before continuing.');
       return;
     }
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      showCopyableSnackBar(
-        context,
-        'Task name is required',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Task name required', 'Please fill in the task name before continuing.');
       return;
     }
-    if (!_validateAssigneesAndPic()) return;
+    if (!await _validateAssigneesAndPic()) return;
+    if (!mounted) return;
     final directorIds = _selectedAssigneeIds.toList();
     final picKey = _resolvePicKeyForSave();
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
-      showCopyableSnackBar(
-        context,
-        'Enter a reason when the start/due span exceeds policy for this priority',
-        backgroundColor: Colors.orange,
+      await showAsanaConfirmDialog(
+        context: context,
+        title: 'Reason required',
+        content:
+            'Please explain why this task needs more time than expected before continuing.',
+        confirmText: 'OK',
+        palette: widget.palette,
       );
       return;
     }
     if (_startDate != null &&
         _dueDate != null &&
         _startDate!.isAfter(_dueDate!)) {
-      showCopyableSnackBar(
-        context,
-        'Start date cannot be after due date',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Invalid date range', 'Start date cannot be after due date.');
       return;
     }
     _taskAi?.clearAllSuggestions();
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final slots =
           await SupabaseService.assigneeSlotsForTask(directorIds);
@@ -1165,7 +1144,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         projectId: _selectedProjectId,
       );
       if (ins.error != null && mounted) {
-        showCopyableSnackBar(context, ins.error!, backgroundColor: Colors.orange);
+        await _showInfo('Could not create task', ins.error!);
         return;
       }
       final newId = ins.taskId;
@@ -1176,11 +1155,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         picKey,
       );
       if (uploadErr != null && mounted) {
-        showCopyableSnackBar(
-          context,
-          uploadErr,
-          backgroundColor: Colors.orange,
-        );
+        await _showInfo('Attachment upload failed', uploadErr);
         return;
       }
       final comment = _commentController.text.trim();
@@ -1201,15 +1176,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (model != null) {
         state.upsertTask(model);
       }
-      if (mounted) widget.onClose();
+      if (mounted) widget.onCreated?.call(newId);
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
 
   Future<void> _save(AppState state, Task task) async {
     if (!SupabaseConfig.isConfigured) {
-      showCopyableSnackBar(context, 'Supabase not configured');
+      await _showInfo('Supabase not configured', 'Please configure Supabase before continuing.');
       return;
     }
     if (!_canEditMetadata(state, task)) {
@@ -1221,26 +1197,27 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       return;
     }
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
-      showCopyableSnackBar(
-        context,
-        'Enter a reason when the start/due span exceeds policy for this priority',
-        backgroundColor: Colors.orange,
+      await showAsanaConfirmDialog(
+        context: context,
+        title: 'Reason required',
+        content:
+            'Please explain why this task needs more time than expected before continuing.',
+        confirmText: 'OK',
+        palette: widget.palette,
       );
       return;
     }
     if (_startDate != null &&
         _dueDate != null &&
         _startDate!.isAfter(_dueDate!)) {
-      showCopyableSnackBar(
-        context,
-        'Start date cannot be after due date',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Invalid date range', 'Start date cannot be after due date.');
       return;
     }
-    if (_isCreator(state, task) && !_validateAssigneesAndPic()) return;
+    if (_isCreator(state, task) && !await _validateAssigneesAndPic()) return;
+    if (!mounted) return;
     _taskAi?.clearAllSuggestions();
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final directorIds = _isCreator(state, task)
           ? _selectedAssigneeIds.toList()
@@ -1276,7 +1253,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             : null,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not update task', err);
         return;
       }
       if (_canEditAttachments(state, task)) {
@@ -1285,11 +1262,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           rows: _attachmentPayload(),
         );
         if (errA != null && mounted) {
-          showCopyableSnackBar(
-            context,
-            'Task saved; attachments: $errA',
-            backgroundColor: Colors.orange,
-          );
+          await _showInfo('Task saved, attachments failed', errA);
         } else {
           await _loadAttachments();
         }
@@ -1312,23 +1285,26 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       SupabaseService.invalidateSubtasksCacheForTask(task.id);
       await _loadSubtasks();
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
 
   Future<void> _saveAttachmentsOnly(AppState state, Task task) async {
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.replaceAttachmentsForTask(
         taskId: task.id,
         rows: _attachmentPayload(),
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not save attachments', err);
       } else {
         await _loadAttachments();
       }
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -1337,6 +1313,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final text = _commentController.text.trim();
     if (text.isEmpty) return;
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final c = await SupabaseService.insertSingularCommentRow(
         taskId: task.id,
@@ -1344,12 +1321,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         creatorStaffLookupKey: state.userStaffAppId,
       );
       if (c.error != null && mounted) {
-        showCopyableSnackBar(context, c.error!, backgroundColor: Colors.orange);
+        await _showInfo('Could not add comment', c.error!);
         return;
       }
       _commentController.clear();
       await _loadComments();
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -1364,6 +1342,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _markCompleted(AppState state, Task task) async {
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final completedAt = task.submitDate ?? DateTime.now().toUtc();
       final err = await SupabaseService.updateSingularTaskRow(
@@ -1374,7 +1353,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         completionDateAt: completedAt,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not mark task completed', err);
         return;
       }
       state.replaceTask(
@@ -1386,20 +1365,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         ),
       );
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
 
   Future<void> _submitTask(AppState state, Task task) async {
     if (_subtasks.any(subtaskPreventsParentTaskSubmission)) {
-      showCopyableSnackBar(
-        context,
-        'Complete all sub-tasks before submitting',
-        backgroundColor: Colors.orange,
-      );
+      await _showInfo('Sub-tasks incomplete', 'Complete all sub-tasks before submitting.');
       return;
     }
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
@@ -1408,13 +1385,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         stampSubmitDateNow: true,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not submit task', err);
         return;
       }
       state.replaceTask(
         task.copyWith(submission: 'Submitted', submitDate: DateTime.now().toUtc()),
       );
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -1425,6 +1403,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _returnTask(AppState state, Task task) async {
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
@@ -1432,11 +1411,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         updateByStaffLookupKey: state.userStaffAppId,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not return task', err);
         return;
       }
       state.replaceTask(task.copyWith(submission: 'Returned'));
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -1449,6 +1429,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _undoAcceptOrReturn(AppState state, Task task) async {
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
@@ -1458,7 +1439,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         clearCompletionDate: true,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not undo task status', err);
         return;
       }
       state.replaceTask(
@@ -1470,12 +1451,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         ),
       );
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
 
   Future<void> _undoDeleted(AppState state, Task task) async {
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
@@ -1483,7 +1466,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         updateByStaffLookupKey: state.userStaffAppId,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not restore task', err);
         return;
       }
       state.replaceTask(
@@ -1491,24 +1474,23 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       await _loadSubtasks();
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
 
   Future<void> _deleteTask(AppState state, Task task) async {
-    final go = await showDialog<bool>(
+    final go = await showAsanaConfirmDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete task?'),
-        content: const Text('This marks the task as deleted.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
-        ],
-      ),
+      title: 'Delete task?',
+      content: 'This marks the task as deleted.',
+      confirmText: 'Delete',
+      isDestructive: true,
+      palette: widget.palette,
     );
     if (go != true || !mounted) return;
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
       final err = await SupabaseService.updateSingularTaskRow(
         taskId: task.id,
@@ -1516,7 +1498,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         updateByStaffLookupKey: state.userStaffAppId,
       );
       if (err != null && mounted) {
-        showCopyableSnackBar(context, err, backgroundColor: Colors.orange);
+        await _showInfo('Could not delete task', err);
         return;
       }
       await SupabaseService.markSubtasksDeletedForParentTask(
@@ -1526,6 +1508,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       state.replaceTask(task.copyWith(dbStatus: 'Deleted'));
       await _loadSubtasks();
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -1743,9 +1726,22 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ? task.name.trim()
             : _nameController.text.trim(),
         currentComment: _commentController.text,
+        websiteAttachments: _websiteAttachmentsForAi(),
       ),
       onApplyComment: (v) => setState(() => _commentController.text = v),
+      onApplyWebsiteLink: _applyWebsiteLinkFromAi,
     );
+  }
+
+  void _applyWebsiteLinkFromAi(String url, String desc) {
+    setState(() {
+      _attachments.add(_AttachmentDraft(
+        id: 'ai_${DateTime.now().millisecondsSinceEpoch}',
+        url: url,
+        desc: desc,
+        isWebsiteLink: true,
+      ));
+    });
   }
 
   Widget? _buildSlideFooterStack({
@@ -1972,7 +1968,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       isAssigneeOnly: _isTaskAssignee(state, task) &&
           !_isCreator(state, task) &&
           !_isPic(state, task),
-      canDelete: _staffDirector || _isCreator(state, task),
+      canDelete: _isCreator(state, task),
       canMarkComplete: _canMarkComplete(task),
       canUndoAcceptOrReturn: _canUndoAcceptOrReturn(task),
     );
@@ -2003,7 +1999,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             isAssigneeOnly: _isTaskAssignee(state, task) &&
                 !_isCreator(state, task) &&
                 !_isPic(state, task),
-            canDelete: _staffDirector || _isCreator(state, task),
+            canDelete: _isCreator(state, task),
             onUpdate: () => _save(state, task),
             onMarkComplete: () => _markCompleted(state, task),
             onSubmit: () => _submitTask(state, task),
@@ -2027,7 +2023,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-                  AsanaHoverTextField(
+          AsanaHoverTextField(
                     controller: _nameController,
                     canEdit: canEdit,
                     readOnly: _saving,
@@ -2046,6 +2042,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                       readOnly: _saving,
                       maxLines: 8,
                       minLines: 2,
+                        hintText: 'Please fill in task description',
                       style: asanaDetailMultilineValueStyle(context),
                     ),
                   ),
@@ -2058,6 +2055,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                             anchorLink: _projectAnchorLink,
                             value: _projectLabel(task),
                             canEdit: true,
+                            emptyPlaceholder: 'Select project (optional)',
                             onTap: _pickProject,
                           )
                         : AsanaDetailPlainValue(
@@ -2217,7 +2215,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                       ),
                     ),
                   if (canEdit)
-                    _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
+                    _aiSuggestions(AsanaTaskAiFieldKey.websiteLink)
+                  else if (showCommentAi)
+                    _aiSuggestions(
+                      AsanaTaskAiFieldKey.websiteLink,
+                      controller: _commentAi,
+                    ),
                   AsanaDetailLabelValue(
                     label: 'Comments',
                     child: Column(

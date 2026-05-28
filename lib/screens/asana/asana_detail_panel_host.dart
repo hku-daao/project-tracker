@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../asana_landing_screen.dart';
-import '../high_level/create_subtask_screen.dart';
 import 'asana_detail_selection.dart';
 import 'asana_create_project_detail_panel.dart';
 import 'asana_project_detail_panel.dart';
@@ -18,6 +17,11 @@ class AsanaDetailPanelHost extends StatelessWidget {
     this.onPop,
     this.onPushCreateSubtask,
     this.onPushSubtask,
+    this.onTaskCreated,
+    this.onProjectCreated,
+    this.onProjectChanged,
+    this.onSubtaskCreated,
+    this.onSubtaskChanged,
     this.detailRefreshToken = 0,
   });
 
@@ -27,6 +31,11 @@ class AsanaDetailPanelHost extends StatelessWidget {
   final VoidCallback? onPop;
   final void Function(String parentTaskId)? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
+  final void Function(String taskId)? onTaskCreated;
+  final void Function(String projectId)? onProjectCreated;
+  final VoidCallback? onProjectChanged;
+  final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
+  final VoidCallback? onSubtaskChanged;
   final int detailRefreshToken;
 
   @override
@@ -45,24 +54,36 @@ class AsanaDetailPanelHost extends StatelessWidget {
       AsanaSubtaskDetailSelection(:final subtaskId) => AsanaSubtaskDetailPanel(
           subtaskId: subtaskId,
           palette: palette,
+          onClose: onPop ?? onClose,
+          onChanged: onSubtaskChanged,
         ),
       AsanaProjectDetailSelection(:final projectId) => AsanaProjectDetailPanel(
           projectId: projectId,
+          palette: palette,
+          onClose: onClose,
+          onChanged: onProjectChanged,
         ),
       AsanaCreateSubtaskDetailSelection(:final parentTaskId) =>
-        CreateSubtaskScreen(
-          taskId: parentTaskId,
-          onAsanaPanelClose: onPop ?? onClose,
-          onAsanaSubtaskCreated: (_) => (onPop ?? onClose)(),
+        AsanaSubtaskDetailPanel(
+          createMode: true,
+          parentTaskId: parentTaskId,
+          palette: palette,
+          onClose: onPop ?? onClose,
+          onCreated: onSubtaskCreated == null
+              ? null
+              : (subtaskId) => onSubtaskCreated!(parentTaskId, subtaskId),
+          onChanged: onSubtaskChanged,
         ),
       AsanaCreateTaskDetailSelection() => AsanaTaskDetailPanel(
           createMode: true,
           palette: palette,
           onClose: onClose,
+          onCreated: onTaskCreated,
         ),
       AsanaCreateProjectDetailSelection() => AsanaCreateProjectDetailPanel(
           palette: palette,
           onClose: onClose,
+          onCreated: onProjectCreated,
         ),
     };
   }

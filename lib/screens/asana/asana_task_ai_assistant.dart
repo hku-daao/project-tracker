@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../../priority.dart';
 import '../../services/deepseek_service.dart';
+import 'asana_project_ai_assistant.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart';
@@ -22,6 +23,7 @@ enum AsanaTaskAiFieldKey {
   dueDate,
   comment,
   websiteLink,
+  projectStatus,
 }
 
 /// Name, description, and comment use full slide width (no label column inset).
@@ -146,25 +148,154 @@ class AsanaTaskAiFormSnapshot {
 }
 
 /// Task-field assistant (create / creator edit) vs comment-only (assignees, etc.).
-enum AsanaTaskAiAssistantMode { taskFields, commentOnly }
+enum AsanaTaskAiAssistantMode { taskFields, commentOnly, projectFields, subtaskFields }
+
+class AsanaSubtaskAiFormSnapshot {
+  const AsanaSubtaskAiFormSnapshot({
+    required this.subtaskName,
+    required this.currentComment,
+    required this.canEditName,
+    required this.parentTaskContext,
+    this.websiteAttachments = const [],
+  });
+
+  final String subtaskName;
+  final String currentComment;
+  final bool canEditName;
+  final String parentTaskContext;
+  final List<({String url, String description})> websiteAttachments;
+
+  String buildLlmContext() {
+    final buf = StringBuffer()
+      ..writeln('Parent task details (read-only context):')
+      ..writeln(parentTaskContext.trim().isEmpty ? "(no details provided)" : parentTaskContext.trim())
+      ..writeln('\nSub-task fields:')
+      ..writeln('- name: ${subtaskName.isEmpty ? "(unnamed)" : subtaskName}')
+      ..writeln('- comment (draft, posted on save): ${currentComment.isEmpty ? "(empty)" : currentComment}');
+
+    if (websiteAttachments.isNotEmpty) {
+      buf.writeln('Current website link attachments:');
+      for (final w in websiteAttachments) {
+        buf.writeln('- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}');
+      }
+    } else {
+      buf.writeln('Current website link attachments: (none)');
+    }
+
+    if (canEditName) {
+      buf.writeln('\nYou may suggest changes to: name, comment, websiteLinks.');
+    } else {
+      buf.writeln('\nYou may suggest changes to: comment, websiteLinks. (name is NOT modifiable by this user)');
+    }
+    buf.writeln('If assignees are discussed, only use people listed as allowable sub-task assignees in the parent task details.');
+    return buf.toString();
+  }
+}
+
+class AsanaSubtaskAiSuggestionBuilder {
+  static List<AsanaTaskAiSuggestionLine> build({
+    required Map<String, dynamic> raw,
+    required AsanaSubtaskAiFormSnapshot form,
+    required void Function(String name)? applyName,
+    required void Function(String comment) applyComment,
+    required void Function(String url, String description)? applyWebsiteLink,
+  }) {
+    final related = raw['related'];
+    if (related is bool && !related) {
+      final msg = AsanaTaskAiSuggestionBuilder._str(raw['message']) ??
+          'This prompt does not look related to updating a sub-task.';
+      return [AsanaTaskAiSuggestionLine.warning(msg)];
+    }
+
+    final lines = <AsanaTaskAiSuggestionLine>[];
+
+    if (form.canEditName && applyName != null) {
+      final name = AsanaTaskAiSuggestionBuilder._str(raw['name']);
+      if (name != null &&
+          name.isNotEmpty &&
+          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(name, form.subtaskName)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.taskName,
+            fieldLabel: 'Sub-task name',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.subtaskName),
+            suggestedText: name,
+            onAdopt: () => applyName(name),
+          ),
+        );
+      }
+    }
+
+    final comment = AsanaTaskAiSuggestionBuilder._str(raw['comment']);
+    if (comment != null && comment.isNotEmpty) {
+      lines.add(
+        AsanaTaskAiSuggestionLine.adopt(
+          fieldKey: AsanaTaskAiFieldKey.comment,
+          fieldLabel: 'Comment',
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.currentComment),
+          suggestedText: comment,
+          onAdopt: () => applyComment(comment),
+        ),
+      );
+    }
+
+    if (applyWebsiteLink != null) {
+      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(raw['websiteLinks']);
+      for (var i = 0; i < wList.length; i++) {
+        final link = wList[i];
+        final display = link.description.trim().isEmpty
+            ? link.url
+            : '${link.url}\n${link.description.trim()}';
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.websiteLink,
+            linkIndex: i,
+            fieldLabel: 'Website link',
+            currentValue: '(none)',
+            suggestedText: display,
+            onAdopt: () => applyWebsiteLink(link.url, link.description),
+          ),
+        );
+      }
+    }
+
+    if (lines.isEmpty) {
+      return [
+        const AsanaTaskAiSuggestionLine.info('No changes suggested from this prompt.'),
+      ];
+    }
+    return lines;
+  }
+}
 
 /// Context for comment-only assistant.
 class AsanaCommentAiFormSnapshot {
   const AsanaCommentAiFormSnapshot({
     required this.taskName,
     required this.currentComment,
+    this.websiteAttachments = const [],
   });
 
   final String taskName;
   final String currentComment;
+  final List<({String url, String description})> websiteAttachments;
 
   String buildLlmContext() {
-    return '''
-Task: ${taskName.isEmpty ? "(unnamed task)" : taskName}
-Current comment draft: ${currentComment.isEmpty ? "(empty)" : currentComment}
+    final buf = StringBuffer()
+      ..writeln('Task: ${taskName.isEmpty ? "(unnamed task)" : taskName}')
+      ..writeln('Current comment draft: ${currentComment.isEmpty ? "(empty)" : currentComment}');
 
-You may ONLY suggest an improved comment body. Do not change task name, dates, assignees, or any other task field.
-''';
+    if (websiteAttachments.isNotEmpty) {
+      buf.writeln('Current website link attachments:');
+      for (final w in websiteAttachments) {
+        buf.writeln('- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}');
+      }
+    } else {
+      buf.writeln('Current website link attachments: (none)');
+    }
+
+    buf.writeln('\nYou may ONLY suggest an improved comment body or websiteLinks. Do not change task name, dates, assignees, or any other task field.');
+    return buf.toString();
   }
 }
 
@@ -214,8 +345,10 @@ class AsanaTaskAiSuggestionLine {
   final bool adoptable;
   final bool isWarning;
 
-  static String _displayCurrent(String value) =>
+  static String displayCurrent(String value) =>
       value.trim().isEmpty ? '(empty)' : value.trim();
+
+  static String _displayCurrent(String value) => displayCurrent(value);
 }
 
 /// Validates LLM JSON and builds adoptable lines (no auto-apply).
@@ -678,6 +811,7 @@ class AsanaCommentAiSuggestionBuilder {
     required Map<String, dynamic> raw,
     required AsanaCommentAiFormSnapshot form,
     required void Function(String comment) applyComment,
+    required void Function(String url, String description)? applyWebsiteLink,
   }) {
     final related = raw['related'];
     if (related is bool && !related) {
@@ -701,10 +835,30 @@ class AsanaCommentAiSuggestionBuilder {
       );
     }
 
+    if (applyWebsiteLink != null) {
+      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(raw['websiteLinks']);
+      for (var i = 0; i < wList.length; i++) {
+        final link = wList[i];
+        final display = link.description.trim().isEmpty
+            ? link.url
+            : '${link.url}\n${link.description.trim()}';
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.websiteLink,
+            linkIndex: i,
+            fieldLabel: 'Website link',
+            currentValue: '(none)',
+            suggestedText: display,
+            onAdopt: () => applyWebsiteLink(link.url, link.description),
+          ),
+        );
+      }
+    }
+
     if (lines.isEmpty) {
       return [
         const AsanaTaskAiSuggestionLine.info(
-          'No comment suggestion from this prompt. Describe what you want to say in the comment box.',
+          'No comment or link suggestion from this prompt.',
         ),
       ];
     }
@@ -757,10 +911,19 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.apply,
     this.commentSnapshot,
     this.onApplyComment,
+    this.onApplyWebsiteLink,
+    this.projectSnapshot,
+    this.projectApply,
+    this.subtaskSnapshot,
+    this.onApplySubtaskName,
   })  : assert(
           mode == AsanaTaskAiAssistantMode.taskFields
               ? formSnapshot != null && apply != null
-              : commentSnapshot != null && onApplyComment != null,
+              : mode == AsanaTaskAiAssistantMode.projectFields
+                  ? projectSnapshot != null && projectApply != null
+                  : mode == AsanaTaskAiAssistantMode.subtaskFields
+                      ? subtaskSnapshot != null && onApplyComment != null
+                      : commentSnapshot != null && onApplyComment != null,
         );
 
   final AsanaTaskAiAssistantMode mode;
@@ -769,8 +932,13 @@ class AsanaTaskAiController extends ChangeNotifier {
   final AsanaTaskAiApply? apply;
   final AsanaCommentAiFormSnapshot Function()? commentSnapshot;
   final void Function(String comment)? onApplyComment;
+  final void Function(String url, String description)? onApplyWebsiteLink;
+  final AsanaProjectAiFormSnapshot Function()? projectSnapshot;
+  final AsanaProjectAiApply? projectApply;
+  final AsanaSubtaskAiFormSnapshot Function()? subtaskSnapshot;
+  final void Function(String name)? onApplySubtaskName;
 
-  final promptController = TextEditingController();
+  final TextEditingController promptController = TextEditingController();
   bool busy = false;
   String? error;
   List<AsanaTaskAiSuggestionLine> lines = [];
@@ -906,6 +1074,33 @@ class AsanaTaskAiController extends ChangeNotifier {
           raw: raw,
           form: form,
           applyComment: onApplyComment!,
+          applyWebsiteLink: onApplyWebsiteLink,
+        );
+        overallFeedback = deriveOverallFeedback(raw, lines);
+      } else if (mode == AsanaTaskAiAssistantMode.projectFields) {
+        final form = projectSnapshot!();
+        final raw = await DeepseekService.suggestAsanaProjectDraft(
+          userPrompt: prompt,
+          formContext: form.buildLlmContext(),
+        );
+        lines = AsanaProjectAiSuggestionBuilder.build(
+          raw: raw,
+          form: form,
+          apply: projectApply!,
+        );
+        overallFeedback = deriveOverallFeedback(raw, lines);
+      } else if (mode == AsanaTaskAiAssistantMode.subtaskFields) {
+        final form = subtaskSnapshot!();
+        final raw = await DeepseekService.suggestAsanaSubtaskDraft(
+          userPrompt: prompt,
+          formContext: form.buildLlmContext(),
+        );
+        lines = AsanaSubtaskAiSuggestionBuilder.build(
+          raw: raw,
+          form: form,
+          applyName: onApplySubtaskName,
+          applyComment: onApplyComment!,
+          applyWebsiteLink: onApplyWebsiteLink,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
       } else {
@@ -986,8 +1181,9 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
   @override
   Widget build(BuildContext context) {
     final colors = AsanaTaskAiColors.fromPalette(widget.palette);
-    final commentOnly =
-        widget.controller.mode == AsanaTaskAiAssistantMode.commentOnly;
+    final mode = widget.controller.mode;
+    final commentOnly = mode == AsanaTaskAiAssistantMode.commentOnly;
+    final projectOnly = mode == AsanaTaskAiAssistantMode.projectFields;
 
     return Material(
       color: colors.boxBackground,
@@ -1076,6 +1272,7 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
                       palette: widget.palette,
                       colors: colors,
                       commentOnly: commentOnly,
+                      projectOnly: projectOnly,
                     ),
                   ),
               ],
@@ -1093,12 +1290,14 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
     required this.palette,
     required this.colors,
     required this.commentOnly,
+    required this.projectOnly,
   });
 
   final AsanaTaskAiController controller;
   final AsanaLandingPalette palette;
   final AsanaTaskAiColors colors;
   final bool commentOnly;
+  final bool projectOnly;
 
   bool _enterSubmitsPrompt(BuildContext context) {
     if (!kIsWeb) return false;
@@ -1121,7 +1320,9 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
             Text(
               commentOnly
                   ? 'This assistant helps you write a better comment.'
-                  : 'Describe the task, then tap Analyse. Suggestions appear on matching fields.',
+                  : projectOnly
+                      ? 'Describe the project, then tap Analyse. Suggestions appear on matching fields.'
+                      : 'Describe the task, then tap Analyse. Suggestions appear on matching fields.',
               style: asanaDetailLabelStyle(context),
             ),
             if (!configured) ...[

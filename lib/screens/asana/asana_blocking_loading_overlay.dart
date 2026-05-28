@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Full-screen dimmed overlay with centered spinner (task save, file upload, etc.).
+/// Full-screen dimmed overlay with centered loading bar (task save, file upload, etc.).
 class AsanaBlockingLoadingOverlay {
   AsanaBlockingLoadingOverlay._();
 
@@ -15,29 +15,33 @@ class AsanaBlockingLoadingOverlay {
 
     _entry = OverlayEntry(
       builder: (ctx) => Material(
-        color: const Color(0x66000000),
+        color: const Color(0x80000000),
         child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 16,
-                  offset: Offset(0, 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Loading',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
                 ),
-              ],
-            ),
-            child: const SizedBox(
-              width: 36,
-              height: 36,
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                color: Color(0xFF4573D2),
               ),
-            ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 220,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: const LinearProgressIndicator(
+                    minHeight: 6,
+                    backgroundColor: Color(0x66FFFFFF),
+                    color: Color(0xFFFFFFFF),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

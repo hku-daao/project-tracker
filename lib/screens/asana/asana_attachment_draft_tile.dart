@@ -43,7 +43,7 @@ class _AsanaAttachmentDraftTileState extends State<AsanaAttachmentDraftTile> {
   @override
   Widget build(BuildContext context) {
     final canRemove = widget.enabled && widget.onRemove != null;
-    final showRemove = canRemove && _hovering;
+    final showRemove = canRemove;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),

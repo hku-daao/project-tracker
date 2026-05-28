@@ -301,6 +301,7 @@ class AsanaHoverTapValue extends StatefulWidget {
     required this.value,
     required this.canEdit,
     this.onTap,
+    this.onClear,
     this.emptyPlaceholder = '',
     this.anchorLink,
   });
@@ -309,6 +310,7 @@ class AsanaHoverTapValue extends StatefulWidget {
   final bool canEdit;
   /// Receives this field's [BuildContext] (for anchored overlays).
   final void Function(BuildContext fieldContext)? onTap;
+  final VoidCallback? onClear;
   final String emptyPlaceholder;
   /// When set, anchored overlays can follow this field on resize / scroll.
   final LayerLink? anchorLink;
@@ -323,9 +325,9 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
   @override
   Widget build(BuildContext context) {
     final showBorder = widget.canEdit && _hovering;
-    final display = widget.value.trim().isEmpty
-        ? widget.emptyPlaceholder
-        : widget.value.trim();
+    final hasValue = widget.value.trim().isNotEmpty;
+    final display = hasValue ? widget.value.trim() : widget.emptyPlaceholder;
+    final showClear = widget.canEdit && widget.onClear != null && hasValue;
 
     Widget child = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
@@ -346,9 +348,32 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
             horizontal: showBorder ? 8 : 0,
             vertical: showBorder ? 6 : 2,
           ),
-          child: Text(
-            display,
-            style: asanaDetailValueStyle(context),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: IntrinsicWidth(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(right: showClear ? 14 : 0),
+                    child: Text(
+                      display,
+                      style: asanaDetailValueStyle(context).copyWith(
+                        color: hasValue
+                            ? kAsanaTextPrimary
+                            : kAsanaTextSecondary,
+                      ),
+                    ),
+                  ),
+                  if (showClear)
+                    Positioned(
+                      top: -8,
+                      right: -2,
+                      child: _AsanaSmallClearButton(onTap: widget.onClear!),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -360,6 +385,32 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
       );
     }
     return child;
+  }
+}
+
+class _AsanaSmallClearButton extends StatelessWidget {
+  const _AsanaSmallClearButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 18,
+          height: 18,
+          decoration: const BoxDecoration(
+            color: Color(0xFF6D6E6F),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.close, size: 12, color: Colors.white),
+        ),
+      ),
+    );
   }
 }
 
@@ -655,6 +706,111 @@ class AsanaTaskDetailActionStyles {
       ),
     );
   }
+}
+
+/// Asana-style custom dialog for confirmations.
+Future<bool?> showAsanaConfirmDialog({
+  required BuildContext context,
+  required String title,
+  required String content,
+  required String confirmText,
+  bool isDestructive = false,
+  required AsanaLandingPalette palette,
+}) {
+  return showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      return Dialog(
+        backgroundColor: palette.panelBackground,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: const Color(0xFFEDEAE9),
+            width: 1,
+          ),
+        ),
+        elevation: 12,
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                title,
+                style: asanaTextStyle(
+                  theme.textTheme.titleMedium,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: kAsanaTextPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                content,
+                style: asanaTextStyle(
+                  theme.textTheme.bodyMedium,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: kAsanaTextSecondary,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAsanaTextPrimary,
+                      side: const BorderSide(color: Color(0xFFEDEAE9)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: isDestructive ? const Color(0xFFC62828) : palette.accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: Text(confirmText),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+Future<void> showAsanaInfoDialog({
+  required BuildContext context,
+  required String title,
+  required String content,
+  required AsanaLandingPalette palette,
+  String confirmText = 'OK',
+}) async {
+  await showAsanaConfirmDialog(
+    context: context,
+    title: title,
+    content: content,
+    confirmText: confirmText,
+    palette: palette,
+  );
 }
 
 /// Submission pill for slide detail rows (matches table chip size).

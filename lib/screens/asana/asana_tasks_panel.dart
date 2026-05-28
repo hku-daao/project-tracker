@@ -28,6 +28,7 @@ class AsanaTasksPanel extends StatefulWidget {
     this.onOpenTask,
     this.onOpenSubtask,
     this.onCreateTask,
+    this.refreshToken = 0,
   });
 
   final AsanaLandingPalette palette;
@@ -38,6 +39,7 @@ class AsanaTasksPanel extends StatefulWidget {
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
   final VoidCallback? onCreateTask;
+  final int refreshToken;
 
   @override
   State<AsanaTasksPanel> createState() => _AsanaTasksPanelState();
@@ -66,7 +68,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     super.didUpdateWidget(oldWidget);
     if (!_filtersReady) return;
     if (oldWidget.searchQuery != widget.searchQuery ||
-        oldWidget.flatTasksAndSubtasks != widget.flatTasksAndSubtasks) {
+        oldWidget.flatTasksAndSubtasks != widget.flatTasksAndSubtasks ||
+        oldWidget.refreshToken != widget.refreshToken) {
       _rebuildTaskList();
     }
   }
@@ -460,25 +463,25 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 
   String _scopeLabel() {
-    switch (_filters.scope) {
-      case 'assigned':
-        return 'Assigned to me';
-      case 'created':
-        return 'Created by me';
-      default:
-        return 'All';
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) return 'All';
+    if (_filters.scopes.length == 1) {
+      if (_filters.scopes.contains('assigned')) return 'Assigned to me';
+      if (_filters.scopes.contains('created')) return 'Created by me';
     }
+    return '${_filters.scopes.length} selected';
   }
 
   String _scopeSectionTitle() {
-    switch (_filters.scope) {
-      case 'assigned':
-        return 'Tasks assigned to me';
-      case 'created':
-        return 'Tasks created by me';
-      default:
-        return 'Tasks created by and assigned to my team';
+    final prefix =
+        widget.flatTasksAndSubtasks ? 'Tasks/Sub-tasks' : 'Tasks';
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) {
+      return '$prefix created by or assigned to my team';
     }
+    if (_filters.scopes.length == 1) {
+      if (_filters.scopes.contains('assigned')) return '$prefix assigned to me';
+      if (_filters.scopes.contains('created')) return '$prefix created by me';
+    }
+    return '$prefix (Multiple scopes)';
   }
 
   String _statusLabel() {
@@ -515,7 +518,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     return 'To ${HkTime.formatInstantAsHk(e!, 'MMM d')}';
   }
 
-  String _overdueLabel() => _filters.overdueOnly ? 'Overdue only' : 'All';
+  String _overdueLabel() => _filters.overdueOptions.contains('overdue') ? 'Overdue only' : 'All';
 
   Future<void> _showDueDateRangePicker(BuildContext buttonContext) async {
     final picked = await showAsanaAnchoredDateRangePicker(
@@ -542,109 +545,94 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 
   Future<void> _showScopeMenu(BuildContext buttonContext) async {
-    await showMenu<String>(
-      context: buttonContext,
-      position: _menuPosition(buttonContext),
-      items: const [
-        PopupMenuItem(value: 'all', child: Text('All')),
-        PopupMenuItem(value: 'assigned', child: Text('Assigned to me')),
-        PopupMenuItem(value: 'created', child: Text('Created by me')),
+    const allKey = 'all';
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(key: 'assigned', label: 'Assigned to me'),
+        AsanaFilterCheckboxOption(key: 'created', label: 'Created by me'),
       ],
-    ).then((v) {
-      if (v == null) return;
-      setState(() => _filters.scope = v);
+      initialSelection: _filters.scopes,
+    );
+    if (selection != null) {
+      setState(() => _filters.scopes = selection);
       _onFiltersChanged();
-    });
+    }
   }
 
   Future<void> _showStatusMenu(BuildContext buttonContext) async {
     const allKey = '__all__';
-    await showAsanaCheckboxFilterPanel(
+    final selection = await showAsanaCheckboxFilterPanel(
       anchorContext: buttonContext,
-      options: [
-        const AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
-        const AsanaFilterCheckboxOption(
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.statusIncomplete,
           label: 'Incomplete',
         ),
-        const AsanaFilterCheckboxOption(
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.statusCompleted,
           label: 'Completed',
         ),
-        const AsanaFilterCheckboxOption(
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.statusDeleted,
           label: 'Deleted',
         ),
       ],
-      isChecked: (key) => key == allKey
-          ? _filters.statuses.isEmpty
-          : _filters.statuses.contains(key),
-      onSelectAll: () => setState(() => _filters.statuses.clear()),
-      onToggle: (key, checked) {
-        setState(() {
-          if (checked) {
-            _filters.statuses.add(key);
-          } else {
-            _filters.statuses.remove(key);
-          }
-        });
-      },
+      initialSelection: _filters.statuses,
     );
-    _onFiltersChanged();
+    if (selection != null) {
+      setState(() => _filters.statuses = selection);
+      _onFiltersChanged();
+    }
   }
 
   Future<void> _showSubmissionMenu(BuildContext buttonContext) async {
     const allKey = '__all__';
-    await showAsanaCheckboxFilterPanel(
+    final selection = await showAsanaCheckboxFilterPanel(
       anchorContext: buttonContext,
-      options: [
-        const AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
-        const AsanaFilterCheckboxOption(
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.submissionPending,
           label: 'Pending',
         ),
-        const AsanaFilterCheckboxOption(
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.submissionSubmitted,
           label: 'Submitted',
         ),
-        const AsanaFilterCheckboxOption(
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.submissionAccepted,
           label: 'Accepted',
         ),
-        const AsanaFilterCheckboxOption(
+        AsanaFilterCheckboxOption(
           key: AsanaTaskFilterState.submissionReturned,
           label: 'Returned',
         ),
       ],
-      isChecked: (key) => key == allKey
-          ? _filters.submissions.isEmpty
-          : _filters.submissions.contains(key),
-      onSelectAll: () => setState(() => _filters.submissions.clear()),
-      onToggle: (key, checked) {
-        setState(() {
-          if (checked) {
-            _filters.submissions.add(key);
-          } else {
-            _filters.submissions.remove(key);
-          }
-        });
-      },
+      initialSelection: _filters.submissions,
     );
-    _onFiltersChanged();
+    if (selection != null) {
+      setState(() => _filters.submissions = selection);
+      _onFiltersChanged();
+    }
   }
 
   Future<void> _showOverdueMenu(BuildContext buttonContext) async {
-    final v = await showMenu<String>(
-      context: buttonContext,
-      position: _menuPosition(buttonContext),
-      items: const [
-        PopupMenuItem(value: 'all', child: Text('All')),
-        PopupMenuItem(value: 'overdue', child: Text('Overdue only')),
+    const allKey = 'all';
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(key: 'overdue', label: 'Overdue only'),
       ],
+      initialSelection: _filters.overdueOptions,
     );
-    if (v == null) return;
-    setState(() => _filters.overdueOnly = v == 'overdue');
-    _onFiltersChanged();
+    if (selection != null) {
+      setState(() => _filters.overdueOptions = selection);
+      _onFiltersChanged();
+    }
   }
 
   Future<void> _showSortMenu(BuildContext buttonContext) async {

@@ -32,10 +32,11 @@ Future<AsanaAttachmentMenuResult?> showAsanaAnchoredAttachmentMenu({
   required BuildContext anchorContext,
   BuildContext? widthAlignContext,
   VoidCallback? onClosed,
+  bool allowFileUpload = true,
 }) async {
   AsanaAttachmentMenuResult? picked;
   final alignCtx = widthAlignContext ?? anchorContext;
-  final menuWidth = asanaAnchoredFieldWidth(alignCtx);
+  final menuWidth = asanaAnchoredFieldWidth(alignCtx).clamp(280.0, 420.0);
   await showAsanaAnchoredOverlay(
     anchorLink: anchorLink,
     anchorContext: anchorContext,
@@ -46,6 +47,7 @@ Future<AsanaAttachmentMenuResult?> showAsanaAnchoredAttachmentMenu({
     builder: (ctx, close) {
       return _AsanaAttachmentMenuPanel(
         anchorContext: anchorContext,
+        allowFileUpload: allowFileUpload,
         onUploadFile: () {
           picked = const AsanaAttachmentUploadFile();
           SchedulerBinding.instance.addPostFrameCallback((_) => close());
@@ -261,11 +263,13 @@ class _AsanaAttachmentLinkEditorPanelState
 class _AsanaAttachmentMenuPanel extends StatefulWidget {
   const _AsanaAttachmentMenuPanel({
     required this.anchorContext,
+    required this.allowFileUpload,
     required this.onUploadFile,
     required this.onAddLink,
   });
 
   final BuildContext anchorContext;
+  final bool allowFileUpload;
   final VoidCallback onUploadFile;
   final void Function(String url, String description) onAddLink;
 
@@ -339,7 +343,8 @@ class _AsanaAttachmentMenuPanelState extends State<_AsanaAttachmentMenuPanel> {
             _MenuRow(
               icon: Icons.upload_file_outlined,
               label: 'Upload a file',
-              onTap: widget.onUploadFile,
+              enabled: widget.allowFileUpload,
+              onTap: widget.allowFileUpload ? widget.onUploadFile : null,
             ),
             const Divider(height: 1, color: _divider),
             _MenuRow(
@@ -434,29 +439,43 @@ class _MenuRow extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.selected = false,
+    this.enabled = true,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
   final bool selected;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: selected ? const Color(0xFFF3F4F6) : Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              Icon(icon, size: 20, color: kAsanaTextSecondary),
+              Icon(
+                icon,
+                size: 20,
+                color: enabled
+                    ? kAsanaTextSecondary
+                    : kAsanaTextSecondary.withValues(alpha: 0.45),
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   label,
-                  style: asanaDetailValueStyle(context),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: asanaDetailValueStyle(context).copyWith(
+                    color: enabled
+                        ? kAsanaTextPrimary
+                        : kAsanaTextSecondary.withValues(alpha: 0.65),
+                  ),
                 ),
               ),
               if (selected)

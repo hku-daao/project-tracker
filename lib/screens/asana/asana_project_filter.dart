@@ -3,9 +3,9 @@ import '../../models/project_record.dart';
 class AsanaProjectFilterState {
   AsanaProjectFilterState();
 
-  String scope = 'all';
+  Set<String> scopes = {};
   /// Empty = all statuses (default).
-  final Set<String> statuses = {};
+  Set<String> statuses = {};
 
   DateTime? createDateStart;
   DateTime? createDateEnd;
@@ -16,7 +16,7 @@ class AsanaProjectFilterState {
       createDateStart != null || createDateEnd != null;
 
   void resetToDefaults() {
-    scope = 'all';
+    scopes.clear();
     statuses.clear();
     sortKey = 'due';
     sortAscending = true;
@@ -53,18 +53,31 @@ class AsanaProjectFilter {
   static bool _projectVisible(
     ProjectRecord p,
     AppState state,
-    String scope,
+    Set<String> scopes,
   ) {
     final mine = state.userStaffAppId?.trim();
     final myUuid = state.userStaffId?.trim();
-    if (scope == 'assigned') {
-      if (myUuid == null || myUuid.isEmpty) return false;
-      return p.assigneeStaffUuids.any((u) => u.trim() == myUuid);
+
+    if (scopes.isNotEmpty && !scopes.contains('all')) {
+      bool pass = false;
+      if (scopes.contains('assigned')) {
+        if (myUuid != null && myUuid.isNotEmpty) {
+          if (p.assigneeStaffUuids.any((u) => u.trim() == myUuid) ||
+              p.picStaffUuids.any((u) => u.trim() == myUuid)) {
+            pass = true;
+          }
+        }
+      }
+      if (!pass && scopes.contains('created')) {
+        if (myUuid != null && myUuid.isNotEmpty) {
+          if (p.createByStaffUuid?.trim() == myUuid) {
+            pass = true;
+          }
+        }
+      }
+      if (!pass) return false;
     }
-    if (scope == 'created') {
-      if (myUuid == null || myUuid.isEmpty) return false;
-      return p.createByStaffUuid?.trim() == myUuid;
-    }
+
     if (mine == null || mine.isEmpty) return false;
     if (myUuid != null &&
         myUuid.isNotEmpty &&
@@ -77,6 +90,11 @@ class AsanaProjectFilter {
       final appId = state.assigneeById(uid)?.id ?? uid;
       if (appId == mine) return true;
     }
+    if (myUuid != null &&
+        myUuid.isNotEmpty &&
+        p.picStaffUuids.any((u) => u.trim() == myUuid)) {
+      return true;
+    }
     final subs = state.subordinateAppIds;
     if (subs.isEmpty) return false;
     final cb = p.createByStaffUuid?.trim();
@@ -88,11 +106,29 @@ class AsanaProjectFilter {
       final appId = state.assigneeById(u.trim())?.id ?? u.trim();
       if (subs.contains(appId)) return true;
     }
+    for (final u in p.picStaffUuids) {
+      final appId = state.assigneeById(u.trim())?.id ?? u.trim();
+      if (subs.contains(appId)) return true;
+    }
     return false;
   }
 
-  static String _staffName(AppState state, String staffUuid) {
-    return state.assigneeById(staffUuid)?.name ?? staffUuid;
+  static String _staffName(
+    AppState state,
+    String staffUuid, {
+    String? resolvedName,
+  }) {
+    final stored = resolvedName?.trim();
+    if (stored != null && stored.isNotEmpty && stored != staffUuid.trim()) {
+      return stored;
+    }
+    final u = staffUuid.trim();
+    if (u.isEmpty) return '';
+    final byApp = state.assigneeById(u);
+    if (byApp != null && byApp.name.trim().isNotEmpty) {
+      return byApp.name.trim();
+    }
+    return u;
   }
 
   static bool projectCreatedByCurrentUser(AppState state, ProjectRecord p) {
@@ -113,11 +149,12 @@ class AsanaProjectFilter {
     required String searchQuery,
   }) {
     var list = state.projects
-        .where((p) => _projectVisible(p, state, filters.scope))
+        .where((p) => _projectVisible(p, state, filters.scopes))
         .toList();
 
-    if (filters.statuses.isNotEmpty) {
-      list = list.where((p) => filters.statuses.contains(p.status)).toList();
+    final statuses = filters.statuses.difference({'all', '__all__'});
+    if (statuses.isNotEmpty) {
+      list = list.where((p) => statuses.contains(p.status)).toList();
     }
 
     list = list.where((p) => _projectPassesDueDate(p, filters)).toList();
@@ -175,7 +212,23 @@ class AsanaProjectFilter {
 
   static String assigneesLine(ProjectRecord p, AppState state) {
     if (p.assigneeStaffUuids.isEmpty) return '—';
-    return p.assigneeStaffUuids.map((u) => _staffName(state, u)).join(', ');
+    final parts = <String>[];
+    for (var i = 0; i < p.assigneeStaffUuids.length; i++) {
+      final uuid = p.assigneeStaffUuids[i];
+      final stored = i < p.assigneeStaffDisplayNames.length
+          ? p.assigneeStaffDisplayNames[i]
+          : null;
+      parts.add(_staffName(state, uuid, resolvedName: stored));
+    }
+    return parts.join(', ');
+  }
+
+  static String creatorLine(ProjectRecord p, AppState state) {
+    final stored = p.createByDisplayName?.trim();
+    if (stored != null && stored.isNotEmpty) return stored;
+    final id = p.createByStaffUuid?.trim();
+    if (id == null || id.isEmpty) return '—';
+    return _staffName(state, id);
   }
 
   static String picLine(ProjectRecord p, AppState state) {

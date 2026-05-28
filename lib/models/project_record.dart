@@ -4,6 +4,7 @@ class ProjectRecord {
     required this.id,
     required this.name,
     required this.assigneeStaffUuids,
+    this.assigneeStaffDisplayNames = const [],
     this.picStaffUuids = const [],
     this.picStaffDisplayNames = const [],
     required this.description,
@@ -23,6 +24,9 @@ class ProjectRecord {
 
   /// Ordered non-empty `staff.id` values from assignee_01…assignee_10.
   final List<String> assigneeStaffUuids;
+
+  /// Resolved assignee names (parallel to [assigneeStaffUuids] when known at fetch).
+  final List<String> assigneeStaffDisplayNames;
 
   /// Non-empty `staff.id` values from [`project.pic`] JSON array (PICs ⊆ assignees).
   final List<String> picStaffUuids;

@@ -164,6 +164,79 @@ Rules:
     return map;
   }
 
+  /// Structured project-field suggestions for the Asana project slide.
+  static Future<Map<String, dynamic>> suggestAsanaProjectDraft({
+    required String userPrompt,
+    required String formContext,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(
+        'Missing DEEPSEEK_API_KEY. Rebuild with '
+        '--dart-define=DEEPSEEK_API_KEY=your_key',
+      );
+    }
+    final trimmed = userPrompt.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Prompt is empty');
+    }
+
+    const system = '''
+You help users fill a project form in a workplace project tracker.
+Reply with ONLY one JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "related": true or false,
+  "message": "optional short note when nothing can be suggested",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred (required if any name/description/status/assigneeNames/picNames/startDate/dueDate are set)",
+  "name": "string or null",
+  "description": "string or null",
+  "status": "Not started" or "In progress" or "Completed" or null,
+  "assigneeNames": ["names from available staff list"] or [],
+  "picNames": ["names from available staff list, must be assignees"] or [],
+  "startDate": "YYYY-MM-DD" or null,
+  "dueDate": "YYYY-MM-DD" or null
+}
+
+Rules:
+- Set "related": false only if the prompt is clearly unrelated to creating or updating a project.
+- Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
+- NEVER echo unchanged values: compare each field to "Current project form values" in context.
+- Use assignee and PIC names only from the provided staff list.
+- assigneeNames: full resulting assignee list when the user changes assignees.
+- picNames: PIC(s) must be chosen from assigneeNames. When one assignee, they are usually PIC too.
+- Dates must be YYYY-MM-DD. startDate must be on or before dueDate when both are set.
+- status must be exactly one of: Not started, In progress, Completed.
+- overallComment: required whenever you output at least one non-null field suggestion.
+- You are suggesting values only; the user adopts them. Do not mention overwriting.
+''';
+
+    final user = StringBuffer()
+      ..writeln(formContext.trim())
+      ..writeln()
+      ..writeln('User prompt:')
+      ..writeln(trimmed);
+
+    final body = jsonEncode({
+      'model': model.trim().isEmpty ? 'deepseek-chat' : model.trim(),
+      'messages': [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user.toString()},
+      ],
+      'temperature': 0.25,
+    });
+
+    final content = await _chatCompletionContent(body);
+    final map = parseJsonObjectFromModel(content);
+    if (map == null) {
+      throw FormatException(
+        'Could not parse JSON from model. Raw (truncated): '
+        '${content.length > 400 ? content.substring(0, 400) : content}',
+      );
+    }
+    return map;
+  }
+
   /// Comment-only suggestions for assignees (does not touch task metadata).
   static Future<Map<String, dynamic>> suggestCommentDraft({
     required String userPrompt,
@@ -189,15 +262,19 @@ Schema:
   "related": true or false,
   "message": "optional short note when no comment can be suggested",
   "overallComment": "when comment is set: 1-2 sentences on how you improved the draft (required if comment is non-null)",
-  "comment": "improved comment text or null"
+  "comment": "improved comment text or null",
+  "websiteLinks": [
+    { "url": "https://...", "description": "short label for the link" }
+  ] or []
 }
 
 Rules:
 - Set "related": false only if the prompt is clearly unrelated to drafting a task comment.
-- You may ONLY suggest the comment body. Never suggest task name, description, dates, assignees, PIC, priority, or project.
+- You may ONLY suggest the comment body or website links. Never suggest task name, description, dates, assignees, PIC, priority, or project.
 - Improve clarity and tone; keep the user's intent. Use the task name and current draft for context.
-- overallComment: required when comment is non-null; briefly explain what you changed or added.
-- You are suggesting text only; the user adopts it into the comment field. Do not mention other fields.
+- Website links: when the user mentions one or more URLs, add each as an entry in websiteLinks with a concise description. Do not repeat URLs already listed under "Current website link attachments".
+- overallComment: required when comment or websiteLinks is non-null/non-empty; briefly explain what you changed or added.
+- You are suggesting text/links only; the user adopts it into the comment/attachments field. Do not mention other fields.
 ''';
 
     final user = StringBuffer()
@@ -213,6 +290,78 @@ Rules:
         {'role': 'user', 'content': user.toString()},
       ],
       'temperature': 0.25,
+    });
+
+    final content = await _chatCompletionContent(body);
+    final map = parseJsonObjectFromModel(content);
+    if (map == null) {
+      throw FormatException(
+        'Could not parse JSON from model. Raw (truncated): '
+        '${content.length > 400 ? content.substring(0, 400) : content}',
+      );
+    }
+    return map;
+  }
+
+  /// Structured subtask-field suggestions for the Asana subtask slide.
+  static Future<Map<String, dynamic>> suggestAsanaSubtaskDraft({
+    required String userPrompt,
+    required String formContext,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(
+        'Missing DEEPSEEK_API_KEY. Rebuild with '
+        '--dart-define=DEEPSEEK_API_KEY=your_key',
+      );
+    }
+    final trimmed = userPrompt.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Prompt is empty');
+    }
+
+    const system = '''
+You help users fill a sub-task form in a workplace project tracker.
+Reply with ONLY one JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "related": true or false,
+  "message": "optional short note when nothing can be suggested",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt",
+  "name": "string or null",
+  "comment": "comment body for the Comments field (posted when the user saves), or null",
+  "websiteLinks": [
+    { "url": "https://...", "description": "short label for the link" }
+  ] or []
+}
+
+Rules:
+- Set "related": false only if the prompt is clearly unrelated to updating a sub-task.
+- Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
+- NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical, omit that field (null).
+- comment: text for the Comments field. Compare to "comment (draft)" in context; omit if identical.
+- Website links: when the user mentions one or more URLs, add each as an entry in websiteLinks with a concise description. Do not repeat URLs already listed under "Current website link attachments".
+- The user may or may not be the creator. If the user is NOT the creator, they cannot modify the name. The context will tell you if the name field is modifiable. If not modifiable, DO NOT suggest a name.
+- Use the parent task context provided to understand the context of the sub-task.
+- If assignees are discussed, treat the "Allowable sub-task assignees" list in the parent task context as the only valid people. Never suggest assigning someone outside the parent task assignees.
+- Attachments are represented as websiteLinks. Include URLs in websiteLinks, not in the comment text, unless the user explicitly asks to write them into the comment.
+- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language.
+- You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
+''';
+
+    final user = StringBuffer()
+      ..writeln(formContext.trim())
+      ..writeln()
+      ..writeln('User prompt:')
+      ..writeln(trimmed);
+
+    final body = jsonEncode({
+      'model': model.trim().isEmpty ? 'deepseek-chat' : model.trim(),
+      'messages': [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user.toString()},
+      ],
+      'temperature': 0.35,
     });
 
     final content = await _chatCompletionContent(body);

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +7,7 @@ import '../app_state.dart';
 import '../web_deep_link.dart';
 import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
+import 'asana/asana_detail_widgets.dart';
 import 'asana/asana_home_panel.dart';
 import 'asana/asana_projects_panel.dart';
 import 'asana/asana_tasks_panel.dart';
@@ -133,7 +135,7 @@ class AsanaLandingPalette {
       subtaskSection: Color(0xFFD5EFEB),
       projectRow: Color(0xFFF2FAF9),
     ),
-    panelBackground: Color(0xFFE8F5F3),
+    panelBackground: Color(0xFFF4FBFA),
     listSurface: Color(0xFFFFFFFF),
   );
 
@@ -156,7 +158,7 @@ class AsanaLandingPalette {
       subtaskSection: Color(0xFFBBDEFB),
       projectRow: Color(0xFFEEF5FD),
     ),
-    panelBackground: Color(0xFFE8F0FA),
+    panelBackground: Color(0xFFF1F6FD),
     listSurface: Color(0xFFFFFFFF),
   );
 
@@ -179,7 +181,7 @@ class AsanaLandingPalette {
       subtaskSection: Color(0xFFC8E6C9),
       projectRow: Color(0xFFF0F8F0),
     ),
-    panelBackground: Color(0xFFE8F5E9),
+    panelBackground: Color(0xFFF2FAF3),
     listSurface: Color(0xFFFFFFFF),
   );
 
@@ -202,7 +204,7 @@ class AsanaLandingPalette {
       subtaskSection: Color(0xFFFFE0B2),
       projectRow: Color(0xFFFFF8F2),
     ),
-    panelBackground: Color(0xFFFFF3E0),
+    panelBackground: Color(0xFFFFF8F0),
     listSurface: Color(0xFFFFFFFF),
   );
 
@@ -271,6 +273,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         palette: palette,
         searchQuery: searchQuery,
         flatTasksAndSubtasks: _selectedNav == 'All Tasks & Sub-tasks',
+        refreshToken: _detailRefreshToken,
         onOpenTask: (id) => setState(
           () => _detailStack
             ..clear()
@@ -292,6 +295,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       return AsanaProjectsPanel(
         palette: palette,
         searchQuery: searchQuery,
+        refreshToken: _detailRefreshToken,
         onOpenProject: (id) => setState(
           () => _detailStack
             ..clear()
@@ -338,10 +342,41 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     setState(() {
       if (_detailStack.length > 1) {
         _detailStack.removeLast();
-        _detailRefreshToken++;
       } else {
         _detailStack.clear();
       }
+    });
+  }
+
+  void _handleSubtaskCreated(String parentTaskId, String subtaskId) {
+    setState(() {
+      _detailRefreshToken++;
+    });
+  }
+
+  void _handleSubtaskChanged() {
+    setState(() => _detailRefreshToken++);
+  }
+
+  void _handleTaskCreated(String taskId) {
+    setState(() {
+      _detailStack
+        ..clear()
+        ..add(AsanaDetailSelection.task(taskId));
+      _detailRefreshToken++;
+    });
+  }
+
+  void _handleProjectChanged() {
+    setState(() => _detailRefreshToken++);
+  }
+
+  void _handleProjectCreated(String projectId) {
+    setState(() {
+      _detailStack
+        ..clear()
+        ..add(AsanaDetailSelection.project(projectId));
+      _detailRefreshToken++;
     });
   }
 
@@ -661,6 +696,15 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                 ),
                                               ),
                                             ),
+                                            onTaskCreated: _handleTaskCreated,
+                                            onProjectCreated:
+                                                _handleProjectCreated,
+                                            onProjectChanged:
+                                                _handleProjectChanged,
+                                            onSubtaskCreated:
+                                                _handleSubtaskCreated,
+                                            onSubtaskChanged:
+                                                _handleSubtaskChanged,
                                           ),
                                   ),
                                 ),
@@ -877,11 +921,25 @@ class _SidebarNavTile extends StatelessWidget {
   }
 }
 
-/// Bottom-left sidebar avatar with staff initials (e.g. Ken Lee → KL).
+/// Bottom-left sidebar avatar with staff initials (e.g. Ken Lee → KL) and log out button.
 class _SidebarUserAvatar extends StatelessWidget {
   const _SidebarUserAvatar({required this.palette});
 
   final AsanaLandingPalette palette;
+
+  Future<void> _confirmLogOut(BuildContext context) async {
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Log out',
+      content: 'Are you sure you want to log out?',
+      confirmText: 'Log out',
+      isDestructive: true,
+      palette: palette,
+    );
+    if (ok == true) {
+      await FirebaseAuth.instance.signOut();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -897,27 +955,36 @@ class _SidebarUserAvatar extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: palette.accent,
-            shape: BoxShape.circle,
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            initials,
-            style: asanaTextStyle(
-              Theme.of(context).textTheme.labelLarge,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-              height: 1,
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: palette.accent,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initials,
+              style: asanaTextStyle(
+                Theme.of(context).textTheme.labelLarge,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+                height: 1,
+              ),
             ),
           ),
-        ),
+          const Spacer(),
+          IconButton(
+            onPressed: () => _confirmLogOut(context),
+            icon: const Icon(Icons.logout),
+            color: palette.darkChrome ? Colors.white : kAsanaTextSecondary,
+            tooltip: 'Log out',
+            splashRadius: 20,
+          ),
+        ],
       ),
     );
   }

@@ -16,12 +16,14 @@ class AsanaProjectsPanel extends StatefulWidget {
     super.key,
     required this.palette,
     required this.searchQuery,
+    this.refreshToken = 0,
     this.onOpenProject,
     this.onCreateProject,
   });
 
   final AsanaLandingPalette palette;
   final String searchQuery;
+  final int refreshToken;
   final void Function(String projectId)? onOpenProject;
   final VoidCallback? onCreateProject;
 
@@ -45,7 +47,8 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   @override
   void didUpdateWidget(covariant AsanaProjectsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.searchQuery != widget.searchQuery) {
+    if (oldWidget.searchQuery != widget.searchQuery ||
+        oldWidget.refreshToken != widget.refreshToken) {
       _rebuildList();
     }
   }
@@ -98,6 +101,21 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _scopeSectionTitle(),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: kAsanaTextPrimary,
+                  height: 1.25,
+                ),
+              ),
+            ),
+          ),
           AsanaPanelFilterToolbar(
               palette: widget.palette,
               createLabel: 'Create Project',
@@ -205,14 +223,23 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   }
 
   String _scopeLabel() {
-    switch (_filters.scope) {
-      case 'assigned':
-        return 'Assigned to me';
-      case 'created':
-        return 'My created projects';
-      default:
-        return 'All';
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) return 'All';
+    if (_filters.scopes.length == 1) {
+      if (_filters.scopes.contains('assigned')) return 'Assigned to me';
+      if (_filters.scopes.contains('created')) return 'Created by me';
     }
+    return '${_filters.scopes.length} selected';
+  }
+
+  String _scopeSectionTitle() {
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) {
+      return 'Projects created by or assigned to my team';
+    }
+    if (_filters.scopes.length == 1) {
+      if (_filters.scopes.contains('assigned')) return 'Projects assigned to me';
+      if (_filters.scopes.contains('created')) return 'Projects created by me';
+    }
+    return 'Projects (Multiple scopes)';
   }
 
   String _statusLabel() {
@@ -258,19 +285,20 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   }
 
   Future<void> _showScopeMenu(BuildContext buttonContext) async {
-    await showMenu<String>(
-      context: buttonContext,
-      position: _menuPosition(buttonContext),
-      items: const [
-        PopupMenuItem(value: 'all', child: Text('All')),
-        PopupMenuItem(value: 'assigned', child: Text('Assigned to me')),
-        PopupMenuItem(value: 'created', child: Text('My created projects')),
+    const allKey = 'all';
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(key: 'assigned', label: 'Assigned to me'),
+        AsanaFilterCheckboxOption(key: 'created', label: 'Created by me'),
       ],
-    ).then((v) {
-      if (v == null) return;
-      setState(() => _filters.scope = v);
+      initialSelection: _filters.scopes,
+    );
+    if (selection != null) {
+      setState(() => _filters.scopes = selection);
       _rebuildList();
-    });
+    }
   }
 
   Future<void> _showStatusMenu(BuildContext buttonContext) async {
@@ -279,29 +307,21 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       'Not started',
       'In progress',
       'Completed',
+      'Deleted',
     ];
-    await showAsanaCheckboxFilterPanel(
+    final selection = await showAsanaCheckboxFilterPanel(
       anchorContext: buttonContext,
       options: [
         const AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
         for (final s in options)
           AsanaFilterCheckboxOption(key: s, label: s),
       ],
-      isChecked: (key) => key == allKey
-          ? _filters.statuses.isEmpty
-          : _filters.statuses.contains(key),
-      onSelectAll: () => setState(() => _filters.statuses.clear()),
-      onToggle: (key, checked) {
-        setState(() {
-          if (checked) {
-            _filters.statuses.add(key);
-          } else {
-            _filters.statuses.remove(key);
-          }
-        });
-      },
+      initialSelection: _filters.statuses,
     );
-    _rebuildList();
+    if (selection != null) {
+      setState(() => _filters.statuses = selection);
+      _rebuildList();
+    }
   }
 
   Future<void> _showSortMenu(BuildContext buttonContext) async {
@@ -365,17 +385,17 @@ class _ProjectTableLayout {
 
   final double tableWidth;
 
-  static const double minTableWidth = 752;
+  static const double minTableWidth = 1000;
   static const double typeCol = 48;
   static const double typeColGap = 10;
   /// Aligns project name with task list (matches [_TaskTableLayout.nameGutter]).
   static const double nameGutter = 36;
-  /// Plain-text columns (name, due, PIC) each followed by a gap.
-  static const int textColumnGapCount = 3;
+  /// Plain-text columns (name, due, creator, PIC, assignees) each followed by a gap.
+  static const int textColumnGapCount = 5;
   static const double singleLineExtent = 24;
   static const double hPad = 12;
 
-  static const double _flexWeightSum = 0.34 + 0.14 + 0.22;
+  static const double _flexWeightSum = 0.24 + 0.10 + 0.09 + 0.14 + 0.16;
 
   late final double _inner = (tableWidth -
           typeCol -
@@ -385,9 +405,11 @@ class _ProjectTableLayout {
           kAsanaTableStatusColWidth)
       .clamp(320, double.infinity);
 
-  double get nameCol => _inner * (0.34 / _flexWeightSum);
-  double get dueCol => _inner * (0.14 / _flexWeightSum);
-  double get picCol => _inner * (0.22 / _flexWeightSum);
+  double get nameCol => _inner * (0.24 / _flexWeightSum);
+  double get dueCol => _inner * (0.10 / _flexWeightSum);
+  double get creatorCol => _inner * (0.09 / _flexWeightSum);
+  double get picCol => _inner * (0.14 / _flexWeightSum);
+  double get assigneeCol => _inner * (0.16 / _flexWeightSum);
   double get statusCol => kAsanaTableStatusColWidth;
 }
 
@@ -429,8 +451,22 @@ class _ProjectTableHeader extends StatelessWidget {
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
+            width: cols.creatorCol,
+            label: 'Creator',
+            style: style,
+            rowHeight: _ProjectTableLayout.singleLineExtent,
+          ),
+          asanaTextColumnGap(),
+          asanaTableHeaderLabel(
             width: cols.picCol,
             label: 'PIC',
+            style: style,
+            rowHeight: _ProjectTableLayout.singleLineExtent,
+          ),
+          asanaTextColumnGap(),
+          asanaTableHeaderLabel(
+            width: cols.assigneeCol,
+            label: 'Assignees',
             style: style,
             rowHeight: _ProjectTableLayout.singleLineExtent,
           ),
@@ -530,9 +566,29 @@ class _ProjectTableRow extends StatelessWidget {
                 ),
                 asanaTextColumnGap(),
                 SizedBox(
+                  width: cols.creatorCol,
+                  child: Text(
+                    AsanaProjectFilter.creatorLine(project, appState),
+                    style: rowValueStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                asanaTextColumnGap(),
+                SizedBox(
                   width: cols.picCol,
                   child: Text(
                     AsanaProjectFilter.picLine(project, appState),
+                    style: rowValueStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.assigneeCol,
+                  child: Text(
+                    AsanaProjectFilter.assigneesLine(project, appState),
                     style: rowValueStyle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

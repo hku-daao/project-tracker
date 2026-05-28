@@ -59,6 +59,9 @@ class AsanaFilterDropdown extends StatelessWidget {
                     minimumSize: Size(buttonWidth, 34),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                     backgroundColor: highlighted
                         ? theme.colorScheme.primaryContainer
                         : null,
@@ -220,23 +223,21 @@ class AsanaFilterCheckboxOption {
 }
 
 /// Shows a small menu under the filter button (not full-screen).
-Future<void> showAsanaCheckboxFilterPanel({
+Future<Set<String>?> showAsanaCheckboxFilterPanel({
   required BuildContext anchorContext,
   required List<AsanaFilterCheckboxOption> options,
-  required bool Function(String key) isChecked,
-  required void Function(String key, bool checked) onToggle,
-  required VoidCallback onSelectAll,
+  required Set<String> initialSelection,
 }) {
-  final completer = Completer<void>();
+  final completer = Completer<Set<String>?>();
   final box = anchorContext.findRenderObject() as RenderBox?;
   if (box == null || !box.hasSize) {
-    completer.complete();
+    completer.complete(null);
     return completer.future;
   }
 
   final overlay = Overlay.maybeOf(anchorContext, rootOverlay: true);
   if (overlay == null) {
-    completer.complete();
+    completer.complete(null);
     return completer.future;
   }
 
@@ -244,9 +245,9 @@ Future<void> showAsanaCheckboxFilterPanel({
   final size = box.size;
   late OverlayEntry entry;
 
-  void close() {
+  void close([Set<String>? result]) {
     if (entry.mounted) entry.remove();
-    if (!completer.isCompleted) completer.complete();
+    if (!completer.isCompleted) completer.complete(result);
   }
 
   entry = OverlayEntry(
@@ -254,7 +255,7 @@ Future<void> showAsanaCheckboxFilterPanel({
       children: [
         Positioned.fill(
           child: GestureDetector(
-            onTap: close,
+            onTap: () => close(null),
             behavior: HitTestBehavior.translucent,
             child: const ColoredBox(color: Colors.transparent),
           ),
@@ -273,16 +274,8 @@ Future<void> showAsanaCheckboxFilterPanel({
               ),
               child: _CheckboxFilterPanelBody(
                 options: options,
-                isChecked: isChecked,
-                onToggle: (key, checked) {
-                  onToggle(key, checked);
-                  entry.markNeedsBuild();
-                },
-                onSelectAll: () {
-                  onSelectAll();
-                  entry.markNeedsBuild();
-                },
-                onDone: close,
+                initialSelection: initialSelection,
+                onDone: (newSelection) => close(newSelection),
               ),
             ),
           ),
@@ -291,10 +284,9 @@ Future<void> showAsanaCheckboxFilterPanel({
     ),
   );
 
-  // Defer so the opening tap does not hit the barrier and close immediately.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     if (!anchorContext.mounted) {
-      completer.complete();
+      completer.complete(null);
       return;
     }
     overlay.insert(entry);
@@ -303,50 +295,104 @@ Future<void> showAsanaCheckboxFilterPanel({
   return completer.future;
 }
 
-class _CheckboxFilterPanelBody extends StatelessWidget {
+class _CheckboxFilterPanelBody extends StatefulWidget {
   const _CheckboxFilterPanelBody({
     required this.options,
-    required this.isChecked,
-    required this.onToggle,
-    required this.onSelectAll,
+    required this.initialSelection,
     required this.onDone,
   });
 
   final List<AsanaFilterCheckboxOption> options;
-  final bool Function(String key) isChecked;
-  final void Function(String key, bool checked) onToggle;
-  final VoidCallback onSelectAll;
-  final VoidCallback onDone;
+  final Set<String> initialSelection;
+  final void Function(Set<String>) onDone;
+
+  @override
+  State<_CheckboxFilterPanelBody> createState() => _CheckboxFilterPanelBodyState();
+}
+
+class _CheckboxFilterPanelBodyState extends State<_CheckboxFilterPanelBody> {
+  late Set<String> _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = Set.of(widget.initialSelection);
+  }
+
+  void _toggle(String key, bool checked) {
+    setState(() {
+      _selected.remove('all');
+      _selected.remove('__all__');
+      if (checked) {
+        _selected.add(key);
+      } else {
+        _selected.remove(key);
+      }
+    });
+  }
+
+  void _selectAll(String allKey) {
+    setState(() {
+      _selected.clear();
+      _selected.add(allKey);
+    });
+  }
+
+  bool _isChecked(AsanaFilterCheckboxOption opt) {
+    if (opt.isAll) {
+      return _selected.isEmpty || _selected.contains(opt.key);
+    }
+    return _selected.contains(opt.key);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final opt in options)
+        for (final opt in widget.options)
           _CompactCheckboxTile(
             label: opt.label,
-            value: opt.isAll ? isChecked(opt.key) : isChecked(opt.key),
+            value: _isChecked(opt),
             onChanged: (v) {
               if (opt.isAll) {
-                if (v == true) onSelectAll();
+                if (v == true) _selectAll(opt.key);
               } else {
-                onToggle(opt.key, v == true);
+                _toggle(opt.key, v == true);
               }
             },
           ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: onDone,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: () {
+                if (_selected.contains('all') || _selected.contains('__all__')) {
+                  widget.onDone(<String>{});
+                  return;
+                }
+                widget.onDone(_selected);
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFE4E6EB),
+                foregroundColor: const Color(0xFF1F2937),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ).copyWith(
+                overlayColor: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.hovered)
+                      ? Colors.black12
+                      : null,
+                ),
+              ),
+              child: const Text('Done', style: TextStyle(fontWeight: FontWeight.w600)),
             ),
-            child: Text('Done', style: theme.textTheme.labelLarge),
           ),
         ),
       ],
@@ -478,6 +524,90 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
     start: asanaDateOnlyFromPicker(picked.start),
     end: asanaDateOnlyFromPicker(picked.end),
   );
+}
+
+/// Anchored single-date calendar for fields that should not imply a range.
+Future<DateTime?> showAsanaAnchoredSingleDatePicker({
+  required BuildContext anchorContext,
+  DateTime? initialDate,
+  String helpText = 'Select date',
+}) async {
+  final box = anchorContext.findRenderObject() as RenderBox?;
+  if (box == null || !box.hasSize) return null;
+
+  final now = HkTime.todayDateOnlyHk();
+  final firstDate = now.subtract(const Duration(days: 365 * 10));
+  final lastDate = now.add(const Duration(days: 365 * 5));
+  final initial = asanaDateOnlyFromPicker(initialDate ?? now);
+  final offset = box.localToGlobal(Offset.zero);
+  final size = box.size;
+  final screen = MediaQuery.sizeOf(anchorContext);
+  const panelWidth = 380.0;
+  const panelHeight = 420.0;
+  final accent = Theme.of(anchorContext).colorScheme.primary;
+  final pickerTheme = Theme.of(anchorContext).copyWith(
+    colorScheme: Theme.of(anchorContext).colorScheme.copyWith(
+      primary: accent,
+      onPrimary: Colors.white,
+    ),
+  );
+  var left = offset.dx;
+  if (left + panelWidth > screen.width - 8) {
+    left = screen.width - panelWidth - 8;
+  }
+  if (left < 8) left = 8;
+  var top = offset.dy + size.height + 4;
+  if (top + panelHeight > screen.height - 8) {
+    top = offset.dy - panelHeight - 4;
+  }
+  if (top < 8) top = 8;
+
+  final picked = await showGeneralDialog<DateTime>(
+    context: anchorContext,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black26,
+    transitionDuration: Duration.zero,
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      return Stack(
+        children: [
+          Positioned(
+            left: left,
+            top: top,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              color: pickerTheme.colorScheme.surface,
+              child: Theme(
+                data: pickerTheme,
+                child: SizedBox(
+                  width: panelWidth,
+                  child: CalendarDatePicker(
+                    initialDate: initial.isBefore(firstDate) ||
+                            initial.isAfter(lastDate)
+                        ? now
+                        : initial,
+                    firstDate: firstDate,
+                    lastDate: lastDate,
+                    currentDate: now,
+                    onDateChanged: (date) {
+                      Navigator.pop(
+                        dialogContext,
+                        asanaDateOnlyFromPicker(date),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  if (picked == null) return null;
+  return asanaDateOnlyFromPicker(picked);
 }
 
 /// One selectable row in [showAsanaAnchoredOptionMenu].

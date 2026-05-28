@@ -19,13 +19,13 @@ class AsanaTaskFilterState {
   AsanaTaskFilterState();
 
   /// `all` | `assigned` | `created`
-  String scope = 'all';
+  Set<String> scopes = {};
   /// Empty = all statuses / all submissions (no chip filter).
-  final Set<String> statuses = {};
-  final Set<String> submissions = {};
+  Set<String> statuses = {};
+  Set<String> submissions = {};
   DateTime? createDateStart;
   DateTime? createDateEnd;
-  bool overdueOnly = false;
+  Set<String> overdueOptions = {};
 
   /// `due` | `created` | `name`
   String sortKey = 'due';
@@ -44,10 +44,10 @@ class AsanaTaskFilterState {
       createDateStart != null || createDateEnd != null;
 
   void resetToDefaults() {
-    scope = 'all';
+    scopes.clear();
     statuses.clear();
     submissions.clear();
-    overdueOnly = false;
+    overdueOptions.clear();
     sortKey = 'due';
     sortAscending = true;
     assigneeStaffIds = [];
@@ -62,7 +62,8 @@ class AsanaTaskFilterState {
     var ft = data.filterType;
     if (ft == 'my') ft = 'all';
     if (ft != 'all' && ft != 'assigned' && ft != 'created') ft = 'all';
-    scope = ft;
+    scopes.clear();
+    if (ft != 'all') scopes.add(ft);
     statuses.clear();
     for (final s in data.statuses) {
       if (s == statusIncomplete || s == statusCompleted || s == statusDeleted) {
@@ -78,7 +79,8 @@ class AsanaTaskFilterState {
         submissions.add(s);
       }
     }
-    overdueOnly = data.filterOverdueOnly;
+    overdueOptions.clear();
+    if (data.filterOverdueOnly) overdueOptions.add('overdue');
     createDateStart = data.filterCreateDateStartMs != null
         ? DateTime.fromMillisecondsSinceEpoch(data.filterCreateDateStartMs!)
         : null;
@@ -141,6 +143,9 @@ class AsanaTaskFilter {
     return s == 'delete' || s == 'deleted';
   }
 
+  static Set<String> _normalizedStatuses(AsanaTaskFilterState filters) =>
+      filters.statuses.difference({'all', '__all__'});
+
   static bool _singularCompleted(Task t) {
     final s = t.dbStatus?.trim().toLowerCase() ?? '';
     return s == 'completed' || s == 'complete';
@@ -181,10 +186,13 @@ class AsanaTaskFilter {
     return false;
   }
 
-  static bool _landingVisible(AppState state, Task t, String filterKey) {
-    final fk = filterKey == 'my' ? 'all' : filterKey;
-    if (fk == 'assigned') return _taskAssignedToCurrentUser(state, t);
-    if (fk == 'created') return state.taskIsCreatedByCurrentUser(t);
+  static bool _landingVisible(AppState state, Task t, Set<String> scopes) {
+    if (scopes.isNotEmpty && !scopes.contains('all')) {
+      bool pass = false;
+      if (scopes.contains('assigned') && _taskAssignedToCurrentUser(state, t)) pass = true;
+      if (!pass && scopes.contains('created') && state.taskIsCreatedByCurrentUser(t)) pass = true;
+      return pass;
+    }
     return state.taskMatchesSupervisorScope(t);
   }
 
@@ -231,14 +239,15 @@ class AsanaTaskFilter {
     SingularSubtask s,
     AsanaTaskFilterState filters,
   ) {
-    if (filters.statuses.isEmpty) return true;
-    final wantInc = filters.statuses.contains(
+    final statuses = _normalizedStatuses(filters);
+    if (statuses.isEmpty) return true;
+    final wantInc = statuses.contains(
       AsanaTaskFilterState.statusIncomplete,
     );
-    final wantComp = filters.statuses.contains(
+    final wantComp = statuses.contains(
       AsanaTaskFilterState.statusCompleted,
     );
-    final wantDel = filters.statuses.contains(
+    final wantDel = statuses.contains(
       AsanaTaskFilterState.statusDeleted,
     );
     if (!wantInc && !wantComp && !wantDel) return true;
@@ -250,8 +259,9 @@ class AsanaTaskFilter {
   static bool _overviewCompletedOnlyWithoutIncomplete(
     AsanaTaskFilterState filters,
   ) {
-    return filters.statuses.contains(AsanaTaskFilterState.statusCompleted) &&
-        !filters.statuses.contains(AsanaTaskFilterState.statusIncomplete);
+    final statuses = _normalizedStatuses(filters);
+    return statuses.contains(AsanaTaskFilterState.statusCompleted) &&
+        !statuses.contains(AsanaTaskFilterState.statusIncomplete);
   }
 
   static bool _shouldOmitSubtaskRow(
@@ -259,14 +269,16 @@ class AsanaTaskFilter {
     SingularSubtask s,
     AsanaTaskFilterState filters,
   ) {
+    final statuses = _normalizedStatuses(filters);
     if (s.isDeleted) {
-      if (!filters.statuses.contains(AsanaTaskFilterState.statusDeleted)) {
+      if (statuses.isNotEmpty &&
+          !statuses.contains(AsanaTaskFilterState.statusDeleted)) {
         return true;
       }
       return false;
     }
-    if (filters.statuses.contains(AsanaTaskFilterState.statusIncomplete) &&
-        !filters.statuses.contains(AsanaTaskFilterState.statusCompleted) &&
+    if (statuses.contains(AsanaTaskFilterState.statusIncomplete) &&
+        !statuses.contains(AsanaTaskFilterState.statusCompleted) &&
         _singularIncomplete(t) &&
         _singularSubtaskCompleted(s)) {
       return true;
@@ -386,20 +398,20 @@ class AsanaTaskFilter {
         .where((t) => !_singularDeleted(t))
         .toList();
     final tasksDeletedSingular = tasksList.where(_singularDeleted).toList();
-    final filterKey = filters.scope;
     bool taskMatchesSubmission(Task t) {
       if (filters.submissions.isEmpty) return true;
       return filters.submissions.contains(_submissionKey(t));
     }
 
+    final statuses = _normalizedStatuses(filters);
     bool nonDeletedMatchesStatus(Task t) {
-      if (filters.statuses.isEmpty) return taskMatchesSubmission(t);
+      if (statuses.isEmpty) return taskMatchesSubmission(t);
       if (_singularDeleted(t)) return false;
-      if (filters.statuses.contains(AsanaTaskFilterState.statusIncomplete) &&
+      if (statuses.contains(AsanaTaskFilterState.statusIncomplete) &&
           _singularIncomplete(t)) {
         return taskMatchesSubmission(t);
       }
-      if (filters.statuses.contains(AsanaTaskFilterState.statusCompleted) &&
+      if (statuses.contains(AsanaTaskFilterState.statusCompleted) &&
           _singularCompleted(t)) {
         return taskMatchesSubmission(t);
       }
@@ -408,16 +420,16 @@ class AsanaTaskFilter {
 
     bool deletedMatchesStatus(Task t) {
       if (!_singularDeleted(t)) return false;
-      if (filters.statuses.isEmpty) return false;
-      if (!filters.statuses.contains(AsanaTaskFilterState.statusDeleted)) {
+      if (statuses.isEmpty) return taskMatchesSubmission(t);
+      if (!statuses.contains(AsanaTaskFilterState.statusDeleted)) {
         return false;
       }
       return taskMatchesSubmission(t);
     }
 
     bool shouldShowDeleted() {
-      if (filters.statuses.isEmpty) return false;
-      return filters.statuses.contains(AsanaTaskFilterState.statusDeleted);
+      if (statuses.isEmpty) return true;
+      return statuses.contains(AsanaTaskFilterState.statusDeleted);
     }
 
     List<Task> withScopeAndStatus(
@@ -425,12 +437,15 @@ class AsanaTaskFilter {
       bool Function(Task) statusMatch,
     ) {
       Iterable<Task> it = source;
-      if (filterKey == 'assigned') {
-        it = it.where((t) => _taskAssignedToCurrentUser(state, t));
-      } else if (filterKey == 'created') {
-        it = it.where(state.taskIsCreatedByCurrentUser);
+      if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+        it = it.where((t) {
+          bool pass = false;
+          if (filters.scopes.contains('assigned') && _taskAssignedToCurrentUser(state, t)) pass = true;
+          if (!pass && filters.scopes.contains('created') && state.taskIsCreatedByCurrentUser(t)) pass = true;
+          return pass;
+        });
       } else {
-        it = it.where((t) => _landingVisible(state, t, 'all'));
+        it = it.where((t) => _landingVisible(state, t, {}));
       }
       return it.where(statusMatch).toList();
     }
@@ -443,7 +458,7 @@ class AsanaTaskFilter {
       ];
     }
     // Customized Overview: parent task rows stay in phase 1 when overdue filter is on.
-    if (filters.overdueOnly) {
+    if (filters.overdueOptions.contains('overdue')) {
       // Sub-task overdue inclusion happens in [applyTasksTabRows].
     }
     // Search is applied in [applyTasksTabRows] (token / sub-task aware).
@@ -458,21 +473,29 @@ class AsanaTaskFilter {
   ) {
     final ids = phase1.map((t) => t.id).toList();
     final have = ids.toSet();
-    if (!filters.statuses.contains(AsanaTaskFilterState.statusDeleted) &&
-        !filters.statuses.contains(AsanaTaskFilterState.statusCompleted)) {
+    final statuses = _normalizedStatuses(filters);
+    if (statuses.isNotEmpty &&
+        !statuses.contains(AsanaTaskFilterState.statusDeleted) &&
+        !statuses.contains(AsanaTaskFilterState.statusCompleted)) {
       return ids;
     }
     const allTeams = <String>{};
     final scope = state
         .tasksForTeams(allTeams)
         .where((t) => t.isSingularTableRow);
-    Iterable<Task> it = scope.where((t) => !_singularDeleted(t));
-    if (filters.scope == 'assigned') {
-      it = it.where((t) => _taskAssignedToCurrentUser(state, t));
-    } else if (filters.scope == 'created') {
-      it = it.where(state.taskIsCreatedByCurrentUser);
+    Iterable<Task> it = statuses.isEmpty ||
+            statuses.contains(AsanaTaskFilterState.statusDeleted)
+        ? scope
+        : scope.where((t) => !_singularDeleted(t));
+    if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+      it = it.where((t) {
+        bool pass = false;
+        if (filters.scopes.contains('assigned') && _taskAssignedToCurrentUser(state, t)) pass = true;
+        if (!pass && filters.scopes.contains('created') && state.taskIsCreatedByCurrentUser(t)) pass = true;
+        return pass;
+      });
     } else {
-      it = it.where((t) => _landingVisible(state, t, 'all'));
+      it = it.where((t) => _landingVisible(state, t, {}));
     }
     for (final t in it) {
       if (!have.contains(t.id)) {
@@ -491,8 +514,10 @@ class AsanaTaskFilter {
     Map<String, List<SingularSubtask>> grouped,
   ) {
     var active = List<Task>.from(phase1);
-    final landingFk = filters.scope;
-    if (filters.statuses.contains(AsanaTaskFilterState.statusDeleted)) {
+    final landingFk = filters.scopes;
+    final statuses = _normalizedStatuses(filters);
+    if (statuses.isEmpty ||
+        statuses.contains(AsanaTaskFilterState.statusDeleted)) {
       final have = active.map((t) => t.id).toSet();
       for (final tid in grouped.keys) {
         final sl = grouped[tid] ?? [];
@@ -507,7 +532,7 @@ class AsanaTaskFilter {
         have.add(tid);
       }
     }
-    if (filters.statuses.contains(AsanaTaskFilterState.statusCompleted)) {
+    if (statuses.contains(AsanaTaskFilterState.statusCompleted)) {
       final have = active.map((t) => t.id).toSet();
       for (final tid in grouped.keys) {
         final sl = grouped[tid] ?? [];
@@ -528,13 +553,16 @@ class AsanaTaskFilter {
       Iterable<Task> scopeIt = state
           .tasksForTeams(allTeams)
           .where((t) => t.isSingularTableRow && !_singularDeleted(t));
-      if (filters.scope == 'assigned') {
-        scopeIt = scopeIt.where((t) => _taskAssignedToCurrentUser(state, t));
-      } else if (filters.scope == 'created') {
-        scopeIt = scopeIt.where(state.taskIsCreatedByCurrentUser);
-      } else {
-        scopeIt = scopeIt.where((t) => _landingVisible(state, t, 'all'));
-      }
+    if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+      scopeIt = scopeIt.where((t) {
+        bool pass = false;
+        if (filters.scopes.contains('assigned') && _taskAssignedToCurrentUser(state, t)) pass = true;
+        if (!pass && filters.scopes.contains('created') && state.taskIsCreatedByCurrentUser(t)) pass = true;
+        return pass;
+      });
+    } else {
+      scopeIt = scopeIt.where((t) => _landingVisible(state, t, {}));
+    }
       for (final t in scopeIt) {
         if (!t.isSingularTableRow || byId.containsKey(t.id)) continue;
         if (!_singularIncomplete(t)) continue;
@@ -560,6 +588,7 @@ class AsanaTaskFilter {
     final tokens = _searchTokens(searchQuery);
     final searchActive = tokens.isNotEmpty;
     final out = <Task>[];
+    final statuses = _normalizedStatuses(filters);
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
       final subs = grouped[t.id] ?? [];
@@ -568,10 +597,11 @@ class AsanaTaskFilter {
           .toList();
       final subsNonDeleted = subsFiltered.where((s) => !s.isDeleted).toList();
       final subsDeleted =
-          filters.statuses.contains(AsanaTaskFilterState.statusDeleted)
+          (statuses.isEmpty ||
+                  statuses.contains(AsanaTaskFilterState.statusDeleted))
           ? subsFiltered.where((s) => s.isDeleted).toList()
           : <SingularSubtask>[];
-      if (filters.overdueOnly) {
+      if (filters.overdueOptions.contains('overdue')) {
         if (t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) out.add(t);
@@ -677,7 +707,7 @@ class AsanaTaskFilter {
     if (out.isEmpty &&
         activeTasks.isNotEmpty &&
         !searchActive &&
-        !filters.overdueOnly &&
+        !filters.overdueOptions.contains('overdue') &&
         !filters.createDateEngaged) {
       out.addAll(
         activeTasks.where(
@@ -727,6 +757,7 @@ class AsanaTaskFilter {
     final tokens = _searchTokens(searchQuery);
     final searchActive = tokens.isNotEmpty;
     final out = <AsanaFlatRow>[];
+    final statuses = _normalizedStatuses(filters);
 
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
@@ -735,7 +766,8 @@ class AsanaTaskFilter {
           subs.where((s) => _subtaskPassesStatusChips(s, filters)).toList();
       final subsNonDeleted =
           subsFiltered.where((s) => !s.isDeleted).toList();
-      final subsDeleted = filters.statuses.contains(AsanaTaskFilterState.statusDeleted)
+      final subsDeleted = (statuses.isEmpty ||
+              statuses.contains(AsanaTaskFilterState.statusDeleted))
           ? subsFiltered.where((s) => s.isDeleted).toList()
           : <SingularSubtask>[];
 
@@ -758,7 +790,7 @@ class AsanaTaskFilter {
         }
       }
 
-      if (filters.overdueOnly) {
+      if (filters.overdueOptions.contains('overdue')) {
         if (t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) addTaskIfAllowed();
@@ -867,7 +899,7 @@ class AsanaTaskFilter {
     if (out.isEmpty &&
         activeTasks.isNotEmpty &&
         !searchActive &&
-        !filters.overdueOnly &&
+        !filters.overdueOptions.contains('overdue') &&
         !filters.createDateEngaged) {
       for (final t in activeTasks) {
         if (!t.isSingularTableRow) continue;
@@ -932,9 +964,11 @@ class AsanaTaskFilter {
     AsanaTaskFilterState filters, {
     Task? parentTask,
   }) {
+    final statuses = _normalizedStatuses(filters);
     Iterable<SingularSubtask> it =
         subs.where((s) => _subtaskPassesStatusChips(s, filters));
-    if (!filters.statuses.contains(AsanaTaskFilterState.statusDeleted)) {
+    if (statuses.isNotEmpty &&
+        !statuses.contains(AsanaTaskFilterState.statusDeleted)) {
       it = it.where((s) => !s.isDeleted);
     }
     if (filters.createDateEngaged && parentTask != null) {
@@ -967,18 +1001,20 @@ class AsanaTaskFilter {
   }) {
     final tokens = _searchTokens(searchQuery);
     final searchActive = tokens.isNotEmpty;
+    final statuses = _normalizedStatuses(filters);
 
     final subsFiltered =
         subs.where((s) => _subtaskPassesStatusChips(s, filters)).toList();
     final subsNonDeleted =
         subsFiltered.where((s) => !s.isDeleted).toList();
-    final subsDeleted = filters.statuses.contains(AsanaTaskFilterState.statusDeleted)
+    final subsDeleted = (statuses.isEmpty ||
+            statuses.contains(AsanaTaskFilterState.statusDeleted))
         ? subsFiltered.where((s) => s.isDeleted).toList()
         : <SingularSubtask>[];
 
     bool includeSub(SingularSubtask s) {
       if (_shouldOmitSubtaskRow(task, s, filters)) return false;
-      if (filters.overdueOnly && s.overdue != 'Yes') return false;
+      if (filters.overdueOptions.contains('overdue') && s.overdue != 'Yes') return false;
       if (!searchActive) {
         return _rowPassesDueDateSubtask(task, s, filters);
       }
