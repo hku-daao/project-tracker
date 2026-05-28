@@ -371,7 +371,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                   appState: state,
                                   onRowTap: isSub
                                       ? () => widget.onOpenSubtask
-                                          ?.call(sub!.id)
+                                          ?.call(sub.id)
                                       : () =>
                                           widget.onOpenTask?.call(row.task.id),
                                   projectName:

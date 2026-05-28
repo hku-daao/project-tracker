@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -125,7 +126,7 @@ class AsanaToolbarCreateButton extends StatelessWidget {
 }
 
 /// Filter row: [create] on the left, filter dropdowns + Clear all on the right.
-class AsanaPanelFilterToolbar extends StatelessWidget {
+class AsanaPanelFilterToolbar extends StatefulWidget {
   const AsanaPanelFilterToolbar({
     super.key,
     required this.palette,
@@ -142,40 +143,94 @@ class AsanaPanelFilterToolbar extends StatelessWidget {
   final VoidCallback onClearAll;
 
   @override
+  State<AsanaPanelFilterToolbar> createState() =>
+      _AsanaPanelFilterToolbarState();
+}
+
+class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
+  final _filterScrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _filterScrollController.dispose();
+    super.dispose();
+  }
+
+  Widget _scrollableFilters(Widget child, {bool reverse = false}) {
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      child: SingleChildScrollView(
+        controller: _filterScrollController,
+        scrollDirection: Axis.horizontal,
+        reverse: reverse,
+        child: child,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          AsanaToolbarCreateButton(
-            label: createLabel,
-            palette: palette,
-            onPressed: onCreate,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                reverse: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: filterChildren,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 760;
+          final createButton = AsanaToolbarCreateButton(
+            label: widget.createLabel,
+            palette: widget.palette,
+            onPressed: widget.onCreate,
+          );
+          final clearButton = TextButton(
+            onPressed: widget.onClearAll,
+            child: const Text('Clear all'),
+          );
+          final filterRow = Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: widget.filterChildren,
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    createButton,
+                    const Spacer(),
+                    clearButton,
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _scrollableFilters(filterRow),
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              createButton,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: _scrollableFilters(filterRow, reverse: true),
                 ),
               ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 18, left: 8),
-            child: TextButton(
-              onPressed: onClearAll,
-              child: const Text('Clear all'),
-            ),
-          ),
-        ],
+              Padding(
+                padding: const EdgeInsets.only(top: 18, left: 8),
+                child: clearButton,
+              ),
+            ],
+          );
+        },
       ),
     );
   }
