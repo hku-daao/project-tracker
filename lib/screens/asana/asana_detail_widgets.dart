@@ -613,8 +613,12 @@ class AsanaDetailSlideScaffold extends StatelessWidget {
 class AsanaTaskDetailActionStyles {
   AsanaTaskDetailActionStyles._();
 
-  static const Color successGreen = Color(0xFF298A00);
-  static const Color returnBlue = Color(0xFF0B0094);
+  static const Color createTeal = Color(0xFF00897B);
+  static const Color updateSlate = Color(0xFF455A64);
+  static const Color submitPurple = Color(0xFF6A1B9A);
+  static const Color successGreen = Color(0xFF2E7D32);
+  static const Color returnOrange = Color(0xFFEF6C00);
+  static const Color deleteRed = Color(0xFFC62828);
   static const double _cornerRadius = 8;
 
   static const EdgeInsets _padding =
@@ -634,7 +638,7 @@ class AsanaTaskDetailActionStyles {
   static ButtonStyle updateFilled(AsanaLandingPalette palette) {
     return _rounded(
       FilledButton.styleFrom(
-        backgroundColor: palette.accent,
+        backgroundColor: updateSlate,
         foregroundColor: Colors.white,
         padding: _padding,
         elevation: 0,
@@ -643,7 +647,14 @@ class AsanaTaskDetailActionStyles {
   }
 
   static ButtonStyle createFilled(AsanaLandingPalette palette) {
-    return updateFilled(palette);
+    return _rounded(
+      FilledButton.styleFrom(
+        backgroundColor: createTeal,
+        foregroundColor: Colors.white,
+        padding: _padding,
+        elevation: 0,
+      ),
+    );
   }
 
   static ButtonStyle successFilled() {
@@ -660,7 +671,7 @@ class AsanaTaskDetailActionStyles {
   static ButtonStyle returnFilled() {
     return _rounded(
       FilledButton.styleFrom(
-        backgroundColor: returnBlue,
+        backgroundColor: returnOrange,
         foregroundColor: Colors.white,
         padding: _padding,
         elevation: 0,
@@ -671,7 +682,7 @@ class AsanaTaskDetailActionStyles {
   static ButtonStyle submitFilled(AsanaLandingPalette palette) {
     return _rounded(
       FilledButton.styleFrom(
-        backgroundColor: palette.accent.withValues(alpha: 0.88),
+        backgroundColor: submitPurple,
         foregroundColor: Colors.white,
         padding: _padding,
         elevation: 0,
@@ -694,7 +705,7 @@ class AsanaTaskDetailActionStyles {
   static ButtonStyle deleteFilled() {
     return _rounded(
       FilledButton.styleFrom(
-        backgroundColor: const Color(0xFFC62828),
+        backgroundColor: deleteRed,
         foregroundColor: Colors.white,
         padding: _padding,
         elevation: 1,

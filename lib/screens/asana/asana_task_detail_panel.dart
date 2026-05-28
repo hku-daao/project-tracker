@@ -101,7 +101,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _loadingExtras = true;
   bool _saving = false;
   String? _myStaffUuid;
-  bool _staffDirector = false;
 
   int _localPriority = priorityStandard;
   DateTime? _startDate;
@@ -478,11 +477,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final lk = context.read<AppState>().userStaffAppId?.trim();
     if (lk != null && lk.isNotEmpty) {
       _myStaffUuid = await SupabaseService.staffRowIdForAssigneeKey(lk);
-      if (_myStaffUuid != null && _myStaffUuid!.isNotEmpty) {
-        _staffDirector = await SupabaseService.fetchStaffDirectorByStaffUuid(
-          _myStaffUuid!,
-        );
-      }
     }
     final loads = <Future<void>>[
       _loadProjectsIfCreator(),
