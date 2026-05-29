@@ -6,6 +6,8 @@ class AsanaProjectFilterState {
   Set<String> scopes = {};
   /// Empty = all statuses (default).
   Set<String> statuses = {};
+  List<String> creatorStaffIds = [];
+  List<String> picStaffIds = [];
 
   DateTime? createDateStart;
   DateTime? createDateEnd;
@@ -18,6 +20,8 @@ class AsanaProjectFilterState {
   void resetToDefaults() {
     scopes.clear();
     statuses.clear();
+    creatorStaffIds = [];
+    picStaffIds = [];
     sortKey = 'due';
     sortAscending = true;
     createDateStart = null;
@@ -143,6 +147,30 @@ class AsanaProjectFilter {
     return p.assigneeStaffUuids.any((u) => u.trim() == myUuid);
   }
 
+  static bool _keyMatches(String? value, Iterable<String> selected) {
+    final v = value?.trim();
+    if (v == null || v.isEmpty) return false;
+    for (final s in selected) {
+      if (v.toLowerCase() == s.trim().toLowerCase()) return true;
+    }
+    return false;
+  }
+
+  static bool _projectPassesRoleFilters(
+    ProjectRecord p,
+    AsanaProjectFilterState filters,
+  ) {
+    if (filters.creatorStaffIds.isNotEmpty &&
+        !_keyMatches(p.createByStaffUuid, filters.creatorStaffIds)) {
+      return false;
+    }
+    if (filters.picStaffIds.isNotEmpty &&
+        !p.picStaffUuids.any((u) => _keyMatches(u, filters.picStaffIds))) {
+      return false;
+    }
+    return true;
+  }
+
   static List<String> searchTokens(String raw) {
     return raw
         .trim()
@@ -206,6 +234,7 @@ class AsanaProjectFilter {
     }
 
     list = list.where((p) => _projectPassesDueDate(p, filters)).toList();
+    list = list.where((p) => _projectPassesRoleFilters(p, filters)).toList();
 
     final tokens = searchTokens(searchQuery);
     if (tokens.isNotEmpty) {

@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -136,6 +138,16 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                   onPressed: _showStatusMenu,
                 ),
                 AsanaFilterDropdown(
+                  title: 'Creator',
+                  value: _creatorLabel(state),
+                  onPressed: _showCreatorMenu,
+                ),
+                AsanaFilterDropdown(
+                  title: 'PIC',
+                  value: _picLabel(state),
+                  onPressed: _showPicMenu,
+                ),
+                AsanaFilterDropdown(
                   title: 'Due date',
                   value: _dueDateLabel(),
                   buttonWidth: 188,
@@ -226,12 +238,21 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                 );
 
                 if (constraints.maxWidth < _ProjectTableLayout.minTableWidth) {
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: tableWidth,
-                      height: constraints.maxHeight,
-                      child: table,
+                  return ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      dragDevices: {
+                        PointerDeviceKind.touch,
+                        PointerDeviceKind.mouse,
+                        PointerDeviceKind.trackpad,
+                      },
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: tableWidth,
+                        height: constraints.maxHeight,
+                        child: table,
+                      ),
                     ),
                   );
                 }
@@ -270,6 +291,18 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     return _filters.statuses.join(', ');
   }
 
+  String _staffFilterLabel(AppState state, List<String> ids) {
+    if (ids.isEmpty) return 'All';
+    if (ids.length == 1) return state.assigneeById(ids.first)?.name ?? ids.first;
+    return '${ids.length} selected';
+  }
+
+  String _creatorLabel(AppState state) =>
+      _staffFilterLabel(state, _filters.creatorStaffIds);
+
+  String _picLabel(AppState state) =>
+      _staffFilterLabel(state, _filters.picStaffIds);
+
   String _dueDateLabel() {
     final s = _filters.createDateStart;
     final e = _filters.createDateEnd;
@@ -283,7 +316,63 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     return 'To ${HkTime.formatInstantAsHk(e!, 'MMM d')}';
   }
 
+  List<AsanaFilterCheckboxOption> _staffOptions(
+    AppState state,
+    Iterable<String?> ids,
+  ) {
+    final map = <String, String>{};
+    for (final raw in ids) {
+      final id = raw?.trim();
+      if (id == null || id.isEmpty) continue;
+      map[id] = state.assigneeById(id)?.name.trim() ?? id;
+    }
+    final list = map.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    return [
+      const AsanaFilterCheckboxOption(
+        key: '__all__',
+        label: 'All',
+        isAll: true,
+      ),
+      for (final a in list)
+        AsanaFilterCheckboxOption(key: a.key, label: a.value),
+    ];
+  }
+
+  Iterable<String?> _visibleCreatorIds() sync* {
+    for (final project in _displayProjects) {
+      yield project.createByStaffUuid;
+    }
+  }
+
+  Iterable<String?> _visiblePicIds() sync* {
+    for (final project in _displayProjects) {
+      for (final id in project.picStaffUuids) {
+        yield id;
+      }
+    }
+  }
+
   Future<void> _showDueDateRangePicker(BuildContext buttonContext) async {
+    final all = await showMenu<bool>(
+      context: buttonContext,
+      position: _menuPosition(buttonContext),
+      color: Theme.of(buttonContext).colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      items: const [
+        PopupMenuItem(value: true, child: Text('All')),
+        PopupMenuItem(value: false, child: Text('Choose date range')),
+      ],
+    );
+    if (all == null) return;
+    if (all) {
+      setState(() {
+        _filters.createDateStart = null;
+        _filters.createDateEnd = null;
+      });
+      _rebuildList();
+      return;
+    }
     final picked = await showAsanaAnchoredDateRangePicker(
       anchorContext: buttonContext,
       start: _filters.createDateStart,
@@ -295,6 +384,32 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       _filters.createDateEnd = asanaDateOnlyFromPicker(picked.end);
     });
     _rebuildList();
+  }
+
+  Future<void> _showCreatorMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _staffOptions(state, _visibleCreatorIds()),
+      initialSelection: _filters.creatorStaffIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.creatorStaffIds = selection.toList());
+      _rebuildList();
+    }
+  }
+
+  Future<void> _showPicMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _staffOptions(state, _visiblePicIds()),
+      initialSelection: _filters.picStaffIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.picStaffIds = selection.toList());
+      _rebuildList();
+    }
   }
 
   String _sortLabel() {

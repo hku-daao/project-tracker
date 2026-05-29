@@ -1351,22 +1351,29 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return [
         FilledButton(
           onPressed: _saving ? null : _save,
-          style: AsanaTaskDetailActionStyles.createFilled(widget.palette),
-          child: Text(_saving ? 'Creating…' : 'Create'),
+          style: AsanaTaskDetailActionStyles.createFilled(
+            widget.palette,
+            context: context,
+          ),
+          child: Text(_saving ? 'Creating' : 'Create'),
         ),
       ];
     }
     final s = subtask;
     if (s == null) return const [];
     final deleted = s.isDeleted;
+    final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
     final buttons = <Widget>[];
     final showUpdate = !deleted && (isCreator || isPic || isAssigneeOnly);
     if (showUpdate) {
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : _save,
-          style: AsanaTaskDetailActionStyles.updateFilled(widget.palette),
-          child: Text(_saving ? 'Saving…' : 'Update'),
+          style: AsanaTaskDetailActionStyles.updateFilled(
+            widget.palette,
+            context: context,
+          ),
+          child: Text(_saving ? 'Saving' : 'Update'),
         ),
       );
     }
@@ -1374,8 +1381,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _markCompleted(state, s),
-          style: AsanaTaskDetailActionStyles.successFilled(),
-          child: const Text('Mark as Completed'),
+          style: AsanaTaskDetailActionStyles.successFilled(context: context),
+          child: Text(mobileButtons ? 'Complete' : 'Mark as Completed'),
         ),
       );
     }
@@ -1383,7 +1390,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       buttons.add(
         OutlinedButton(
           onPressed: _saving ? null : () => _undoAcceptOrReturn(state, s),
-          style: AsanaTaskDetailActionStyles.undoOutlined(widget.palette),
+          style: AsanaTaskDetailActionStyles.undoOutlined(
+            widget.palette,
+            context: context,
+          ),
           child: const Text('Undo'),
         ),
       );
@@ -1392,7 +1402,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _submitSubtask(state, s),
-          style: AsanaTaskDetailActionStyles.submitFilled(widget.palette),
+          style: AsanaTaskDetailActionStyles.submitFilled(
+            widget.palette,
+            context: context,
+          ),
           child: const Text('Submit'),
         ),
       );
@@ -1401,14 +1414,14 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _markCompleted(state, s),
-          style: AsanaTaskDetailActionStyles.successFilled(),
+          style: AsanaTaskDetailActionStyles.successFilled(context: context),
           child: const Text('Accept'),
         ),
       );
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _returnSubtask(state, s),
-          style: AsanaTaskDetailActionStyles.returnFilled(),
+          style: AsanaTaskDetailActionStyles.returnFilled(context: context),
           child: const Text('Return'),
         ),
       );
@@ -1418,7 +1431,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         buttons.add(
           OutlinedButton(
             onPressed: _saving ? null : () => _undoDeleted(state, s),
-            style: AsanaTaskDetailActionStyles.undoOutlined(widget.palette),
+            style: AsanaTaskDetailActionStyles.undoOutlined(
+              widget.palette,
+              context: context,
+            ),
             child: const Text('Undo'),
           ),
         );
@@ -1426,7 +1442,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         buttons.add(
           FilledButton(
             onPressed: _saving ? null : _deleteSubtask,
-            style: AsanaTaskDetailActionStyles.deleteFilled(),
+            style: AsanaTaskDetailActionStyles.deleteFilled(context: context),
             child: const Text('Delete'),
           ),
         );

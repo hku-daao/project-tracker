@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -301,6 +302,16 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                   onPressed: _showSubmissionMenu,
                 ),
                 AsanaFilterDropdown(
+                  title: 'Creator',
+                  value: _creatorLabel(state),
+                  onPressed: _showCreatorMenu,
+                ),
+                AsanaFilterDropdown(
+                  title: 'PIC',
+                  value: _picLabel(state),
+                  onPressed: _showPicMenu,
+                ),
+                AsanaFilterDropdown(
                   title: 'Due date',
                   value: _dueDateLabel(),
                   buttonWidth: 188,
@@ -559,12 +570,21 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                   ],
                 );
                 if (constraints.maxWidth < _TaskTableLayout.minTableWidth) {
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: tableWidth,
-                      height: constraints.maxHeight,
-                      child: table,
+                  return ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      dragDevices: {
+                        PointerDeviceKind.touch,
+                        PointerDeviceKind.mouse,
+                        PointerDeviceKind.trackpad,
+                      },
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: tableWidth,
+                        height: constraints.maxHeight,
+                        child: table,
+                      ),
                     ),
                   );
                 }
@@ -621,6 +641,18 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     return _filters.submissions.map((k) => labels[k] ?? k).join(', ');
   }
 
+  String _staffFilterLabel(AppState state, List<String> ids) {
+    if (ids.isEmpty) return 'All';
+    if (ids.length == 1) return state.assigneeById(ids.first)?.name ?? ids.first;
+    return '${ids.length} selected';
+  }
+
+  String _creatorLabel(AppState state) =>
+      _staffFilterLabel(state, _filters.creatorStaffIds);
+
+  String _picLabel(AppState state) =>
+      _staffFilterLabel(state, _filters.picStaffIds);
+
   String _dueDateLabel() {
     final s = _filters.createDateStart;
     final e = _filters.createDateEnd;
@@ -636,7 +668,73 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
 
   String _overdueLabel() => _filters.overdueOptions.contains('overdue') ? 'Overdue only' : 'All';
 
+  List<AsanaFilterCheckboxOption> _staffOptions(
+    AppState state,
+    Iterable<String?> ids,
+  ) {
+    final map = <String, String>{};
+    for (final raw in ids) {
+      final id = raw?.trim();
+      if (id == null || id.isEmpty) continue;
+      map[id] = state.assigneeById(id)?.name.trim() ?? id;
+    }
+    final list = map.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    return [
+      const AsanaFilterCheckboxOption(
+        key: '__all__',
+        label: 'All',
+        isAll: true,
+      ),
+      for (final a in list)
+        AsanaFilterCheckboxOption(key: a.key, label: a.value),
+    ];
+  }
+
+  Iterable<String?> _visibleCreatorIds() sync* {
+    if (widget.flatTasksAndSubtasks) {
+      for (final row in _displayFlatRows) {
+        yield row.sub?.createByStaffId ?? row.task.createByAssigneeKey;
+      }
+      return;
+    }
+    for (final task in _displayTasks) {
+      yield task.createByAssigneeKey;
+    }
+  }
+
+  Iterable<String?> _visiblePicIds() sync* {
+    if (widget.flatTasksAndSubtasks) {
+      for (final row in _displayFlatRows) {
+        yield row.sub?.pic ?? row.task.pic;
+      }
+      return;
+    }
+    for (final task in _displayTasks) {
+      yield task.pic;
+    }
+  }
+
   Future<void> _showDueDateRangePicker(BuildContext buttonContext) async {
+    final all = await showMenu<bool>(
+      context: buttonContext,
+      position: _menuPosition(buttonContext),
+      color: Theme.of(buttonContext).colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      items: const [
+        PopupMenuItem(value: true, child: Text('All')),
+        PopupMenuItem(value: false, child: Text('Choose date range')),
+      ],
+    );
+    if (all == null) return;
+    if (all) {
+      setState(() {
+        _filters.createDateStart = null;
+        _filters.createDateEnd = null;
+      });
+      _onFiltersChanged();
+      return;
+    }
     final picked = await showAsanaAnchoredDateRangePicker(
       anchorContext: buttonContext,
       start: _filters.createDateStart,
@@ -648,6 +746,32 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       _filters.createDateEnd = asanaDateOnlyFromPicker(picked.end);
     });
     _onFiltersChanged();
+  }
+
+  Future<void> _showCreatorMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _staffOptions(state, _visibleCreatorIds()),
+      initialSelection: _filters.creatorStaffIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.creatorStaffIds = selection.toList());
+      _onFiltersChanged();
+    }
+  }
+
+  Future<void> _showPicMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _staffOptions(state, _visiblePicIds()),
+      initialSelection: _filters.picStaffIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.picStaffIds = selection.toList());
+      _onFiltersChanged();
+    }
   }
 
   String _sortLabel() {

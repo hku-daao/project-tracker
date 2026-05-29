@@ -2514,8 +2514,11 @@ class _ActionBar extends StatelessWidget {
         children: [
           FilledButton(
             onPressed: saving ? null : onPrimary,
-            style: AsanaTaskDetailActionStyles.createFilled(palette),
-            child: Text(saving ? 'Creating…' : 'Create'),
+            style: AsanaTaskDetailActionStyles.createFilled(
+              palette,
+              context: context,
+            ),
+            child: Text(saving ? 'Creating' : 'Create'),
           ),
         ],
       );
@@ -2525,14 +2528,18 @@ class _ActionBar extends StatelessWidget {
     final deleted = (t.dbStatus ?? '').trim().toLowerCase() == 'deleted';
     final showUpdate =
         !deleted && (isCreator || isPic || isAssigneeOnly);
+    final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
     final buttons = <Widget>[];
 
     if (showUpdate) {
       buttons.add(
         FilledButton(
           onPressed: saving ? null : onUpdate,
-          style: AsanaTaskDetailActionStyles.updateFilled(palette),
-          child: Text(saving ? 'Saving…' : 'Update'),
+          style: AsanaTaskDetailActionStyles.updateFilled(
+            palette,
+            context: context,
+          ),
+          child: Text(saving ? 'Saving' : 'Update'),
         ),
       );
     }
@@ -2540,8 +2547,8 @@ class _ActionBar extends StatelessWidget {
       buttons.add(
         FilledButton(
           onPressed: saving ? null : onMarkComplete,
-          style: AsanaTaskDetailActionStyles.successFilled(),
-          child: const Text('Mark as Completed'),
+          style: AsanaTaskDetailActionStyles.successFilled(context: context),
+          child: Text(mobileButtons ? 'Complete' : 'Mark as Completed'),
         ),
       );
     }
@@ -2549,7 +2556,10 @@ class _ActionBar extends StatelessWidget {
       buttons.add(
         OutlinedButton(
           onPressed: saving ? null : onUndoAcceptOrReturn,
-          style: AsanaTaskDetailActionStyles.undoOutlined(palette),
+          style: AsanaTaskDetailActionStyles.undoOutlined(
+            palette,
+            context: context,
+          ),
           child: const Text('Undo'),
         ),
       );
@@ -2558,7 +2568,10 @@ class _ActionBar extends StatelessWidget {
       buttons.add(
         FilledButton(
           onPressed: saving ? null : onSubmit,
-          style: AsanaTaskDetailActionStyles.submitFilled(palette),
+          style: AsanaTaskDetailActionStyles.submitFilled(
+            palette,
+            context: context,
+          ),
           child: const Text('Submit'),
         ),
       );
@@ -2567,14 +2580,14 @@ class _ActionBar extends StatelessWidget {
       buttons.add(
         FilledButton(
           onPressed: saving ? null : onAccept,
-          style: AsanaTaskDetailActionStyles.successFilled(),
+          style: AsanaTaskDetailActionStyles.successFilled(context: context),
           child: const Text('Accept'),
         ),
       );
       buttons.add(
         FilledButton(
           onPressed: saving ? null : onReturn,
-          style: AsanaTaskDetailActionStyles.returnFilled(),
+          style: AsanaTaskDetailActionStyles.returnFilled(context: context),
           child: const Text('Return'),
         ),
       );
@@ -2584,7 +2597,10 @@ class _ActionBar extends StatelessWidget {
         buttons.add(
           OutlinedButton(
             onPressed: saving ? null : onUndoDeleted,
-            style: AsanaTaskDetailActionStyles.undoOutlined(palette),
+            style: AsanaTaskDetailActionStyles.undoOutlined(
+              palette,
+              context: context,
+            ),
             child: const Text('Undo'),
           ),
         );
@@ -2592,7 +2608,7 @@ class _ActionBar extends StatelessWidget {
         buttons.add(
           FilledButton(
             onPressed: saving ? null : onDelete,
-            style: AsanaTaskDetailActionStyles.deleteFilled(),
+            style: AsanaTaskDetailActionStyles.deleteFilled(context: context),
             child: const Text('Delete'),
           ),
         );

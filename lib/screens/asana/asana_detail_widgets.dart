@@ -629,6 +629,8 @@ class AsanaTaskDetailActionStyles {
 
   static const EdgeInsets _padding =
       EdgeInsets.symmetric(horizontal: 20, vertical: 12);
+  static const EdgeInsets _mobilePadding =
+      EdgeInsets.symmetric(horizontal: 18, vertical: 11);
 
   static final RoundedRectangleBorder _shape = RoundedRectangleBorder(
     borderRadius: BorderRadius.circular(_cornerRadius),
@@ -637,83 +639,120 @@ class AsanaTaskDetailActionStyles {
   static ButtonStyle _rounded(ButtonStyle style) {
     return style.copyWith(
       shape: WidgetStatePropertyAll(_shape),
-      minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
+      minimumSize: WidgetStateProperty.resolveWith((states) => Size.zero),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
   }
 
-  static ButtonStyle updateFilled(AsanaLandingPalette palette) {
+  static EdgeInsets _responsivePadding(BuildContext? context) {
+    if (context != null && MediaQuery.sizeOf(context).width < 600) {
+      return _mobilePadding;
+    }
+    return _padding;
+  }
+
+  static TextStyle? _responsiveTextStyle(BuildContext? context) {
+    if (context != null && MediaQuery.sizeOf(context).width < 600) {
+      return Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12.6);
+    }
+    return null;
+  }
+
+  static bool isMobile(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < 600;
+
+  static ButtonStyle updateFilled(
+    AsanaLandingPalette palette, {
+    BuildContext? context,
+  }) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: updateSlate,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 0,
       ),
     );
   }
 
-  static ButtonStyle createFilled(AsanaLandingPalette palette) {
+  static ButtonStyle createFilled(
+    AsanaLandingPalette palette, {
+    BuildContext? context,
+  }) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: createTeal,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 0,
       ),
     );
   }
 
-  static ButtonStyle successFilled() {
+  static ButtonStyle successFilled({BuildContext? context}) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: successGreen,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 0,
       ),
     );
   }
 
-  static ButtonStyle returnFilled() {
+  static ButtonStyle returnFilled({BuildContext? context}) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: returnOrange,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 0,
       ),
     );
   }
 
-  static ButtonStyle submitFilled(AsanaLandingPalette palette) {
+  static ButtonStyle submitFilled(
+    AsanaLandingPalette palette, {
+    BuildContext? context,
+  }) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: submitPurple,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 0,
       ),
     );
   }
 
-  static ButtonStyle undoOutlined(AsanaLandingPalette palette) {
+  static ButtonStyle undoOutlined(
+    AsanaLandingPalette palette, {
+    BuildContext? context,
+  }) {
     return _rounded(
       OutlinedButton.styleFrom(
         foregroundColor: kAsanaTextPrimary,
         backgroundColor: palette.listSurface,
         side: BorderSide(color: palette.accent.withValues(alpha: 0.35)),
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
       ),
     );
   }
 
   /// Strong filled delete — visible on all five landing themes.
-  static ButtonStyle deleteFilled() {
+  static ButtonStyle deleteFilled({BuildContext? context}) {
     return _rounded(
       FilledButton.styleFrom(
         backgroundColor: deleteRed,
         foregroundColor: Colors.white,
-        padding: _padding,
+        padding: _responsivePadding(context),
+        textStyle: _responsiveTextStyle(context),
         elevation: 1,
         shadowColor: const Color(0x66B71C1C),
       ).copyWith(

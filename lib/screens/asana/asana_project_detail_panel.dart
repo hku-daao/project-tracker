@@ -640,19 +640,23 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required AppState state,
   }) {
     if (!canEdit) return null;
+    final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
     final buttons = <Widget>[
       FilledButton(
         onPressed: _saving ? null : () => _save(state, p),
-        style: AsanaTaskDetailActionStyles.updateFilled(widget.palette),
-        child: Text(_saving ? 'Saving…' : 'Update'),
+        style: AsanaTaskDetailActionStyles.updateFilled(
+          widget.palette,
+          context: context,
+        ),
+        child: Text(_saving ? 'Saving' : 'Update'),
       ),
     ];
     if (_canMarkProjectComplete(p)) {
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _markCompleted(state, p),
-          style: AsanaTaskDetailActionStyles.successFilled(),
-          child: const Text('Mark as Completed'),
+          style: AsanaTaskDetailActionStyles.successFilled(context: context),
+          child: Text(mobileButtons ? 'Complete' : 'Mark as Completed'),
         ),
       );
     }
@@ -660,7 +664,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _confirmDeleteProject(state),
-          style: AsanaTaskDetailActionStyles.deleteFilled(),
+          style: AsanaTaskDetailActionStyles.deleteFilled(context: context),
           child: const Text('Delete'),
         ),
       );

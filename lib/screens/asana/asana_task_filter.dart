@@ -186,6 +186,31 @@ class AsanaTaskFilter {
     return false;
   }
 
+  static bool _keyMatches(String? value, Iterable<String> selected) {
+    final v = value?.trim();
+    if (v == null || v.isEmpty) return false;
+    for (final s in selected) {
+      if (v.toLowerCase() == s.trim().toLowerCase()) return true;
+    }
+    return false;
+  }
+
+  static bool _rowPassesRoleFilters(
+    Task task,
+    SingularSubtask? sub,
+    AsanaTaskFilterState filters,
+  ) {
+    if (filters.creatorStaffIds.isNotEmpty) {
+      final creatorKey = sub?.createByStaffId ?? task.createByAssigneeKey;
+      if (!_keyMatches(creatorKey, filters.creatorStaffIds)) return false;
+    }
+    if (filters.picStaffIds.isNotEmpty) {
+      final picKey = sub?.pic ?? task.pic;
+      if (!_keyMatches(picKey, filters.picStaffIds)) return false;
+    }
+    return true;
+  }
+
   static bool _landingVisible(AppState state, Task t, Set<String> scopes) {
     if (scopes.isNotEmpty && !scopes.contains('all')) {
       bool pass = false;
@@ -418,18 +443,6 @@ class AsanaTaskFilter {
         (t) => t.assigneeIds.any(filters.assigneeStaffIds.contains),
       );
     }
-    if (filters.picStaffIds.isNotEmpty) {
-      tasks = tasks.where((t) {
-        final p = t.pic?.trim();
-        return p != null && p.isNotEmpty && filters.picStaffIds.contains(p);
-      });
-    }
-    if (filters.creatorStaffIds.isNotEmpty) {
-      tasks = tasks.where((t) {
-        final k = t.createByAssigneeKey?.trim();
-        return k != null && k.isNotEmpty && filters.creatorStaffIds.contains(k);
-      });
-    }
     final tasksList = tasks.toList();
     final tasksNonDeleted = tasksList
         .where((t) => !_singularDeleted(t))
@@ -628,18 +641,23 @@ class AsanaTaskFilter {
     final statuses = _normalizedStatuses(filters);
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
+      final taskPassesRole = _rowPassesRoleFilters(t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsFiltered = subs
           .where((s) => _subtaskPassesStatusChips(s, filters))
           .toList();
-      final subsNonDeleted = subsFiltered.where((s) => !s.isDeleted).toList();
+      final subsRoleFiltered = subsFiltered
+          .where((s) => _rowPassesRoleFilters(t, s, filters))
+          .toList();
+      final subsNonDeleted =
+          subsRoleFiltered.where((s) => !s.isDeleted).toList();
       final subsDeleted =
           (statuses.isEmpty ||
                   statuses.contains(AsanaTaskFilterState.statusDeleted))
-          ? subsFiltered.where((s) => s.isDeleted).toList()
+          ? subsRoleFiltered.where((s) => s.isDeleted).toList()
           : <SingularSubtask>[];
       if (filters.overdueOptions.contains('overdue')) {
-        if (t.overdue == 'Yes') {
+        if (taskPassesRole && t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) out.add(t);
           } else if (taskSearchMatches(state, t, tokens) &&
@@ -696,7 +714,8 @@ class AsanaTaskFilter {
             .where((s) => _rowPassesDueDateSubtask(t, s, filters))
             .where((s) => !_shouldOmitSubtaskRow(t, s, filters))
             .toList();
-        final taskInRange = _rowPassesDueDate(t, null, filters);
+        final taskInRange =
+            taskPassesRole && _rowPassesDueDate(t, null, filters);
         if (!taskInRange && subsInRange.isEmpty && subsDeletedInRange.isEmpty) {
           continue;
         }
@@ -711,7 +730,8 @@ class AsanaTaskFilter {
         }
         continue;
       }
-      final taskTextMatch = taskSearchMatches(state, t, tokens);
+      final taskTextMatch =
+          taskPassesRole && taskSearchMatches(state, t, tokens);
       if (taskTextMatch) {
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(t);
@@ -798,14 +818,18 @@ class AsanaTaskFilter {
 
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
+      final taskPassesRole = _rowPassesRoleFilters(t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsFiltered =
           subs.where((s) => _subtaskPassesStatusChips(s, filters)).toList();
+      final subsRoleFiltered = subsFiltered
+          .where((s) => _rowPassesRoleFilters(t, s, filters))
+          .toList();
       final subsNonDeleted =
-          subsFiltered.where((s) => !s.isDeleted).toList();
+          subsRoleFiltered.where((s) => !s.isDeleted).toList();
       final subsDeleted = (statuses.isEmpty ||
               statuses.contains(AsanaTaskFilterState.statusDeleted))
-          ? subsFiltered.where((s) => s.isDeleted).toList()
+          ? subsRoleFiltered.where((s) => s.isDeleted).toList()
           : <SingularSubtask>[];
 
       void addTaskIfAllowed() {
@@ -816,6 +840,7 @@ class AsanaTaskFilter {
 
       void addSubsInRange(List<SingularSubtask> list) {
         for (final s in list) {
+          if (!_rowPassesRoleFilters(t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!searchActive) {
             if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
@@ -828,7 +853,7 @@ class AsanaTaskFilter {
       }
 
       if (filters.overdueOptions.contains('overdue')) {
-        if (t.overdue == 'Yes') {
+        if (taskPassesRole && t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) addTaskIfAllowed();
           } else if (taskSearchMatches(state, t, tokens) &&
@@ -850,7 +875,8 @@ class AsanaTaskFilter {
             .where((s) => _rowPassesDueDateSubtask(t, s, filters))
             .where((s) => !_shouldOmitSubtaskRow(t, s, filters))
             .toList();
-        final taskInRange = _rowPassesDueDate(t, null, filters);
+        final taskInRange =
+            taskPassesRole && _rowPassesDueDate(t, null, filters);
         if (!taskInRange &&
             subsInRange.isEmpty &&
             subsDeletedInRange.isEmpty) {
@@ -869,17 +895,20 @@ class AsanaTaskFilter {
         continue;
       }
 
-      final taskTextMatch = taskSearchMatches(state, t, tokens);
+      final taskTextMatch =
+          taskPassesRole && taskSearchMatches(state, t, tokens);
       if (taskTextMatch) {
         addTaskIfAllowed();
       }
       for (final s in subsNonDeleted) {
+        if (!_rowPassesRoleFilters(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
       }
       for (final s in subsDeleted) {
+        if (!_rowPassesRoleFilters(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
@@ -1042,7 +1071,10 @@ class AsanaTaskFilter {
     final statuses = _normalizedStatuses(filters);
 
     final subsFiltered =
-        subs.where((s) => _subtaskPassesStatusChips(s, filters)).toList();
+        subs
+            .where((s) => _subtaskPassesStatusChips(s, filters))
+            .where((s) => _rowPassesRoleFilters(task, s, filters))
+            .toList();
     final subsNonDeleted =
         subsFiltered.where((s) => !s.isDeleted).toList();
     final subsDeleted = (statuses.isEmpty ||
@@ -1051,6 +1083,7 @@ class AsanaTaskFilter {
         : <SingularSubtask>[];
 
     bool includeSub(SingularSubtask s) {
+      if (!_rowPassesRoleFilters(task, s, filters)) return false;
       if (_shouldOmitSubtaskRow(task, s, filters)) return false;
       if (filters.overdueOptions.contains('overdue') && s.overdue != 'Yes') return false;
       if (!searchActive) {
