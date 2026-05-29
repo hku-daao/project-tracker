@@ -617,6 +617,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       if (_filters.scopes.contains('assigned')) return '$prefix assigned to me';
       if (_filters.scopes.contains('created')) return '$prefix created by me';
     }
+    if (_filters.scopes.contains('assigned') &&
+        _filters.scopes.contains('created')) {
+      return '$prefix created by or assigned to me';
+    }
     return '$prefix (Multiple scopes)';
   }
 
@@ -719,6 +723,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     final all = await showMenu<bool>(
       context: buttonContext,
       position: _menuPosition(buttonContext),
+      initialValue: !_filters.createDateEngaged,
       color: Theme.of(buttonContext).colorScheme.surface,
       surfaceTintColor: Colors.transparent,
       items: const [

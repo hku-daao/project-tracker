@@ -100,7 +100,7 @@ class AsanaLandingPalette {
 
   /// Default: dark chrome + white content (matches Asana Inbox reference).
   static const asana = AsanaLandingPalette(
-    id: 'Asana',
+    id: 'Charcoal',
     banner: Color(0xFF2A2B2C),
     sidebar: Color(0xFF2A2B2C),
     content: Color(0xFFFFFFFF),

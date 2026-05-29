@@ -283,6 +283,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       if (_filters.scopes.contains('assigned')) return 'Projects assigned to me';
       if (_filters.scopes.contains('created')) return 'Projects created by me';
     }
+    if (_filters.scopes.contains('assigned') &&
+        _filters.scopes.contains('created')) {
+      return 'Projects created by or assigned to me';
+    }
     return 'Projects (Multiple scopes)';
   }
 
@@ -357,6 +361,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     final all = await showMenu<bool>(
       context: buttonContext,
       position: _menuPosition(buttonContext),
+      initialValue: !_filters.createDateEngaged,
       color: Theme.of(buttonContext).colorScheme.surface,
       surfaceTintColor: Colors.transparent,
       items: const [
