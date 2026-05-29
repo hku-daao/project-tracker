@@ -252,7 +252,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
 
   String _selectedNav = 'Home';
   String _themeId = AsanaLandingPalette.asana.id;
-  bool _sidebarOpen = true;
+  bool? _sidebarOpenOverride;
   double? _lastScreenWidth;
   bool _themeMenuExpanded = false;
   final List<AsanaDetailSelection> _detailStack = [];
@@ -322,6 +322,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
+        searchQuery: searchQuery,
         onOpenTask: (id) => setState(
           () => _detailStack
             ..clear()
@@ -399,12 +400,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         syncWebLocationForAsanaDesign();
       });
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (MediaQuery.sizeOf(context).width < _kSidebarAutoHideWidth) {
-        setState(() => _sidebarOpen = false);
-      }
-    });
   }
 
   @override
@@ -431,7 +426,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                     _detailStack.clear();
                     if (MediaQuery.sizeOf(context).width <
                         _kSidebarAutoHideWidth) {
-                      _sidebarOpen = false;
+                      _sidebarOpenOverride = false;
                     }
                   }),
                 ),
@@ -466,18 +461,19 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     final palette = _palette;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final sidebarOverlay = screenWidth < _kSidebarAutoHideWidth;
+    final sidebarOpen = _sidebarOpenOverride ?? !sidebarOverlay;
     if (_lastScreenWidth != null &&
         _lastScreenWidth! >= _kSidebarAutoHideWidth &&
         sidebarOverlay &&
-        _sidebarOpen) {
+        sidebarOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _sidebarOpen = false);
+        if (mounted) setState(() => _sidebarOpenOverride = false);
       });
     }
     _lastScreenWidth = screenWidth;
 
-    final inlineSidebar = !sidebarOverlay && _sidebarOpen;
-    final overlaySidebar = sidebarOverlay && _sidebarOpen;
+    final inlineSidebar = !sidebarOverlay && sidebarOpen;
+    final overlaySidebar = sidebarOverlay && sidebarOpen;
     final sidebarVisible = inlineSidebar || overlaySidebar;
     final compactBanner = screenWidth < 600;
     final searchWidth = compactBanner ? screenWidth * 0.42 : screenWidth / 3;
@@ -523,7 +519,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                         ),
                         tooltip: sidebarVisible ? 'Hide panel' : 'Show panel',
                         onPressed: () =>
-                            setState(() => _sidebarOpen = !_sidebarOpen),
+                            setState(() => _sidebarOpenOverride = !sidebarOpen),
                       ),
                       Expanded(
                         child: Center(
@@ -617,7 +613,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                           child: AnimatedContainer(
                             duration: _kSidebarAnimDuration,
                             curve: Curves.easeInOut,
-                            width: _sidebarOpen ? _kSidebarWidth : 0,
+                            width: sidebarOpen ? _kSidebarWidth : 0,
                             child: Material(
                               color: palette.sidebar,
                               child: SizedBox(
@@ -746,7 +742,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                           opacity: overlaySidebar ? 1 : 0,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onTap: () => setState(() => _sidebarOpen = false),
+                            onTap: () =>
+                                setState(() => _sidebarOpenOverride = false),
                             child: const ColoredBox(
                               color: Color(0x33000000),
                             ),

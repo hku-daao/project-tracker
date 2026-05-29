@@ -25,8 +25,12 @@ bool _preferAsanaShellOnWeb(String? view) {
   if (!kIsWeb) return false;
   if (!AppEnvironment.isTesting && !isTestWebHost) return false;
   if (view == 'project') return false;
+  if (view == 'original') return false;
   if (view == 'asana' || view == 'newui' || view == 'new-ui') return true;
-  return false;
+  return view == null ||
+      view.isEmpty ||
+      view == 'default' ||
+      view == 'overview';
 }
 
 Widget _bootstrapShellChild() {
@@ -264,20 +268,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
   Widget build(BuildContext context) {
     if (!_ready) {
       return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              Text(
-                SupabaseConfig.isConfigured
-                    ? 'Loading...'
-                    : 'Starting…',
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-            ],
-          ),
+        body: StartupLoadingView(
+          label: SupabaseConfig.isConfigured ? 'Loading' : 'Starting',
         ),
       );
     }
@@ -314,6 +306,76 @@ class _AppBootstrapState extends State<AppBootstrap> {
       );
     }
     return _StartupShell(child: _bootstrapShellChild());
+  }
+}
+
+class StartupLoadingView extends StatelessWidget {
+  const StartupLoadingView({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    const palette = AsanaLandingPalette.asana;
+    const logoHeight = 48.0;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cacheH = (logoHeight * dpr).round().clamp(1, 4096);
+    return ColoredBox(
+      color: palette.banner,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Image.asset(
+                  'assets/images/logo.png',
+                  height: logoHeight,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
+                  cacheHeight: cacheH,
+                  semanticLabel: 'Project Tracker logo',
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Project\nTracker',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: palette.onBanner,
+                    height: 1.05,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: palette.onBanner,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: 220,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: const LinearProgressIndicator(
+                  minHeight: 6,
+                  backgroundColor: Color(0x66FFFFFF),
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

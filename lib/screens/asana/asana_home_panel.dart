@@ -17,11 +17,13 @@ class AsanaHomePanel extends StatefulWidget {
   const AsanaHomePanel({
     super.key,
     required this.palette,
+    this.searchQuery = '',
     this.onOpenTask,
     this.onOpenProject,
   });
 
   final AsanaLandingPalette palette;
+  final String searchQuery;
   final void Function(String taskId)? onOpenTask;
   final void Function(String projectId)? onOpenProject;
 
@@ -135,12 +137,36 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     return state.assigneeById(key)?.name.trim() ?? key;
   }
 
+  static List<Task> _filterTasksBySearch(
+    AppState state,
+    List<Task> tasks,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) return tasks;
+    return tasks
+        .where((t) => AsanaTaskFilter.taskSearchMatches(state, t, tokens))
+        .toList();
+  }
+
+  static List<ProjectRecord> _filterProjectsBySearch(
+    AppState state,
+    List<ProjectRecord> projects,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) return projects;
+    return projects
+        .where((p) => AsanaProjectFilter.projectSearchMatches(state, p, tokens))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final today = HkTime.todayDateOnlyHk();
     final dateLine = _formatHeaderDate(today);
     final greeting = '${_greetingPhrase()}, ${_greetingDisplayName(state)}';
+    final isNarrow = MediaQuery.sizeOf(context).width < 600;
+    final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
 
     final all = _activeSingularTasks(state);
     final created =
@@ -149,6 +175,8 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
         .toList()
       ..sort(_sortByDue);
+    final visibleCreated = _filterTasksBySearch(state, created, searchTokens);
+    final visibleAssigned = _filterTasksBySearch(state, assigned, searchTokens);
 
     final people = _peopleRows(state, all, today);
 
@@ -161,6 +189,16 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         .where((p) => AsanaProjectFilter.projectAssignedToCurrentUser(state, p))
         .toList()
       ..sort(_sortProjectsByDue);
+    final visibleProjectsCreated = _filterProjectsBySearch(
+      state,
+      projectsCreated,
+      searchTokens,
+    );
+    final visibleProjectsAssigned = _filterProjectsBySearch(
+      state,
+      projectsAssigned,
+      searchTokens,
+    );
 
     return ColoredBox(
       color: palette.panelBackground,
@@ -169,34 +207,27 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    dateLine,
-                    style: asanaTextStyle(
-                      Theme.of(context).textTheme.bodyMedium,
-                      fontSize: 14,
-                      color: kAsanaTextSecondary,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const _HomeHeaderBrand(),
-              ],
+            Text(
+              dateLine,
+              style: asanaTextStyle(
+                Theme.of(context).textTheme.bodyMedium,
+                fontSize: 14,
+                color: kAsanaTextSecondary,
+                height: 1.3,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               greeting,
               style: asanaTextStyle(
                 Theme.of(context).textTheme.headlineMedium,
-                fontSize: 32,
+                fontSize: isNarrow ? 22 : 32,
                 fontWeight: FontWeight.w700,
                 color: kAsanaTextPrimary,
                 height: 1.15,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 28),
             Expanded(
@@ -214,7 +245,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     key: ValueKey('home-created-$layoutKey'),
                     palette: palette,
                     title: "Tasks I've created",
-                    tasks: created,
+                    tasks: visibleCreated,
                     middleHeader: 'PIC',
                     middleValue: (t) => _picLine(state, t.pic),
                     onOpenTask: widget.onOpenTask,
@@ -229,7 +260,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     key: ValueKey('home-assigned-$layoutKey'),
                     palette: palette,
                     title: 'Tasks assigned to me',
-                    tasks: assigned,
+                    tasks: visibleAssigned,
                     middleHeader: 'Creator',
                     middleValue: (t) =>
                         t.createByStaffName?.trim().isNotEmpty == true
@@ -257,8 +288,8 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                   final projectsCard = _HomeProjectsCard(
                     key: ValueKey('home-projects-$layoutKey'),
                     palette: palette,
-                    created: projectsCreated,
-                    assigned: projectsAssigned,
+                    created: visibleProjectsCreated,
+                    assigned: visibleProjectsAssigned,
                     onOpenProject: widget.onOpenProject,
                     expanded: allowCollapse
                         ? (_expanded['projects'] ?? true)
@@ -495,40 +526,6 @@ class _TaskCounts {
   final int incomplete;
   final int completed;
   final int upcoming;
-}
-
-class _HomeHeaderBrand extends StatelessWidget {
-  const _HomeHeaderBrand();
-
-  @override
-  Widget build(BuildContext context) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final cacheH = (22 * dpr).round().clamp(1, 4096);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Image.asset(
-          'assets/images/logo.png',
-          height: 22,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          cacheHeight: cacheH,
-          semanticLabel: 'Project Tracker logo',
-        ),
-        const SizedBox(width: 6),
-        Text(
-          'Project Tracker',
-          style: asanaTextStyle(
-            Theme.of(context).textTheme.bodyMedium,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: kAsanaTextPrimary,
-            height: 1.2,
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class _PersonTaskSummary {

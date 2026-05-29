@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../app_bootstrap.dart';
-import 'login_screen.dart';
+import 'asana_login_screen.dart';
 
 /// Shows [LoginScreen] when no Firebase user; otherwise [AppBootstrap].
 class AuthGate extends StatelessWidget {
@@ -14,21 +14,12 @@ class AuthGate extends StatelessWidget {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Loading…'),
-                ],
-              ),
-            ),
+            body: StartupLoadingView(label: 'Loading'),
           );
         }
         final user = snapshot.data;
         if (user == null) {
-          return const LoginScreen();
+          return const AsanaLoginScreen();
         }
         return const AppBootstrap();
       },

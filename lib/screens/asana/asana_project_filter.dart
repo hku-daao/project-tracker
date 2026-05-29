@@ -143,6 +143,54 @@ class AsanaProjectFilter {
     return p.assigneeStaffUuids.any((u) => u.trim() == myUuid);
   }
 
+  static List<String> searchTokens(String raw) {
+    return raw
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  static bool _containsAllTokens(Iterable<String?> values, List<String> tokens) {
+    if (tokens.isEmpty) return false;
+    final haystack = values
+        .whereType<String>()
+        .map((v) => v.trim())
+        .where((v) => v.isNotEmpty)
+        .join(' ')
+        .toLowerCase();
+    if (haystack.isEmpty) return false;
+    for (final tkn in tokens) {
+      if (!haystack.contains(tkn)) return false;
+    }
+    return true;
+  }
+
+  static bool projectSearchMatches(
+    AppState state,
+    ProjectRecord p,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) return false;
+    return _containsAllTokens(
+      [
+        p.name,
+        p.description,
+        p.createByDisplayName,
+        p.createByStaffUuid,
+        creatorLine(p, state),
+        assigneesLine(p, state),
+        picLine(p, state),
+        ...p.assigneeStaffDisplayNames,
+        ...p.assigneeStaffUuids,
+        ...p.picStaffDisplayNames,
+        ...p.picStaffUuids,
+      ],
+      tokens,
+    );
+  }
+
   static List<ProjectRecord> apply(
     AppState state,
     AsanaProjectFilterState filters, {
@@ -159,14 +207,10 @@ class AsanaProjectFilter {
 
     list = list.where((p) => _projectPassesDueDate(p, filters)).toList();
 
-    final q = searchQuery.trim().toLowerCase();
-    if (q.isNotEmpty) {
+    final tokens = searchTokens(searchQuery);
+    if (tokens.isNotEmpty) {
       list = list
-          .where(
-            (p) =>
-                p.name.toLowerCase().contains(q) ||
-                p.description.toLowerCase().contains(q),
-          )
+          .where((p) => projectSearchMatches(state, p, tokens))
           .toList();
     }
 

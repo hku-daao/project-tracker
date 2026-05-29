@@ -205,34 +205,71 @@ class AsanaTaskFilter {
         .toList();
   }
 
-  static bool _taskTextMatchesAllTokens(Task t, List<String> tokens) {
+  static String _nameFor(AppState state, String? staffKey) {
+    final key = staffKey?.trim();
+    if (key == null || key.isEmpty) return '';
+    final name = state.assigneeById(key)?.name.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return key;
+  }
+
+  static bool _containsAllTokens(Iterable<String?> values, List<String> tokens) {
     if (tokens.isEmpty) return false;
-    final name = t.name.toLowerCase();
-    final desc = t.description.toLowerCase();
-    final pn = (t.projectName ?? '').toLowerCase();
-    final pd = (t.projectDescription ?? '').toLowerCase();
+    final haystack = values
+        .whereType<String>()
+        .map((v) => v.trim())
+        .where((v) => v.isNotEmpty)
+        .join(' ')
+        .toLowerCase();
+    if (haystack.isEmpty) return false;
     for (final tkn in tokens) {
-      if (!name.contains(tkn) &&
-          !desc.contains(tkn) &&
-          !pn.contains(tkn) &&
-          !pd.contains(tkn)) {
-        return false;
-      }
+      if (!haystack.contains(tkn)) return false;
     }
     return true;
   }
 
-  static bool _subtaskTextMatchesAllTokens(
+  static bool taskSearchMatches(
+    AppState state,
+    Task t,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) return false;
+    return _containsAllTokens(
+      [
+        t.name,
+        t.description,
+        t.projectName,
+        t.projectDescription,
+        t.createByStaffName,
+        t.createByAssigneeKey,
+        t.pic,
+        _nameFor(state, t.pic),
+        for (final id in t.assigneeIds) id,
+        for (final id in t.assigneeIds) _nameFor(state, id),
+      ],
+      tokens,
+    );
+  }
+
+  static bool subtaskSearchMatches(
+    AppState state,
     SingularSubtask s,
     List<String> tokens,
   ) {
     if (tokens.isEmpty) return false;
-    final n = s.subtaskName.toLowerCase();
-    final d = s.description.toLowerCase();
-    for (final tkn in tokens) {
-      if (!n.contains(tkn) && !d.contains(tkn)) return false;
-    }
-    return true;
+    return _containsAllTokens(
+      [
+        s.subtaskName,
+        s.description,
+        s.createByStaffName,
+        s.createByStaffId,
+        s.pic,
+        _nameFor(state, s.pic),
+        for (final id in s.assigneeIds) id,
+        for (final id in s.assigneeIds) _nameFor(state, id),
+      ],
+      tokens,
+    );
   }
 
   static bool _subtaskPassesStatusChips(
@@ -605,7 +642,7 @@ class AsanaTaskFilter {
         if (t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) out.add(t);
-          } else if (_taskTextMatchesAllTokens(t, tokens) &&
+          } else if (taskSearchMatches(state, t, tokens) &&
               _rowPassesDueDate(t, null, filters)) {
             out.add(t);
           }
@@ -620,7 +657,7 @@ class AsanaTaskFilter {
                 break;
               }
             } else {
-              if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+              if (!subtaskSearchMatches(state, s, tokens)) continue;
               if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
               wantParent = true;
               break;
@@ -636,7 +673,7 @@ class AsanaTaskFilter {
                   break;
                 }
               } else {
-                if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+                if (!subtaskSearchMatches(state, s, tokens)) continue;
                 if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
                 wantParent = true;
                 break;
@@ -674,7 +711,7 @@ class AsanaTaskFilter {
         }
         continue;
       }
-      final taskTextMatch = _taskTextMatchesAllTokens(t, tokens);
+      final taskTextMatch = taskSearchMatches(state, t, tokens);
       if (taskTextMatch) {
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(t);
@@ -683,7 +720,7 @@ class AsanaTaskFilter {
       }
       var anySub = false;
       for (final s in subsNonDeleted) {
-        if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+        if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         anySub = true;
@@ -691,7 +728,7 @@ class AsanaTaskFilter {
       }
       if (!anySub) {
         for (final s in subsDeleted) {
-          if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+          if (!subtaskSearchMatches(state, s, tokens)) continue;
           if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           anySub = true;
@@ -783,7 +820,7 @@ class AsanaTaskFilter {
           if (!searchActive) {
             if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
           } else {
-            if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+            if (!subtaskSearchMatches(state, s, tokens)) continue;
             if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
           }
           out.add(AsanaFlatRow.subtask(t, s));
@@ -794,7 +831,7 @@ class AsanaTaskFilter {
         if (t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) addTaskIfAllowed();
-          } else if (_taskTextMatchesAllTokens(t, tokens) &&
+          } else if (taskSearchMatches(state, t, tokens) &&
               _rowPassesDueDate(t, null, filters)) {
             addTaskIfAllowed();
           }
@@ -832,18 +869,18 @@ class AsanaTaskFilter {
         continue;
       }
 
-      final taskTextMatch = _taskTextMatchesAllTokens(t, tokens);
+      final taskTextMatch = taskSearchMatches(state, t, tokens);
       if (taskTextMatch) {
         addTaskIfAllowed();
       }
       for (final s in subsNonDeleted) {
-        if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+        if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
       }
       for (final s in subsDeleted) {
-        if (!_subtaskTextMatchesAllTokens(s, tokens)) continue;
+        if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
@@ -996,6 +1033,7 @@ class AsanaTaskFilter {
   static List<SingularSubtask> visibleSubtasksForTask(
     Task task,
     List<SingularSubtask> subs,
+    AppState state,
     AsanaTaskFilterState filters, {
     required String searchQuery,
   }) {
@@ -1018,7 +1056,7 @@ class AsanaTaskFilter {
       if (!searchActive) {
         return _rowPassesDueDateSubtask(task, s, filters);
       }
-      if (!_subtaskTextMatchesAllTokens(s, tokens)) return false;
+      if (!subtaskSearchMatches(state, s, tokens)) return false;
       return _rowPassesDueDateSubtask(task, s, filters);
     }
 
