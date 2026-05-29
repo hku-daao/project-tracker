@@ -111,13 +111,15 @@ class AsanaTaskFilterState {
     }
   }
 
-  /// Restores shared prefs (scope, status, sort, …) but not Overview menu role filters
-  /// (assignee / PIC / creator), which would hide every row in the Asana table.
+  /// Restores shared prefs (scope, status, sort, ...) but not Overview menu
+  /// date/role filters. Asana panels should open with Due date = All.
   void applyAsanaPanelFilters(LandingTaskFilters data) {
     applyLandingFilters(data);
     assigneeStaffIds = [];
     picStaffIds = [];
     creatorStaffIds = [];
+    createDateStart = null;
+    createDateEnd = null;
   }
 }
 

@@ -97,6 +97,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     final projects = _displayProjects;
     final theme = Theme.of(context);
     final tableColors = widget.palette.tableColors;
+    final compactTitle = MediaQuery.sizeOf(context).width < 600;
 
     return ColoredBox(
       color: widget.palette.panelBackground,
@@ -110,11 +111,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
               child: Text(
                 _scopeSectionTitle(),
                 style: theme.textTheme.titleMedium?.copyWith(
-                  fontSize: 18,
+                  fontSize: compactTitle ? 14 : 18,
                   fontWeight: FontWeight.w600,
                   color: kAsanaTextPrimary,
                   height: 1.25,
                 ),
+                maxLines: compactTitle ? 1 : null,
+                overflow:
+                    compactTitle ? TextOverflow.ellipsis : TextOverflow.visible,
               ),
             ),
           ),

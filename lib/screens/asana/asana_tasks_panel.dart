@@ -247,8 +247,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
         widget.flatTasksAndSubtasks ? flatRows.length : tasks.length;
     final theme = Theme.of(context);
     final tableColors = widget.palette.tableColors;
-    final compactTitle = widget.flatTasksAndSubtasks &&
-        MediaQuery.sizeOf(context).width < 600;
+    final compactTitle = MediaQuery.sizeOf(context).width < 600;
 
     if (!_filtersReady || _loadingTasks) {
       return const StartupLoadingView(label: 'Loading');
