@@ -117,6 +117,7 @@ Schema:
   "priority": "Standard" or "URGENT" or null,
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
+  "reason": "reason for needing a long time to complete the task, or null",
   "websiteLinks": [
     { "url": "https://...", "description": "short label for the link" }
   ] or []
@@ -133,8 +134,9 @@ Rules:
 - picName must match someone in assigneeNames when both are set.
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
+- reason: only suggest when the current form shows or implies a long duration that needs explanation. It should explain why the task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description (what the link is for). Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
-- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, startDate, dueDate, or websiteLinks). Summarize the intended updates in plain language; do not list unchanged fields.
+- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; do not list unchanged fields.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
@@ -329,6 +331,7 @@ Schema:
   "message": "optional short note when nothing can be suggested",
   "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt",
   "name": "string or null",
+  "reason": "reason for needing a long time to complete the sub-task, or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
   "websiteLinks": [
     { "url": "https://...", "description": "short label for the link" }
@@ -340,6 +343,7 @@ Rules:
 - Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
 - NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical, omit that field (null).
 - comment: text for the Comments field. Compare to "comment (draft)" in context; omit if identical.
+- reason: only suggest when the context says reason is editable and the long duration needs explanation. It should explain why the sub-task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs, add each as an entry in websiteLinks with a concise description. Do not repeat URLs already listed under "Current website link attachments".
 - The user may or may not be the creator. If the user is NOT the creator, they cannot modify the name. The context will tell you if the name field is modifiable. If not modifiable, DO NOT suggest a name.
 - Use the parent task context provided to understand the context of the sub-task.

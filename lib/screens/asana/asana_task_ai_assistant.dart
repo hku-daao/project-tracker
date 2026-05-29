@@ -21,6 +21,7 @@ enum AsanaTaskAiFieldKey {
   priority,
   startDate,
   dueDate,
+  reason,
   comment,
   websiteLink,
   projectStatus,
@@ -30,6 +31,7 @@ enum AsanaTaskAiFieldKey {
 bool asanaTaskAiFieldUsesFullWidth(AsanaTaskAiFieldKey key) {
   return key == AsanaTaskAiFieldKey.taskName ||
       key == AsanaTaskAiFieldKey.description ||
+      key == AsanaTaskAiFieldKey.reason ||
       key == AsanaTaskAiFieldKey.comment ||
       key == AsanaTaskAiFieldKey.websiteLink;
 }
@@ -82,6 +84,7 @@ class AsanaTaskAiFormSnapshot {
     required this.priority,
     required this.startDate,
     required this.dueDate,
+    required this.reason,
     required this.projects,
     required this.staff,
     required this.canSuggestProject,
@@ -101,6 +104,7 @@ class AsanaTaskAiFormSnapshot {
   final int priority;
   final DateTime? startDate;
   final DateTime? dueDate;
+  final String reason;
   final List<({String id, String name})> projects;
   final List<({String id, String name})> staff;
   final bool canSuggestProject;
@@ -122,7 +126,8 @@ class AsanaTaskAiFormSnapshot {
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
       ..writeln('- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}')
-      ..writeln('- due date: ${dueDate == null ? "(empty)" : _ymd(dueDate!)}');
+      ..writeln('- due date: ${dueDate == null ? "(empty)" : _ymd(dueDate!)}')
+      ..writeln('- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}');
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
@@ -155,6 +160,8 @@ class AsanaSubtaskAiFormSnapshot {
     required this.subtaskName,
     required this.currentComment,
     required this.canEditName,
+    required this.canEditReason,
+    required this.reason,
     required this.parentTaskContext,
     this.websiteAttachments = const [],
   });
@@ -162,6 +169,8 @@ class AsanaSubtaskAiFormSnapshot {
   final String subtaskName;
   final String currentComment;
   final bool canEditName;
+  final bool canEditReason;
+  final String reason;
   final String parentTaskContext;
   final List<({String url, String description})> websiteAttachments;
 
@@ -171,6 +180,7 @@ class AsanaSubtaskAiFormSnapshot {
       ..writeln(parentTaskContext.trim().isEmpty ? "(no details provided)" : parentTaskContext.trim())
       ..writeln('\nSub-task fields:')
       ..writeln('- name: ${subtaskName.isEmpty ? "(unnamed)" : subtaskName}')
+      ..writeln('- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}')
       ..writeln('- comment (draft, posted on save): ${currentComment.isEmpty ? "(empty)" : currentComment}');
 
     if (websiteAttachments.isNotEmpty) {
@@ -183,9 +193,11 @@ class AsanaSubtaskAiFormSnapshot {
     }
 
     if (canEditName) {
-      buf.writeln('\nYou may suggest changes to: name, comment, websiteLinks.');
+      final editable = ['name', if (canEditReason) 'reason', 'comment', 'websiteLinks'];
+      buf.writeln('\nYou may suggest changes to: ${editable.join(', ')}.');
     } else {
-      buf.writeln('\nYou may suggest changes to: comment, websiteLinks. (name is NOT modifiable by this user)');
+      final editable = [if (canEditReason) 'reason', 'comment', 'websiteLinks'];
+      buf.writeln('\nYou may suggest changes to: ${editable.join(', ')}. (name is NOT modifiable by this user)');
     }
     buf.writeln('If assignees are discussed, only use people listed as allowable sub-task assignees in the parent task details.');
     return buf.toString();
@@ -197,6 +209,7 @@ class AsanaSubtaskAiSuggestionBuilder {
     required Map<String, dynamic> raw,
     required AsanaSubtaskAiFormSnapshot form,
     required void Function(String name)? applyName,
+    required void Function(String reason)? applyReason,
     required void Function(String comment) applyComment,
     required void Function(String url, String description)? applyWebsiteLink,
   }) {
@@ -221,6 +234,23 @@ class AsanaSubtaskAiSuggestionBuilder {
             currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.subtaskName),
             suggestedText: name,
             onAdopt: () => applyName(name),
+          ),
+        );
+      }
+    }
+
+    if (form.canEditReason && applyReason != null) {
+      final reason = AsanaTaskAiSuggestionBuilder._str(raw['reason']);
+      if (reason != null &&
+          reason.isNotEmpty &&
+          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(reason, form.reason)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.reason,
+            fieldLabel: 'Reason',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.reason),
+            suggestedText: reason,
+            onAdopt: () => applyReason(reason),
           ),
         );
       }
@@ -430,6 +460,21 @@ class AsanaTaskAiSuggestionBuilder {
               AsanaTaskAiSuggestionLine._displayCurrent(form.commentDraft),
           suggestedText: comment,
           onAdopt: () => apply.applyComment(comment),
+        ),
+      );
+    }
+
+    final reason = _str(raw['reason']);
+    if (reason != null &&
+        reason.isNotEmpty &&
+        !_sameNormalizedText(reason, form.reason)) {
+      lines.add(
+        AsanaTaskAiSuggestionLine.adopt(
+          fieldKey: AsanaTaskAiFieldKey.reason,
+          fieldLabel: 'Reason',
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.reason),
+          suggestedText: reason,
+          onAdopt: () => apply.applyReason(reason),
         ),
       );
     }
@@ -891,6 +936,7 @@ class AsanaTaskAiApply {
     required this.applyPriority,
     required this.applyStartDate,
     required this.applyDueDate,
+    required this.applyReason,
     required this.applyWebsiteLink,
     required this.applyComment,
   });
@@ -903,6 +949,7 @@ class AsanaTaskAiApply {
   final void Function(int priority) applyPriority;
   final void Function(DateTime start) applyStartDate;
   final void Function(DateTime due) applyDueDate;
+  final void Function(String reason) applyReason;
   final void Function(String url, String description) applyWebsiteLink;
   final void Function(String comment) applyComment;
 }
@@ -921,6 +968,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.projectApply,
     this.subtaskSnapshot,
     this.onApplySubtaskName,
+    this.onApplyReason,
   })  : assert(
           mode == AsanaTaskAiAssistantMode.taskFields
               ? formSnapshot != null && apply != null
@@ -942,6 +990,7 @@ class AsanaTaskAiController extends ChangeNotifier {
   final AsanaProjectAiApply? projectApply;
   final AsanaSubtaskAiFormSnapshot Function()? subtaskSnapshot;
   final void Function(String name)? onApplySubtaskName;
+  final void Function(String reason)? onApplyReason;
 
   final TextEditingController promptController = TextEditingController();
   bool busy = false;
@@ -1104,6 +1153,7 @@ class AsanaTaskAiController extends ChangeNotifier {
           raw: raw,
           form: form,
           applyName: onApplySubtaskName,
+          applyReason: onApplyReason,
           applyComment: onApplyComment!,
           applyWebsiteLink: onApplyWebsiteLink,
         );

@@ -1821,6 +1821,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       priority: _localPriority,
       startDate: _startDate,
       dueDate: _dueDate,
+      reason: _reasonController.text.trim(),
       projects: _myProjects
           .map((p) => (id: p.id, name: p.name.trim()))
           .where((p) => p.name.isNotEmpty)
@@ -1853,6 +1854,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       applyPriority: (p) => setState(() => _localPriority = p),
       applyStartDate: (d) => setState(() => _startDate = _dateOnly(d)),
       applyDueDate: (d) => setState(() => _dueDate = _dateOnly(d)),
+      applyReason: (v) => setState(() => _reasonController.text = v),
       applyWebsiteLink: (url, desc) => setState(() {
         _attachments.add(
           _AttachmentDraft(
@@ -2060,18 +2062,24 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
           if (_needsChangeDueReason())
-            AsanaDetailLabelValue(
-              label: 'Reason',
-              child: AsanaHoverTextField(
-                controller: _reasonController,
-                canEdit: true,
-                readOnly: _saving,
-                showOutline: true,
-                maxLines: 4,
-                minLines: 2,
-                hintText: 'Required for this due date span',
-                style: asanaDetailMultilineValueStyle(context),
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaDetailLabelValue(
+                  label: 'Reason',
+                  child: AsanaHoverTextField(
+                    controller: _reasonController,
+                    canEdit: true,
+                    readOnly: _saving,
+                    showOutline: true,
+                    maxLines: 4,
+                    minLines: 2,
+                    hintText: 'Required for this due date span',
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
+                ),
+                _aiSuggestions(AsanaTaskAiFieldKey.reason),
+              ],
             ),
           const AsanaDetailTwoColumnRow(
             label: 'Submission',
@@ -2318,16 +2326,23 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
                   if (_needsChangeDueReason() ||
                       (task.changeDueReason ?? '').trim().isNotEmpty)
-                    AsanaDetailLabelValue(
-                      label: 'Reason',
-                      child: AsanaHoverTextField(
-                        controller: _reasonController,
-                        canEdit: canEdit,
-                        readOnly: _saving,
-                        maxLines: 4,
-                        minLines: 2,
-                        style: asanaDetailMultilineValueStyle(context),
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AsanaDetailLabelValue(
+                          label: 'Reason',
+                          child: AsanaHoverTextField(
+                            controller: _reasonController,
+                            canEdit: canEdit,
+                            readOnly: _saving,
+                            maxLines: 4,
+                            minLines: 2,
+                            style: asanaDetailMultilineValueStyle(context),
+                          ),
+                        ),
+                        if (canEdit)
+                          _aiSuggestions(AsanaTaskAiFieldKey.reason),
+                      ],
                     ),
                   AsanaDetailTwoColumnRow(
                     label: 'Submission',
@@ -2601,7 +2616,7 @@ class _ActionBar extends StatelessWidget {
               palette,
               context: context,
             ),
-            child: const Text('Undo'),
+            child: Text(mobileButtons ? 'Restore' : 'Restore to Incomplete'),
           ),
         );
       } else {

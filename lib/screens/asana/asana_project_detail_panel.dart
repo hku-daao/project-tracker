@@ -492,6 +492,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   bool _canDeleteProject(ProjectRecord p) =>
       _isCreator(p) && _effectiveStatus(p) != 'Deleted';
 
+  bool _canRestoreProject(ProjectRecord p) =>
+      _isCreator(p) && _effectiveStatus(p) == 'Deleted';
+
   Future<void> _confirmDeleteProject(AppState state) async {
     final ok = await showAsanaConfirmDialog(
       context: context,
@@ -528,10 +531,39 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       }
       final projects = await SupabaseService.fetchAllProjectsFromSupabase();
       if (mounted) state.applyProjects(projects);
+      await _loadProject();
       widget.onChanged?.call();
-      if (mounted) {
-        widget.onClose();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
+    }
+  }
+
+  Future<void> _restoreDeletedProject(AppState state, ProjectRecord p) async {
+    if (!_canRestoreProject(p)) return;
+    _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final err = await SupabaseService.updateProjectRow(
+        projectId: widget.projectId,
+        status: 'Not started',
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not restore project',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
       }
+      final projects = await SupabaseService.fetchAllProjectsFromSupabase();
+      if (mounted) state.applyProjects(projects);
+      await _loadProject();
+      _projectAi?.clearAllSuggestions();
+      widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -641,22 +673,38 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }) {
     if (!canEdit) return null;
     final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
-    final buttons = <Widget>[
-      FilledButton(
-        onPressed: _saving ? null : () => _save(state, p),
-        style: AsanaTaskDetailActionStyles.updateFilled(
-          widget.palette,
-          context: context,
+    final deleted = _effectiveStatus(p) == 'Deleted';
+    final buttons = <Widget>[];
+    if (!deleted) {
+      buttons.add(
+        FilledButton(
+          onPressed: _saving ? null : () => _save(state, p),
+          style: AsanaTaskDetailActionStyles.updateFilled(
+            widget.palette,
+            context: context,
+          ),
+          child: Text(_saving ? 'Saving' : 'Update'),
         ),
-        child: Text(_saving ? 'Saving' : 'Update'),
-      ),
-    ];
+      );
+    }
     if (_canMarkProjectComplete(p)) {
       buttons.add(
         FilledButton(
           onPressed: _saving ? null : () => _markCompleted(state, p),
           style: AsanaTaskDetailActionStyles.successFilled(context: context),
           child: Text(mobileButtons ? 'Complete' : 'Mark as Completed'),
+        ),
+      );
+    }
+    if (_canRestoreProject(p)) {
+      buttons.add(
+        OutlinedButton(
+          onPressed: _saving ? null : () => _restoreDeletedProject(state, p),
+          style: AsanaTaskDetailActionStyles.undoOutlined(
+            widget.palette,
+            context: context,
+          ),
+          child: Text(mobileButtons ? 'Restore' : 'Restore to Not started'),
         ),
       );
     }

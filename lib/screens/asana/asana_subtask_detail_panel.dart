@@ -695,10 +695,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         subtaskName: _nameController.text.trim(),
         currentComment: _commentController.text.trim(),
         canEditName: _effectiveCreateMode || _isCreator(state),
+        canEditReason: _effectiveCreateMode || _isCreator(state),
+        reason: _reasonController.text.trim(),
         parentTaskContext: _buildParentContext(p, state),
         websiteAttachments: _websiteAttachmentsForAi(),
       ),
       onApplySubtaskName: (v) => setState(() => _nameController.text = v),
+      onApplyReason: (v) => setState(() => _reasonController.text = v),
       onApplyComment: (v) => setState(() => _commentController.text = v),
       onApplyWebsiteLink: _applyWebsiteLinkFromAi,
     );
@@ -1435,7 +1438,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               widget.palette,
               context: context,
             ),
-            child: const Text('Undo'),
+            child: Text(mobileButtons ? 'Restore' : 'Restore to Incomplete'),
           ),
         );
       } else {
@@ -1666,16 +1669,22 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ),
           if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
           if (isCreator && (_needsChangeDueReason() || _reasonController.text.trim().isNotEmpty))
-            AsanaDetailLabelValue(
-              label: 'Reason',
-              child: AsanaHoverTextField(
-                controller: _reasonController,
-                canEdit: true,
-                readOnly: _saving,
-                maxLines: 4,
-                minLines: 2,
-                style: asanaDetailMultilineValueStyle(context),
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaDetailLabelValue(
+                  label: 'Reason',
+                  child: AsanaHoverTextField(
+                    controller: _reasonController,
+                    canEdit: true,
+                    readOnly: _saving,
+                    maxLines: 4,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
+                ),
+                _aiSuggestions(AsanaTaskAiFieldKey.reason),
+              ],
             )
           else if (!isCreator && (s?.changeDueReason ?? '').trim().isNotEmpty)
             AsanaDetailLabelValue(
