@@ -625,7 +625,7 @@ class AsanaTaskAiSuggestionBuilder {
             onAdopt: () => apply.applyStartDate(start),
           ),
         );
-      } else if (startRaw != null && startRaw.isNotEmpty) {
+      } else if (startRaw != null && startRaw.isNotEmpty && start == null) {
         lines.add(
           AsanaTaskAiSuggestionLine.info(
             'Start date "$startRaw" could not be parsed (use YYYY-MM-DD).',
@@ -647,7 +647,7 @@ class AsanaTaskAiSuggestionBuilder {
             onAdopt: () => apply.applyDueDate(due),
           ),
         );
-      } else if (dueRaw != null && dueRaw.isNotEmpty) {
+      } else if (dueRaw != null && dueRaw.isNotEmpty && due == null) {
         lines.add(
           AsanaTaskAiSuggestionLine.info(
             'Due date "$dueRaw" could not be parsed (use YYYY-MM-DD).',
