@@ -1,9 +1,11 @@
 import '../../app_state.dart';
 import '../../models/project_record.dart';
+
 class AsanaProjectFilterState {
   AsanaProjectFilterState();
 
   Set<String> scopes = {};
+
   /// Empty = all statuses (default).
   Set<String> statuses = {};
   List<String> creatorStaffIds = [];
@@ -16,6 +18,30 @@ class AsanaProjectFilterState {
 
   bool get createDateEngaged =>
       createDateStart != null || createDateEnd != null;
+
+  Map<String, dynamic> toCookieJson() => {
+    'scopes': scopes.toList(),
+    'statuses': statuses.toList(),
+    'sortKey': sortKey,
+    'sortAscending': sortAscending,
+  };
+
+  void applyCookieJson(Map<String, dynamic> data) {
+    scopes = _stringSet(data['scopes']);
+    statuses = _stringSet(data['statuses']);
+    final rawSortKey = data['sortKey'] as String?;
+    if (rawSortKey == 'due' ||
+        rawSortKey == 'created' ||
+        rawSortKey == 'name') {
+      sortKey = rawSortKey!;
+    }
+    sortAscending = data['sortAscending'] as bool? ?? sortAscending;
+  }
+
+  static Set<String> _stringSet(Object? value) => {
+    for (final e in value is List ? value : const [])
+      if (e != null) e.toString(),
+  };
 
   void resetToDefaults() {
     scopes.clear();
@@ -180,7 +206,10 @@ class AsanaProjectFilter {
         .toList();
   }
 
-  static bool _containsAllTokens(Iterable<String?> values, List<String> tokens) {
+  static bool _containsAllTokens(
+    Iterable<String?> values,
+    List<String> tokens,
+  ) {
     if (tokens.isEmpty) return false;
     final haystack = values
         .whereType<String>()
@@ -201,22 +230,19 @@ class AsanaProjectFilter {
     List<String> tokens,
   ) {
     if (tokens.isEmpty) return false;
-    return _containsAllTokens(
-      [
-        p.name,
-        p.description,
-        p.createByDisplayName,
-        p.createByStaffUuid,
-        creatorLine(p, state),
-        assigneesLine(p, state),
-        picLine(p, state),
-        ...p.assigneeStaffDisplayNames,
-        ...p.assigneeStaffUuids,
-        ...p.picStaffDisplayNames,
-        ...p.picStaffUuids,
-      ],
-      tokens,
-    );
+    return _containsAllTokens([
+      p.name,
+      p.description,
+      p.createByDisplayName,
+      p.createByStaffUuid,
+      creatorLine(p, state),
+      assigneesLine(p, state),
+      picLine(p, state),
+      ...p.assigneeStaffDisplayNames,
+      ...p.assigneeStaffUuids,
+      ...p.picStaffDisplayNames,
+      ...p.picStaffUuids,
+    ], tokens);
   }
 
   static List<ProjectRecord> apply(
@@ -238,9 +264,7 @@ class AsanaProjectFilter {
 
     final tokens = searchTokens(searchQuery);
     if (tokens.isNotEmpty) {
-      list = list
-          .where((p) => projectSearchMatches(state, p, tokens))
-          .toList();
+      list = list.where((p) => projectSearchMatches(state, p, tokens)).toList();
     }
 
     list.sort((a, b) {

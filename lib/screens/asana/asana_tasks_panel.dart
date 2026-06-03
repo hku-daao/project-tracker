@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
+import '../../services/asana_filter_cookie_storage.dart';
 import '../../services/landing_task_filters_storage.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/hk_time.dart';
@@ -59,6 +60,14 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   int _listGeneration = 0;
   String _tasksDataSig = '';
 
+  String get _cookieStorageKey {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final tab = widget.flatTasksAndSubtasks ? 'all_tasks_subtasks' : 'tasks';
+    return uid == null || uid.isEmpty
+        ? 'asana_filters_$tab'
+        : 'asana_filters_${tab}_$uid';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -83,6 +92,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       if (data != null && mounted) {
         setState(() => _filters.applyAsanaPanelFilters(data));
       }
+    }
+    final cookieData = AsanaFilterCookieStorage.load(_cookieStorageKey);
+    if (cookieData != null && mounted) {
+      setState(() => _filters.applyCookieJson(cookieData));
     }
     if (!mounted) return;
     setState(() => _filtersReady = true);
@@ -171,15 +184,14 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
           e.key: e.value.where((s) => !s.isDeleted).length,
       };
       if (!widget.flatTasksAndSubtasks) {
-        _expandedTaskIds.removeWhere(
-          (id) => !tasks.any((t) => t.id == id),
-        );
+        _expandedTaskIds.removeWhere((id) => !tasks.any((t) => t.id == id));
       }
       _loadingTasks = false;
     });
   }
 
   void _onFiltersChanged() {
+    AsanaFilterCookieStorage.save(_cookieStorageKey, _filters.toCookieJson());
     _rebuildTaskList();
   }
 
@@ -191,8 +203,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       if (!mounted) return;
       setState(() {
         _groupedSubtasks[taskId] = list;
-        _subtaskCountByTaskId[taskId] =
-            list.where((s) => !s.isDeleted).length;
+        _subtaskCountByTaskId[taskId] = list.where((s) => !s.isDeleted).length;
       });
     } catch (_) {
       // Keep expand UI; rows may stay empty until prefetch succeeds.
@@ -243,8 +254,9 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
 
     final tasks = _displayTasks;
     final flatRows = _displayFlatRows;
-    final rowCount =
-        widget.flatTasksAndSubtasks ? flatRows.length : tasks.length;
+    final rowCount = widget.flatTasksAndSubtasks
+        ? flatRows.length
+        : tasks.length;
     final theme = Theme.of(context);
     final tableColors = widget.palette.tableColors;
     final compactTitle = MediaQuery.sizeOf(context).width < 600;
@@ -271,325 +283,332 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                   height: 1.25,
                 ),
                 maxLines: compactTitle ? 1 : null,
-                overflow:
-                    compactTitle ? TextOverflow.ellipsis : TextOverflow.visible,
+                overflow: compactTitle
+                    ? TextOverflow.ellipsis
+                    : TextOverflow.visible,
               ),
             ),
           ),
           AsanaPanelFilterToolbar(
-              palette: widget.palette,
-              createLabel: 'Create Task',
-              onCreate: widget.onCreateTask ?? () {},
-              onClearAll: () {
-                setState(_filters.resetToDefaults);
-                _onFiltersChanged();
-              },
-              filterChildren: [
-                AsanaFilterDropdown(
-                  title: 'Scope',
-                  value: _scopeLabel(),
-                  onPressed: _showScopeMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Status',
-                  value: _statusLabel(),
-                  onPressed: _showStatusMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Submission',
-                  value: _submissionLabel(),
-                  onPressed: _showSubmissionMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Creator',
-                  value: _creatorLabel(state),
-                  onPressed: _showCreatorMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'PIC',
-                  value: _picLabel(state),
-                  onPressed: _showPicMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Due date',
-                  value: _dueDateLabel(),
-                  buttonWidth: 188,
-                  onPressed: _showDueDateRangePicker,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Sort',
-                  value: _sortLabel(),
-                  onPressed: _showSortMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Overdue',
-                  value: _overdueLabel(),
-                  onPressed: _showOverdueMenu,
-                ),
-              ],
-            ),
+            palette: widget.palette,
+            createLabel: 'Create Task',
+            onCreate: widget.onCreateTask ?? () {},
+            onClearAll: () {
+              setState(_filters.resetToDefaults);
+              _onFiltersChanged();
+            },
+            filterChildren: [
+              AsanaFilterDropdown(
+                title: 'Scope',
+                value: _scopeLabel(),
+                onPressed: _showScopeMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Status',
+                value: _statusLabel(),
+                onPressed: _showStatusMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Submission',
+                value: _submissionLabel(),
+                onPressed: _showSubmissionMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Creator',
+                value: _creatorLabel(state),
+                onPressed: _showCreatorMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'PIC',
+                value: _picLabel(state),
+                onPressed: _showPicMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Due date',
+                value: _dueDateLabel(),
+                buttonWidth: 188,
+                onPressed: _showDueDateRangePicker,
+              ),
+              AsanaFilterDropdown(
+                title: 'Sort',
+                value: _sortLabel(),
+                onPressed: _showSortMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Overdue',
+                value: _overdueLabel(),
+                onPressed: _showOverdueMenu,
+              ),
+            ],
+          ),
           Expanded(
             child: AsanaPanelListSurface(
               palette: widget.palette,
               child: LayoutBuilder(
-              builder: (context, constraints) {
-                final mobileFlatList =
-                    widget.flatTasksAndSubtasks && constraints.maxWidth < 600;
-                final mobileTaskList =
-                    !widget.flatTasksAndSubtasks && constraints.maxWidth < 600;
-                final tableWidth = constraints.maxWidth <
-                        _TaskTableLayout.minTableWidth
-                    ? _TaskTableLayout.minTableWidth
-                    : constraints.maxWidth;
-                if (rowCount == 0) {
-                  return Center(
-                    child: Text(
-                      widget.flatTasksAndSubtasks
-                          ? 'No tasks or sub-tasks match your filters.'
-                          : 'No tasks match your filters.',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                builder: (context, constraints) {
+                  final mobileFlatList =
+                      widget.flatTasksAndSubtasks && constraints.maxWidth < 600;
+                  final mobileTaskList =
+                      !widget.flatTasksAndSubtasks &&
+                      constraints.maxWidth < 600;
+                  final tableWidth =
+                      constraints.maxWidth < _TaskTableLayout.minTableWidth
+                      ? _TaskTableLayout.minTableWidth
+                      : constraints.maxWidth;
+                  if (rowCount == 0) {
+                    return Center(
+                      child: Text(
+                        widget.flatTasksAndSubtasks
+                            ? 'No tasks or sub-tasks match your filters.'
+                            : 'No tasks match your filters.',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
-                  );
-                }
-                if (mobileFlatList) {
-                  return ListView.builder(
-                    itemCount: rowCount,
-                    itemBuilder: (context, index) {
-                      final row = flatRows[index];
-                      final sub = row.sub;
-                      final isSub = sub != null;
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (index > 0)
-                            Divider(height: 1, color: Colors.grey.shade300),
-                          _FlatMobileRow(
-                            tableColors: tableColors,
-                            appState: state,
-                            task: row.task,
-                            subtask: sub,
-                            onTap: isSub
-                                ? () => widget.onOpenSubtask?.call(sub.id)
-                                : () => widget.onOpenTask?.call(row.task.id),
-                          ),
-                        ],
-                      );
-                    },
-                  );
-                }
-                if (mobileTaskList) {
-                  return ListView.builder(
-                    itemCount: rowCount,
-                    itemBuilder: (context, index) {
-                      final t = tasks[index];
-                      final subCount = _subtaskCountByTaskId[t.id] ?? 0;
-                      final rawSubs = _groupedSubtasks[t.id] ?? [];
-                      final expandedSubs =
-                          AsanaTaskFilter.subtasksForExpandedPanel(
-                        rawSubs,
-                        _filters,
-                        parentTask: t,
-                      );
-                      final visibleSubCount = subCount > 0
-                          ? subCount
-                          : rawSubs.where((s) => !s.isDeleted).length;
-                      final expanded = _expandedTaskIds.contains(t.id);
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (index > 0)
-                            Divider(height: 1, color: Colors.grey.shade300),
-                          _FlatMobileRow(
-                            tableColors: tableColors,
-                            appState: state,
-                            task: t,
-                            onTap: () => widget.onOpenTask?.call(t.id),
-                            expandControl: visibleSubCount > 0
-                                ? _ExpandChevron(
-                                    expanded: expanded,
-                                    onPressed: () => _toggleTaskExpanded(t.id),
-                                  )
-                                : null,
-                          ),
-                          if (visibleSubCount > 0)
-                            _AnimatedSubtaskExpansion(
-                              expanded: expanded,
-                              child: ColoredBox(
-                                      color: tableColors.subtaskSection,
-                                      child: Column(
-                                        children: [
-                                          if (expandedSubs.isEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 16,
-                                                vertical: 10,
-                                              ),
-                                              child: Align(
-                                                alignment: Alignment.centerLeft,
-                                                child: Text(
-                                                  'No visible sub-tasks',
-                                                  style:
-                                                      asanaTableRowValueStyle(context),
-                                                ),
-                                              ),
-                                            )
-                                          else
-                                            for (var i = 0;
-                                                i < expandedSubs.length;
-                                                i++) ...[
-                                              if (i > 0)
-                                                Divider(
-                                                  height: 1,
-                                                  color: Colors.grey.shade300,
-                                                ),
-                                              _FlatMobileRow(
-                                                tableColors: tableColors,
-                                                appState: state,
-                                                task: t,
-                                                subtask: expandedSubs[i],
-                                                onTap: () => widget.onOpenSubtask
-                                                    ?.call(expandedSubs[i].id),
-                                              ),
-                                            ],
-                                        ],
-                                      ),
-                                    ),
+                    );
+                  }
+                  if (mobileFlatList) {
+                    return ListView.builder(
+                      itemCount: rowCount,
+                      itemBuilder: (context, index) {
+                        final row = flatRows[index];
+                        final sub = row.sub;
+                        final isSub = sub != null;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (index > 0)
+                              Divider(height: 1, color: Colors.grey.shade300),
+                            _FlatMobileRow(
+                              tableColors: tableColors,
+                              appState: state,
+                              task: row.task,
+                              subtask: sub,
+                              onTap: isSub
+                                  ? () => widget.onOpenSubtask?.call(sub.id)
+                                  : () => widget.onOpenTask?.call(row.task.id),
                             ),
-                        ],
-                      );
-                    },
-                  );
-                }
-                final table = Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _TableHeaderRow(
-                      tableWidth: tableWidth,
-                      flatList: widget.flatTasksAndSubtasks,
-                    ),
-                    Divider(height: 1, color: Colors.grey.shade300),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: rowCount,
-                        itemBuilder: (context, index) {
-                          if (widget.flatTasksAndSubtasks) {
-                            final row = flatRows[index];
-                            final sub = row.sub;
-                            final isSub = sub != null;
-                            final name = isSub
-                                ? (sub.subtaskName.trim().isEmpty
-                                    ? '(Unnamed sub-task)'
-                                    : sub.subtaskName.trim())
-                                : row.task.name;
+                          ],
+                        );
+                      },
+                    );
+                  }
+                  if (mobileTaskList) {
+                    return ListView.builder(
+                      itemCount: rowCount,
+                      itemBuilder: (context, index) {
+                        final t = tasks[index];
+                        final subCount = _subtaskCountByTaskId[t.id] ?? 0;
+                        final rawSubs = _groupedSubtasks[t.id] ?? [];
+                        final expandedSubs =
+                            AsanaTaskFilter.subtasksForExpandedPanel(
+                              rawSubs,
+                              _filters,
+                              parentTask: t,
+                            );
+                        final visibleSubCount = subCount > 0
+                            ? subCount
+                            : rawSubs.where((s) => !s.isDeleted).length;
+                        final expanded = _expandedTaskIds.contains(t.id);
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (index > 0)
+                              Divider(height: 1, color: Colors.grey.shade300),
+                            _FlatMobileRow(
+                              tableColors: tableColors,
+                              appState: state,
+                              task: t,
+                              onTap: () => widget.onOpenTask?.call(t.id),
+                              expandControl: visibleSubCount > 0
+                                  ? _ExpandChevron(
+                                      expanded: expanded,
+                                      onPressed: () =>
+                                          _toggleTaskExpanded(t.id),
+                                    )
+                                  : null,
+                            ),
+                            if (visibleSubCount > 0)
+                              _AnimatedSubtaskExpansion(
+                                expanded: expanded,
+                                child: ColoredBox(
+                                  color: tableColors.subtaskSection,
+                                  child: Column(
+                                    children: [
+                                      if (expandedSubs.isEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 10,
+                                          ),
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(
+                                              'No visible sub-tasks',
+                                              style: asanaTableRowValueStyle(
+                                                context,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        for (
+                                          var i = 0;
+                                          i < expandedSubs.length;
+                                          i++
+                                        ) ...[
+                                          if (i > 0)
+                                            Divider(
+                                              height: 1,
+                                              color: Colors.grey.shade300,
+                                            ),
+                                          _FlatMobileRow(
+                                            tableColors: tableColors,
+                                            appState: state,
+                                            task: t,
+                                            subtask: expandedSubs[i],
+                                            onTap: () => widget.onOpenSubtask
+                                                ?.call(expandedSubs[i].id),
+                                          ),
+                                        ],
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    );
+                  }
+                  final table = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _TableHeaderRow(
+                        tableWidth: tableWidth,
+                        flatList: widget.flatTasksAndSubtasks,
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade300),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: rowCount,
+                          itemBuilder: (context, index) {
+                            if (widget.flatTasksAndSubtasks) {
+                              final row = flatRows[index];
+                              final sub = row.sub;
+                              final isSub = sub != null;
+                              final name = isSub
+                                  ? (sub.subtaskName.trim().isEmpty
+                                        ? '(Unnamed sub-task)'
+                                        : sub.subtaskName.trim())
+                                  : row.task.name;
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (index > 0)
+                                    Divider(
+                                      height: 1,
+                                      color: Colors.grey.shade300,
+                                    ),
+                                  _ItemTableRow(
+                                    tableWidth: tableWidth,
+                                    tableColors: tableColors,
+                                    appState: state,
+                                    onRowTap: isSub
+                                        ? () =>
+                                              widget.onOpenSubtask?.call(sub.id)
+                                        : () => widget.onOpenTask?.call(
+                                            row.task.id,
+                                          ),
+                                    projectName: row.task.projectName ?? '—',
+                                    name: name,
+                                    isSubtask: isSub,
+                                    completed: isSub
+                                        ? _subtaskCompleted(sub)
+                                        : _taskCompleted(row.task),
+                                    dueDate: isSub
+                                        ? sub.dueDate
+                                        : row.task.endDate,
+                                    creator: isSub
+                                        ? sub.createByStaffName
+                                        : row.task.createByStaffName,
+                                    picKey: isSub ? sub.pic : row.task.pic,
+                                    priority: isSub
+                                        ? sub.priority
+                                        : row.task.priority,
+                                    status: isSub
+                                        ? sub.status
+                                        : TaskListCard.statusLabel(row.task),
+                                    submission: isSub
+                                        ? sub.submission
+                                        : row.task.submission,
+                                  ),
+                                ],
+                              );
+                            }
+                            final t = tasks[index];
+                            final subCount = _subtaskCountByTaskId[t.id] ?? 0;
+                            final rawSubs = _groupedSubtasks[t.id] ?? [];
+                            final expandedSubs =
+                                AsanaTaskFilter.subtasksForExpandedPanel(
+                                  rawSubs,
+                                  _filters,
+                                  parentTask: t,
+                                );
                             return Column(
                               mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 if (index > 0)
                                   Divider(
                                     height: 1,
                                     color: Colors.grey.shade300,
                                   ),
-                                _ItemTableRow(
+                                _ExpandableTaskTableRow(
                                   tableWidth: tableWidth,
                                   tableColors: tableColors,
+                                  task: t,
                                   appState: state,
-                                  onRowTap: isSub
-                                      ? () => widget.onOpenSubtask
-                                          ?.call(sub.id)
-                                      : () =>
-                                          widget.onOpenTask?.call(row.task.id),
-                                  projectName:
-                                      row.task.projectName ?? '—',
-                                  name: name,
-                                  isSubtask: isSub,
-                                  completed: isSub
-                                      ? _subtaskCompleted(sub)
-                                      : _taskCompleted(row.task),
-                                  dueDate:
-                                      isSub ? sub.dueDate : row.task.endDate,
-                                  creator: isSub
-                                      ? sub.createByStaffName
-                                      : row.task.createByStaffName,
-                                  picKey: isSub ? sub.pic : row.task.pic,
-                                  priority: isSub ? sub.priority : row.task.priority,
-                                  status: isSub
-                                      ? sub.status
-                                      : TaskListCard.statusLabel(row.task),
-                                  submission: isSub
-                                      ? sub.submission
-                                      : row.task.submission,
+                                  onOpenTask: widget.onOpenTask,
+                                  onOpenSubtask: widget.onOpenSubtask,
+                                  subtaskCount: subCount > 0
+                                      ? subCount
+                                      : rawSubs
+                                            .where((s) => !s.isDeleted)
+                                            .length,
+                                  expandedSubtasks: expandedSubs,
+                                  expanded: _expandedTaskIds.contains(t.id),
+                                  onToggleExpand: () =>
+                                      _toggleTaskExpanded(t.id),
                                 ),
                               ],
                             );
-                          }
-                          final t = tasks[index];
-                          final subCount =
-                              _subtaskCountByTaskId[t.id] ?? 0;
-                          final rawSubs = _groupedSubtasks[t.id] ?? [];
-                          final expandedSubs =
-                              AsanaTaskFilter.subtasksForExpandedPanel(
-                            rawSubs,
-                            _filters,
-                            parentTask: t,
-                          );
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (index > 0)
-                                Divider(
-                                  height: 1,
-                                  color: Colors.grey.shade300,
-                                ),
-                              _ExpandableTaskTableRow(
-                                tableWidth: tableWidth,
-                                tableColors: tableColors,
-                                task: t,
-                                appState: state,
-                                onOpenTask: widget.onOpenTask,
-                                onOpenSubtask: widget.onOpenSubtask,
-                                subtaskCount: subCount > 0
-                                    ? subCount
-                                    : rawSubs
-                                        .where((s) => !s.isDeleted)
-                                        .length,
-                                expandedSubtasks: expandedSubs,
-                                expanded:
-                                    _expandedTaskIds.contains(t.id),
-                                onToggleExpand: () =>
-                                    _toggleTaskExpanded(t.id),
-                              ),
-                            ],
-                          );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+                  if (constraints.maxWidth < _TaskTableLayout.minTableWidth) {
+                    return ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.trackpad,
                         },
                       ),
-                    ),
-                  ],
-                );
-                if (constraints.maxWidth < _TaskTableLayout.minTableWidth) {
-                  return ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context).copyWith(
-                      dragDevices: {
-                        PointerDeviceKind.touch,
-                        PointerDeviceKind.mouse,
-                        PointerDeviceKind.trackpad,
-                      },
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(
-                        width: tableWidth,
-                        height: constraints.maxHeight,
-                        child: table,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: tableWidth,
+                          height: constraints.maxHeight,
+                          child: table,
+                        ),
                       ),
-                    ),
-                  );
-                }
-                return table;
-              },
-            ),
+                    );
+                  }
+                  return table;
+                },
+              ),
             ),
           ),
         ],
@@ -598,7 +617,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 
   String _scopeLabel() {
-    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) return 'All';
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all'))
+      return 'All';
     if (_filters.scopes.length == 1) {
       if (_filters.scopes.contains('assigned')) return 'Assigned to me';
       if (_filters.scopes.contains('created')) return 'Created by me';
@@ -607,8 +627,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 
   String _scopeSectionTitle() {
-    final prefix =
-        widget.flatTasksAndSubtasks ? 'Tasks/Sub-tasks' : 'Tasks';
+    final prefix = widget.flatTasksAndSubtasks ? 'Tasks/Sub-tasks' : 'Tasks';
     if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) {
       return '$prefix created by or assigned to my team';
     }
@@ -646,7 +665,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
 
   String _staffFilterLabel(AppState state, List<String> ids) {
     if (ids.isEmpty) return 'All';
-    if (ids.length == 1) return state.assigneeById(ids.first)?.name ?? ids.first;
+    if (ids.length == 1)
+      return state.assigneeById(ids.first)?.name ?? ids.first;
     return '${ids.length} selected';
   }
 
@@ -669,7 +689,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     return 'To ${HkTime.formatInstantAsHk(e!, 'MMM d')}';
   }
 
-  String _overdueLabel() => _filters.overdueOptions.contains('overdue') ? 'Overdue only' : 'All';
+  String _overdueLabel() =>
+      _filters.overdueOptions.contains('overdue') ? 'Overdue only' : 'All';
 
   List<AsanaFilterCheckboxOption> _staffOptions(
     AppState state,
@@ -946,10 +967,13 @@ class _TaskTableLayout {
   static const double minTableWidth = 1184;
   static const double typeCol = 48;
   static const double typeColGap = 10;
+
   /// Reserved before task name text (expand chevron or empty) so names align.
   static const double nameGutter = 36;
+
   /// Plain-text columns (name, due, project, creator, PIC) each followed by a gap.
   static const int textColumnGapCount = 5;
+
   /// Fixed height for name gutter + single-line row alignment.
   static const double singleLineExtent = 24;
   static const double hPad = 12;
@@ -957,13 +981,14 @@ class _TaskTableLayout {
   static const double _flexWeightSum =
       0.28 + 0.08 + 0.11 + 0.09 + 0.09 + 0.08 + 0.09;
 
-  late final double _inner = (tableWidth -
-          typeCol -
-          typeColGap -
-          kAsanaTextColumnGap * textColumnGapCount -
-          hPad * 2 -
-          kAsanaTableStatusColWidth)
-      .clamp(400, double.infinity);
+  late final double _inner =
+      (tableWidth -
+              typeCol -
+              typeColGap -
+              kAsanaTextColumnGap * textColumnGapCount -
+              hPad * 2 -
+              kAsanaTableStatusColWidth)
+          .clamp(400, double.infinity);
 
   double get taskNameCol => _inner * (0.28 / _flexWeightSum);
   double get dueCol => _inner * (0.08 / _flexWeightSum);
@@ -979,10 +1004,7 @@ TextStyle? _taskTableHeaderStyle(BuildContext context) =>
     asanaTableHeaderStyle(context);
 
 class _TableHeaderRow extends StatelessWidget {
-  const _TableHeaderRow({
-    required this.tableWidth,
-    this.flatList = false,
-  });
+  const _TableHeaderRow({required this.tableWidth, this.flatList = false});
 
   final double tableWidth;
   final bool flatList;
@@ -998,7 +1020,10 @@ class _TableHeaderRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          SizedBox(width: _TaskTableLayout.typeCol, child: Text('', style: style)),
+          SizedBox(
+            width: _TaskTableLayout.typeCol,
+            child: Text('', style: style),
+          ),
           const SizedBox(width: _TaskTableLayout.typeColGap),
           SizedBox(
             width: cols.taskNameCol,
@@ -1117,58 +1142,51 @@ class _ExpandableTaskTableRow extends StatelessWidget {
             status: TaskListCard.statusLabel(task),
             submission: task.submission,
             expandControl: hasSubs
-                ? _ExpandChevron(
-                    expanded: expanded,
-                    onPressed: onToggleExpand,
-                  )
+                ? _ExpandChevron(expanded: expanded, onPressed: onToggleExpand)
                 : null,
           ),
           if (hasSubs)
             _AnimatedSubtaskExpansion(
               expanded: expanded,
               child: ColoredBox(
-                      color: tableColors.subtaskSection,
-                      child: SizedBox(
-                        width: tableWidth,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _SubtaskSectionHeader(tableWidth: tableWidth),
-                            if (expandedSubtasks.isEmpty)
-                              Padding(
-                                padding: EdgeInsets.fromLTRB(
-                                  _TaskTableLayout.hPad +
-                                      _TaskTableLayout.typeCol +
-                                      _TaskTableLayout.typeColGap +
-                                      _TaskTableLayout.nameGutter,
-                                  8,
-                                  16,
-                                  12,
-                                ),
-                                child: Text(
-                                  'No sub-tasks to display.',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        color: kAsanaTextSecondary,
-                                      ),
-                                ),
-                              ),
-                            for (var i = 0; i < expandedSubtasks.length; i++)
-                              _SubtaskDataRow(
-                                tableWidth: tableWidth,
-                                tableColors: tableColors,
-                                appState: appState,
-                                parent: task,
-                                subtask: expandedSubtasks[i],
-                                showDivider: i > 0,
-                                onOpenSubtask: onOpenSubtask,
-                              ),
-                          ],
+                color: tableColors.subtaskSection,
+                child: SizedBox(
+                  width: tableWidth,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _SubtaskSectionHeader(tableWidth: tableWidth),
+                      if (expandedSubtasks.isEmpty)
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            _TaskTableLayout.hPad +
+                                _TaskTableLayout.typeCol +
+                                _TaskTableLayout.typeColGap +
+                                _TaskTableLayout.nameGutter,
+                            8,
+                            16,
+                            12,
+                          ),
+                          child: Text(
+                            'No sub-tasks to display.',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: kAsanaTextSecondary),
+                          ),
                         ),
-                      ),
-                    ),
+                      for (var i = 0; i < expandedSubtasks.length; i++)
+                        _SubtaskDataRow(
+                          tableWidth: tableWidth,
+                          tableColors: tableColors,
+                          appState: appState,
+                          parent: task,
+                          subtask: expandedSubtasks[i],
+                          showDivider: i > 0,
+                          onOpenSubtask: onOpenSubtask,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -1236,7 +1254,8 @@ class _SubtaskDataRow extends StatelessWidget {
         if (showDivider)
           Divider(
             height: 1,
-            indent: _TaskTableLayout.hPad +
+            indent:
+                _TaskTableLayout.hPad +
                 _TaskTableLayout.typeCol +
                 _TaskTableLayout.typeColGap +
                 _TaskTableLayout.nameGutter,
@@ -1282,7 +1301,10 @@ class _SubtaskSectionHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(width: _TaskTableLayout.typeCol, child: Text('', style: style)),
+          SizedBox(
+            width: _TaskTableLayout.typeCol,
+            child: Text('', style: style),
+          ),
           const SizedBox(width: _TaskTableLayout.typeColGap),
           SizedBox(
             width: cols.taskNameCol,
@@ -1356,10 +1378,7 @@ class _SubtaskSectionHeader extends StatelessWidget {
 }
 
 class _ExpandChevron extends StatelessWidget {
-  const _ExpandChevron({
-    required this.expanded,
-    required this.onPressed,
-  });
+  const _ExpandChevron({required this.expanded, required this.onPressed});
 
   final bool expanded;
   final VoidCallback onPressed;
@@ -1426,15 +1445,16 @@ class _ItemTableRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cols = _TaskTableLayout(tableWidth);
-    final rowValueStyle =
-        asanaTableRowValueStyle(context, completed: completed);
+    final rowValueStyle = asanaTableRowValueStyle(
+      context,
+      completed: completed,
+    );
     final nameStyle = asanaTableRowNameStyle(
       context,
       completed: completed,
       isSubtask: isSubtask,
     );
-    final rowBg =
-        isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
+    final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
 
     return Material(
       color: rowBg,
@@ -1450,105 +1470,105 @@ class _ItemTableRow extends StatelessWidget {
           child: SizedBox(
             width: tableWidth - _TaskTableLayout.hPad * 2,
             child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: _TaskTableLayout.typeCol,
-                child: Center(
-                  child: AsanaRowTypeLetter(
-                    letter: isSubtask ? 'S' : 'T',
-                    completed: completed,
-                    deleted: _rowDeleted(
-                      isSubtask: isSubtask,
-                      status: status,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: _TaskTableLayout.typeCol,
+                  child: Center(
+                    child: AsanaRowTypeLetter(
+                      letter: isSubtask ? 'S' : 'T',
+                      completed: completed,
+                      deleted: _rowDeleted(
+                        isSubtask: isSubtask,
+                        status: status,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: _TaskTableLayout.typeColGap),
-              SizedBox(
-                width: cols.taskNameCol,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: _TaskTableLayout.nameGutter,
-                      height: _TaskTableLayout.singleLineExtent,
-                      child: Center(
-                        child: expandControl ?? const SizedBox.shrink(),
+                const SizedBox(width: _TaskTableLayout.typeColGap),
+                SizedBox(
+                  width: cols.taskNameCol,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: _TaskTableLayout.nameGutter,
+                        height: _TaskTableLayout.singleLineExtent,
+                        child: Center(
+                          child: expandControl ?? const SizedBox.shrink(),
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: nameStyle,
-                        maxLines: isSubtask ? 2 : 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: nameStyle,
+                          maxLines: isSubtask ? 2 : 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              asanaTextColumnGap(),
-              SizedBox(
-                width: cols.dueCol,
-                child: Text(
-                  _formatDueDate(dueDate),
-                  style: rowValueStyle,
-                  overflow: TextOverflow.ellipsis,
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.dueCol,
+                  child: Text(
+                    _formatDueDate(dueDate),
+                    style: rowValueStyle,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              asanaTextColumnGap(),
-              SizedBox(
-                width: cols.projectCol,
-                child: Text(
-                  projectName,
-                  style: rowValueStyle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.projectCol,
+                  child: Text(
+                    projectName,
+                    style: rowValueStyle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              asanaTextColumnGap(),
-              SizedBox(
-                width: cols.creatorCol,
-                child: Text(
-                  _formatCreator(creator),
-                  style: rowValueStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.creatorCol,
+                  child: Text(
+                    _formatCreator(creator),
+                    style: rowValueStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              asanaTextColumnGap(),
-              SizedBox(
-                width: cols.picCol,
-                child: Text(
-                  _formatPic(appState, picKey),
-                  style: rowValueStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.picCol,
+                  child: Text(
+                    _formatPic(appState, picKey),
+                    style: rowValueStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              asanaTextColumnGap(),
-              SizedBox(
-                width: cols.priorityCol,
-                child: AsanaTableCellChip(
-                  child: AsanaPriorityChip(priority: priority),
+                asanaTextColumnGap(),
+                SizedBox(
+                  width: cols.priorityCol,
+                  child: AsanaTableCellChip(
+                    child: AsanaPriorityChip(priority: priority),
+                  ),
                 ),
-              ),
-              SizedBox(
-                width: cols.statusCol,
-                child: AsanaTableCellChip(
-                  child: AsanaStatusChip(status: status),
+                SizedBox(
+                  width: cols.statusCol,
+                  child: AsanaTableCellChip(
+                    child: AsanaStatusChip(status: status),
+                  ),
                 ),
-              ),
-              SizedBox(
-                width: cols.submissionCol,
-                child: AsanaTableCellChip(
-                  child: AsanaSubmissionChip(submission: submission),
+                SizedBox(
+                  width: cols.submissionCol,
+                  child: AsanaTableCellChip(
+                    child: AsanaSubmissionChip(submission: submission),
+                  ),
                 ),
-              ),
-            ],
+              ],
             ),
           ),
         ),
@@ -1577,15 +1597,18 @@ class _FlatMobileRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSubtask = subtask != null;
-    final completed =
-        isSubtask ? _subtaskCompleted(subtask!) : _taskCompleted(task);
+    final completed = isSubtask
+        ? _subtaskCompleted(subtask!)
+        : _taskCompleted(task);
     final name = isSubtask
         ? (subtask!.subtaskName.trim().isEmpty
-            ? '(Unnamed sub-task)'
-            : subtask!.subtaskName.trim())
+              ? '(Unnamed sub-task)'
+              : subtask!.subtaskName.trim())
         : (task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim());
     final dueDate = isSubtask ? subtask!.dueDate : task.endDate;
-    final creator = isSubtask ? subtask!.createByStaffName : task.createByStaffName;
+    final creator = isSubtask
+        ? subtask!.createByStaffName
+        : task.createByStaffName;
     final picKey = isSubtask ? subtask!.pic : task.pic;
     final status = isSubtask ? subtask!.status : TaskListCard.statusLabel(task);
     final submission = isSubtask ? subtask!.submission : task.submission;
@@ -1595,10 +1618,7 @@ class _FlatMobileRow extends StatelessWidget {
       completed: completed,
       isSubtask: isSubtask,
     );
-    final valueStyle = asanaTableRowValueStyle(
-      context,
-      completed: completed,
-    );
+    final valueStyle = asanaTableRowValueStyle(context, completed: completed);
     final metaLine = [
       'Cr: ${_formatCreator(creator)}',
       'PIC: ${_formatPic(appState, picKey)}',
@@ -1731,4 +1751,3 @@ String _formatPic(AppState state, String? pic) {
   if (p == null || p.isEmpty) return '—';
   return state.assigneeById(p)?.name ?? p;
 }
-

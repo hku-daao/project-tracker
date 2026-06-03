@@ -1,10 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
 import '../../models/project_record.dart';
+import '../../services/asana_filter_cookie_storage.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_filter_widgets.dart';
@@ -38,9 +40,20 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   List<ProjectRecord> _displayProjects = [];
   String _projectsDataSig = '';
 
+  String get _cookieStorageKey {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return uid == null || uid.isEmpty
+        ? 'asana_filters_projects'
+        : 'asana_filters_projects_$uid';
+  }
+
   @override
   void initState() {
     super.initState();
+    final cookieData = AsanaFilterCookieStorage.load(_cookieStorageKey);
+    if (cookieData != null) {
+      _filters.applyCookieJson(cookieData);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _rebuildList();
     });
@@ -64,6 +77,11 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         searchQuery: widget.searchQuery,
       );
     });
+  }
+
+  void _onFiltersChanged() {
+    AsanaFilterCookieStorage.save(_cookieStorageKey, _filters.toCookieJson());
+    _rebuildList();
   }
 
   @override
@@ -117,152 +135,155 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                   height: 1.25,
                 ),
                 maxLines: compactTitle ? 1 : null,
-                overflow:
-                    compactTitle ? TextOverflow.ellipsis : TextOverflow.visible,
+                overflow: compactTitle
+                    ? TextOverflow.ellipsis
+                    : TextOverflow.visible,
               ),
             ),
           ),
           AsanaPanelFilterToolbar(
-              palette: widget.palette,
-              createLabel: 'Create Project',
-              onCreate: widget.onCreateProject ?? () {},
-              onClearAll: () {
-                setState(_filters.resetToDefaults);
-                _rebuildList();
-              },
-              filterChildren: [
-                AsanaFilterDropdown(
-                  title: 'Scope',
-                  value: _scopeLabel(),
-                  onPressed: _showScopeMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Status',
-                  value: _statusLabel(),
-                  onPressed: _showStatusMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Creator',
-                  value: _creatorLabel(state),
-                  onPressed: _showCreatorMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'PIC',
-                  value: _picLabel(state),
-                  onPressed: _showPicMenu,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Due date',
-                  value: _dueDateLabel(),
-                  buttonWidth: 188,
-                  onPressed: _showDueDateRangePicker,
-                ),
-                AsanaFilterDropdown(
-                  title: 'Sort',
-                  value: _sortLabel(),
-                  onPressed: _showSortMenu,
-                ),
-              ],
-            ),
+            palette: widget.palette,
+            createLabel: 'Create Project',
+            onCreate: widget.onCreateProject ?? () {},
+            onClearAll: () {
+              setState(_filters.resetToDefaults);
+              _onFiltersChanged();
+            },
+            filterChildren: [
+              AsanaFilterDropdown(
+                title: 'Scope',
+                value: _scopeLabel(),
+                onPressed: _showScopeMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Status',
+                value: _statusLabel(),
+                onPressed: _showStatusMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Creator',
+                value: _creatorLabel(state),
+                onPressed: _showCreatorMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'PIC',
+                value: _picLabel(state),
+                onPressed: _showPicMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Due date',
+                value: _dueDateLabel(),
+                buttonWidth: 188,
+                onPressed: _showDueDateRangePicker,
+              ),
+              AsanaFilterDropdown(
+                title: 'Sort',
+                value: _sortLabel(),
+                onPressed: _showSortMenu,
+              ),
+            ],
+          ),
           Expanded(
             child: AsanaPanelListSurface(
               palette: widget.palette,
               child: LayoutBuilder(
-              builder: (context, constraints) {
-                final mobileList = constraints.maxWidth < 600;
-                final tableWidth = constraints.maxWidth <
-                        _ProjectTableLayout.minTableWidth
-                    ? _ProjectTableLayout.minTableWidth
-                    : constraints.maxWidth;
+                builder: (context, constraints) {
+                  final mobileList = constraints.maxWidth < 600;
+                  final tableWidth =
+                      constraints.maxWidth < _ProjectTableLayout.minTableWidth
+                      ? _ProjectTableLayout.minTableWidth
+                      : constraints.maxWidth;
 
-                if (projects.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'No projects match your filters.',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                  if (projects.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'No projects match your filters.',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
-                  );
-                }
+                    );
+                  }
 
-                if (mobileList) {
-                  return ListView.builder(
-                    itemCount: projects.length,
-                    itemBuilder: (context, index) {
-                      final p = projects[index];
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (index > 0)
-                            Divider(height: 1, color: Colors.grey.shade300),
-                          _ProjectMobileRow(
-                            tableColors: tableColors,
-                            project: p,
-                            appState: state,
-                            onTap: () => widget.onOpenProject?.call(p.id),
-                          ),
-                        ],
-                      );
-                    },
-                  );
-                }
+                  if (mobileList) {
+                    return ListView.builder(
+                      itemCount: projects.length,
+                      itemBuilder: (context, index) {
+                        final p = projects[index];
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (index > 0)
+                              Divider(height: 1, color: Colors.grey.shade300),
+                            _ProjectMobileRow(
+                              tableColors: tableColors,
+                              project: p,
+                              appState: state,
+                              onTap: () => widget.onOpenProject?.call(p.id),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  }
 
-                final table = Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _ProjectTableHeader(tableWidth: tableWidth),
-                    Divider(height: 1, color: Colors.grey.shade300),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: projects.length,
-                        itemBuilder: (context, index) {
-                          final p = projects[index];
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (index > 0)
-                                Divider(
-                                  height: 1,
-                                  color: Colors.grey.shade300,
+                  final table = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ProjectTableHeader(tableWidth: tableWidth),
+                      Divider(height: 1, color: Colors.grey.shade300),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: projects.length,
+                          itemBuilder: (context, index) {
+                            final p = projects[index];
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (index > 0)
+                                  Divider(
+                                    height: 1,
+                                    color: Colors.grey.shade300,
+                                  ),
+                                _ProjectTableRow(
+                                  tableWidth: tableWidth,
+                                  tableColors: tableColors,
+                                  project: p,
+                                  appState: state,
+                                  onRowTap: () =>
+                                      widget.onOpenProject?.call(p.id),
                                 ),
-                              _ProjectTableRow(
-                                tableWidth: tableWidth,
-                                tableColors: tableColors,
-                                project: p,
-                                appState: state,
-                                onRowTap: () => widget.onOpenProject?.call(p.id),
-                              ),
-                            ],
-                          );
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  );
+
+                  if (constraints.maxWidth <
+                      _ProjectTableLayout.minTableWidth) {
+                    return ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.trackpad,
                         },
                       ),
-                    ),
-                  ],
-                );
-
-                if (constraints.maxWidth < _ProjectTableLayout.minTableWidth) {
-                  return ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context).copyWith(
-                      dragDevices: {
-                        PointerDeviceKind.touch,
-                        PointerDeviceKind.mouse,
-                        PointerDeviceKind.trackpad,
-                      },
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SizedBox(
-                        width: tableWidth,
-                        height: constraints.maxHeight,
-                        child: table,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: tableWidth,
+                          height: constraints.maxHeight,
+                          child: table,
+                        ),
                       ),
-                    ),
-                  );
-                }
-                return table;
-              },
-            ),
+                    );
+                  }
+                  return table;
+                },
+              ),
             ),
           ),
         ],
@@ -271,7 +292,8 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   }
 
   String _scopeLabel() {
-    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) return 'All';
+    if (_filters.scopes.isEmpty || _filters.scopes.contains('all'))
+      return 'All';
     if (_filters.scopes.length == 1) {
       if (_filters.scopes.contains('assigned')) return 'Assigned to me';
       if (_filters.scopes.contains('created')) return 'Created by me';
@@ -284,7 +306,8 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       return 'Projects created by or assigned to my team';
     }
     if (_filters.scopes.length == 1) {
-      if (_filters.scopes.contains('assigned')) return 'Projects assigned to me';
+      if (_filters.scopes.contains('assigned'))
+        return 'Projects assigned to me';
       if (_filters.scopes.contains('created')) return 'Projects created by me';
     }
     if (_filters.scopes.contains('assigned') &&
@@ -299,9 +322,42 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     return _filters.statuses.join(', ');
   }
 
+  String _staffName(AppState state, String id) {
+    final key = id.trim();
+    if (key.isEmpty) return '';
+    final fromProject = _projectStaffNameById(key);
+    if (fromProject != null && fromProject.isNotEmpty) return fromProject;
+    return state.assigneeById(key)?.name.trim() ?? key;
+  }
+
+  String? _projectStaffNameById(String id) {
+    for (final project in _displayProjects) {
+      final creatorId = project.createByStaffUuid?.trim();
+      if (creatorId == id) {
+        final name = project.createByDisplayName?.trim();
+        if (name != null && name.isNotEmpty && name != id) return name;
+      }
+      for (var i = 0; i < project.picStaffUuids.length; i++) {
+        if (project.picStaffUuids[i].trim() != id) continue;
+        if (i < project.picStaffDisplayNames.length) {
+          final name = project.picStaffDisplayNames[i].trim();
+          if (name.isNotEmpty && name != id) return name;
+        }
+      }
+      for (var i = 0; i < project.assigneeStaffUuids.length; i++) {
+        if (project.assigneeStaffUuids[i].trim() != id) continue;
+        if (i < project.assigneeStaffDisplayNames.length) {
+          final name = project.assigneeStaffDisplayNames[i].trim();
+          if (name.isNotEmpty && name != id) return name;
+        }
+      }
+    }
+    return null;
+  }
+
   String _staffFilterLabel(AppState state, List<String> ids) {
     if (ids.isEmpty) return 'All';
-    if (ids.length == 1) return state.assigneeById(ids.first)?.name ?? ids.first;
+    if (ids.length == 1) return _staffName(state, ids.first);
     return '${ids.length} selected';
   }
 
@@ -332,7 +388,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     for (final raw in ids) {
       final id = raw?.trim();
       if (id == null || id.isEmpty) continue;
-      map[id] = state.assigneeById(id)?.name.trim() ?? id;
+      map[id] = _staffName(state, id);
     }
     final list = map.entries.toList()
       ..sort((a, b) => a.value.compareTo(b.value));
@@ -444,30 +500,24 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     );
     if (selection != null) {
       setState(() => _filters.scopes = selection);
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
   Future<void> _showStatusMenu(BuildContext buttonContext) async {
     const allKey = '__all__';
-    const options = [
-      'Not started',
-      'In progress',
-      'Completed',
-      'Deleted',
-    ];
+    const options = ['Not started', 'In progress', 'Completed', 'Deleted'];
     final selection = await showAsanaCheckboxFilterPanel(
       anchorContext: buttonContext,
       options: [
         const AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
-        for (final s in options)
-          AsanaFilterCheckboxOption(key: s, label: s),
+        for (final s in options) AsanaFilterCheckboxOption(key: s, label: s),
       ],
       initialSelection: _filters.statuses,
     );
     if (selection != null) {
       setState(() => _filters.statuses = selection);
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
@@ -509,7 +559,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
             _filters.sortAscending = true;
         }
       });
-      _rebuildList();
+      _onFiltersChanged();
     });
   }
 
@@ -537,8 +587,10 @@ class _ProjectTableLayout {
   static const double minTableWidth = 1000;
   static const double typeCol = 48;
   static const double typeColGap = 10;
+
   /// Aligns project name with task list (matches [_TaskTableLayout.nameGutter]).
   static const double nameGutter = 36;
+
   /// Plain-text columns (name, due, creator, PIC, assignees) each followed by a gap.
   static const int textColumnGapCount = 5;
   static const double singleLineExtent = 24;
@@ -546,13 +598,14 @@ class _ProjectTableLayout {
 
   static const double _flexWeightSum = 0.24 + 0.10 + 0.09 + 0.14 + 0.16;
 
-  late final double _inner = (tableWidth -
-          typeCol -
-          typeColGap -
-          kAsanaTextColumnGap * textColumnGapCount -
-          hPad * 2 -
-          kAsanaTableStatusColWidth)
-      .clamp(320, double.infinity);
+  late final double _inner =
+      (tableWidth -
+              typeCol -
+              typeColGap -
+              kAsanaTextColumnGap * textColumnGapCount -
+              hPad * 2 -
+              kAsanaTableStatusColWidth)
+          .clamp(320, double.infinity);
 
   double get nameCol => _inner * (0.24 / _flexWeightSum);
   double get dueCol => _inner * (0.10 / _flexWeightSum);
@@ -578,16 +631,17 @@ class _ProjectTableHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          SizedBox(width: _ProjectTableLayout.typeCol, child: Text('', style: style)),
+          SizedBox(
+            width: _ProjectTableLayout.typeCol,
+            child: Text('', style: style),
+          ),
           const SizedBox(width: _ProjectTableLayout.typeColGap),
           SizedBox(
             width: cols.nameCol,
             child: Row(
               children: [
                 const SizedBox(width: _ProjectTableLayout.nameGutter),
-                Expanded(
-                  child: Text('Project Name', style: style),
-                ),
+                Expanded(child: Text('Project Name', style: style)),
               ],
             ),
           ),
@@ -656,12 +710,11 @@ class _ProjectTableRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cols = _ProjectTableLayout(tableWidth);
-    final rowValueStyle =
-        asanaTableRowValueStyle(context, completed: _completed);
-    final nameStyle = asanaTableRowNameStyle(
+    final rowValueStyle = asanaTableRowValueStyle(
       context,
       completed: _completed,
     );
+    final nameStyle = asanaTableRowNameStyle(context, completed: _completed);
 
     return Material(
       color: tableColors.projectRow,
@@ -785,16 +838,11 @@ class _ProjectMobileRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name =
-        project.name.trim().isEmpty ? '(Unnamed project)' : project.name.trim();
-    final nameStyle = asanaTableRowNameStyle(
-      context,
-      completed: _completed,
-    );
-    final valueStyle = asanaTableRowValueStyle(
-      context,
-      completed: _completed,
-    );
+    final name = project.name.trim().isEmpty
+        ? '(Unnamed project)'
+        : project.name.trim();
+    final nameStyle = asanaTableRowNameStyle(context, completed: _completed);
+    final valueStyle = asanaTableRowValueStyle(context, completed: _completed);
     final metaLine = [
       'Cr: ${AsanaProjectFilter.creatorLine(project, appState)}',
       'PIC: ${AsanaProjectFilter.picLine(project, appState)}',

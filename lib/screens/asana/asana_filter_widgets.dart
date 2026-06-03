@@ -12,7 +12,8 @@ import 'asana_detail_widgets.dart';
 import 'asana_theme.dart';
 
 /// Calendar day from a [DateRangePickerDialog] result (local date components).
-DateTime asanaDateOnlyFromPicker(DateTime d) => DateTime(d.year, d.month, d.day);
+DateTime asanaDateOnlyFromPicker(DateTime d) =>
+    DateTime(d.year, d.month, d.day);
 
 /// Filter control with a label above the current value (Asana-style toolbar).
 class AsanaFilterDropdown extends StatelessWidget {
@@ -79,9 +80,7 @@ class AsanaFilterDropdown extends StatelessWidget {
                         ),
                       ),
                       Icon(
-                        highlighted
-                            ? Icons.expand_less
-                            : Icons.arrow_drop_down,
+                        highlighted ? Icons.expand_less : Icons.arrow_drop_down,
                         size: 20,
                       ),
                     ],
@@ -200,13 +199,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    createButton,
-                    const Spacer(),
-                    clearButton,
-                  ],
-                ),
+                Row(children: [createButton, const Spacer(), clearButton]),
                 const SizedBox(height: 10),
                 _scrollableFilters(filterRow),
               ],
@@ -298,6 +291,25 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
 
   final offset = box.localToGlobal(Offset.zero);
   final size = box.size;
+  final screen = MediaQuery.sizeOf(anchorContext);
+  const margin = 8.0;
+  const gap = 2.0;
+  final panelWidth = size.width.clamp(180.0, 280.0).toDouble();
+  var left = offset.dx;
+  if (left + panelWidth > screen.width - margin) {
+    left = screen.width - panelWidth - margin;
+  }
+  if (left < margin) left = margin;
+  final belowTop = offset.dy + size.height + gap;
+  final belowSpace = screen.height - belowTop - margin;
+  final aboveSpace = offset.dy - gap - margin;
+  final openAbove = belowSpace < 220 && aboveSpace > belowSpace;
+  final availableHeight = openAbove ? aboveSpace : belowSpace;
+  final maxPanelHeight = availableHeight
+      .clamp(160.0, (screen.height - margin * 2).clamp(160.0, 420.0))
+      .toDouble();
+  var top = openAbove ? offset.dy - gap - maxPanelHeight : belowTop;
+  if (top < margin) top = margin;
   late OverlayEntry entry;
 
   void close([Set<String>? result]) {
@@ -316,16 +328,17 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
           ),
         ),
         Positioned(
-          left: offset.dx,
-          top: offset.dy + size.height + 2,
+          left: left,
+          top: top,
           child: Material(
             elevation: 8,
             borderRadius: BorderRadius.circular(8),
             color: Theme.of(anchorContext).colorScheme.surface,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minWidth: size.width.clamp(180, 280),
-                maxWidth: 280,
+                minWidth: panelWidth,
+                maxWidth: panelWidth,
+                maxHeight: maxPanelHeight,
               ),
               child: _CheckboxFilterPanelBody(
                 options: options,
@@ -362,16 +375,24 @@ class _CheckboxFilterPanelBody extends StatefulWidget {
   final void Function(Set<String>) onDone;
 
   @override
-  State<_CheckboxFilterPanelBody> createState() => _CheckboxFilterPanelBodyState();
+  State<_CheckboxFilterPanelBody> createState() =>
+      _CheckboxFilterPanelBodyState();
 }
 
 class _CheckboxFilterPanelBodyState extends State<_CheckboxFilterPanelBody> {
   late Set<String> _selected;
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _selected = Set.of(widget.initialSelection);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   void _toggle(String key, bool checked) {
@@ -407,47 +428,69 @@ class _CheckboxFilterPanelBodyState extends State<_CheckboxFilterPanelBody> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final opt in widget.options)
-          _CompactCheckboxTile(
-            label: opt.label,
-            value: _isChecked(opt),
-            onChanged: (v) {
-              if (opt.isAll) {
-                if (v == true) _selectAll(opt.key);
-              } else {
-                _toggle(opt.key, v == true);
-              }
-            },
+        Flexible(
+          child: Scrollbar(
+            controller: _scrollController,
+            thumbVisibility: widget.options.length > 6,
+            child: ListView.builder(
+              controller: _scrollController,
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: widget.options.length,
+              itemBuilder: (context, index) {
+                final opt = widget.options[index];
+                return _CompactCheckboxTile(
+                  label: opt.label,
+                  value: _isChecked(opt),
+                  onChanged: (v) {
+                    if (opt.isAll) {
+                      if (v == true) _selectAll(opt.key);
+                    } else {
+                      _toggle(opt.key, v == true);
+                    }
+                  },
+                );
+              },
+            ),
           ),
+        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: Align(
             alignment: mobile ? Alignment.centerLeft : Alignment.centerRight,
             child: FilledButton(
               onPressed: () {
-                if (_selected.contains('all') || _selected.contains('__all__')) {
+                if (_selected.contains('all') ||
+                    _selected.contains('__all__')) {
                   widget.onDone(<String>{});
                   return;
                 }
                 widget.onDone(_selected);
               },
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFE4E6EB),
-                foregroundColor: const Color(0xFF1F2937),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ).copyWith(
-                overlayColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.hovered)
-                      ? Colors.black12
-                      : null,
-                ),
+              style:
+                  FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE4E6EB),
+                    foregroundColor: const Color(0xFF1F2937),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ).copyWith(
+                    overlayColor: WidgetStateProperty.resolveWith(
+                      (states) => states.contains(WidgetState.hovered)
+                          ? Colors.black12
+                          : null,
+                    ),
+                  ),
+              child: const Text(
+                'Done',
+                style: TextStyle(fontWeight: FontWeight.w600),
               ),
-              child: const Text('Done', style: TextStyle(fontWeight: FontWeight.w600)),
             ),
           ),
         ),
@@ -486,10 +529,7 @@ class _CompactCheckboxTile extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: Text(
-                label,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              child: Text(label, style: Theme.of(context).textTheme.bodySmall),
             ),
           ],
         ),
@@ -523,10 +563,9 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
   const panelHeight = 420.0;
   final accent = Theme.of(anchorContext).colorScheme.primary;
   final pickerTheme = Theme.of(anchorContext).copyWith(
-    colorScheme: Theme.of(anchorContext).colorScheme.copyWith(
-      primary: accent,
-      onPrimary: Colors.white,
-    ),
+    colorScheme: Theme.of(
+      anchorContext,
+    ).colorScheme.copyWith(primary: accent, onPrimary: Colors.white),
   );
   var left = offset.dx;
   if (left + panelWidth > screen.width - 8) {
@@ -602,10 +641,9 @@ Future<DateTime?> showAsanaAnchoredSingleDatePicker({
   const panelHeight = 420.0;
   final accent = Theme.of(anchorContext).colorScheme.primary;
   final pickerTheme = Theme.of(anchorContext).copyWith(
-    colorScheme: Theme.of(anchorContext).colorScheme.copyWith(
-      primary: accent,
-      onPrimary: Colors.white,
-    ),
+    colorScheme: Theme.of(
+      anchorContext,
+    ).colorScheme.copyWith(primary: accent, onPrimary: Colors.white),
   );
   var left = offset.dx;
   if (left + panelWidth > screen.width - 8) {
@@ -640,8 +678,8 @@ Future<DateTime?> showAsanaAnchoredSingleDatePicker({
                 child: SizedBox(
                   width: panelWidth,
                   child: CalendarDatePicker(
-                    initialDate: initial.isBefore(firstDate) ||
-                            initial.isAfter(lastDate)
+                    initialDate:
+                        initial.isBefore(firstDate) || initial.isAfter(lastDate)
                         ? now
                         : initial,
                     firstDate: firstDate,
