@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
+import '../services/asana_filter_cookie_storage.dart';
 import '../web_deep_link.dart';
+import 'asana/asana_blocking_loading_overlay.dart';
 import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
@@ -24,14 +26,11 @@ class AsanaSlideChrome {
   final AsanaLandingPalette palette;
 
   /// Top strip darker than the bottom action area (Asana: banner vs selectedNav).
-  Color get header => palette.darkChrome
-      ? palette.banner
-      : palette.banner;
+  Color get header => palette.darkChrome ? palette.banner : palette.banner;
   Color get onHeader => palette.onBanner;
   Color get body => palette.content;
-  Color get footer => palette.darkChrome
-      ? palette.selectedNav
-      : palette.sidebar;
+  Color get footer =>
+      palette.darkChrome ? palette.selectedNav : palette.sidebar;
   Color get footerBorder => palette.darkChrome
       ? palette.onSidebarMuted.withValues(alpha: 0.35)
       : palette.accent.withValues(alpha: 0.25);
@@ -60,8 +59,10 @@ class AsanaLandingPalette {
   final Color banner;
   final Color sidebar;
   final Color content;
+
   /// Pale background behind toolbars and around the list card.
   final Color panelBackground;
+
   /// White (or near-white) box containing the data table.
   final Color listSurface;
   final Color searchField;
@@ -221,10 +222,7 @@ class AsanaLandingPalette {
   ];
 
   static AsanaLandingPalette byId(String id) {
-    return all.firstWhere(
-      (p) => p.id == id,
-      orElse: () => asana,
-    );
+    return all.firstWhere((p) => p.id == id, orElse: () => asana);
   }
 }
 
@@ -247,6 +245,7 @@ class AsanaLandingScreen extends StatefulWidget {
 class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   static const Duration _kDetailSlideDuration = Duration(milliseconds: 300);
   static const double _kSidebarWidth = 240;
+  static const String _themeCookieKey = 'asana_landing_theme';
 
   final _searchController = TextEditingController();
 
@@ -272,6 +271,15 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       Uri.parse(_kAsanaFeedbackFormUrl),
       mode: LaunchMode.externalApplication,
     );
+  }
+
+  void _showNavigationLoadingUntilNextFrame() {
+    AsanaBlockingLoadingOverlay.show(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 450), () {
+        AsanaBlockingLoadingOverlay.hide();
+      });
+    });
   }
 
   Widget _buildMainContent({
@@ -395,6 +403,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   @override
   void initState() {
     super.initState();
+    final themeId = AsanaFilterCookieStorage.load(
+      _themeCookieKey,
+    )?['themeId']?.toString().trim();
+    if (themeId != null &&
+        themeId.isNotEmpty &&
+        AsanaLandingPalette.all.any((p) => p.id == themeId)) {
+      _themeId = themeId;
+    }
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _openInitialDeepLink();
@@ -437,6 +453,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
 
   @override
   void dispose() {
+    AsanaBlockingLoadingOverlay.hideAll();
     _searchController.dispose();
     super.dispose();
   }
@@ -454,14 +471,19 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                   label: label,
                   palette: palette,
                   selected: _selectedNav == label,
-                  onTap: () => setState(() {
-                    _selectedNav = label;
-                    _detailStack.clear();
-                    if (MediaQuery.sizeOf(context).width <
-                        _kSidebarAutoHideWidth) {
-                      _sidebarOpenOverride = false;
+                  onTap: () {
+                    if (_selectedNav != label) {
+                      _showNavigationLoadingUntilNextFrame();
                     }
-                  }),
+                    setState(() {
+                      _selectedNav = label;
+                      _detailStack.clear();
+                      if (MediaQuery.sizeOf(context).width <
+                          _kSidebarAutoHideWidth) {
+                        _sidebarOpenOverride = false;
+                      }
+                    });
+                  },
                 ),
               _SidebarNavTile(
                 label: 'Feedback',
@@ -473,12 +495,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                 palette: palette,
                 expanded: _themeMenuExpanded,
                 selectedThemeId: _themeId,
-                onToggle: () => setState(
-                  () => _themeMenuExpanded = !_themeMenuExpanded,
-                ),
+                onToggle: () =>
+                    setState(() => _themeMenuExpanded = !_themeMenuExpanded),
                 onSelectTheme: (id) => setState(() {
                   _themeId = id;
                   _themeMenuExpanded = false;
+                  AsanaFilterCookieStorage.save(_themeCookieKey, {
+                    'themeId': id,
+                  });
                 }),
               ),
             ],
@@ -541,8 +565,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
                   child: Row(
                     children: [
                       IconButton(
@@ -576,8 +602,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                 isDense: true,
                                 contentPadding: EdgeInsets.symmetric(
                                   horizontal: 12,
-                                  vertical: (searchBarHeight -
-                                          titleFontSize * 1.2) /
+                                  vertical:
+                                      (searchBarHeight - titleFontSize * 1.2) /
                                       2,
                                 ),
                                 prefixIcon: Icon(
@@ -619,7 +645,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                             _AsanaBannerLogo(height: titleFontSize * 1.6),
                             SizedBox(width: compactBanner ? 6 : 8),
                             Text(
-                              compactBanner ? 'Project\nTracker' : 'Project Tracker',
+                              compactBanner
+                                  ? 'Project\nTracker'
+                                  : 'Project Tracker',
                               style: titleStyle?.copyWith(
                                 fontSize: compactBanner ? 12 : titleFontSize,
                                 height: compactBanner ? 1.05 : 1.2,
@@ -661,16 +689,16 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                           listenable: _searchController,
                           builder: (context, _) {
                             final q = _searchController.text;
-                            final screenW =
-                                MediaQuery.sizeOf(context).width;
-                            final basePanelWidth =
-                                (screenW * 0.504).clamp(480.0, 672.0);
+                            final screenW = MediaQuery.sizeOf(context).width;
+                            final basePanelWidth = (screenW * 0.504).clamp(
+                              480.0,
+                              672.0,
+                            );
                             final panelWidth =
                                 _detailStack.isNotEmpty &&
-                                        screenW <
-                                            _kDetailFullWidthBreakpoint
-                                    ? screenW
-                                    : basePanelWidth;
+                                    screenW < _kDetailFullWidthBreakpoint
+                                ? screenW
+                                : basePanelWidth;
                             return Stack(
                               fit: StackFit.expand,
                               children: [
@@ -683,8 +711,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                     ignoring: _detailStack.isEmpty,
                                     child: AnimatedOpacity(
                                       duration: _kDetailSlideDuration,
-                                      opacity:
-                                          _detailStack.isEmpty ? 0 : 1,
+                                      opacity: _detailStack.isEmpty ? 0 : 1,
                                       child: GestureDetector(
                                         behavior: HitTestBehavior.opaque,
                                         onTap: _dismissAllDetails,
@@ -727,19 +754,20 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                             palette: palette,
                                             stack:
                                                 List<AsanaDetailSelection>.from(
-                                              _detailStack,
-                                            ),
+                                                  _detailStack,
+                                                ),
                                             detailRefreshToken:
                                                 _detailRefreshToken,
                                             onDismissAll: _dismissAllDetails,
                                             onPop: _popDetail,
                                             onPushCreateSubtask: (taskId) =>
                                                 setState(
-                                              () => _detailStack.add(
-                                                AsanaDetailSelection
-                                                    .createSubtask(taskId),
-                                              ),
-                                            ),
+                                                  () => _detailStack.add(
+                                                    AsanaDetailSelection.createSubtask(
+                                                      taskId,
+                                                    ),
+                                                  ),
+                                                ),
                                             onPushSubtask: (id) => setState(
                                               () => _detailStack.add(
                                                 AsanaDetailSelection.subtask(
@@ -777,9 +805,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                             behavior: HitTestBehavior.opaque,
                             onTap: () =>
                                 setState(() => _sidebarOpenOverride = false),
-                            child: const ColoredBox(
-                              color: Color(0x33000000),
-                            ),
+                            child: const ColoredBox(color: Color(0x33000000)),
                           ),
                         ),
                       ),
@@ -848,8 +874,8 @@ class _ThemeSidebarExpandable extends StatelessWidget {
             size: 22,
             color: expanded
                 ? (palette.darkChrome
-                    ? Colors.white
-                    : palette.accent.withValues(alpha: 0.95))
+                      ? Colors.white
+                      : palette.accent.withValues(alpha: 0.95))
                 : palette.onSidebarMuted,
           ),
         ),
@@ -947,10 +973,7 @@ class _SidebarNavTile extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  if (leading != null) ...[
-                    leading!,
-                    const SizedBox(width: 10),
-                  ],
+                  if (leading != null) ...[leading!, const SizedBox(width: 10)],
                   Expanded(
                     child: Text(
                       label,

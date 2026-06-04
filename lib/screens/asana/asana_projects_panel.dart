@@ -9,6 +9,7 @@ import '../../models/project_record.dart';
 import '../../services/asana_filter_cookie_storage.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_blocking_loading_overlay.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
 import 'asana_theme.dart';
@@ -81,7 +82,12 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
 
   void _onFiltersChanged() {
     AsanaFilterCookieStorage.save(_cookieStorageKey, _filters.toCookieJson());
-    _rebuildList();
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      _rebuildList();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+    }
   }
 
   @override
@@ -153,6 +159,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
               AsanaFilterDropdown(
                 title: 'Scope',
                 value: _scopeLabel(),
+                buttonWidth: 148,
                 onPressed: _showScopeMenu,
               ),
               AsanaFilterDropdown(
@@ -188,7 +195,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
               palette: widget.palette,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final mobileList = constraints.maxWidth < 600;
+                  const mobileList = false;
                   final tableWidth =
                       constraints.maxWidth < _ProjectTableLayout.minTableWidth
                       ? _ProjectTableLayout.minTableWidth
@@ -294,10 +301,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   String _scopeLabel() {
     if (_filters.scopes.isEmpty || _filters.scopes.contains('all'))
       return 'All';
-    if (_filters.scopes.length == 1) {
-      if (_filters.scopes.contains('assigned')) return 'Assigned to me';
-      if (_filters.scopes.contains('created')) return 'Created by me';
-    }
+    final labels = <String>[];
+    if (_filters.scopes.contains('assigned')) labels.add('Assigned to me');
+    if (_filters.scopes.contains('created')) labels.add('Created by me');
+    if (labels.isNotEmpty) return labels.join(', ');
     return '${_filters.scopes.length} selected';
   }
 

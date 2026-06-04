@@ -33,8 +33,10 @@ class AsanaHomePanel extends StatefulWidget {
   static const double _cardRadius = 16;
   static const double _gridGap = 12;
   static const double _panelTitleFontSize = 22;
+
   /// Home content width at or above this keeps the 2×2 card grid.
   static const double _twoColumnGridMinWidth = 1000;
+
   /// Below this card width, task/project lists use two-line labeled rows.
   static const double _homeCompactMaxWidth = 540;
   static const int _minVisibleTaskRows = 5;
@@ -48,8 +50,7 @@ class AsanaHomePanel extends StatefulWidget {
   static const double _rowDividerHeight = 1;
   static const double _tableHeaderHeight = 34;
   static const double _cardPaddingVertical = 30;
-  static const double _cardTitleBlockHeight =
-      _panelTitleFontSize * 1.2 + 12;
+  static const double _cardTitleBlockHeight = _panelTitleFontSize * 1.2 + 12;
   static const double homeListMinHeight =
       _rowDividerHeight +
       _minVisibleTaskRows * _taskRowHeight +
@@ -80,7 +81,7 @@ class AsanaHomePanel extends StatefulWidget {
       return homeListMinHeight;
     }
     final listH = maxHeight - chromeAboveList;
-    return listH < homeListMinHeight ? homeListMinHeight : listH;
+    return listH.clamp(0, double.infinity);
   }
 }
 
@@ -105,14 +106,11 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   }
 
   static List<Task> _activeSingularTasks(AppState state) {
-    return state
-        .tasksForTeams({})
-        .where((t) {
-          if (!t.isSingularTableRow) return false;
-          final ds = t.dbStatus?.trim().toLowerCase() ?? '';
-          return ds != 'delete' && ds != 'deleted';
-        })
-        .toList();
+    return state.tasksForTeams({}).where((t) {
+      if (!t.isSingularTableRow) return false;
+      final ds = t.dbStatus?.trim().toLowerCase() ?? '';
+      return ds != 'delete' && ds != 'deleted';
+    }).toList();
   }
 
   static String _greetingDisplayName(AppState state) {
@@ -169,26 +167,33 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
 
     final all = _activeSingularTasks(state);
-    final created =
-        all.where(state.taskIsCreatedByCurrentUser).toList()..sort(_sortByDue);
-    final assigned = all
-        .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
-        .toList()
+    final created = all.where(state.taskIsCreatedByCurrentUser).toList()
       ..sort(_sortByDue);
+    final assigned =
+        all
+            .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
+            .toList()
+          ..sort(_sortByDue);
     final visibleCreated = _filterTasksBySearch(state, created, searchTokens);
     final visibleAssigned = _filterTasksBySearch(state, assigned, searchTokens);
 
     final people = _peopleRows(state, all, today);
 
     final projects = state.projects;
-    final projectsCreated = projects
-        .where((p) => AsanaProjectFilter.projectCreatedByCurrentUser(state, p))
-        .toList()
-      ..sort(_sortProjectsByDue);
-    final projectsAssigned = projects
-        .where((p) => AsanaProjectFilter.projectAssignedToCurrentUser(state, p))
-        .toList()
-      ..sort(_sortProjectsByDue);
+    final projectsCreated =
+        projects
+            .where(
+              (p) => AsanaProjectFilter.projectCreatedByCurrentUser(state, p),
+            )
+            .toList()
+          ..sort(_sortProjectsByDue);
+    final projectsAssigned =
+        projects
+            .where(
+              (p) => AsanaProjectFilter.projectAssignedToCurrentUser(state, p),
+            )
+            .toList()
+          ..sort(_sortProjectsByDue);
     final visibleProjectsCreated = _filterProjectsBySearch(
       state,
       projectsCreated,
@@ -249,8 +254,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     middleHeader: 'PIC',
                     middleValue: (t) => _picLine(state, t.pic),
                     onOpenTask: widget.onOpenTask,
-                    expanded:
-                        allowCollapse ? (_expanded['created'] ?? true) : true,
+                    expanded: allowCollapse
+                        ? (_expanded['created'] ?? true)
+                        : true,
                     onToggleExpanded: allowCollapse
                         ? () => _toggleSection('created')
                         : null,
@@ -264,8 +270,8 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     middleHeader: 'Creator',
                     middleValue: (t) =>
                         t.createByStaffName?.trim().isNotEmpty == true
-                            ? t.createByStaffName!.trim()
-                            : '—',
+                        ? t.createByStaffName!.trim()
+                        : '—',
                     onOpenTask: widget.onOpenTask,
                     expanded: allowCollapse
                         ? (_expanded['assigned'] ?? true)
@@ -279,10 +285,12 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     key: ValueKey('home-people-$layoutKey'),
                     palette: palette,
                     rows: people,
-                    expanded:
-                        allowCollapse ? (_expanded['people'] ?? true) : true,
-                    onToggleExpanded:
-                        allowCollapse ? () => _toggleSection('people') : null,
+                    expanded: allowCollapse
+                        ? (_expanded['people'] ?? true)
+                        : true,
+                    onToggleExpanded: allowCollapse
+                        ? () => _toggleSection('people')
+                        : null,
                     fillHeight: fillHeight,
                   );
                   final projectsCard = _HomeProjectsCard(
@@ -417,7 +425,8 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         ),
       );
     }
-    final subs = List<String>.from(state.subordinateAppIds)..sort((a, b) {
+    final subs = List<String>.from(state.subordinateAppIds)
+      ..sort((a, b) {
         final na = state.assigneeById(a)?.name.trim() ?? a;
         final nb = state.assigneeById(b)?.name.trim() ?? b;
         return na.compareTo(nb);
@@ -451,8 +460,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final pic = t.pic?.trim();
     if (pic != null && pic.isNotEmpty) {
       if (pic == appId) return true;
-      if (staffUuid != null &&
-          pic.toLowerCase() == staffUuid.toLowerCase()) {
+      if (staffUuid != null && pic.toLowerCase() == staffUuid.toLowerCase()) {
         return true;
       }
     }
@@ -503,9 +511,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
 
   static bool _isCompleted(Task t) {
     final s = t.dbStatus?.trim().toLowerCase() ?? '';
-    return s == 'completed' ||
-        s == 'complete' ||
-        t.status == TaskStatus.done;
+    return s == 'completed' || s == 'complete' || t.status == TaskStatus.done;
   }
 
   static DateTime? _dateOnly(DateTime? d) {
@@ -553,10 +559,7 @@ Widget _homeFixedCell({
   );
 }
 
-String _homeLabeledMetaLine({
-  required String label,
-  required String value,
-}) {
+String _homeLabeledMetaLine({required String label, required String value}) {
   final v = value.trim().isEmpty ? '—' : value.trim();
   return '$label: $v';
 }
@@ -569,10 +572,7 @@ String _firstNameOnly(String value) {
   return first.split(RegExp(r'\s+')).first;
 }
 
-Widget _homeListViewport({
-  required double height,
-  required Widget child,
-}) {
+Widget _homeListViewport({required double height, required Widget child}) {
   return SizedBox(height: height, child: child);
 }
 
@@ -618,9 +618,7 @@ class _HomeCardShell extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(title, style: titleStyle),
-                  ),
+                  Expanded(child: Text(title, style: titleStyle)),
                   if (collapsible)
                     Icon(
                       Icons.expand_more,
@@ -638,8 +636,10 @@ class _HomeCardShell extends StatelessWidget {
     Widget buildShell(BoxConstraints outer) {
       Widget body = child;
       if (fillHeight && outer.maxHeight.isFinite) {
-        final bodyHeight = (outer.maxHeight - AsanaHomePanel._homeShellHeaderHeight)
-            .clamp(AsanaHomePanel.homeListMinHeight, double.infinity);
+        final bodyHeight =
+            (outer.maxHeight - AsanaHomePanel._homeShellHeaderHeight)
+                .clamp(0, double.infinity)
+                .toDouble();
         body = SizedBox(
           height: bodyHeight,
           width: double.infinity,
@@ -663,9 +663,7 @@ class _HomeCardShell extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Row(
                     children: [
-                      Expanded(
-                        child: Text(title, style: titleStyle),
-                      ),
+                      Expanded(child: Text(title, style: titleStyle)),
                       if (collapsible)
                         Icon(
                           Icons.expand_less,
@@ -817,10 +815,7 @@ Widget _homeTaskListBody({
   return ListView.separated(
     primary: false,
     itemCount: tasks.length,
-    separatorBuilder: (_, _) => Divider(
-      height: 1,
-      color: Colors.grey.shade200,
-    ),
+    separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade200),
     itemBuilder: (context, index) => rowAt(index),
   );
 }
@@ -914,11 +909,7 @@ class _HomeTaskTableHeader extends StatelessWidget {
 }
 
 class _HomeTaskRow extends StatelessWidget {
-  const _HomeTaskRow({
-    required this.task,
-    required this.middle,
-    this.onTap,
-  });
+  const _HomeTaskRow({required this.task, required this.middle, this.onTap});
 
   final Task task;
   final String middle;
@@ -1001,10 +992,7 @@ class _HomeTaskCompactRow extends StatelessWidget {
     final metaStyle = asanaTableRowValueStyle(context);
     final metaLine = [
       _homeLabeledMetaLine(label: middleHeader, value: middle),
-      _homeLabeledMetaLine(
-        label: 'Due',
-        value: _formatDueDate(task.endDate),
-      ),
+      _homeLabeledMetaLine(label: 'Due', value: _formatDueDate(task.endDate)),
     ].join(' · ');
 
     return InkWell(
@@ -1084,10 +1072,8 @@ class _HomePeopleCard extends StatelessWidget {
               : ListView.separated(
                   primary: false,
                   itemCount: rows.length,
-                  separatorBuilder: (_, _) => Divider(
-                    height: 1,
-                    color: Colors.grey.shade200,
-                  ),
+                  separatorBuilder: (_, _) =>
+                      Divider(height: 1, color: Colors.grey.shade200),
                   itemBuilder: (context, index) {
                     return _HomePeopleRow(
                       palette: palette,
@@ -1121,9 +1107,9 @@ class _HomePeopleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nameStyle = asanaTableRowNameStyle(context)?.copyWith(
-      fontWeight: summary.isSelf ? FontWeight.w700 : FontWeight.w600,
-    );
+    final nameStyle = asanaTableRowNameStyle(
+      context,
+    )?.copyWith(fontWeight: summary.isSelf ? FontWeight.w700 : FontWeight.w600);
     final c = summary.counts;
     final chips = [
       _HomeMetricChip(
@@ -1161,20 +1147,12 @@ class _HomePeopleRow extends StatelessWidget {
       children: [
         Row(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            chips[0],
-            const SizedBox(width: 6),
-            chips[1],
-          ],
+          children: [chips[0], const SizedBox(width: 6), chips[1]],
         ),
         const SizedBox(height: 6),
         Row(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            chips[2],
-            const SizedBox(width: 6),
-            chips[3],
-          ],
+          children: [chips[2], const SizedBox(width: 6), chips[3]],
         ),
       ],
     );
@@ -1306,10 +1284,7 @@ class _HomeProjectsCard extends StatelessWidget {
   }) {
     if (projects.isEmpty) return [];
     return [
-      _HomeSectionBanner(
-        palette: palette,
-        title: bannerTitle,
-      ),
+      _HomeSectionBanner(palette: palette, title: bannerTitle),
       if (!compact) const _HomeProjectTableHeader(),
       ...projects.map(
         (p) => compact
@@ -1359,8 +1334,7 @@ class _HomeProjectsCard extends StatelessWidget {
               ),
             );
           }
-          final compact =
-              AsanaHomePanel.homeUseCompact(constraints.maxWidth);
+          final compact = AsanaHomePanel.homeUseCompact(constraints.maxWidth);
           final children = <Widget>[
             ..._projectSection(
               context: context,
@@ -1382,10 +1356,7 @@ class _HomeProjectsCard extends StatelessWidget {
 
           return _homeListViewport(
             height: listH,
-            child: ListView(
-              primary: false,
-              children: children,
-            ),
+            child: ListView(primary: false, children: children),
           );
         },
       ),
@@ -1394,10 +1365,7 @@ class _HomeProjectsCard extends StatelessWidget {
 }
 
 class _HomeSectionBanner extends StatelessWidget {
-  const _HomeSectionBanner({
-    required this.palette,
-    required this.title,
-  });
+  const _HomeSectionBanner({required this.palette, required this.title});
 
   final AsanaLandingPalette palette;
   final String title;
@@ -1494,17 +1462,12 @@ class _HomeProjectRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name =
-        project.name.trim().isEmpty ? '(Unnamed project)' : project.name.trim();
+    final name = project.name.trim().isEmpty
+        ? '(Unnamed project)'
+        : project.name.trim();
     final completed = project.status.trim() == 'Completed';
-    final nameStyle = asanaTableRowNameStyle(
-      context,
-      completed: completed,
-    );
-    final valueStyle = asanaTableRowValueStyle(
-      context,
-      completed: completed,
-    );
+    final nameStyle = asanaTableRowNameStyle(context, completed: completed);
+    final valueStyle = asanaTableRowValueStyle(context, completed: completed);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1578,23 +1541,16 @@ class _HomeProjectCompactRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name =
-        project.name.trim().isEmpty ? '(Unnamed project)' : project.name.trim();
+    final name = project.name.trim().isEmpty
+        ? '(Unnamed project)'
+        : project.name.trim();
     final completed = project.status.trim() == 'Completed';
-    final nameStyle = asanaTableRowNameStyle(
-      context,
-      completed: completed,
-    );
-    final metaStyle = asanaTableRowValueStyle(
-      context,
-      completed: completed,
-    );
+    final nameStyle = asanaTableRowNameStyle(context, completed: completed);
+    final metaStyle = asanaTableRowValueStyle(context, completed: completed);
     final metaLine = [
       _homeLabeledMetaLine(
         label: 'PIC',
-        value: _firstNameOnly(
-          AsanaProjectFilter.picLine(project, appState),
-        ),
+        value: _firstNameOnly(AsanaProjectFilter.picLine(project, appState)),
       ),
       _homeLabeledMetaLine(
         label: 'Due',

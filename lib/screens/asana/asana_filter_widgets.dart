@@ -214,7 +214,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
               Expanded(
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: _scrollableFilters(filterRow, reverse: true),
+                  child: _scrollableFilters(filterRow),
                 ),
               ),
               Padding(

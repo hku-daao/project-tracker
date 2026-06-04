@@ -16,6 +16,7 @@ import '../../utils/hk_time.dart';
 import '../../widgets/task_list_card.dart';
 import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
+import 'asana_blocking_loading_overlay.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_task_filter.dart';
 import 'asana_theme.dart';
@@ -105,89 +106,103 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   Future<void> _rebuildTaskList() async {
     if (!mounted || !_filtersReady) return;
     final gen = ++_listGeneration;
+    final showBlockingOverlay = true;
+    if (showBlockingOverlay) {
+      AsanaBlockingLoadingOverlay.show(context);
+    }
     setState(() => _loadingTasks = true);
 
-    final state = context.read<AppState>();
-    final phase1 = AsanaTaskFilter.buildPhase1Tasks(
-      state,
-      _filters,
-      searchQuery: widget.searchQuery,
-    );
-    final prefetchIds = AsanaTaskFilter.subtaskPrefetchTaskIds(
-      phase1,
-      state,
-      _filters,
-    );
+    try {
+      final state = context.read<AppState>();
+      final phase1 = AsanaTaskFilter.buildPhase1Tasks(
+        state,
+        _filters,
+        searchQuery: widget.searchQuery,
+      );
+      final prefetchIds = AsanaTaskFilter.subtaskPrefetchTaskIds(
+        phase1,
+        state,
+        _filters,
+      );
 
-    Map<String, List<SingularSubtask>> grouped = {};
-    if (prefetchIds.isNotEmpty) {
-      try {
-        grouped = await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(
-          prefetchIds,
+      Map<String, List<SingularSubtask>> grouped = {};
+      if (prefetchIds.isNotEmpty) {
+        try {
+          grouped =
+              await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(
+                prefetchIds,
+              );
+        } catch (_) {
+          // List still renders from phase-1 when sub-task fetch fails.
+        }
+      }
+
+      if (!mounted || gen != _listGeneration) return;
+
+      final active = AsanaTaskFilter.enrichActiveTasks(
+        phase1,
+        state,
+        _filters,
+        grouped,
+      );
+      final tasks = widget.flatTasksAndSubtasks
+          ? <Task>[]
+          : AsanaTaskFilter.applyTasksTabRows(
+              active,
+              grouped,
+              state,
+              _filters,
+              searchQuery: widget.searchQuery,
+            );
+      final flatRows = widget.flatTasksAndSubtasks
+          ? AsanaTaskFilter.applyAllTasksAndSubtasksFlat(
+              active,
+              grouped,
+              state,
+              _filters,
+              searchQuery: widget.searchQuery,
+            )
+          : <AsanaFlatRow>[];
+
+      if (kDebugMode) {
+        final prefetchedSubs = grouped.values.fold<int>(
+          0,
+          (sum, list) => sum + list.length,
         );
-      } catch (_) {
-        // List still renders from phase-1 when sub-task fetch fails.
+        final flatTaskRows = flatRows.where((r) => r.isTask).length;
+        final flatSubRows = flatRows.length - flatTaskRows;
+        debugPrint(
+          'AsanaTasksPanel: mode=${widget.flatTasksAndSubtasks ? "flat" : "tasks"} '
+          'AppState.tasks=${state.tasks.length} phase1=${phase1.length} '
+          'active=${active.length} prefetchIds=${prefetchIds.length} '
+          'prefetchedSubs=$prefetchedSubs displayTasks=${tasks.length} '
+          'flatRows=${flatRows.length} (tasks=$flatTaskRows subs=$flatSubRows) '
+          'scoped=${state.tasksLoadedWithVisibilityScope} '
+          'statuses=${_filters.statuses} submissions=${_filters.submissions}',
+        );
+      }
+
+      setState(() {
+        _displayTasks = tasks;
+        _displayFlatRows = flatRows;
+        _groupedSubtasks = grouped;
+        _subtaskCountByTaskId = {
+          for (final e in grouped.entries)
+            e.key: e.value.where((s) => !s.isDeleted).length,
+        };
+        if (!widget.flatTasksAndSubtasks) {
+          _expandedTaskIds.removeWhere((id) => !tasks.any((t) => t.id == id));
+        }
+        _loadingTasks = false;
+      });
+    } finally {
+      if (showBlockingOverlay) {
+        AsanaBlockingLoadingOverlay.hide();
+      }
+      if (mounted && gen == _listGeneration && _loadingTasks) {
+        setState(() => _loadingTasks = false);
       }
     }
-
-    if (!mounted || gen != _listGeneration) return;
-
-    final active = AsanaTaskFilter.enrichActiveTasks(
-      phase1,
-      state,
-      _filters,
-      grouped,
-    );
-    final tasks = widget.flatTasksAndSubtasks
-        ? <Task>[]
-        : AsanaTaskFilter.applyTasksTabRows(
-            active,
-            grouped,
-            state,
-            _filters,
-            searchQuery: widget.searchQuery,
-          );
-    final flatRows = widget.flatTasksAndSubtasks
-        ? AsanaTaskFilter.applyAllTasksAndSubtasksFlat(
-            active,
-            grouped,
-            state,
-            _filters,
-            searchQuery: widget.searchQuery,
-          )
-        : <AsanaFlatRow>[];
-
-    if (kDebugMode) {
-      final prefetchedSubs = grouped.values.fold<int>(
-        0,
-        (sum, list) => sum + list.length,
-      );
-      final flatTaskRows = flatRows.where((r) => r.isTask).length;
-      final flatSubRows = flatRows.length - flatTaskRows;
-      debugPrint(
-        'AsanaTasksPanel: mode=${widget.flatTasksAndSubtasks ? "flat" : "tasks"} '
-        'AppState.tasks=${state.tasks.length} phase1=${phase1.length} '
-        'active=${active.length} prefetchIds=${prefetchIds.length} '
-        'prefetchedSubs=$prefetchedSubs displayTasks=${tasks.length} '
-        'flatRows=${flatRows.length} (tasks=$flatTaskRows subs=$flatSubRows) '
-        'scoped=${state.tasksLoadedWithVisibilityScope} '
-        'statuses=${_filters.statuses} submissions=${_filters.submissions}',
-      );
-    }
-
-    setState(() {
-      _displayTasks = tasks;
-      _displayFlatRows = flatRows;
-      _groupedSubtasks = grouped;
-      _subtaskCountByTaskId = {
-        for (final e in grouped.entries)
-          e.key: e.value.where((s) => !s.isDeleted).length,
-      };
-      if (!widget.flatTasksAndSubtasks) {
-        _expandedTaskIds.removeWhere((id) => !tasks.any((t) => t.id == id));
-      }
-      _loadingTasks = false;
-    });
   }
 
   void _onFiltersChanged() {
@@ -261,8 +276,9 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     final tableColors = widget.palette.tableColors;
     final compactTitle = MediaQuery.sizeOf(context).width < 600;
 
-    if (!_filtersReady || _loadingTasks) {
-      return const StartupLoadingView(label: 'Loading');
+    if (!_filtersReady ||
+        (_loadingTasks && _displayTasks.isEmpty && _displayFlatRows.isEmpty)) {
+      return ColoredBox(color: widget.palette.panelBackground);
     }
 
     return ColoredBox(
@@ -301,6 +317,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
               AsanaFilterDropdown(
                 title: 'Scope',
                 value: _scopeLabel(),
+                buttonWidth: 148,
                 onPressed: _showScopeMenu,
               ),
               AsanaFilterDropdown(
@@ -346,11 +363,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
               palette: widget.palette,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final mobileFlatList =
-                      widget.flatTasksAndSubtasks && constraints.maxWidth < 600;
-                  final mobileTaskList =
-                      !widget.flatTasksAndSubtasks &&
-                      constraints.maxWidth < 600;
+                  const mobileFlatList = false;
+                  const mobileTaskList = false;
                   final tableWidth =
                       constraints.maxWidth < _TaskTableLayout.minTableWidth
                       ? _TaskTableLayout.minTableWidth
@@ -619,10 +633,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   String _scopeLabel() {
     if (_filters.scopes.isEmpty || _filters.scopes.contains('all'))
       return 'All';
-    if (_filters.scopes.length == 1) {
-      if (_filters.scopes.contains('assigned')) return 'Assigned to me';
-      if (_filters.scopes.contains('created')) return 'Created by me';
-    }
+    final labels = <String>[];
+    if (_filters.scopes.contains('assigned')) labels.add('Assigned to me');
+    if (_filters.scopes.contains('created')) labels.add('Created by me');
+    if (labels.isNotEmpty) return labels.join(', ');
     return '${_filters.scopes.length} selected';
   }
 
