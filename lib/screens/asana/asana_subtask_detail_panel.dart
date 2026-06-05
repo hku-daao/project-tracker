@@ -27,6 +27,7 @@ import 'asana_assignee_picker.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_inline_image_widgets.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -56,9 +57,19 @@ class _SubtaskAttachmentDraft {
 }
 
 class _SubtaskCommentDisplayTile extends StatelessWidget {
-  const _SubtaskCommentDisplayTile({required this.comment});
+  const _SubtaskCommentDisplayTile({
+    required this.comment,
+    required this.inlineImages,
+    required this.canAddInlineImage,
+    required this.inlineImageEnabled,
+    required this.onAddInlineImage,
+  });
 
   final SubtaskCommentRowDisplay comment;
+  final List<InlineAttachmentRow> inlineImages;
+  final bool canAddInlineImage;
+  final bool inlineImageEnabled;
+  final VoidCallback onAddInlineImage;
 
   DateTime? get _displayTimestamp {
     final created = comment.createTimestampUtc;
@@ -96,11 +107,17 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  comment.description,
+                  stripInlineImageMarkers(comment.description),
                   style: asanaDetailMultilineValueStyle(context).copyWith(
                     color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
                   ),
                 ),
+                if (canAddInlineImage)
+                  InlineImageToolbar(
+                    enabled: inlineImageEnabled,
+                    onAdd: onAddInlineImage,
+                  ),
+                InlineImagePreviewList(images: inlineImages),
                 if (timestamp != null) ...[
                   const SizedBox(height: 6),
                   Align(
@@ -166,6 +183,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final _commentController = TextEditingController();
   final List<_SubtaskAttachmentDraft> _attachments = [];
   List<SubtaskCommentRowDisplay> _comments = [];
+  List<InlineAttachmentRow> _descriptionInlineImages = [];
+  Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
+  List<InlineAttachmentRow> _draftCommentInlineImages = [];
 
   final Set<String> _assigneeIds = {};
   String? _picAssigneeId;
@@ -249,6 +269,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _commentController.clear();
     _clearAttachments();
     _comments = [];
+    _descriptionInlineImages = [];
+    _commentInlineImages = {};
+    _draftCommentInlineImages = [];
     _assigneeIds.clear();
     _picAssigneeId = null;
     _localPriority = priorityStandard;
@@ -304,7 +327,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
           setState(() {
             _subtask = row;
             _nameController.text = row?.subtaskName ?? '';
-            _descController.text = row?.description ?? '';
+            _descController.text = stripInlineImageMarkers(row?.description ?? '');
             _reasonController.text = row?.changeDueReason ?? '';
             _assigneeIds.clear();
             if (row != null)
@@ -320,6 +343,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
           _loadAssigneeStaff();
           _loadAttachments(row);
           _loadComments(row);
+          _loadSubtaskDescriptionInlineImages(row);
         }
       }
     } finally {
@@ -360,7 +384,38 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       final list = await SupabaseService.fetchSubtaskComments(row.id);
       if (!mounted) return;
       setState(() => _comments = list);
+      await _loadCommentInlineImages(list);
     } catch (_) {}
+  }
+
+  Future<void> _loadSubtaskDescriptionInlineImages(SingularSubtask? row) async {
+    if (row == null || !SupabaseConfig.isConfigured) {
+      if (mounted) setState(() => _descriptionInlineImages = []);
+      return;
+    }
+    final list = await SupabaseService.fetchInlineAttachments(
+      entityType: 'subtask_description',
+      entityId: row.id,
+    );
+    if (mounted) setState(() => _descriptionInlineImages = list);
+  }
+
+  Future<void> _loadCommentInlineImages(
+    List<SubtaskCommentRowDisplay> comments,
+  ) async {
+    if (!SupabaseConfig.isConfigured || comments.isEmpty) {
+      if (mounted) setState(() => _commentInlineImages = {});
+      return;
+    }
+    final next = <String, List<InlineAttachmentRow>>{};
+    for (final c in comments) {
+      final list = await SupabaseService.fetchInlineAttachments(
+        entityType: 'subtask_comment',
+        entityId: c.id,
+      );
+      if (list.isNotEmpty) next[c.id] = list;
+    }
+    if (mounted) setState(() => _commentInlineImages = next);
   }
 
   String _nameFor(AppState state, String? key) {
@@ -442,7 +497,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       changes,
       'description',
       s.description,
-      _descController.text.trim(),
+      stripInlineImageMarkers(_descController.text),
     );
     _addChange(
       changes,
@@ -947,11 +1002,11 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     AsanaBlockingLoadingOverlay.show(context);
     try {
       if (_effectiveCreateMode) {
-        final commentText = _commentController.text.trim();
+        final commentText = stripInlineImageMarkers(_commentController.text);
         final ins = await SupabaseService.insertSubtaskRow(
           taskId: widget.parentTaskId!,
           subtaskName: newName,
-          description: _descController.text.trim(),
+          description: stripInlineImageMarkers(_descController.text),
           priorityDisplay: priorityToDisplayName(_localPriority),
           startDate: _startDate,
           dueDate: _dueDate,
@@ -1026,7 +1081,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                 _subtask = row;
                 _loading = false;
                 _nameController.text = row.subtaskName;
-                _descController.text = row.description;
+                _descController.text = stripInlineImageMarkers(row.description);
                 _reasonController.text = row.changeDueReason ?? '';
                 _draftStatus = row.status;
               });
@@ -1047,7 +1102,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         final err = await SupabaseService.updateSubtaskRow(
           subtaskId: s!.id,
           subtaskName: newName,
-          description: _descController.text.trim(),
+          description: stripInlineImageMarkers(_descController.text),
           priorityDisplay: priorityToDisplayName(_localPriority),
           status: _draftStatus,
           clearStartDate: _startDate == null,
@@ -1073,12 +1128,14 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         }
       }
 
-      final commentText = _commentController.text.trim();
+      final commentText = stripInlineImageMarkers(_commentController.text);
       String? commentId;
-      if (commentText.isNotEmpty) {
+      if (commentText.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
         final ins = await SupabaseService.insertSubtaskCommentRow(
           subtaskId: s!.id,
-          description: commentText,
+          description: commentText.isNotEmpty
+              ? commentText
+              : inlineImageOnlyCommentPlaceholder,
           creatorStaffLookupKey: state.userStaffAppId,
         );
         if (ins.error != null && mounted) {
@@ -1090,7 +1147,31 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           );
         } else {
           commentId = ins.commentId;
+          if (commentId == null || commentId.isEmpty) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Could not add comment',
+              content:
+                  'The comment was not saved because Supabase did not return a comment id.',
+              palette: widget.palette,
+            );
+            return;
+          }
+          final inlineErr = await _insertDraftCommentInlineImages(
+            commentId: commentId,
+            creatorStaffLookupKey: state.userStaffAppId,
+          );
+          if (inlineErr != null && mounted) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Could not save inline image',
+              content: inlineErr,
+              palette: widget.palette,
+            );
+            return;
+          }
           _commentController.clear();
+          _draftCommentInlineImages = [];
           await _loadComments(s);
         }
       }
@@ -1196,8 +1277,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _submitSubtask(AppState state, SingularSubtask s) async {
-    final commentText = _commentController.text.trim();
-    if (_attachments.isEmpty && commentText.isEmpty) {
+    final commentText = stripInlineImageMarkers(_commentController.text);
+    if (_attachments.isEmpty &&
+        commentText.isEmpty &&
+        _draftCommentInlineImages.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Submission content required',
@@ -1223,10 +1306,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
-      if (commentText.isNotEmpty) {
+      if (commentText.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
         final ins = await SupabaseService.insertSubtaskCommentRow(
           subtaskId: s.id,
-          description: commentText,
+          description: commentText.isNotEmpty
+              ? commentText
+              : inlineImageOnlyCommentPlaceholder,
           creatorStaffLookupKey: state.userStaffAppId,
         );
         if (ins.error != null && mounted) {
@@ -1238,7 +1323,32 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           );
           return;
         }
+        final commentId = ins.commentId;
+        if (commentId == null || commentId.isEmpty) {
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Could not add comment',
+            content:
+                'The comment was not saved because Supabase did not return a comment id.',
+            palette: widget.palette,
+          );
+          return;
+        }
+        final inlineErr = await _insertDraftCommentInlineImages(
+          commentId: commentId,
+          creatorStaffLookupKey: state.userStaffAppId,
+        );
+        if (inlineErr != null && mounted) {
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Could not save inline image',
+            content: inlineErr,
+            palette: widget.palette,
+          );
+          return;
+        }
         _commentController.clear();
+        _draftCommentInlineImages = [];
         await _loadComments(s);
       }
       final isCreator = _isCreator(state);
@@ -1420,6 +1530,183 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
       });
     }
+  }
+
+  Future<void> _addSubtaskDescriptionInlineImage(SingularSubtask subtask) async {
+    await _uploadSubtaskInlineImage(
+      subtask: subtask,
+      entityType: 'subtask_description',
+      entityId: subtask.id,
+      onInserted: () async => _loadSubtaskDescriptionInlineImages(subtask),
+    );
+  }
+
+  Future<void> _addExistingCommentInlineImage(
+    SingularSubtask subtask,
+    SubtaskCommentRowDisplay comment,
+  ) async {
+    await _uploadSubtaskInlineImage(
+      subtask: subtask,
+      entityType: 'subtask_comment',
+      entityId: comment.id,
+      onInserted: () async => _loadComments(subtask),
+    );
+  }
+
+  Future<void> _addDraftCommentInlineImage(SingularSubtask subtask) async {
+    final state = context.read<AppState>();
+    final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
+      subtask.id,
+      aclStaffKeys: _subtaskAttachmentAclKeys(state),
+      onUploadPhaseStarted: () {
+        if (!mounted) return;
+        setState(() => _saving = true);
+        AsanaBlockingLoadingOverlay.show(context);
+      },
+      onUploadPhaseEnded: () {
+        AsanaBlockingLoadingOverlay.hide();
+        if (mounted) setState(() => _saving = false);
+      },
+    );
+    if (!mounted) return;
+    if (r.error != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Inline image upload failed',
+        content: r.error!,
+        palette: widget.palette,
+      );
+      return;
+    }
+    final url = r.url?.trim();
+    if (url == null || url.isEmpty) return;
+    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
+    setState(() {
+      if (_draftCommentInlineImages.any((image) => image.url == url)) return;
+      _draftCommentInlineImages = [
+        ..._draftCommentInlineImages,
+        InlineAttachmentRow(
+          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
+          entityType: 'subtask_comment',
+          entityId: 'draft',
+          url: url,
+          description: label,
+          mimeType: 'image/*',
+          sortOrder: _draftCommentInlineImages.length,
+        ),
+      ];
+    });
+  }
+
+  Future<String?> _insertDraftCommentInlineImages({
+    required String commentId,
+    required String? creatorStaffLookupKey,
+  }) async {
+    for (final image in _draftCommentInlineImages) {
+      final ins = await SupabaseService.insertInlineAttachment(
+        entityType: 'subtask_comment',
+        entityId: commentId,
+        url: image.url,
+        description: image.description,
+        mimeType: image.mimeType ?? 'image/*',
+        creatorStaffLookupKey: creatorStaffLookupKey,
+      );
+      if (ins.error != null) return ins.error;
+    }
+    return null;
+  }
+
+  Future<void> _uploadSubtaskInlineImage({
+    required SingularSubtask subtask,
+    required String entityType,
+    required String entityId,
+    required Future<void> Function() onInserted,
+  }) async {
+    final state = context.read<AppState>();
+    final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
+      subtask.id,
+      aclStaffKeys: _subtaskAttachmentAclKeys(state),
+      onUploadPhaseStarted: () {
+        if (!mounted) return;
+        setState(() => _saving = true);
+        AsanaBlockingLoadingOverlay.show(context);
+      },
+      onUploadPhaseEnded: () {
+        AsanaBlockingLoadingOverlay.hide();
+        if (mounted) setState(() => _saving = false);
+      },
+    );
+    if (!mounted) return;
+    if (r.error != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Inline image upload failed',
+        content: r.error!,
+        palette: widget.palette,
+      );
+      return;
+    }
+    final url = r.url?.trim();
+    if (url == null || url.isEmpty) return;
+    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
+    final ins = await SupabaseService.insertInlineAttachment(
+      entityType: entityType,
+      entityId: entityId,
+      url: url,
+      description: label,
+      mimeType: 'image/*',
+      creatorStaffLookupKey: state.userStaffAppId,
+    );
+    if (ins.error != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not save inline image',
+        content: ins.error!,
+        palette: widget.palette,
+      );
+      return;
+    }
+    await onInserted();
+    if (!mounted) return;
+    _showInlineImageImmediately(
+      entityType: entityType,
+      entityId: entityId,
+      url: url,
+      label: label,
+    );
+  }
+
+  void _showInlineImageImmediately({
+    required String entityType,
+    required String entityId,
+    required String url,
+    required String label,
+  }) {
+    final row = InlineAttachmentRow(
+      id: 'pending_${DateTime.now().microsecondsSinceEpoch}',
+      entityType: entityType,
+      entityId: entityId,
+      url: url,
+      description: label,
+      mimeType: 'image/*',
+      sortOrder: 0,
+    );
+    setState(() {
+      if (entityType == 'subtask_description') {
+        if (_descriptionInlineImages.any((image) => image.url == url)) return;
+        _descriptionInlineImages = [..._descriptionInlineImages, row];
+      } else if (entityType == 'subtask_comment') {
+        if ((_commentInlineImages[entityId] ?? const []).any(
+          (image) => image.url == url,
+        )) {
+          return;
+        }
+        _commentInlineImages = {
+          ..._commentInlineImages,
+          entityId: [...(_commentInlineImages[entityId] ?? const []), row],
+        };
+      }
+    });
   }
 
   List<String?> _subtaskAttachmentAclKeys(AppState state) {
@@ -1709,14 +1996,25 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           const SizedBox(height: 12),
           AsanaDetailLabelValue(
             label: 'Description',
-            child: AsanaHoverTextField(
-              controller: _descController,
-              canEdit: isCreator,
-              readOnly: _saving,
-              maxLines: 8,
-              minLines: 2,
-              style: asanaDetailMultilineValueStyle(context),
-              hintText: 'Please fill in sub-task description',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _descController,
+                  canEdit: isCreator,
+                  readOnly: _saving,
+                  maxLines: 8,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                  hintText: 'Please fill in sub-task description',
+                ),
+                if (!_effectiveCreateMode && isCreator && s != null)
+                  InlineImageToolbar(
+                    enabled: !_saving,
+                    onAdd: () => _addSubtaskDescriptionInlineImage(s),
+                  ),
+                InlineImagePreviewList(images: _descriptionInlineImages),
+              ],
             ),
           ),
           if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.description),
@@ -1945,18 +2243,38 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ),
           AsanaDetailSectionHeader(title: 'Comments', showAddButton: false),
           if (!_effectiveCreateMode && _comments.isNotEmpty) ...[
-            for (final c in _comments) _SubtaskCommentDisplayTile(comment: c),
+            for (final c in _comments)
+              _SubtaskCommentDisplayTile(
+                comment: c,
+                inlineImages: _commentInlineImages[c.id] ?? const [],
+                canAddInlineImage: _matchesCurrentStaff(state, c.createByStaffId),
+                inlineImageEnabled: !_saving,
+                onAddInlineImage: s == null
+                    ? () {}
+                    : () => _addExistingCommentInlineImage(s, c),
+              ),
             const SizedBox(height: 8),
           ],
           AsanaDetailLabelValue(
             label: 'New comment',
-            child: AsanaHoverTextField(
-              controller: _commentController,
-              canEdit: true,
-              readOnly: _saving,
-              maxLines: 8,
-              minLines: 2,
-              hintText: 'Ask a question or post an update...',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _commentController,
+                  canEdit: true,
+                  readOnly: _saving,
+                  maxLines: 8,
+                  minLines: 2,
+                  hintText: 'Ask a question or post an update...',
+                ),
+                if (!_effectiveCreateMode && s != null)
+                  InlineImageToolbar(
+                    enabled: !_saving,
+                    onAdd: () => _addDraftCommentInlineImage(s),
+                  ),
+                InlineImagePreviewList(images: _draftCommentInlineImages),
+              ],
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.comment),

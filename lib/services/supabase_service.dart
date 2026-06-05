@@ -2,6 +2,7 @@ import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 import '../config/supabase_config.dart';
 import '../models/assignee.dart';
@@ -38,6 +39,30 @@ class SubtaskAttachmentRow {
   final String id;
   final String? content;
   final String? description;
+}
+
+class InlineAttachmentRow {
+  const InlineAttachmentRow({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.url,
+    this.description,
+    this.mimeType,
+    this.createdBy,
+    this.createdAt,
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final String url;
+  final String? description;
+  final String? mimeType;
+  final String? createdBy;
+  final DateTime? createdAt;
+  final int sortOrder;
 }
 
 class InitiativesLoadResult {
@@ -803,6 +828,105 @@ class SupabaseService {
       taskId: taskId,
       rows: [(content: content, description: null)],
     );
+  }
+
+  static Future<List<InlineAttachmentRow>> fetchInlineAttachments({
+    required String entityType,
+    required String entityId,
+  }) async {
+    if (!_enabled) return [];
+    final type = entityType.trim();
+    final id = entityId.trim();
+    if (type.isEmpty || id.isEmpty) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('inline_attachment')
+          .select(
+            'id,entity_type,entity_id,url,description,mime_type,created_by,created_at,sort_order',
+          )
+          .eq('entity_type', type)
+          .eq('entity_id', id)
+          .order('sort_order', ascending: true)
+          .order('created_at', ascending: true);
+      final out = <InlineAttachmentRow>[];
+      for (final raw in (res as List)) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final rowId = m['id']?.toString().trim() ?? '';
+        final url = m['url']?.toString().trim() ?? '';
+        if (rowId.isEmpty || url.isEmpty) continue;
+        out.add(
+          InlineAttachmentRow(
+            id: rowId,
+            entityType: m['entity_type']?.toString().trim() ?? type,
+            entityId: m['entity_id']?.toString().trim() ?? id,
+            url: url,
+            description: m['description']?.toString(),
+            mimeType: m['mime_type']?.toString(),
+            createdBy: m['created_by']?.toString(),
+            createdAt: _parseDateTimeNullable(m['created_at']),
+            sortOrder: _flexIntFromRow(m['sort_order']),
+          ),
+        );
+      }
+      return out;
+    } catch (e) {
+      debugPrint('fetchInlineAttachments: $e');
+      return [];
+    }
+  }
+
+  static Future<({String? error, String? inlineAttachmentId})>
+  insertInlineAttachment({
+    required String entityType,
+    required String entityId,
+    required String url,
+    String? description,
+    String? mimeType,
+    String? creatorStaffLookupKey,
+    int sortOrder = 0,
+  }) async {
+    if (!_enabled) {
+      return (error: 'Supabase not configured', inlineAttachmentId: null);
+    }
+    final type = entityType.trim();
+    final id = entityId.trim();
+    final link = url.trim();
+    if (type.isEmpty) {
+      return (error: 'entity_type is required', inlineAttachmentId: null);
+    }
+    if (id.isEmpty) {
+      return (error: 'entity_id is required', inlineAttachmentId: null);
+    }
+    if (link.isEmpty) {
+      return (error: 'url is required', inlineAttachmentId: null);
+    }
+    try {
+      final map = <String, dynamic>{
+        'entity_type': type,
+        'entity_id': id,
+        'url': link,
+        'sort_order': sortOrder,
+      };
+      final desc = description?.trim();
+      if (desc != null && desc.isNotEmpty) map['description'] = desc;
+      final mt = mimeType?.trim();
+      if (mt != null && mt.isNotEmpty) map['mime_type'] = mt;
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['created_by'] = staffId;
+        }
+      }
+      final res = await Supabase.instance.client
+          .from('inline_attachment')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      return (error: null, inlineAttachmentId: res?['id']?.toString());
+    } catch (e) {
+      return (error: e.toString(), inlineAttachmentId: null);
+    }
   }
 
   static int _priorityFromFlexible(dynamic p) {
@@ -2275,7 +2399,9 @@ class SupabaseService {
     if (d.isEmpty) return (error: null, commentId: null);
     try {
       final st = status.trim();
+      final id = const Uuid().v4();
       final map = <String, dynamic>{
+        'id': id,
         'task_id': taskId,
         'description': d,
         'status': st.isEmpty ? 'Active' : st,
@@ -2288,12 +2414,7 @@ class SupabaseService {
           map['create_by'] = staffId;
         }
       }
-      final res = await Supabase.instance.client
-          .from('comment')
-          .insert(map)
-          .select('id')
-          .maybeSingle();
-      final id = res?['id']?.toString();
+      await Supabase.instance.client.from('comment').insert(map);
       return (error: null, commentId: id);
     } catch (e) {
       return (error: e.toString(), commentId: null);
@@ -3387,7 +3508,9 @@ class SupabaseService {
     final d = description.trim();
     if (d.isEmpty) return (error: null, commentId: null);
     try {
+      final id = const Uuid().v4();
       final map = <String, dynamic>{
+        'id': id,
         'subtask_id': subtaskId,
         'description': d,
         'status': status.trim().isEmpty ? 'Active' : status.trim(),
@@ -3400,12 +3523,8 @@ class SupabaseService {
           map['create_by'] = staffId;
         }
       }
-      final res = await Supabase.instance.client
-          .from('subtask_comment')
-          .insert(map)
-          .select('id')
-          .maybeSingle();
-      return (error: null, commentId: res?['id']?.toString());
+      await Supabase.instance.client.from('subtask_comment').insert(map);
+      return (error: null, commentId: id);
     } catch (e) {
       return (error: e.toString(), commentId: null);
     }
