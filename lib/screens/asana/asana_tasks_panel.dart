@@ -1639,6 +1639,7 @@ class _FlatMobileRow extends StatelessWidget {
     final picKey = isSubtask ? subtask!.pic : task.pic;
     final status = isSubtask ? subtask!.status : TaskListCard.statusLabel(task);
     final submission = isSubtask ? subtask!.submission : task.submission;
+    final projectName = task.projectName?.trim() ?? '';
     final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
     final nameStyle = asanaTableRowNameStyle(
       context,
@@ -1646,11 +1647,13 @@ class _FlatMobileRow extends StatelessWidget {
       isSubtask: isSubtask,
     );
     final valueStyle = asanaTableRowValueStyle(context, completed: completed);
-    final metaLine = [
+    final metaParts = [
       'Cr: ${_formatCreator(creator)}',
       'PIC: ${_formatPic(appState, picKey)}',
+      if (projectName.trim().isNotEmpty) 'Pr: ${projectName.trim()}',
       'Due: ${_formatDueDate(dueDate)}',
-    ].join(' · ');
+    ];
+    final metaLine = metaParts.join(' · ');
 
     final typeLetter = AsanaRowTypeLetter(
       letter: isSubtask ? 'S' : 'T',
@@ -1695,12 +1698,7 @@ class _FlatMobileRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 5),
-                    Text(
-                      metaLine,
-                      style: valueStyle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    Text(metaLine, style: valueStyle),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
