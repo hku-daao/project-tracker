@@ -561,9 +561,86 @@ class SupabaseService {
       }
       if (map.isEmpty) return null;
       await Supabase.instance.client.from('task').update(map).eq('id', taskId);
+      if (map.containsKey('update_date')) {
+        final projectTouchError = await _touchTaskProjectFromTaskRow(taskId);
+        if (projectTouchError != null) return projectTouchError;
+      }
       return null;
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  static Future<String?> _touchTaskProjectFromTaskRow(String taskId) async {
+    final id = taskId.trim();
+    if (!_enabled || id.isEmpty) return null;
+    try {
+      final row = await Supabase.instance.client
+          .from('task')
+          .select('project_id,update_by,update_date,last_updated')
+          .eq('id', id)
+          .maybeSingle();
+      if (row == null) return null;
+      final m = Map<String, dynamic>.from(row as Map);
+      final projectId = m['project_id']?.toString().trim();
+      final updateAt = m['last_updated'] ?? m['update_date'];
+      if (projectId == null || projectId.isEmpty || updateAt == null) {
+        return null;
+      }
+      final projectMap = <String, dynamic>{'update_date': updateAt};
+      final updateBy = m['update_by']?.toString().trim();
+      if (updateBy != null && updateBy.isNotEmpty) {
+        projectMap['update_by'] = updateBy;
+      }
+      await Supabase.instance.client
+          .from('project')
+          .update(projectMap)
+          .eq('id', projectId);
+      return null;
+    } catch (e) {
+      return 'Task saved, but project audit sync failed: $e';
+    }
+  }
+
+  static Future<String?> _touchProjectFromSubtaskRow(String subtaskId) async {
+    final id = subtaskId.trim();
+    if (!_enabled || id.isEmpty) return null;
+    try {
+      final row = await Supabase.instance.client
+          .from('subtask')
+          .select('task_id,update_by,update_date,last_updated')
+          .eq('id', id)
+          .maybeSingle();
+      if (row == null) return null;
+      final m = Map<String, dynamic>.from(row as Map);
+      final taskId = m['task_id']?.toString().trim();
+      final updateAt = m['last_updated'] ?? m['update_date'];
+      if (taskId == null || taskId.isEmpty || updateAt == null) {
+        return null;
+      }
+
+      final taskRow = await Supabase.instance.client
+          .from('task')
+          .select('project_id')
+          .eq('id', taskId)
+          .maybeSingle();
+      if (taskRow == null) return null;
+      final taskMap = Map<String, dynamic>.from(taskRow as Map);
+      final projectId = taskMap['project_id']?.toString().trim();
+      if (projectId == null || projectId.isEmpty) return null;
+
+      final projectMap = <String, dynamic>{'update_date': updateAt};
+      final updateBy = m['update_by']?.toString().trim();
+      if (updateBy != null && updateBy.isNotEmpty) {
+        projectMap['update_by'] = updateBy;
+      }
+      await Supabase.instance.client
+          .from('project')
+          .update(projectMap)
+          .eq('id', projectId);
+      return null;
+    } catch (e) {
+      return 'Sub-task saved, but project audit sync failed: $e';
     }
   }
 
@@ -2173,6 +2250,12 @@ class SupabaseService {
           .select('id')
           .maybeSingle();
       final id = res?['id']?.toString();
+      if (id != null && id.trim().isNotEmpty) {
+        final projectTouchError = await _touchTaskProjectFromTaskRow(id);
+        if (projectTouchError != null) {
+          return (error: projectTouchError, taskId: id);
+        }
+      }
       return (error: null, taskId: id);
     } catch (e) {
       return (error: e.toString(), taskId: null);
@@ -3048,6 +3131,10 @@ class SupabaseService {
       if (sid == null || sid.isEmpty) {
         return (error: 'Insert returned no id', subtaskId: null);
       }
+      final projectTouchError = await _touchProjectFromSubtaskRow(sid);
+      if (projectTouchError != null) {
+        return (error: projectTouchError, subtaskId: sid);
+      }
       if (initialComment != null && initialComment.trim().isNotEmpty) {
         await insertSubtaskCommentRow(
           subtaskId: sid,
@@ -3153,6 +3240,10 @@ class SupabaseService {
           .from('subtask')
           .update(map)
           .eq('id', subtaskId);
+      if (map.containsKey('update_date')) {
+        final projectTouchError = await _touchProjectFromSubtaskRow(subtaskId);
+        if (projectTouchError != null) return projectTouchError;
+      }
       return null;
     } catch (e) {
       return e.toString();
