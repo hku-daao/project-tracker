@@ -1067,17 +1067,20 @@ class SupabaseService {
         padded.add(null);
       }
       if (padded.length > 10) padded = padded.sublist(0, 10);
+      final now = HkTime.timestampForDb();
       final map = <String, dynamic>{
         'name': n,
         'description': description?.trim() ?? '',
         'status': status.trim().isEmpty ? 'Not started' : status.trim(),
+        'create_date': now,
+        'update_date': now,
       };
       final lookup = creatorStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
         final staffId = await _staffRowIdForAssigneeKey(lookup);
         if (staffId != null && staffId.isNotEmpty) {
           map['create_by'] = staffId;
-          map['create_date'] = HkTime.timestampForDb();
+          map['update_by'] = staffId;
         }
       }
       if (startDate != null) {
@@ -2119,11 +2122,15 @@ class SupabaseService {
       }
       final s = status.trim();
       if (s.isEmpty) return (error: 'status is required', taskId: null);
+      final now = HkTime.timestampForDb();
       final map = <String, dynamic>{
         'task_name': name,
         'priority': priority,
         'description': description,
         'status': s,
+        'create_date': now,
+        'update_date': now,
+        'last_updated': now,
       };
       final p = projectId?.trim();
       if (p != null && p.isNotEmpty) {
@@ -2134,7 +2141,7 @@ class SupabaseService {
         final staffId = await _staffRowIdForAssigneeKey(lookup);
         if (staffId != null && staffId.isNotEmpty) {
           map['create_by'] = staffId;
-          map['create_date'] = HkTime.timestampForDb();
+          map['update_by'] = staffId;
         }
       }
       if (startDate != null) {
@@ -2985,6 +2992,7 @@ class SupabaseService {
       final assigneeStaffIds = await _staffRowIdSlotsForAssigneeKeys(
         assigneeStaffUuids,
       );
+      final now = HkTime.timestampForDb();
       final map = <String, dynamic>{
         'task_id': taskId,
         'subtask_name': name,
@@ -2992,13 +3000,16 @@ class SupabaseService {
         'priority': priorityDisplay,
         'status': 'Incomplete',
         'submission': 'Pending',
+        'create_date': now,
+        'update_date': now,
+        'last_updated': now,
       };
       final lookup = creatorStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
         final staffId = await _staffRowIdForAssigneeKey(lookup);
         if (staffId != null && staffId.isNotEmpty) {
           map['create_by'] = staffId;
-          map['create_date'] = HkTime.timestampForDb();
+          map['update_by'] = staffId;
         }
       }
       if (startDate != null) {

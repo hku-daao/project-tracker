@@ -28,7 +28,7 @@ class AsanaTaskFilterState {
   DateTime? createDateEnd;
   Set<String> overdueOptions = {};
 
-  /// `due` | `created` | `name`
+  /// `due` | `created` | `updated` | `name`
   String sortKey = 'due';
   bool sortAscending = true;
   List<String> assigneeStaffIds = [];
@@ -61,6 +61,7 @@ class AsanaTaskFilterState {
     final rawSortKey = data['sortKey'] as String?;
     if (rawSortKey == 'due' ||
         rawSortKey == 'created' ||
+        rawSortKey == 'updated' ||
         rawSortKey == 'name') {
       sortKey = rawSortKey!;
     }
@@ -819,6 +820,10 @@ class AsanaTaskFilter {
           cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
         case 'created':
           cmp = a.createdAt.compareTo(b.createdAt);
+        case 'updated':
+          final au = a.lastUpdated ?? a.updateDate ?? a.createdAt;
+          final bu = b.lastUpdated ?? b.updateDate ?? b.createdAt;
+          cmp = au.compareTo(bu);
         case 'due':
         default:
           final ad = a.endDate;
@@ -978,6 +983,22 @@ class AsanaTaskFilter {
           } else {
             cmp = ca.compareTo(cb);
           }
+        case 'updated':
+          final ua = a.isTask
+              ? (a.task.lastUpdated ?? a.task.updateDate ?? a.task.createdAt)
+              : (a.sub!.lastUpdated ?? a.sub!.updateDate ?? a.sub!.createDate);
+          final ub = b.isTask
+              ? (b.task.lastUpdated ?? b.task.updateDate ?? b.task.createdAt)
+              : (b.sub!.lastUpdated ?? b.sub!.updateDate ?? b.sub!.createDate);
+          if (ua == null && ub == null) {
+            cmp = 0;
+          } else if (ua == null) {
+            cmp = 1;
+          } else if (ub == null) {
+            cmp = -1;
+          } else {
+            cmp = ua.compareTo(ub);
+          }
         case 'due':
         default:
           if (dueA == null && dueB == null) {
@@ -1036,6 +1057,26 @@ class AsanaTaskFilter {
               cmp = -1;
             } else {
               cmp = ca.compareTo(cb);
+            }
+          case 'updated':
+            final ua = a.isTask
+                ? (a.task.lastUpdated ?? a.task.updateDate ?? a.task.createdAt)
+                : (a.sub!.lastUpdated ??
+                      a.sub!.updateDate ??
+                      a.sub!.createDate);
+            final ub = b.isTask
+                ? (b.task.lastUpdated ?? b.task.updateDate ?? b.task.createdAt)
+                : (b.sub!.lastUpdated ??
+                      b.sub!.updateDate ??
+                      b.sub!.createDate);
+            if (ua == null && ub == null) {
+              cmp = 0;
+            } else if (ua == null) {
+              cmp = 1;
+            } else if (ub == null) {
+              cmp = -1;
+            } else {
+              cmp = ua.compareTo(ub);
             }
           case 'due':
           default:

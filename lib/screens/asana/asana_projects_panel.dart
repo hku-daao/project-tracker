@@ -186,6 +186,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
               AsanaFilterDropdown(
                 title: 'Sort',
                 value: _sortLabel(),
+                buttonWidth: 152,
                 onPressed: _showSortMenu,
               ),
             ],
@@ -488,6 +489,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     final name = switch (_filters.sortKey) {
       'name' => 'Name',
       'created' => 'Created',
+      'updated' => 'Last updated',
       _ => 'Due date',
     };
     final arrow = _filters.sortAscending ? '↑' : '↓';
@@ -539,6 +541,8 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         PopupMenuItem(value: 'due_desc', child: Text('Due date ↓')),
         PopupMenuItem(value: 'created_desc', child: Text('Created ↓')),
         PopupMenuItem(value: 'created_asc', child: Text('Created ↑')),
+        PopupMenuItem(value: 'updated_desc', child: Text('Last updated ↓')),
+        PopupMenuItem(value: 'updated_asc', child: Text('Last updated ↑')),
         PopupMenuItem(value: 'name_asc', child: Text('Name A–Z')),
         PopupMenuItem(value: 'name_desc', child: Text('Name Z–A')),
       ],
@@ -554,6 +558,12 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
             _filters.sortAscending = false;
           case 'created_asc':
             _filters.sortKey = 'created';
+            _filters.sortAscending = true;
+          case 'updated_desc':
+            _filters.sortKey = 'updated';
+            _filters.sortAscending = false;
+          case 'updated_asc':
+            _filters.sortKey = 'updated';
             _filters.sortAscending = true;
           case 'name_asc':
             _filters.sortKey = 'name';

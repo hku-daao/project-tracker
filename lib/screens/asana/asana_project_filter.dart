@@ -32,6 +32,7 @@ class AsanaProjectFilterState {
     final rawSortKey = data['sortKey'] as String?;
     if (rawSortKey == 'due' ||
         rawSortKey == 'created' ||
+        rawSortKey == 'updated' ||
         rawSortKey == 'name') {
       sortKey = rawSortKey!;
     }
@@ -283,6 +284,18 @@ class AsanaProjectFilter {
             cmp = -1;
           } else {
             cmp = ac.compareTo(bc);
+          }
+        case 'updated':
+          final au = a.updateDate ?? a.createDate;
+          final bu = b.updateDate ?? b.createDate;
+          if (au == null && bu == null) {
+            cmp = 0;
+          } else if (au == null) {
+            cmp = 1;
+          } else if (bu == null) {
+            cmp = -1;
+          } else {
+            cmp = au.compareTo(bu);
           }
         case 'due':
         default:
