@@ -36,7 +36,8 @@ class AsanaProjectDetailPanel extends StatefulWidget {
   final VoidCallback? onChanged;
 
   @override
-  State<AsanaProjectDetailPanel> createState() => _AsanaProjectDetailPanelState();
+  State<AsanaProjectDetailPanel> createState() =>
+      _AsanaProjectDetailPanelState();
 }
 
 class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
@@ -64,8 +65,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   String? _assigneePickerError;
   final ValueNotifier<AsanaAssigneePickerSnapshot> _assigneeSnapshot =
       ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
-  final ValueNotifier<AsanaAssigneePickerSnapshot> _picSnapshot =
-      ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
+  final ValueNotifier<AsanaAssigneePickerSnapshot> _picSnapshot = ValueNotifier(
+    const AsanaAssigneePickerSnapshot(loading: true),
+  );
 
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
@@ -102,10 +104,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     if (lk != null && lk.isNotEmpty) {
       _myStaffUuid = await SupabaseService.staffRowIdForAssigneeKey(lk);
     }
-    await Future.wait([
-      _loadProject(),
-      _loadAssigneePicker(),
-    ]);
+    await Future.wait([_loadProject(), _loadAssigneePicker()]);
   }
 
   Future<void> _loadProject() async {
@@ -172,7 +171,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   bool get _canOpenAnchoredPicker =>
-      DateTime.now().millisecondsSinceEpoch > _anchoredPickerReopenBlockedUntilMs;
+      DateTime.now().millisecondsSinceEpoch >
+      _anchoredPickerReopenBlockedUntilMs;
 
   void _blockAnchoredPickerReopen() {
     _anchoredPickerReopenBlockedUntilMs =
@@ -422,8 +422,10 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final state = context.read<AppState>();
     final ids = _assigneeIds.toList()
       ..sort(
-        (a, b) => _labelForAssigneeId(a, state)
-            .compareTo(_labelForAssigneeId(b, state)),
+        (a, b) => _labelForAssigneeId(
+          a,
+          state,
+        ).compareTo(_labelForAssigneeId(b, state)),
       );
     final choice = await showAsanaAnchoredOptionMenu<String>(
       anchorLink: _picAnchorLink,
@@ -483,11 +485,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     }
   }
 
-  String _effectiveStatus(ProjectRecord p) =>
-      (_draftStatus ?? p.status).trim();
+  String _effectiveStatus(ProjectRecord p) => (_draftStatus ?? p.status).trim();
 
   bool _canMarkProjectComplete(ProjectRecord p) =>
-      _isCreator(p) && _effectiveStatus(p) != 'Completed' && _effectiveStatus(p) != 'Deleted';
+      _isCreator(p) &&
+      _effectiveStatus(p) != 'Completed' &&
+      _effectiveStatus(p) != 'Deleted';
 
   bool _canDeleteProject(ProjectRecord p) =>
       _isCreator(p) && _effectiveStatus(p) != 'Deleted';
@@ -499,7 +502,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final ok = await showAsanaConfirmDialog(
       context: context,
       title: 'Delete project',
-      content: 'Delete "${_project?.name ?? 'this project'}"? It will be moved to the Deleted status.',
+      content:
+          'Delete "${_project?.name ?? 'this project'}"? It will be moved to the Deleted status.',
       confirmText: 'Delete',
       isDestructive: true,
       palette: widget.palette,
@@ -605,8 +609,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final assigneesLabel = _assigneeIds
         .map((id) => _labelForAssigneeId(id, state))
         .join(', ');
-    final picLabel =
-        _picAssigneeIds.map((id) => _labelForAssigneeId(id, state)).join(', ');
+    final picLabel = _picAssigneeIds
+        .map((id) => _labelForAssigneeId(id, state))
+        .join(', ');
     final staff = _pickerStaff
         .map((s) => (id: s.assigneeId, name: s.name.trim()))
         .where((s) => s.name.isNotEmpty)
@@ -656,7 +661,10 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           entityType: 'project',
           entityId: widget.projectId,
           staffId: state.userStaffId,
-          staffDisplayName: _labelForAssigneeId(state.userStaffAppId ?? '', state),
+          staffDisplayName: _labelForAssigneeId(
+            state.userStaffAppId ?? '',
+            state,
+          ),
           actionType: 'update',
         );
       },
@@ -814,8 +822,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final slots =
-          await SupabaseService.assigneeSlotsForTask(_assigneeIds.toList());
+      final slots = await SupabaseService.assigneeSlotsForTask(
+        _assigneeIds.toList(),
+      );
       final picUuids = <String>[];
       for (final key in _picAssigneeIds) {
         final u = await SupabaseService.resolveStaffRowIdForAssigneeKey(key);
@@ -970,18 +979,22 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           AsanaDetailTwoColumnRow(
             label: 'Status',
             child: canEdit
-                ? CompositedTransformTarget(
-                    link: _statusAnchorLink,
-                    child: MouseRegion(
-                      cursor: _saving
-                          ? SystemMouseCursors.basic
-                          : SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _saving
-                            ? null
-                            : () => _pickStatus(context),
-                        child: AsanaDetailStatusPill(status: _effectiveStatus(p)),
+                ? Builder(
+                    builder: (anchorContext) => CompositedTransformTarget(
+                      link: _statusAnchorLink,
+                      child: MouseRegion(
+                        cursor: _saving
+                            ? SystemMouseCursors.basic
+                            : SystemMouseCursors.click,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _saving
+                              ? null
+                              : () => _pickStatus(anchorContext),
+                          child: AsanaDetailStatusPill(
+                            status: _effectiveStatus(p),
+                          ),
+                        ),
                       ),
                     ),
                   )
@@ -1017,9 +1030,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           if ((p.updateByDisplayName ?? '').trim().isNotEmpty)
             AsanaDetailTwoColumnRow(
               label: 'Last updated by',
-              child: AsanaDetailPlainValue(
-                text: p.updateByDisplayName!.trim(),
-              ),
+              child: AsanaDetailPlainValue(text: p.updateByDisplayName!.trim()),
             ),
           if (p.updateDate != null)
             AsanaDetailTwoColumnRow(
