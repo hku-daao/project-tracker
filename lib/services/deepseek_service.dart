@@ -123,9 +123,10 @@ Schema:
 }
 
 Rules:
-- Set "related": false only if the prompt is clearly unrelated to creating or updating a task.
-- Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
-- NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical to what is already on the form, omit that field (null). Example: if the user only describes what the task is about, suggest name and/or description only — do not output assignees, PIC, priority, dates, project, or comment unless the user asked to change them AND the new value differs from current.
+- The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
+- Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
+- For optional structured fields (project, assignees, PIC, priority, dates, reason, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - comment: text for the Comments field (a draft posted when the user saves the task). When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
 - Use assignee and project names only from the provided staff/projects lists.
 - Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
@@ -200,9 +201,10 @@ Schema:
 }
 
 Rules:
-- Set "related": false only if the prompt is clearly unrelated to creating or updating a project.
-- Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
-- NEVER echo unchanged values: compare each field to "Current project form values" in context.
+- The user is already working inside a project create/edit slide. Treat every prompt as an attempt to fill or improve this project form. Always set "related": true.
+- Always try to suggest at least one useful field. Prefer name and description when the prompt contains project details; if the prompt is vague, make a best-effort improvement based on the prompt plus current project form values.
+- For optional structured fields (status, assigneeNames, picNames, startDate, dueDate), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Avoid echoing unchanged values: compare each field to "Current project form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - Use assignee and PIC names only from the provided staff list.
 - assigneeNames: full resulting assignee list when the user changes assignees.
 - picNames: PIC(s) must be chosen from assigneeNames. When one assignee, they are usually PIC too.
@@ -344,10 +346,11 @@ Schema:
 }
 
 Rules:
-- Set "related": false only if the prompt is clearly unrelated to updating a sub-task.
-- Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
-- NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical, omit that field (null).
-- For sub-task creation or major clarification prompts, prioritize suggesting BOTH name and description when the user provides enough detail. The description should be useful execution detail, not just a repeat of the name.
+- The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
+- Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
+- For optional structured fields (assigneeNames, picName, priority, dates, reason, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical, improve/expand it when reasonable; otherwise omit that specific field.
+- The description should be useful execution detail, not just a repeat of the name.
 - Use assignee and PIC names only from the available sub-task assignees list in context.
 - Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
 - PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them.

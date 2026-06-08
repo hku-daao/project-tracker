@@ -32,17 +32,21 @@ class AsanaProjectAiFormSnapshot {
       ..writeln('Today (Hong Kong): ${_ymd(HkTime.todayDateOnlyHk())}')
       ..writeln('Current project form values:')
       ..writeln('- name: ${name.isEmpty ? "(empty)" : name}')
-      ..writeln('- description: ${description.isEmpty ? "(empty)" : description}')
+      ..writeln(
+        '- description: ${description.isEmpty ? "(empty)" : description}',
+      )
       ..writeln('- status: ${status.isEmpty ? "(empty)" : status}')
-      ..writeln('- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}')
+      ..writeln(
+        '- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}',
+      )
       ..writeln('- due date: ${dueDate == null ? "(empty)" : _ymd(dueDate!)}')
-      ..writeln('- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}')
+      ..writeln(
+        '- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}',
+      )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}');
 
     if (staff.isNotEmpty) {
-      buf.writeln(
-        'Available staff: ${staff.map((s) => s.name).join('; ')}',
-      );
+      buf.writeln('Available staff: ${staff.map((s) => s.name).join('; ')}');
     }
     buf.writeln('Status options: Not started, In progress, Completed');
     return buf.toString();
@@ -80,13 +84,6 @@ class AsanaProjectAiSuggestionBuilder {
     required AsanaProjectAiFormSnapshot form,
     required AsanaProjectAiApply apply,
   }) {
-    final related = raw['related'];
-    if (related is bool && !related) {
-      final msg = _str(raw['message']) ??
-          'This prompt does not look related to updating a project.';
-      return [AsanaTaskAiSuggestionLine.warning(msg)];
-    }
-
     final lines = <AsanaTaskAiSuggestionLine>[];
 
     final name = _str(raw['name']);
@@ -112,8 +109,9 @@ class AsanaProjectAiSuggestionBuilder {
         AsanaTaskAiSuggestionLine.adopt(
           fieldKey: AsanaTaskAiFieldKey.description,
           fieldLabel: 'Description',
-          currentValue:
-              AsanaTaskAiSuggestionLine.displayCurrent(form.description),
+          currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
+            form.description,
+          ),
           suggestedText: desc,
           onAdopt: () => apply.applyDescription(desc),
         ),
@@ -140,7 +138,8 @@ class AsanaProjectAiSuggestionBuilder {
           ),
         );
       }
-      if (resolved.isNotEmpty && !_sameIdSet(resolved, form.selectedAssigneeIds)) {
+      if (resolved.isNotEmpty &&
+          !_sameIdSet(resolved, form.selectedAssigneeIds)) {
         final label = _staffNamesForIds(resolved.toList(), form.staff);
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
@@ -176,14 +175,16 @@ class AsanaProjectAiSuggestionBuilder {
           ),
         );
       }
-      if (resolved.isNotEmpty && !_sameIdSet(resolved, form.selectedPicAssigneeIds)) {
+      if (resolved.isNotEmpty &&
+          !_sameIdSet(resolved, form.selectedPicAssigneeIds)) {
         final label = _staffNamesForIds(resolved.toList(), form.staff);
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.pic,
             fieldLabel: 'PIC',
-            currentValue:
-                AsanaTaskAiSuggestionLine.displayCurrent(form.picLabel),
+            currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
+              form.picLabel,
+            ),
             suggestedText: label,
             onAdopt: () => apply.applyPic(resolved),
           ),
@@ -330,12 +331,14 @@ class AsanaProjectAiSuggestionBuilder {
     List<String> ids,
     List<({String id, String name})> staff,
   ) {
-    return ids.map((id) {
-      for (final s in staff) {
-        if (s.id == id) return s.name.trim();
-      }
-      return id;
-    }).join(', ');
+    return ids
+        .map((id) {
+          for (final s in staff) {
+            if (s.id == id) return s.name.trim();
+          }
+          return id;
+        })
+        .join(', ');
   }
 
   static String? _parseProjectStatus(String raw) {
@@ -354,9 +357,7 @@ class AsanaProjectAiSuggestionBuilder {
       final month = int.parse(m.group(2)!);
       final day = int.parse(m.group(3)!);
       final parsed = DateTime(year, month, day);
-      if (parsed.year != year ||
-          parsed.month != month ||
-          parsed.day != day) {
+      if (parsed.year != year || parsed.month != month || parsed.day != day) {
         return null;
       }
       return parsed;

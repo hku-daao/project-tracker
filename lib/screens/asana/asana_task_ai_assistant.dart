@@ -337,14 +337,6 @@ class AsanaSubtaskAiSuggestionBuilder {
     required void Function(String comment) applyComment,
     required void Function(String url, String description)? applyWebsiteLink,
   }) {
-    final related = raw['related'];
-    if (related is bool && !related) {
-      final msg =
-          AsanaTaskAiSuggestionBuilder._str(raw['message']) ??
-          'This prompt does not look related to updating a sub-task.';
-      return [AsanaTaskAiSuggestionLine.warning(msg)];
-    }
-
     final lines = <AsanaTaskAiSuggestionLine>[];
 
     DateTime? proposedStart;
@@ -764,14 +756,6 @@ class AsanaTaskAiSuggestionBuilder {
     required AsanaTaskAiFormSnapshot form,
     required AsanaTaskAiApply apply,
   }) {
-    final related = raw['related'];
-    if (related is bool && !related) {
-      final msg =
-          _str(raw['message']) ??
-          'This prompt does not look related to filling in task details.';
-      return [AsanaTaskAiSuggestionLine.warning(msg)];
-    }
-
     final lines = <AsanaTaskAiSuggestionLine>[];
 
     DateTime? proposedStart;
