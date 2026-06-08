@@ -14,6 +14,8 @@ import 'asana_assignee_picker.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_project_ai_assistant.dart';
+import 'asana_task_ai_assistant.dart';
 
 /// New project slide — empty fields, Create in footer.
 class AsanaCreateProjectDetailPanel extends StatefulWidget {
@@ -49,12 +51,14 @@ class _AsanaCreateProjectDetailPanelState
   final Set<String> _picAssigneeIds = {};
   final ValueNotifier<AsanaAssigneePickerSnapshot> _assigneeSnapshot =
       ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
-  final ValueNotifier<AsanaAssigneePickerSnapshot> _picSnapshot =
-      ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
+  final ValueNotifier<AsanaAssigneePickerSnapshot> _picSnapshot = ValueNotifier(
+    const AsanaAssigneePickerSnapshot(loading: true),
+  );
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _statusAnchorLink = LayerLink();
   int _anchoredPickerReopenBlockedUntilMs = 0;
+  AsanaTaskAiController? _projectAi;
 
   @override
   void initState() {
@@ -68,6 +72,7 @@ class _AsanaCreateProjectDetailPanelState
     _descController.dispose();
     _assigneeSnapshot.dispose();
     _picSnapshot.dispose();
+    _projectAi?.dispose();
     super.dispose();
   }
 
@@ -77,7 +82,8 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   bool get _canOpenAnchoredPicker =>
-      DateTime.now().millisecondsSinceEpoch > _anchoredPickerReopenBlockedUntilMs;
+      DateTime.now().millisecondsSinceEpoch >
+      _anchoredPickerReopenBlockedUntilMs;
 
   void _blockAnchoredPickerReopen() {
     _anchoredPickerReopenBlockedUntilMs =
@@ -154,7 +160,10 @@ class _AsanaCreateProjectDetailPanelState
     return id;
   }
 
-  List<({String id, String name})> _rowsForIds(Set<String> ids, AppState state) {
+  List<({String id, String name})> _rowsForIds(
+    Set<String> ids,
+    AppState state,
+  ) {
     return ids
         .map((id) => (id: id, name: _labelForAssigneeId(id, state)))
         .toList()
@@ -242,8 +251,10 @@ class _AsanaCreateProjectDetailPanelState
     final state = context.read<AppState>();
     final ids = _assigneeIds.toList()
       ..sort(
-        (a, b) => _labelForAssigneeId(a, state)
-            .compareTo(_labelForAssigneeId(b, state)),
+        (a, b) => _labelForAssigneeId(
+          a,
+          state,
+        ).compareTo(_labelForAssigneeId(b, state)),
       );
     final choice = await showAsanaAnchoredOptionMenu<String>(
       anchorLink: _picAnchorLink,
@@ -299,6 +310,84 @@ class _AsanaCreateProjectDetailPanelState
     if (choice != null && mounted) {
       setState(() => _draftStatus = choice);
     }
+  }
+
+  AsanaProjectAiFormSnapshot _aiFormSnapshot(AppState state) {
+    final assigneesLabel = _assigneeIds
+        .map((id) => _labelForAssigneeId(id, state))
+        .join(', ');
+    final picLabel = _picAssigneeIds
+        .map((id) => _labelForAssigneeId(id, state))
+        .join(', ');
+    final staff = _pickerStaff
+        .map((s) => (id: s.assigneeId, name: s.name.trim()))
+        .where((s) => s.name.isNotEmpty)
+        .toList();
+    return AsanaProjectAiFormSnapshot(
+      name: _nameController.text.trim(),
+      description: _descController.text.trim(),
+      status: _draftStatus,
+      startDate: _startDate,
+      dueDate: _endDate,
+      assigneesLabel: assigneesLabel,
+      picLabel: picLabel,
+      staff: staff,
+      selectedAssigneeIds: Set<String>.from(_assigneeIds),
+      selectedPicAssigneeIds: Set<String>.from(_picAssigneeIds),
+    );
+  }
+
+  AsanaProjectAiApply _aiApplyHandlers() {
+    return AsanaProjectAiApply(
+      applyName: (v) => setState(() => _nameController.text = v),
+      applyDescription: (v) => setState(() => _descController.text = v),
+      applyAssignees: (ids) => setState(() {
+        _assigneeIds
+          ..clear()
+          ..addAll(ids);
+        _syncPicAfterAssigneesChange();
+      }),
+      applyPic: (ids) => setState(() {
+        _picAssigneeIds
+          ..clear()
+          ..addAll(ids);
+      }),
+      applyStatus: (s) => setState(() => _draftStatus = s),
+      applyStartDate: (d) => setState(() => _startDate = d),
+      applyDueDate: (d) => setState(() => _endDate = d),
+    );
+  }
+
+  void _ensureProjectAi() {
+    _projectAi ??= AsanaTaskAiController(
+      mode: AsanaTaskAiAssistantMode.projectFields,
+      readOnly: () => _saving,
+      auditContext: () {
+        final state = context.read<AppState>();
+        return AsanaAiAuditContext(
+          entityType: 'project',
+          entityId: null,
+          staffId: state.userStaffId,
+          staffDisplayName: _labelForAssigneeId(
+            state.userStaffAppId ?? '',
+            state,
+          ),
+          actionType: 'create',
+        );
+      },
+      projectSnapshot: () => _aiFormSnapshot(context.read<AppState>()),
+      projectApply: _aiApplyHandlers(),
+    );
+  }
+
+  Widget _aiSuggestions(AsanaTaskAiFieldKey key) {
+    final c = _projectAi;
+    if (c == null) return const SizedBox.shrink();
+    return AsanaTaskAiInlineSuggestions(
+      controller: c,
+      fieldKey: key,
+      palette: widget.palette,
+    );
   }
 
   Future<void> _create(AppState state) async {
@@ -357,8 +446,9 @@ class _AsanaCreateProjectDetailPanelState
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final slots =
-          await SupabaseService.assigneeSlotsForTask(_assigneeIds.toList());
+      final slots = await SupabaseService.assigneeSlotsForTask(
+        _assigneeIds.toList(),
+      );
       final picUuids = <String>[];
       for (final key in _picAssigneeIds) {
         final u = await SupabaseService.resolveStaffRowIdForAssigneeKey(key);
@@ -385,6 +475,7 @@ class _AsanaCreateProjectDetailPanelState
       }
       final newId = ins.projectId;
       if (newId != null && newId.isNotEmpty) {
+        _projectAi?.attachCreatedEntityId(newId);
         final p = await SupabaseService.fetchProjectById(newId);
         if (p != null) state.upsertProject(p);
         await _notifyEmail(
@@ -407,6 +498,7 @@ class _AsanaCreateProjectDetailPanelState
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final chrome = AsanaSlideChrome(widget.palette);
+    _ensureProjectAi();
     final creatorName = () {
       final id = state.userStaffAppId?.trim();
       if (id == null || id.isEmpty) return '';
@@ -415,120 +507,138 @@ class _AsanaCreateProjectDetailPanelState
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: AsanaDetailSlideFooter(
-        backgroundColor: chrome.footer,
-        borderColor: chrome.footerBorder,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            FilledButton(
-              onPressed: _saving ? null : () => _create(state),
-              style: FilledButton.styleFrom(
-                backgroundColor: widget.palette.accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-              ),
-              child: Text(_saving ? 'Creating…' : 'Create'),
+      footer: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_projectAi != null)
+            AsanaTaskAiDock(
+              controller: _projectAi!,
+              palette: widget.palette,
+              footerBorder: chrome.footerBorder,
             ),
-          ],
-        ),
+          AsanaDetailSlideFooter(
+            backgroundColor: chrome.footer,
+            borderColor: chrome.footerBorder,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                FilledButton(
+                  onPressed: _saving ? null : () => _create(state),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: widget.palette.accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(_saving ? 'Creating…' : 'Create'),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-                AsanaHoverTextField(
-                  controller: _nameController,
-                  canEdit: true,
-                  readOnly: _saving,
-                  maxLines: 3,
-                  minLines: 1,
-                  style: asanaDetailTitleStyle(context),
-                  hintText: 'Please fill in project name',
-                ),
-                const SizedBox(height: 12),
-                AsanaDetailLabelValue(
-                  label: 'Description',
-                  child: AsanaHoverTextField(
-                    controller: _descController,
-                    canEdit: true,
-                    readOnly: _saving,
-                    maxLines: 8,
-                    minLines: 2,
-                    style: asanaDetailMultilineValueStyle(context),
-                    hintText: 'Please fill in project description',
-                  ),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'Creator',
-                  child: AsanaDetailPlainValue(text: creatorName),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'Assignees',
-                  child: AsanaAssigneeFieldValue(
-                    anchorLink: _assigneeAnchorLink,
-                    assignees: _rowsForIds(_assigneeIds, state),
-                    canEdit: !_saving,
-                    onOpenPicker: _pickAssignees,
-                    onRemove: _removeAssignee,
-                  ),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'PIC',
-                  child: AsanaAssigneeFieldValue(
-                    anchorLink: _picAnchorLink,
-                    assignees: _rowsForIds(_picAssigneeIds, state),
-                    canEdit: !_saving && _assigneeIds.isNotEmpty,
-                    emptyPlaceholder: _assigneeIds.isEmpty
-                        ? 'Select assignees first'
-                        : 'Select PIC(s)',
-                    onOpenPicker: _pickPics,
-                    onRemove: _removePic,
-                  ),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'Status',
-                  child: Builder(
-                    builder: (anchorContext) => CompositedTransformTarget(
-                      link: _statusAnchorLink,
-                      child: MouseRegion(
-                        cursor: _saving
-                            ? SystemMouseCursors.basic
-                            : SystemMouseCursors.click,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap:
-                              _saving ? null : () => _pickStatus(anchorContext),
-                          child: AsanaDetailStatusPill(status: _draftStatus),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'Start date',
-                  child: AsanaHoverTapValue(
-                    value: _formatDate(_startDate),
-                    canEdit: true,
-                    emptyPlaceholder: '-',
-                    onTap: _saving ? null : _pickStartDate,
-                    onClear: _saving ? null : () => setState(() => _startDate = null),
-                  ),
-                ),
-                AsanaDetailTwoColumnRow(
-                  label: 'Due date',
-                  child: AsanaHoverTapValue(
-                    value: _formatDate(_endDate),
-                    canEdit: true,
-                    emptyPlaceholder: '-',
-                    onTap: _saving ? null : _pickDueDate,
-                    onClear: _saving ? null : () => setState(() => _endDate = null),
-                  ),
-                ),
-              ],
+          AsanaHoverTextField(
+            controller: _nameController,
+            canEdit: true,
+            readOnly: _saving,
+            maxLines: 3,
+            minLines: 1,
+            style: asanaDetailTitleStyle(context),
+            hintText: 'Please fill in project name',
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.taskName),
+          const SizedBox(height: 12),
+          AsanaDetailLabelValue(
+            label: 'Description',
+            child: AsanaHoverTextField(
+              controller: _descController,
+              canEdit: true,
+              readOnly: _saving,
+              maxLines: 8,
+              minLines: 2,
+              style: asanaDetailMultilineValueStyle(context),
+              hintText: 'Please fill in project description',
             ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.description),
+          AsanaDetailTwoColumnRow(
+            label: 'Creator',
+            child: AsanaDetailPlainValue(text: creatorName),
+          ),
+          AsanaDetailTwoColumnRow(
+            label: 'Assignees',
+            child: AsanaAssigneeFieldValue(
+              anchorLink: _assigneeAnchorLink,
+              assignees: _rowsForIds(_assigneeIds, state),
+              canEdit: !_saving,
+              onOpenPicker: _pickAssignees,
+              onRemove: _removeAssignee,
+            ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.assignees),
+          AsanaDetailTwoColumnRow(
+            label: 'PIC',
+            child: AsanaAssigneeFieldValue(
+              anchorLink: _picAnchorLink,
+              assignees: _rowsForIds(_picAssigneeIds, state),
+              canEdit: !_saving && _assigneeIds.isNotEmpty,
+              emptyPlaceholder: _assigneeIds.isEmpty
+                  ? 'Select assignees first'
+                  : 'Select PIC(s)',
+              onOpenPicker: _pickPics,
+              onRemove: _removePic,
+            ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.pic),
+          AsanaDetailTwoColumnRow(
+            label: 'Status',
+            child: Builder(
+              builder: (anchorContext) => CompositedTransformTarget(
+                link: _statusAnchorLink,
+                child: MouseRegion(
+                  cursor: _saving
+                      ? SystemMouseCursors.basic
+                      : SystemMouseCursors.click,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _saving ? null : () => _pickStatus(anchorContext),
+                    child: AsanaDetailStatusPill(status: _draftStatus),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.projectStatus),
+          AsanaDetailTwoColumnRow(
+            label: 'Start date',
+            child: AsanaHoverTapValue(
+              value: _formatDate(_startDate),
+              canEdit: true,
+              emptyPlaceholder: '-',
+              onTap: _saving ? null : _pickStartDate,
+              onClear: _saving ? null : () => setState(() => _startDate = null),
+            ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.startDate),
+          AsanaDetailTwoColumnRow(
+            label: 'Due date',
+            child: AsanaHoverTapValue(
+              value: _formatDate(_endDate),
+              canEdit: true,
+              emptyPlaceholder: '-',
+              onTap: _saving ? null : _pickDueDate,
+              onClear: _saving ? null : () => setState(() => _endDate = null),
+            ),
+          ),
+          _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+        ],
+      ),
     );
   }
 }
