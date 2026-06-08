@@ -307,7 +307,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
             createLabel: 'Create Task',
             onCreate: widget.onCreateTask ?? () {},
             onClearAll: () {
-              setState(_filters.resetToDefaults);
+              setState(_filters.resetForClearAll);
               _onFiltersChanged();
             },
             filterChildren: [

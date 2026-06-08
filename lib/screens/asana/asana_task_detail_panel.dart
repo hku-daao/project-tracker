@@ -20,6 +20,7 @@ import '../../utils/hk_time.dart';
 import '../../utils/holiday_date_picker.dart';
 import '../../utils/singular_workflow_guards.dart';
 import '../../utils/attachment_url_launch.dart';
+import '../../utils/attachment_file_pick.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
 import 'asana_attachment_draft_tile.dart';
@@ -87,6 +88,26 @@ class _AttachmentDraft {
   }
 }
 
+class _InlineImageDraft {
+  _InlineImageDraft({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.bytes,
+    required this.label,
+    this.mimeType = 'image/*',
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final Uint8List bytes;
+  final String label;
+  final String mimeType;
+  final int sortOrder;
+}
+
 class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
@@ -101,7 +122,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final List<_AttachmentDraft> _attachments = [];
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
-  List<InlineAttachmentRow> _draftCommentInlineImages = [];
+  final List<_InlineImageDraft> _pendingInlineImageAdds = [];
+  final List<InlineAttachmentRow> _pendingInlineImageDeletes = [];
 
   bool _loadingExtras = true;
   bool _saving = false;
@@ -261,12 +283,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _attachments.clear();
   }
 
+  void _clearInlineImageDrafts() {
+    _pendingInlineImageAdds.clear();
+    _pendingInlineImageDeletes.clear();
+  }
+
   void _resetCreateDraft() {
     _nameController.clear();
     _descController.clear();
     _reasonController.clear();
     _commentController.clear();
-    _draftCommentInlineImages = [];
+    _clearInlineImageDrafts();
     _localPriority = priorityStandard;
     _selectedProjectId = null;
     _selectedAssigneeIds.clear();
@@ -979,7 +1006,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 onAdd: () => _addExistingCommentInlineImage(task, c),
               ),
               InlineImagePreviewList(
-                images: _commentInlineImages[c.id] ?? const [],
+                images: _inlinePreviewItems(
+                  entityType: 'task_comment',
+                  entityId: c.id,
+                  saved: _commentInlineImages[c.id] ?? const [],
+                ),
+                onRemove: _removeInlineImagePreview,
               ),
             ],
           )
@@ -993,7 +1025,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 ),
               ),
               InlineImagePreviewList(
-                images: _commentInlineImages[c.id] ?? const [],
+                images: _inlinePreviewItems(
+                  entityType: 'task_comment',
+                  entityId: c.id,
+                  saved: _commentInlineImages[c.id] ?? const [],
+                ),
+                onRemove: _removeInlineImagePreview,
               ),
             ],
           );
@@ -1181,11 +1218,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _addTaskDescriptionInlineImage(Task task) async {
-    await _uploadTaskInlineImage(
-      task: task,
+    await _stageInlineImage(
       entityType: 'task_description',
       entityId: task.id,
-      onInserted: _loadTaskDescriptionInlineImages,
     );
   }
 
@@ -1193,140 +1228,175 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     Task task,
     SingularCommentRowDisplay comment,
   ) async {
-    await _uploadTaskInlineImage(
-      task: task,
-      entityType: 'task_comment',
-      entityId: comment.id,
-      onInserted: () async => _loadComments(),
-    );
+    await _stageInlineImage(entityType: 'task_comment', entityId: comment.id);
   }
 
   Future<void> _addDraftCommentInlineImage(Task task) async {
-    final state = context.read<AppState>();
-    final r = await _withBlockingLoading(
-      () => FirebaseAttachmentUploadService.pickUploadForTask(
-        task.id,
-        aclStaffKeys: _createAttachmentAclKeys(state, task.pic ?? ''),
-      ),
-    );
-    if (!mounted || r == null) return;
-    if (r.error != null) {
-      await _showInfo('Inline image upload failed', r.error!);
+    await _stageInlineImage(entityType: 'task_comment', entityId: 'draft');
+  }
+
+  Future<void> _stageInlineImage({
+    required String entityType,
+    required String entityId,
+  }) async {
+    final picked = await pickOneFileWithBytes();
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
+      await _showInfo('Inline image upload failed', 'Could not read file data.');
       return;
     }
-    final url = r.url?.trim();
-    if (url == null || url.isEmpty) return;
-    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
-    setState(() {
-      if (_draftCommentInlineImages.any((image) => image.url == url)) return;
-      _draftCommentInlineImages = [
-        ..._draftCommentInlineImages,
-        InlineAttachmentRow(
-          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          entityType: 'task_comment',
-          entityId: 'draft',
-          url: url,
-          description: label,
-          mimeType: 'image/*',
-          sortOrder: _draftCommentInlineImages.length,
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
+    setState(
+      () => _pendingInlineImageAdds.add(
+        _InlineImageDraft(
+          id: id,
+          entityType: entityType,
+          entityId: entityId,
+          bytes: picked.bytes,
+          label: label,
+          sortOrder: _pendingInlineImageAdds
+              .where(
+                (draft) =>
+                    draft.entityType == entityType &&
+                    draft.entityId == entityId,
+              )
+              .length,
         ),
-      ];
+      ),
+    );
+  }
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    setState(() {
+      final saved = image.inlineAttachment;
+      if (saved != null) {
+        if (!_pendingInlineImageDeletes.any((row) => row.id == saved.id)) {
+          _pendingInlineImageDeletes.add(saved);
+        }
+      } else {
+        _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      }
     });
   }
 
-  Future<String?> _insertDraftCommentInlineImages({
-    required String commentId,
-    required String? creatorStaffLookupKey,
+  bool _canRemoveInlineAttachment(InlineAttachmentRow row) {
+    return FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+      row.url,
+    );
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems({
+    required String entityType,
+    required String entityId,
+    required List<InlineAttachmentRow> saved,
+  }) {
+    final deletedIds = _pendingInlineImageDeletes.map((row) => row.id).toSet();
+    final savedItems = saved
+        .where((row) => !deletedIds.contains(row.id))
+        .map(
+          (row) => InlineImagePreviewItem(
+            id: row.id,
+            inlineAttachment: row,
+            url: row.url,
+            description: row.description,
+            mimeType: row.mimeType,
+            canRemove: _canRemoveInlineAttachment(row),
+          ),
+        );
+    final draftItems = _pendingInlineImageAdds
+        .where(
+          (draft) =>
+              draft.entityType == entityType && draft.entityId == entityId,
+        )
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        );
+    return [...savedItems, ...draftItems];
+  }
+
+  bool _hasPendingInlineImages(String entityType, String entityId) {
+    return _pendingInlineImageAdds.any(
+      (draft) => draft.entityType == entityType && draft.entityId == entityId,
+    );
+  }
+
+  Future<String?> _commitPendingInlineImages({
+    required String taskId,
+    required AppState state,
+    required String? picKey,
+    Map<String, String> entityIdOverrides = const {},
   }) async {
-    for (final image in _draftCommentInlineImages) {
+    for (final draft in List<_InlineImageDraft>.from(_pendingInlineImageAdds)) {
+      final resolvedEntityId =
+          entityIdOverrides[draft.entityId] ?? draft.entityId;
+      if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
+        continue;
+      }
+      final upload = await FirebaseAttachmentUploadService.uploadBytesForTask(
+        taskId,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: _createAttachmentAclKeys(state, picKey ?? ''),
+      );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
       final ins = await SupabaseService.insertInlineAttachment(
-        entityType: 'task_comment',
-        entityId: commentId,
-        url: image.url,
-        description: image.description,
-        mimeType: image.mimeType ?? 'image/*',
-        creatorStaffLookupKey: creatorStaffLookupKey,
+        entityType: draft.entityType,
+        entityId: resolvedEntityId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.userStaffAppId,
+        sortOrder: draft.sortOrder,
       );
       if (ins.error != null) return ins.error;
     }
+    for (final row in List<InlineAttachmentRow>.from(_pendingInlineImageDeletes)) {
+      final deleteErr =
+          await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+        row.url,
+      );
+      if (deleteErr != null) return deleteErr;
+      final markErr = await SupabaseService.markInlineAttachmentDeleted(row.id);
+      if (markErr != null) return markErr;
+      if (row.entityType == 'task_comment') {
+        final touchErr = await SupabaseService.touchSingularCommentRow(
+          commentId: row.entityId,
+          updaterStaffLookupKey: state.userStaffAppId,
+        );
+        if (touchErr != null) return touchErr;
+      }
+    }
+    _clearInlineImageDrafts();
     return null;
   }
 
-  Future<void> _uploadTaskInlineImage({
-    required Task task,
-    required String entityType,
-    required String entityId,
-    required Future<void> Function() onInserted,
-  }) async {
-    final state = context.read<AppState>();
-    final r = await _withBlockingLoading(
-      () => FirebaseAttachmentUploadService.pickUploadForTask(
-        task.id,
-        aclStaffKeys: _createAttachmentAclKeys(state, task.pic ?? ''),
-      ),
+  Future<bool> _commitExistingTaskInlineChanges(
+    AppState state,
+    Task task,
+  ) async {
+    final err = await _commitPendingInlineImages(
+      taskId: task.id,
+      state: state,
+      picKey: task.pic,
     );
-    if (!mounted || r == null) return;
-    if (r.error != null) {
-      await _showInfo('Inline image upload failed', r.error!);
-      return;
+    if (err != null && mounted) {
+      await _showInfo('Could not save inline image', err);
+      return false;
     }
-    final url = r.url?.trim();
-    if (url == null || url.isEmpty) return;
-    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
-    final ins = await SupabaseService.insertInlineAttachment(
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      description: label,
-      mimeType: 'image/*',
-      creatorStaffLookupKey: state.userStaffAppId,
-    );
-    if (ins.error != null && mounted) {
-      await _showInfo('Could not save inline image', ins.error!);
-      return;
-    }
-    if (!mounted) return;
-    await onInserted();
-    if (!mounted) return;
-    _showInlineImageImmediately(
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      label: label,
-    );
-  }
-
-  void _showInlineImageImmediately({
-    required String entityType,
-    required String entityId,
-    required String url,
-    required String label,
-  }) {
-    final row = InlineAttachmentRow(
-      id: 'pending_${DateTime.now().microsecondsSinceEpoch}',
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      description: label,
-      mimeType: 'image/*',
-      sortOrder: 0,
-    );
-    setState(() {
-      if (entityType == 'task_description') {
-        if (_descriptionInlineImages.any((image) => image.url == url)) return;
-        _descriptionInlineImages = [..._descriptionInlineImages, row];
-      } else if (entityType == 'task_comment') {
-        if ((_commentInlineImages[entityId] ?? const []).any(
-          (image) => image.url == url,
-        )) {
-          return;
-        }
-        _commentInlineImages = {
-          ..._commentInlineImages,
-          entityId: [...(_commentInlineImages[entityId] ?? const []), row],
-        };
-      }
-    });
+    await _loadTaskDescriptionInlineImages();
+    await _loadComments();
+    return true;
   }
 
   Future<bool> _validateAssigneesAndPic() async {
@@ -1517,7 +1587,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return;
       }
       final comment = stripInlineImageMarkers(_commentController.text);
-      if (comment.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
+      String? draftCommentId;
+      if (comment.isNotEmpty || _hasPendingInlineImages('task_comment', 'draft')) {
         final c = await SupabaseService.insertSingularCommentRow(
           taskId: newId,
           description: comment.isNotEmpty
@@ -1539,16 +1610,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           }
           return;
         }
-        final inlineErr = await _insertDraftCommentInlineImages(
-          commentId: commentId,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (inlineErr != null && mounted) {
-          await _showInfo('Could not save inline image', inlineErr);
-          return;
-        }
+        draftCommentId = commentId;
         _commentController.clear();
-        _draftCommentInlineImages = [];
+      }
+      final inlineErr = await _commitPendingInlineImages(
+        taskId: newId,
+        state: state,
+        picKey: picKey,
+        entityIdOverrides: draftCommentId == null
+            ? const {}
+            : {'draft': draftCommentId},
+      );
+      if (inlineErr != null && mounted) {
+        await _showInfo('Could not save inline image', inlineErr);
+        return;
       }
       if (_attachments.isNotEmpty) {
         await SupabaseService.replaceAttachmentsForTask(
@@ -1696,7 +1771,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       final comment = stripInlineImageMarkers(_commentController.text);
       String? commentId;
-      if (comment.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
+      if (comment.isNotEmpty || _hasPendingInlineImages('task_comment', 'draft')) {
         final c = await SupabaseService.insertSingularCommentRow(
           taskId: task.id,
           description: comment.isNotEmpty
@@ -1718,18 +1793,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           }
           return;
         }
-        final inlineErr = await _insertDraftCommentInlineImages(
-          commentId: commentId,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (inlineErr != null && mounted) {
-          await _showInfo('Could not save inline image', inlineErr);
-          return;
-        }
         _commentController.clear();
-        _draftCommentInlineImages = [];
-        await _loadComments();
       }
+      final inlineErr = await _commitPendingInlineImages(
+        taskId: task.id,
+        state: state,
+        picKey: picKey,
+        entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+      );
+      if (inlineErr != null && mounted) {
+        await _showInfo('Could not save inline image', inlineErr);
+        return;
+      }
+      await _loadTaskDescriptionInlineImages();
+      await _loadComments();
       if (!mounted) return;
       final updated = _buildUpdatedTask(task, clearProject: clearProject);
       state.replaceTask(updated);
@@ -1772,7 +1849,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _postCommentOnly(AppState state, Task task) async {
     final text = stripInlineImageMarkers(_commentController.text);
-    if (text.isEmpty && _draftCommentInlineImages.isEmpty) return;
+    if (text.isEmpty && !_hasPendingInlineImages('task_comment', 'draft')) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -1793,16 +1870,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         );
         return;
       }
-      final inlineErr = await _insertDraftCommentInlineImages(
-        commentId: commentId,
-        creatorStaffLookupKey: state.userStaffAppId,
+      final inlineErr = await _commitPendingInlineImages(
+        taskId: task.id,
+        state: state,
+        picKey: task.pic,
+        entityIdOverrides: {'draft': commentId},
       );
       if (inlineErr != null) {
         await _showInfo('Could not save inline image', inlineErr);
         return;
       }
       _commentController.clear();
-      _draftCommentInlineImages = [];
       await _loadComments();
       await _notifyEmail(
         'Task comment email',
@@ -1841,6 +1919,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not mark task completed', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
         task.copyWith(
           dbStatus: 'Completed',
@@ -1883,6 +1962,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not submit task', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
         task.copyWith(
           submission: 'Submitted',
@@ -1917,6 +1997,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not return task', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(task.copyWith(submission: 'Returned'));
       await _notifyEmail(
         'Task returned email',
@@ -1950,6 +2031,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not undo task status', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
         task.copyWith(
           dbStatus: 'Incomplete',
@@ -1977,6 +2059,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not restore task', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
         task.copyWith(dbStatus: 'Incomplete', status: TaskStatus.todo),
       );
@@ -2009,6 +2092,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not delete task', err);
         return;
       }
+      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       await SupabaseService.markSubtasksDeletedForParentTask(
         taskId: task.id,
         updateByStaffLookupKey: state.userStaffAppId,
@@ -2581,7 +2665,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     enabled: !_saving,
                     onAdd: () => _addTaskDescriptionInlineImage(task),
                   ),
-                InlineImagePreviewList(images: _descriptionInlineImages),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'task_description',
+                    entityId: task.id,
+                    saved: _descriptionInlineImages,
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
               ],
             ),
           ),
@@ -2775,7 +2866,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     enabled: !_saving,
                     onAdd: () => _addDraftCommentInlineImage(task),
                   ),
-                  InlineImagePreviewList(images: _draftCommentInlineImages),
+                  InlineImagePreviewList(
+                    images: _inlinePreviewItems(
+                      entityType: 'task_comment',
+                      entityId: 'draft',
+                      saved: const [],
+                    ),
+                    onRemove: _removeInlineImagePreview,
+                  ),
                   if (canEdit)
                     _aiSuggestions(AsanaTaskAiFieldKey.comment)
                   else if (showCommentAi)

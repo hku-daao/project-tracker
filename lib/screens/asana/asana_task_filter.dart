@@ -108,6 +108,12 @@ class AsanaTaskFilterState {
     createDateEnd = null;
   }
 
+  void resetForClearAll() {
+    resetToDefaults();
+    statuses.clear();
+    submissions.clear();
+  }
+
   /// Restore filters saved from the main landing / Overview screen.
   void applyLandingFilters(LandingTaskFilters data) {
     var ft = data.filterType;

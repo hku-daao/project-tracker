@@ -52,6 +52,7 @@ class InlineAttachmentRow {
     this.createdBy,
     this.createdAt,
     this.sortOrder = 0,
+    this.status = 'Active',
   });
 
   final String id;
@@ -63,6 +64,7 @@ class InlineAttachmentRow {
   final String? createdBy;
   final DateTime? createdAt;
   final int sortOrder;
+  final String status;
 }
 
 class InitiativesLoadResult {
@@ -842,10 +844,11 @@ class SupabaseService {
       final res = await Supabase.instance.client
           .from('inline_attachment')
           .select(
-            'id,entity_type,entity_id,url,description,mime_type,created_by,created_at,sort_order',
+            'id,entity_type,entity_id,url,description,mime_type,created_by,created_at,sort_order,status',
           )
           .eq('entity_type', type)
           .eq('entity_id', id)
+          .eq('status', 'Active')
           .order('sort_order', ascending: true)
           .order('created_at', ascending: true);
       final out = <InlineAttachmentRow>[];
@@ -865,6 +868,9 @@ class SupabaseService {
             createdBy: m['created_by']?.toString(),
             createdAt: _parseDateTimeNullable(m['created_at']),
             sortOrder: _flexIntFromRow(m['sort_order']),
+            status: m['status']?.toString().trim().isNotEmpty == true
+                ? m['status'].toString().trim()
+                : 'Active',
           ),
         );
       }
@@ -872,6 +878,21 @@ class SupabaseService {
     } catch (e) {
       debugPrint('fetchInlineAttachments: $e');
       return [];
+    }
+  }
+
+  static Future<String?> markInlineAttachmentDeleted(String inlineAttachmentId) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = inlineAttachmentId.trim();
+    if (id.isEmpty) return 'inline attachment id is required';
+    try {
+      await Supabase.instance.client
+          .from('inline_attachment')
+          .update({'status': 'Deleted'})
+          .eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
     }
   }
 
@@ -2451,6 +2472,29 @@ class SupabaseService {
     }
   }
 
+  static Future<String?> touchSingularCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = commentId.trim();
+    if (id.isEmpty) return 'Comment id is empty';
+    try {
+      final map = <String, dynamic>{'update_date': HkTime.timestampForDb()};
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client.from('comment').update(map).eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Sets `status` to `Deleted` and stamps `update_date` / `update_by`.
   static Future<String?> softDeleteSingularCommentRow({
     required String commentId,
@@ -3554,6 +3598,32 @@ class SupabaseService {
           .from('subtask_comment')
           .update(map)
           .eq('id', commentId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> touchSubtaskCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = commentId.trim();
+    if (id.isEmpty) return 'Comment id is empty';
+    try {
+      final map = <String, dynamic>{'update_date': HkTime.timestampForDb()};
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client
+          .from('subtask_comment')
+          .update(map)
+          .eq('id', id);
       return null;
     } catch (e) {
       return e.toString();

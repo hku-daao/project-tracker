@@ -17,6 +17,7 @@ import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/attachment_file_pick.dart';
 import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
 import 'asana_attachment_draft_tile.dart';
@@ -56,6 +57,26 @@ class _SubtaskAttachmentDraft {
   }
 }
 
+class _SubtaskInlineImageDraft {
+  _SubtaskInlineImageDraft({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.bytes,
+    required this.label,
+    this.mimeType = 'image/*',
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final Uint8List bytes;
+  final String label;
+  final String mimeType;
+  final int sortOrder;
+}
+
 class _SubtaskCommentDisplayTile extends StatelessWidget {
   const _SubtaskCommentDisplayTile({
     required this.comment,
@@ -63,13 +84,15 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
     required this.canAddInlineImage,
     required this.inlineImageEnabled,
     required this.onAddInlineImage,
+    required this.onRemoveInlineImage,
   });
 
   final SubtaskCommentRowDisplay comment;
-  final List<InlineAttachmentRow> inlineImages;
+  final List<InlineImagePreviewItem> inlineImages;
   final bool canAddInlineImage;
   final bool inlineImageEnabled;
   final VoidCallback onAddInlineImage;
+  final void Function(InlineImagePreviewItem image) onRemoveInlineImage;
 
   DateTime? get _displayTimestamp {
     final created = comment.createTimestampUtc;
@@ -117,7 +140,10 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
                     enabled: inlineImageEnabled,
                     onAdd: onAddInlineImage,
                   ),
-                InlineImagePreviewList(images: inlineImages),
+                InlineImagePreviewList(
+                  images: inlineImages,
+                  onRemove: onRemoveInlineImage,
+                ),
                 if (timestamp != null) ...[
                   const SizedBox(height: 6),
                   Align(
@@ -185,7 +211,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   List<SubtaskCommentRowDisplay> _comments = [];
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
-  List<InlineAttachmentRow> _draftCommentInlineImages = [];
+  final List<_SubtaskInlineImageDraft> _pendingInlineImageAdds = [];
+  final List<InlineAttachmentRow> _pendingInlineImageDeletes = [];
 
   final Set<String> _assigneeIds = {};
   String? _picAssigneeId;
@@ -271,7 +298,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _comments = [];
     _descriptionInlineImages = [];
     _commentInlineImages = {};
-    _draftCommentInlineImages = [];
+    _clearInlineImageDrafts();
     _assigneeIds.clear();
     _picAssigneeId = null;
     _localPriority = priorityStandard;
@@ -327,7 +354,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
           setState(() {
             _subtask = row;
             _nameController.text = row?.subtaskName ?? '';
-            _descController.text = stripInlineImageMarkers(row?.description ?? '');
+            _descController.text = stripInlineImageMarkers(
+              row?.description ?? '',
+            );
             _reasonController.text = row?.changeDueReason ?? '';
             _assigneeIds.clear();
             if (row != null)
@@ -356,6 +385,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       a.dispose();
     }
     _attachments.clear();
+  }
+
+  void _clearInlineImageDrafts() {
+    _pendingInlineImageAdds.clear();
+    _pendingInlineImageDeletes.clear();
   }
 
   Future<void> _loadAttachments(SingularSubtask? row) async {
@@ -595,7 +629,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     Task? parent = context.read<AppState>().taskById(id);
     parent ??= await SupabaseService.fetchSingularTaskModelById(id);
     final projectId = parent?.projectId?.trim();
-    if (projectId == null || projectId.isEmpty || !SupabaseConfig.isConfigured) {
+    if (projectId == null ||
+        projectId.isEmpty ||
+        !SupabaseConfig.isConfigured) {
       if (mounted) {
         setState(() {
           _parentTask = parent;
@@ -784,7 +820,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   List<String> _picMenuAssigneeIds(AppState state) {
-    final projectPicKeys = _parentProject?.picStaffUuids
+    final projectPicKeys =
+        _parentProject?.picStaffUuids
             .map((u) => u.trim())
             .where((u) => u.isNotEmpty)
             .toSet() ??
@@ -794,7 +831,10 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       final aProjectPic = _staffKeyMatchesProjectKeys(a, projectPicKeys);
       final bProjectPic = _staffKeyMatchesProjectKeys(b, projectPicKeys);
       if (aProjectPic != bProjectPic) return aProjectPic ? -1 : 1;
-      return _labelForAssigneeId(a, state).compareTo(_labelForAssigneeId(b, state));
+      return _labelForAssigneeId(
+        a,
+        state,
+      ).compareTo(_labelForAssigneeId(b, state));
     });
     return ids;
   }
@@ -916,14 +956,45 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       ),
       subtaskSnapshot: () => AsanaSubtaskAiFormSnapshot(
         subtaskName: _nameController.text.trim(),
+        description: stripInlineImageMarkers(_descController.text),
         currentComment: _commentController.text.trim(),
+        assigneesLabel: _assigneeRowsForDisplay(
+          state,
+        ).map((a) => a.name).where((n) => n.isNotEmpty).join(', '),
+        picLabel: _picAssigneeId == null
+            ? ''
+            : _labelForAssigneeId(_picAssigneeId!, state),
+        priority: _localPriority,
+        startDate: _startDate,
+        dueDate: _dueDate,
         canEditName: _effectiveCreateMode || _isCreator(state),
         canEditReason: _effectiveCreateMode || _isCreator(state),
         reason: _reasonController.text.trim(),
         parentTaskContext: _buildParentContext(p, state),
+        staff: _pickerStaff
+            .map((s) => (id: s.assigneeId, name: s.name.trim()))
+            .where((s) => s.name.isNotEmpty)
+            .toList(),
+        canSuggestAssignees: _effectiveCreateMode || _isCreator(state),
+        selectedAssigneeIds: Set<String>.from(_assigneeIds),
+        picAssigneeId: _picAssigneeId,
         websiteAttachments: _websiteAttachmentsForAi(),
       ),
       onApplySubtaskName: (v) => setState(() => _nameController.text = v),
+      onApplySubtaskDescription: (v) =>
+          setState(() => _descController.text = v),
+      onApplySubtaskAssignees: (ids) => setState(() {
+        _assigneeIds
+          ..clear()
+          ..addAll(ids);
+        _syncPicAfterAssigneesChange();
+      }),
+      onApplySubtaskPic: (id) => setState(() => _picAssigneeId = id),
+      onApplySubtaskPriority: (p) => setState(() => _localPriority = p),
+      onApplySubtaskStartDate: (d) =>
+          setState(() => _startDate = DateTime(d.year, d.month, d.day)),
+      onApplySubtaskDueDate: (d) =>
+          setState(() => _dueDate = DateTime(d.year, d.month, d.day)),
       onApplyReason: (v) => setState(() => _reasonController.text = v),
       onApplyComment: (v) => setState(() => _commentController.text = v),
       onApplyWebsiteLink: _applyWebsiteLinkFromAi,
@@ -1013,7 +1084,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           assigneeStaffUuids: _assigneeIds.toList(),
           picStaffUuid: _picAssigneeId ?? '',
           creatorStaffLookupKey: state.userStaffAppId,
-          initialComment: commentText.isNotEmpty ? commentText : null,
+          initialComment: _hasPendingInlineImages('subtask_comment', 'draft')
+              ? null
+              : (commentText.isNotEmpty ? commentText : null),
           changeDueReason: _needsChangeDueReason()
               ? _reasonController.text.trim()
               : null,
@@ -1042,6 +1115,47 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               palette: widget.palette,
             );
             return;
+          }
+          final created = await SupabaseService.fetchSubtaskById(newSubtaskId);
+          String? draftCommentId;
+          if (commentText.isNotEmpty ||
+              _hasPendingInlineImages('subtask_comment', 'draft')) {
+            final comment = await SupabaseService.insertSubtaskCommentRow(
+              subtaskId: newSubtaskId,
+              description: commentText.isNotEmpty
+                  ? commentText
+                  : inlineImageOnlyCommentPlaceholder,
+              creatorStaffLookupKey: state.userStaffAppId,
+            );
+            if (comment.error != null && mounted) {
+              await showAsanaInfoDialog(
+                context: context,
+                title: 'Could not add comment',
+                content: comment.error!,
+                palette: widget.palette,
+              );
+              return;
+            }
+            draftCommentId = comment.commentId;
+          }
+          if (created != null) {
+            final inlineErr = await _commitPendingInlineImages(
+              subtask: created,
+              state: state,
+              entityIdOverrides: {
+                newSubtaskId: newSubtaskId,
+                if (draftCommentId != null) 'draft': draftCommentId,
+              },
+            );
+            if (inlineErr != null && mounted) {
+              await showAsanaInfoDialog(
+                context: context,
+                title: 'Could not save inline image',
+                content: inlineErr,
+                palette: widget.palette,
+              );
+              return;
+            }
           }
         }
         if (newSubtaskId != null &&
@@ -1130,7 +1244,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
       final commentText = stripInlineImageMarkers(_commentController.text);
       String? commentId;
-      if (commentText.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
+      if (commentText.isNotEmpty ||
+          _hasPendingInlineImages('subtask_comment', 'draft')) {
         final ins = await SupabaseService.insertSubtaskCommentRow(
           subtaskId: s!.id,
           description: commentText.isNotEmpty
@@ -1157,23 +1272,23 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             );
             return;
           }
-          final inlineErr = await _insertDraftCommentInlineImages(
-            commentId: commentId,
-            creatorStaffLookupKey: state.userStaffAppId,
-          );
-          if (inlineErr != null && mounted) {
-            await showAsanaInfoDialog(
-              context: context,
-              title: 'Could not save inline image',
-              content: inlineErr,
-              palette: widget.palette,
-            );
-            return;
-          }
           _commentController.clear();
-          _draftCommentInlineImages = [];
           await _loadComments(s);
         }
+      }
+      final inlineErr = await _commitPendingInlineImages(
+        subtask: s!,
+        state: state,
+        entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+      );
+      if (inlineErr != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not save inline image',
+          content: inlineErr,
+          palette: widget.palette,
+        );
+        return;
       }
       if (isCreator) {
         final attErr = await SupabaseService.replaceSubtaskAttachments(
@@ -1250,6 +1365,19 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
+      final inlineErr = await _commitPendingInlineImages(
+        subtask: s,
+        state: state,
+      );
+      if (inlineErr != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not save inline image',
+          content: inlineErr,
+          palette: widget.palette,
+        );
+        return;
+      }
       widget.onChanged?.call();
       if (mounted) widget.onClose?.call();
     } finally {
@@ -1280,7 +1408,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     final commentText = stripInlineImageMarkers(_commentController.text);
     if (_attachments.isEmpty &&
         commentText.isEmpty &&
-        _draftCommentInlineImages.isEmpty) {
+        !_hasPendingInlineImages('subtask_comment', 'draft') &&
+        _pendingInlineImageDeletes.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Submission content required',
@@ -1306,7 +1435,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
-      if (commentText.isNotEmpty || _draftCommentInlineImages.isNotEmpty) {
+      String? commentId;
+      if (commentText.isNotEmpty ||
+          _hasPendingInlineImages('subtask_comment', 'draft')) {
         final ins = await SupabaseService.insertSubtaskCommentRow(
           subtaskId: s.id,
           description: commentText.isNotEmpty
@@ -1323,7 +1454,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           );
           return;
         }
-        final commentId = ins.commentId;
+        commentId = ins.commentId;
         if (commentId == null || commentId.isEmpty) {
           await showAsanaInfoDialog(
             context: context,
@@ -1334,9 +1465,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           );
           return;
         }
-        final inlineErr = await _insertDraftCommentInlineImages(
-          commentId: commentId,
-          creatorStaffLookupKey: state.userStaffAppId,
+        final inlineErr = await _commitPendingInlineImages(
+          subtask: s,
+          state: state,
+          entityIdOverrides: {'draft': commentId},
         );
         if (inlineErr != null && mounted) {
           await showAsanaInfoDialog(
@@ -1348,8 +1480,22 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           return;
         }
         _commentController.clear();
-        _draftCommentInlineImages = [];
         await _loadComments(s);
+      }
+      if (commentId == null) {
+        final inlineErr = await _commitPendingInlineImages(
+          subtask: s,
+          state: state,
+        );
+        if (inlineErr != null && mounted) {
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Could not save inline image',
+            content: inlineErr,
+            palette: widget.palette,
+          );
+          return;
+        }
       }
       final isCreator = _isCreator(state);
       final err = await SupabaseService.updateSubtaskRow(
@@ -1364,6 +1510,19 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           context: context,
           title: 'Could not submit sub-task',
           content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+      final inlineErr = await _commitPendingInlineImages(
+        subtask: s,
+        state: state,
+      );
+      if (inlineErr != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not save inline image',
+          content: inlineErr,
           palette: widget.palette,
         );
         return;
@@ -1532,12 +1691,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     }
   }
 
-  Future<void> _addSubtaskDescriptionInlineImage(SingularSubtask subtask) async {
-    await _uploadSubtaskInlineImage(
-      subtask: subtask,
+  Future<void> _addSubtaskDescriptionInlineImage(
+    SingularSubtask subtask,
+  ) async {
+    await _stageInlineImage(
       entityType: 'subtask_description',
       entityId: subtask.id,
-      onInserted: () async => _loadSubtaskDescriptionInlineImages(subtask),
     );
   }
 
@@ -1545,168 +1704,168 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     SingularSubtask subtask,
     SubtaskCommentRowDisplay comment,
   ) async {
-    await _uploadSubtaskInlineImage(
-      subtask: subtask,
+    await _stageInlineImage(
       entityType: 'subtask_comment',
       entityId: comment.id,
-      onInserted: () async => _loadComments(subtask),
     );
   }
 
   Future<void> _addDraftCommentInlineImage(SingularSubtask subtask) async {
-    final state = context.read<AppState>();
-    final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
-      subtask.id,
-      aclStaffKeys: _subtaskAttachmentAclKeys(state),
-      onUploadPhaseStarted: () {
-        if (!mounted) return;
-        setState(() => _saving = true);
-        AsanaBlockingLoadingOverlay.show(context);
-      },
-      onUploadPhaseEnded: () {
-        AsanaBlockingLoadingOverlay.hide();
-        if (mounted) setState(() => _saving = false);
-      },
-    );
-    if (!mounted) return;
-    if (r.error != null) {
+    await _stageInlineImage(entityType: 'subtask_comment', entityId: 'draft');
+  }
+
+  Future<void> _stageInlineImage({
+    required String entityType,
+    required String entityId,
+  }) async {
+    final picked = await pickOneFileWithBytes();
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Inline image upload failed',
-        content: r.error!,
+        content: 'Could not read file data.',
         palette: widget.palette,
       );
       return;
     }
-    final url = r.url?.trim();
-    if (url == null || url.isEmpty) return;
-    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
-    setState(() {
-      if (_draftCommentInlineImages.any((image) => image.url == url)) return;
-      _draftCommentInlineImages = [
-        ..._draftCommentInlineImages,
-        InlineAttachmentRow(
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    setState(
+      () => _pendingInlineImageAdds.add(
+        _SubtaskInlineImageDraft(
           id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          entityType: 'subtask_comment',
-          entityId: 'draft',
-          url: url,
-          description: label,
-          mimeType: 'image/*',
-          sortOrder: _draftCommentInlineImages.length,
+          entityType: entityType,
+          entityId: entityId,
+          bytes: picked.bytes,
+          label: label,
+          sortOrder: _pendingInlineImageAdds
+              .where(
+                (draft) =>
+                    draft.entityType == entityType &&
+                    draft.entityId == entityId,
+              )
+              .length,
         ),
-      ];
+      ),
+    );
+  }
+
+  bool _canRemoveInlineAttachment(InlineAttachmentRow row) {
+    return FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+      row.url,
+    );
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems({
+    required String entityType,
+    required String entityId,
+    required List<InlineAttachmentRow> saved,
+  }) {
+    final deletedIds = _pendingInlineImageDeletes.map((row) => row.id).toSet();
+    final savedItems = saved
+        .where((row) => !deletedIds.contains(row.id))
+        .map(
+          (row) => InlineImagePreviewItem(
+            id: row.id,
+            inlineAttachment: row,
+            url: row.url,
+            description: row.description,
+            mimeType: row.mimeType,
+            canRemove: _canRemoveInlineAttachment(row),
+          ),
+        );
+    final draftItems = _pendingInlineImageAdds
+        .where(
+          (draft) =>
+              draft.entityType == entityType && draft.entityId == entityId,
+        )
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        );
+    return [...savedItems, ...draftItems];
+  }
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    setState(() {
+      final saved = image.inlineAttachment;
+      if (saved != null) {
+        if (!_pendingInlineImageDeletes.any((row) => row.id == saved.id)) {
+          _pendingInlineImageDeletes.add(saved);
+        }
+      } else {
+        _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      }
     });
   }
 
-  Future<String?> _insertDraftCommentInlineImages({
-    required String commentId,
-    required String? creatorStaffLookupKey,
+  bool _hasPendingInlineImages(String entityType, String entityId) {
+    return _pendingInlineImageAdds.any(
+      (draft) => draft.entityType == entityType && draft.entityId == entityId,
+    );
+  }
+
+  Future<String?> _commitPendingInlineImages({
+    required SingularSubtask subtask,
+    required AppState state,
+    Map<String, String> entityIdOverrides = const {},
   }) async {
-    for (final image in _draftCommentInlineImages) {
+    for (final draft in List<_SubtaskInlineImageDraft>.from(
+      _pendingInlineImageAdds,
+    )) {
+      final resolvedEntityId =
+          entityIdOverrides[draft.entityId] ?? draft.entityId;
+      if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
+        continue;
+      }
+      final upload =
+          await FirebaseAttachmentUploadService.uploadBytesForSubtask(
+            subtask.id,
+            bytes: draft.bytes,
+            originalFilename: draft.label,
+            aclStaffKeys: _subtaskAttachmentAclKeys(state),
+          );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
       final ins = await SupabaseService.insertInlineAttachment(
-        entityType: 'subtask_comment',
-        entityId: commentId,
-        url: image.url,
-        description: image.description,
-        mimeType: image.mimeType ?? 'image/*',
-        creatorStaffLookupKey: creatorStaffLookupKey,
+        entityType: draft.entityType,
+        entityId: resolvedEntityId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.userStaffAppId,
+        sortOrder: draft.sortOrder,
       );
       if (ins.error != null) return ins.error;
     }
-    return null;
-  }
-
-  Future<void> _uploadSubtaskInlineImage({
-    required SingularSubtask subtask,
-    required String entityType,
-    required String entityId,
-    required Future<void> Function() onInserted,
-  }) async {
-    final state = context.read<AppState>();
-    final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
-      subtask.id,
-      aclStaffKeys: _subtaskAttachmentAclKeys(state),
-      onUploadPhaseStarted: () {
-        if (!mounted) return;
-        setState(() => _saving = true);
-        AsanaBlockingLoadingOverlay.show(context);
-      },
-      onUploadPhaseEnded: () {
-        AsanaBlockingLoadingOverlay.hide();
-        if (mounted) setState(() => _saving = false);
-      },
-    );
-    if (!mounted) return;
-    if (r.error != null) {
-      await showAsanaInfoDialog(
-        context: context,
-        title: 'Inline image upload failed',
-        content: r.error!,
-        palette: widget.palette,
-      );
-      return;
-    }
-    final url = r.url?.trim();
-    if (url == null || url.isEmpty) return;
-    final label = r.label?.trim().isNotEmpty == true ? r.label!.trim() : 'image';
-    final ins = await SupabaseService.insertInlineAttachment(
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      description: label,
-      mimeType: 'image/*',
-      creatorStaffLookupKey: state.userStaffAppId,
-    );
-    if (ins.error != null && mounted) {
-      await showAsanaInfoDialog(
-        context: context,
-        title: 'Could not save inline image',
-        content: ins.error!,
-        palette: widget.palette,
-      );
-      return;
-    }
-    await onInserted();
-    if (!mounted) return;
-    _showInlineImageImmediately(
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      label: label,
-    );
-  }
-
-  void _showInlineImageImmediately({
-    required String entityType,
-    required String entityId,
-    required String url,
-    required String label,
-  }) {
-    final row = InlineAttachmentRow(
-      id: 'pending_${DateTime.now().microsecondsSinceEpoch}',
-      entityType: entityType,
-      entityId: entityId,
-      url: url,
-      description: label,
-      mimeType: 'image/*',
-      sortOrder: 0,
-    );
-    setState(() {
-      if (entityType == 'subtask_description') {
-        if (_descriptionInlineImages.any((image) => image.url == url)) return;
-        _descriptionInlineImages = [..._descriptionInlineImages, row];
-      } else if (entityType == 'subtask_comment') {
-        if ((_commentInlineImages[entityId] ?? const []).any(
-          (image) => image.url == url,
-        )) {
-          return;
-        }
-        _commentInlineImages = {
-          ..._commentInlineImages,
-          entityId: [...(_commentInlineImages[entityId] ?? const []), row],
-        };
+    for (final row in List<InlineAttachmentRow>.from(
+      _pendingInlineImageDeletes,
+    )) {
+      final deleteErr =
+          await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+            row.url,
+          );
+      if (deleteErr != null) return deleteErr;
+      final markErr = await SupabaseService.markInlineAttachmentDeleted(row.id);
+      if (markErr != null) return markErr;
+      if (row.entityType == 'subtask_comment') {
+        final touchErr = await SupabaseService.touchSubtaskCommentRow(
+          commentId: row.entityId,
+          updaterStaffLookupKey: state.userStaffAppId,
+        );
+        if (touchErr != null) return touchErr;
       }
-    });
+    }
+    _clearInlineImageDrafts();
+    return null;
   }
 
   List<String?> _subtaskAttachmentAclKeys(AppState state) {
@@ -2013,7 +2172,14 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                     enabled: !_saving,
                     onAdd: () => _addSubtaskDescriptionInlineImage(s),
                   ),
-                InlineImagePreviewList(images: _descriptionInlineImages),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'subtask_description',
+                    entityId: s?.id ?? '',
+                    saved: _descriptionInlineImages,
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
               ],
             ),
           ),
@@ -2246,12 +2412,20 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             for (final c in _comments)
               _SubtaskCommentDisplayTile(
                 comment: c,
-                inlineImages: _commentInlineImages[c.id] ?? const [],
-                canAddInlineImage: _matchesCurrentStaff(state, c.createByStaffId),
+                inlineImages: _inlinePreviewItems(
+                  entityType: 'subtask_comment',
+                  entityId: c.id,
+                  saved: _commentInlineImages[c.id] ?? const [],
+                ),
+                canAddInlineImage: _matchesCurrentStaff(
+                  state,
+                  c.createByStaffId,
+                ),
                 inlineImageEnabled: !_saving,
                 onAddInlineImage: s == null
                     ? () {}
                     : () => _addExistingCommentInlineImage(s, c),
+                onRemoveInlineImage: _removeInlineImagePreview,
               ),
             const SizedBox(height: 8),
           ],
@@ -2273,7 +2447,14 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                     enabled: !_saving,
                     onAdd: () => _addDraftCommentInlineImage(s),
                   ),
-                InlineImagePreviewList(images: _draftCommentInlineImages),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'subtask_comment',
+                    entityId: 'draft',
+                    saved: const [],
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
               ],
             ),
           ),
@@ -2283,4 +2464,3 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     );
   }
 }
-

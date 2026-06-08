@@ -136,29 +136,45 @@ class AsanaTaskAiFormSnapshot {
   String buildLlmContext() {
     final buf = StringBuffer()
       ..writeln('Today (Hong Kong): ${_ymd(HkTime.todayDateOnlyHk())}')
-      ..writeln('Current form values (user may change; suggest only what the prompt implies):')
+      ..writeln(
+        'Current form values (user may change; suggest only what the prompt implies):',
+      )
       ..writeln('- name: ${name.isEmpty ? "(empty)" : name}')
-      ..writeln('- description: ${description.isEmpty ? "(empty)" : description}')
-      ..writeln('- comment (draft, posted on save): ${commentDraft.isEmpty ? "(empty)" : commentDraft}')
+      ..writeln(
+        '- description: ${description.isEmpty ? "(empty)" : description}',
+      )
+      ..writeln(
+        '- comment (draft, posted on save): ${commentDraft.isEmpty ? "(empty)" : commentDraft}',
+      )
       ..writeln('- project: ${projectLabel.isEmpty ? "(none)" : projectLabel}')
-      ..writeln('- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}')
+      ..writeln(
+        '- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}',
+      )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
-      ..writeln('- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}')
+      ..writeln(
+        '- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}',
+      )
       ..writeln('- due date: ${dueDate == null ? "(empty)" : _ymd(dueDate!)}')
-      ..writeln('- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}');
+      ..writeln(
+        '- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}',
+      );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
       for (final w in websiteAttachments) {
-        buf.writeln('- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}');
+        buf.writeln(
+          '- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}',
+        );
       }
     } else {
       buf.writeln('Current website link attachments: (none)');
     }
 
     if (canSuggestProject && projects.isNotEmpty) {
-      buf.writeln('Available projects: ${projects.map((p) => p.name).join('; ')}');
+      buf.writeln(
+        'Available projects: ${projects.map((p) => p.name).join('; ')}',
+      );
     }
     if (canSuggestAssignees && staff.isNotEmpty) {
       buf.writeln('Available staff: ${staff.map((s) => s.name).join('; ')}');
@@ -172,53 +188,136 @@ class AsanaTaskAiFormSnapshot {
 }
 
 /// Task-field assistant (create / creator edit) vs comment-only (assignees, etc.).
-enum AsanaTaskAiAssistantMode { taskFields, commentOnly, projectFields, subtaskFields }
+enum AsanaTaskAiAssistantMode {
+  taskFields,
+  commentOnly,
+  projectFields,
+  subtaskFields,
+}
 
 class AsanaSubtaskAiFormSnapshot {
   const AsanaSubtaskAiFormSnapshot({
     required this.subtaskName,
+    required this.description,
     required this.currentComment,
+    required this.assigneesLabel,
+    required this.picLabel,
+    required this.priority,
+    required this.startDate,
+    required this.dueDate,
     required this.canEditName,
     required this.canEditReason,
     required this.reason,
     required this.parentTaskContext,
+    required this.staff,
+    required this.canSuggestAssignees,
+    required this.selectedAssigneeIds,
+    this.picAssigneeId,
     this.websiteAttachments = const [],
   });
 
   final String subtaskName;
+  final String description;
   final String currentComment;
+  final String assigneesLabel;
+  final String picLabel;
+  final int priority;
+  final DateTime? startDate;
+  final DateTime? dueDate;
   final bool canEditName;
   final bool canEditReason;
   final String reason;
   final String parentTaskContext;
+  final List<({String id, String name})> staff;
+  final bool canSuggestAssignees;
+  final Set<String> selectedAssigneeIds;
+  final String? picAssigneeId;
   final List<({String url, String description})> websiteAttachments;
 
   String buildLlmContext() {
     final buf = StringBuffer()
+      ..writeln(
+        'Today (Hong Kong): ${AsanaTaskAiFormSnapshot._ymd(HkTime.todayDateOnlyHk())}',
+      )
       ..writeln('Parent task details (read-only context):')
-      ..writeln(parentTaskContext.trim().isEmpty ? "(no details provided)" : parentTaskContext.trim())
+      ..writeln(
+        parentTaskContext.trim().isEmpty
+            ? "(no details provided)"
+            : parentTaskContext.trim(),
+      )
       ..writeln('\nSub-task fields:')
       ..writeln('- name: ${subtaskName.isEmpty ? "(unnamed)" : subtaskName}')
-      ..writeln('- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}')
-      ..writeln('- comment (draft, posted on save): ${currentComment.isEmpty ? "(empty)" : currentComment}');
+      ..writeln(
+        '- description: ${description.isEmpty ? "(empty)" : description}',
+      )
+      ..writeln(
+        '- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}',
+      )
+      ..writeln(
+        '- comment (draft, posted on save): ${currentComment.isEmpty ? "(empty)" : currentComment}',
+      )
+      ..writeln(
+        '- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}',
+      )
+      ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
+      ..writeln('- priority: ${priorityToDisplayName(priority)}')
+      ..writeln(
+        '- start date: ${startDate == null ? "(empty)" : AsanaTaskAiFormSnapshot._ymd(startDate!)}',
+      )
+      ..writeln(
+        '- due date: ${dueDate == null ? "(empty)" : AsanaTaskAiFormSnapshot._ymd(dueDate!)}',
+      );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
       for (final w in websiteAttachments) {
-        buf.writeln('- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}');
+        buf.writeln(
+          '- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}',
+        );
       }
     } else {
       buf.writeln('Current website link attachments: (none)');
     }
 
     if (canEditName) {
-      final editable = ['name', if (canEditReason) 'reason', 'comment', 'websiteLinks'];
+      final editable = [
+        'name',
+        'description',
+        if (canSuggestAssignees) 'assignees',
+        if (canSuggestAssignees) 'PIC',
+        'priority',
+        'startDate',
+        'dueDate',
+        if (canEditReason) 'reason',
+        'comment',
+        'websiteLinks',
+      ];
       buf.writeln('\nYou may suggest changes to: ${editable.join(', ')}.');
     } else {
-      final editable = [if (canEditReason) 'reason', 'comment', 'websiteLinks'];
-      buf.writeln('\nYou may suggest changes to: ${editable.join(', ')}. (name is NOT modifiable by this user)');
+      final editable = [
+        'description',
+        if (canSuggestAssignees) 'assignees',
+        if (canSuggestAssignees) 'PIC',
+        'priority',
+        'startDate',
+        'dueDate',
+        if (canEditReason) 'reason',
+        'comment',
+        'websiteLinks',
+      ];
+      buf.writeln(
+        '\nYou may suggest changes to: ${editable.join(', ')}. (name is NOT modifiable by this user)',
+      );
     }
-    buf.writeln('If assignees are discussed, only use people listed as allowable sub-task assignees in the parent task details.');
+    buf.writeln(
+      'If assignees are discussed, only use people listed as allowable sub-task assignees in the parent task details.',
+    );
+    if (canSuggestAssignees && staff.isNotEmpty) {
+      buf.writeln(
+        'Available sub-task assignees: ${staff.map((s) => s.name).join('; ')}',
+      );
+    }
+    buf.writeln('Priority options: Standard, URGENT');
     return buf.toString();
   }
 }
@@ -228,31 +327,272 @@ class AsanaSubtaskAiSuggestionBuilder {
     required Map<String, dynamic> raw,
     required AsanaSubtaskAiFormSnapshot form,
     required void Function(String name)? applyName,
+    required void Function(String description)? applyDescription,
+    required void Function(Set<String> assigneeIds)? applyAssignees,
+    required void Function(String picAssigneeId)? applyPic,
+    required void Function(int priority)? applyPriority,
+    required void Function(DateTime start)? applyStartDate,
+    required void Function(DateTime due)? applyDueDate,
     required void Function(String reason)? applyReason,
     required void Function(String comment) applyComment,
     required void Function(String url, String description)? applyWebsiteLink,
   }) {
     final related = raw['related'];
     if (related is bool && !related) {
-      final msg = AsanaTaskAiSuggestionBuilder._str(raw['message']) ??
+      final msg =
+          AsanaTaskAiSuggestionBuilder._str(raw['message']) ??
           'This prompt does not look related to updating a sub-task.';
       return [AsanaTaskAiSuggestionLine.warning(msg)];
     }
 
     final lines = <AsanaTaskAiSuggestionLine>[];
 
+    DateTime? proposedStart;
+    DateTime? proposedDue;
+    final startRaw = AsanaTaskAiSuggestionBuilder._str(raw['startDate']);
+    final dueRaw = AsanaTaskAiSuggestionBuilder._str(raw['dueDate']);
+    if (startRaw != null) {
+      proposedStart = AsanaTaskAiSuggestionBuilder._parseYmd(startRaw);
+    }
+    if (dueRaw != null) {
+      proposedDue = AsanaTaskAiSuggestionBuilder._parseYmd(dueRaw);
+    }
+
+    var datesBlocked = false;
+    if (proposedStart != null &&
+        proposedDue != null &&
+        AsanaTaskAiSuggestionBuilder._dateOnly(
+          proposedStart,
+        ).isAfter(AsanaTaskAiSuggestionBuilder._dateOnly(proposedDue))) {
+      datesBlocked = true;
+      lines.add(
+        const AsanaTaskAiSuggestionLine.info(
+          'Start and due dates were not suggested because the start date would be after the due date.',
+          fieldKey: AsanaTaskAiFieldKey.startDate,
+        ),
+      );
+    }
+
     if (form.canEditName && applyName != null) {
       final name = AsanaTaskAiSuggestionBuilder._str(raw['name']);
       if (name != null &&
           name.isNotEmpty &&
-          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(name, form.subtaskName)) {
+          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(
+            name,
+            form.subtaskName,
+          )) {
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.taskName,
             fieldLabel: 'Sub-task name',
-            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.subtaskName),
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.subtaskName,
+            ),
             suggestedText: name,
             onAdopt: () => applyName(name),
+          ),
+        );
+      }
+    }
+
+    final desc = AsanaTaskAiSuggestionBuilder._str(raw['description']);
+    if (applyDescription != null &&
+        desc != null &&
+        desc.isNotEmpty &&
+        !AsanaTaskAiSuggestionBuilder._sameNormalizedText(
+          desc,
+          form.description,
+        )) {
+      lines.add(
+        AsanaTaskAiSuggestionLine.adopt(
+          fieldKey: AsanaTaskAiFieldKey.description,
+          fieldLabel: 'Description',
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+            form.description,
+          ),
+          suggestedText: desc,
+          onAdopt: () => applyDescription(desc),
+        ),
+      );
+    }
+
+    if (form.canSuggestAssignees && applyAssignees != null) {
+      var workingAssignees = Set<String>.from(form.selectedAssigneeIds);
+      final names = AsanaTaskAiSuggestionBuilder._stringList(
+        raw['assigneeNames'],
+      );
+      if (names.isNotEmpty) {
+        final resolved = <String>{};
+        final missing = <String>[];
+        for (final n in names) {
+          final ids = AsanaTaskAiSuggestionBuilder._matchStaffIds(
+            n,
+            form.staff,
+          );
+          if (ids.isEmpty) {
+            missing.add(n);
+          } else {
+            resolved.addAll(ids);
+          }
+        }
+        if (missing.isNotEmpty) {
+          lines.add(
+            AsanaTaskAiSuggestionLine.info(
+              'Could not match assignee(s): ${missing.join(', ')}',
+              fieldKey: AsanaTaskAiFieldKey.assignees,
+            ),
+          );
+        }
+        if (resolved.isNotEmpty) {
+          workingAssignees = resolved;
+        }
+      }
+
+      String? proposedPicId;
+      final picName = AsanaTaskAiSuggestionBuilder._str(raw['picName']);
+      if (picName != null && picName.isNotEmpty) {
+        final picIds = AsanaTaskAiSuggestionBuilder._matchStaffIds(
+          picName,
+          form.staff,
+        );
+        if (picIds.isEmpty) {
+          lines.add(
+            AsanaTaskAiSuggestionLine.info(
+              'PIC "$picName" was not found in the staff list.',
+              fieldKey: AsanaTaskAiFieldKey.pic,
+            ),
+          );
+        } else if (picIds.length > 1) {
+          lines.add(
+            AsanaTaskAiSuggestionLine.info(
+              'Several staff match "$picName": '
+              '${AsanaTaskAiSuggestionBuilder._staffNamesForIds(picIds, form.staff)}. Choose PIC manually.',
+              fieldKey: AsanaTaskAiFieldKey.pic,
+            ),
+          );
+        } else {
+          proposedPicId = picIds.single;
+          workingAssignees = {...workingAssignees, proposedPicId};
+        }
+      }
+
+      if (!AsanaTaskAiSuggestionBuilder._sameIdSet(
+        workingAssignees,
+        form.selectedAssigneeIds,
+      )) {
+        final label = AsanaTaskAiSuggestionBuilder._staffNamesForIds(
+          workingAssignees.toList(),
+          form.staff,
+        );
+        final ids = workingAssignees;
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.assignees,
+            fieldLabel: 'Assignees',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.assigneesLabel,
+            ),
+            suggestedText: label,
+            onAdopt: () => applyAssignees(ids),
+          ),
+        );
+      }
+
+      if (applyPic != null &&
+          proposedPicId != null &&
+          proposedPicId != form.picAssigneeId) {
+        final picId = proposedPicId;
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.pic,
+            fieldLabel: 'PIC',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.picLabel,
+            ),
+            suggestedText: AsanaTaskAiSuggestionBuilder._staffNameForId(
+              picId,
+              form.staff,
+            ),
+            onAdopt: () => applyPic(picId),
+          ),
+        );
+      }
+    }
+
+    final pr = AsanaTaskAiSuggestionBuilder._str(raw['priority']);
+    if (applyPriority != null && pr != null && pr.isNotEmpty) {
+      final p = AsanaTaskAiSuggestionBuilder._parsePriority(pr);
+      if (p == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Priority "$pr" was not recognized (use Standard or URGENT).',
+            fieldKey: AsanaTaskAiFieldKey.priority,
+          ),
+        );
+      } else if (p != form.priority) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.priority,
+            fieldLabel: 'Priority',
+            currentValue: priorityToDisplayName(form.priority),
+            suggestedText: priorityToDisplayName(p),
+            onAdopt: () => applyPriority(p),
+          ),
+        );
+      }
+    }
+
+    if (!datesBlocked) {
+      final start = proposedStart;
+      if (applyStartDate != null &&
+          start != null &&
+          !AsanaTaskAiSuggestionBuilder._sameDateOnly(start, form.startDate)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.startDate,
+            fieldLabel: 'Start date',
+            currentValue: form.startDate == null
+                ? '(empty)'
+                : AsanaTaskAiSuggestionBuilder._formatDisplayDate(
+                    form.startDate!,
+                  ),
+            suggestedText: AsanaTaskAiSuggestionBuilder._formatDisplayDate(
+              start,
+            ),
+            onAdopt: () => applyStartDate(start),
+          ),
+        );
+      } else if (startRaw != null && startRaw.isNotEmpty && start == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Start date "$startRaw" could not be parsed (use YYYY-MM-DD).',
+            fieldKey: AsanaTaskAiFieldKey.startDate,
+          ),
+        );
+      }
+
+      final due = proposedDue;
+      if (applyDueDate != null &&
+          due != null &&
+          !AsanaTaskAiSuggestionBuilder._sameDateOnly(due, form.dueDate)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.dueDate,
+            fieldLabel: 'Due date',
+            currentValue: form.dueDate == null
+                ? '(empty)'
+                : AsanaTaskAiSuggestionBuilder._formatDisplayDate(
+                    form.dueDate!,
+                  ),
+            suggestedText: AsanaTaskAiSuggestionBuilder._formatDisplayDate(due),
+            onAdopt: () => applyDueDate(due),
+          ),
+        );
+      } else if (dueRaw != null && dueRaw.isNotEmpty && due == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Due date "$dueRaw" could not be parsed (use YYYY-MM-DD).',
+            fieldKey: AsanaTaskAiFieldKey.dueDate,
           ),
         );
       }
@@ -262,12 +602,17 @@ class AsanaSubtaskAiSuggestionBuilder {
       final reason = AsanaTaskAiSuggestionBuilder._str(raw['reason']);
       if (reason != null &&
           reason.isNotEmpty &&
-          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(reason, form.reason)) {
+          !AsanaTaskAiSuggestionBuilder._sameNormalizedText(
+            reason,
+            form.reason,
+          )) {
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.reason,
             fieldLabel: 'Reason',
-            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.reason),
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.reason,
+            ),
             suggestedText: reason,
             onAdopt: () => applyReason(reason),
           ),
@@ -281,7 +626,9 @@ class AsanaSubtaskAiSuggestionBuilder {
         AsanaTaskAiSuggestionLine.adopt(
           fieldKey: AsanaTaskAiFieldKey.comment,
           fieldLabel: 'Comment',
-          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(form.currentComment),
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+            form.currentComment,
+          ),
           suggestedText: comment,
           onAdopt: () => applyComment(comment),
         ),
@@ -289,7 +636,9 @@ class AsanaSubtaskAiSuggestionBuilder {
     }
 
     if (applyWebsiteLink != null) {
-      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(raw['websiteLinks']);
+      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(
+        raw['websiteLinks'],
+      );
       for (var i = 0; i < wList.length; i++) {
         final link = wList[i];
         final display = link.description.trim().isEmpty
@@ -310,7 +659,9 @@ class AsanaSubtaskAiSuggestionBuilder {
 
     if (lines.isEmpty) {
       return [
-        const AsanaTaskAiSuggestionLine.info('No changes suggested from this prompt.'),
+        const AsanaTaskAiSuggestionLine.info(
+          'No changes suggested from this prompt.',
+        ),
       ];
     }
     return lines;
@@ -332,18 +683,24 @@ class AsanaCommentAiFormSnapshot {
   String buildLlmContext() {
     final buf = StringBuffer()
       ..writeln('Task: ${taskName.isEmpty ? "(unnamed task)" : taskName}')
-      ..writeln('Current comment draft: ${currentComment.isEmpty ? "(empty)" : currentComment}');
+      ..writeln(
+        'Current comment draft: ${currentComment.isEmpty ? "(empty)" : currentComment}',
+      );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
       for (final w in websiteAttachments) {
-        buf.writeln('- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}');
+        buf.writeln(
+          '- ${w.url} — ${w.description.isEmpty ? "(no description)" : w.description}',
+        );
       }
     } else {
       buf.writeln('Current website link attachments: (none)');
     }
 
-    buf.writeln('\nYou may ONLY suggest an improved comment body or websiteLinks. Do not change task name, dates, assignees, or any other task field.');
+    buf.writeln(
+      '\nYou may ONLY suggest an improved comment body or websiteLinks. Do not change task name, dates, assignees, or any other task field.',
+    );
     return buf.toString();
   }
 }
@@ -357,30 +714,30 @@ class AsanaTaskAiSuggestionLine {
     required this.suggestedText,
     required this.onAdopt,
     this.linkIndex,
-  })  : message = null,
-        adoptable = true,
-        isWarning = false;
+  }) : message = null,
+       adoptable = true,
+       isWarning = false;
 
   const AsanaTaskAiSuggestionLine.info(
     this.message, {
     this.fieldKey = AsanaTaskAiFieldKey.global,
     this.isWarning = false,
-  })  : fieldLabel = null,
-        linkIndex = null,
-        currentValue = null,
-        suggestedText = null,
-        onAdopt = null,
-        adoptable = false;
+  }) : fieldLabel = null,
+       linkIndex = null,
+       currentValue = null,
+       suggestedText = null,
+       onAdopt = null,
+       adoptable = false;
 
   const AsanaTaskAiSuggestionLine.warning(this.message)
-      : fieldKey = AsanaTaskAiFieldKey.global,
-        linkIndex = null,
-        fieldLabel = null,
-        currentValue = null,
-        suggestedText = null,
-        onAdopt = null,
-        adoptable = false,
-        isWarning = true;
+    : fieldKey = AsanaTaskAiFieldKey.global,
+      linkIndex = null,
+      fieldLabel = null,
+      currentValue = null,
+      suggestedText = null,
+      onAdopt = null,
+      adoptable = false,
+      isWarning = true;
 
   final AsanaTaskAiFieldKey fieldKey;
 
@@ -409,7 +766,8 @@ class AsanaTaskAiSuggestionBuilder {
   }) {
     final related = raw['related'];
     if (related is bool && !related) {
-      final msg = _str(raw['message']) ??
+      final msg =
+          _str(raw['message']) ??
           'This prompt does not look related to filling in task details.';
       return [AsanaTaskAiSuggestionLine.warning(msg)];
     }
@@ -459,8 +817,9 @@ class AsanaTaskAiSuggestionBuilder {
         AsanaTaskAiSuggestionLine.adopt(
           fieldKey: AsanaTaskAiFieldKey.description,
           fieldLabel: 'Description',
-          currentValue:
-              AsanaTaskAiSuggestionLine._displayCurrent(form.description),
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+            form.description,
+          ),
           suggestedText: desc,
           onAdopt: () => apply.applyDescription(desc),
         ),
@@ -475,8 +834,9 @@ class AsanaTaskAiSuggestionBuilder {
         AsanaTaskAiSuggestionLine.adopt(
           fieldKey: AsanaTaskAiFieldKey.comment,
           fieldLabel: 'Comment',
-          currentValue:
-              AsanaTaskAiSuggestionLine._displayCurrent(form.commentDraft),
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+            form.commentDraft,
+          ),
           suggestedText: comment,
           onAdopt: () => apply.applyComment(comment),
         ),
@@ -514,8 +874,9 @@ class AsanaTaskAiSuggestionBuilder {
             AsanaTaskAiSuggestionLine.adopt(
               fieldKey: AsanaTaskAiFieldKey.project,
               fieldLabel: 'Project',
-              currentValue:
-                  AsanaTaskAiSuggestionLine._displayCurrent(form.projectLabel),
+              currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+                form.projectLabel,
+              ),
               suggestedText: projName,
               onAdopt: () => apply.applyProject(id),
             ),
@@ -598,8 +959,9 @@ class AsanaTaskAiSuggestionBuilder {
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.pic,
             fieldLabel: 'PIC',
-            currentValue:
-                AsanaTaskAiSuggestionLine._displayCurrent(form.picLabel),
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.picLabel,
+            ),
             suggestedText: _staffNameForId(picId, form.staff),
             onAdopt: () => apply.applyPic(picId),
           ),
@@ -803,9 +1165,7 @@ class AsanaTaskAiSuggestionBuilder {
       final month = int.parse(m.group(2)!);
       final day = int.parse(m.group(3)!);
       final parsed = DateTime(year, month, day);
-      if (parsed.year != year ||
-          parsed.month != month ||
-          parsed.day != day) {
+      if (parsed.year != year || parsed.month != month || parsed.day != day) {
         return null;
       }
       return parsed;
@@ -835,9 +1195,7 @@ class AsanaTaskAiSuggestionBuilder {
   static String _formatDisplayDate(DateTime d) =>
       HkTime.formatInstantAsHk(d, 'MMM d, yyyy');
 
-  static List<({String url, String description})> _websiteLinksList(
-    dynamic v,
-  ) {
+  static List<({String url, String description})> _websiteLinksList(dynamic v) {
     if (v is! List) return [];
     final out = <({String url, String description})>[];
     for (final item in v) {
@@ -852,8 +1210,7 @@ class AsanaTaskAiSuggestionBuilder {
 
   static bool _hasWebsiteUrl(AsanaTaskAiFormSnapshot form, String url) {
     final n = _normalizeUrl(url);
-    return form.websiteAttachments
-        .any((w) => _normalizeUrl(w.url) == n);
+    return form.websiteAttachments.any((w) => _normalizeUrl(w.url) == n);
   }
 
   static String _normalizeUrl(String raw) {
@@ -884,7 +1241,8 @@ class AsanaCommentAiSuggestionBuilder {
   }) {
     final related = raw['related'];
     if (related is bool && !related) {
-      final msg = _str(raw['message']) ??
+      final msg =
+          _str(raw['message']) ??
           'This prompt does not look related to writing a task comment.';
       return [AsanaTaskAiSuggestionLine.warning(msg)];
     }
@@ -896,8 +1254,9 @@ class AsanaCommentAiSuggestionBuilder {
         AsanaTaskAiSuggestionLine.adopt(
           fieldKey: AsanaTaskAiFieldKey.comment,
           fieldLabel: 'Comment',
-          currentValue:
-              AsanaTaskAiSuggestionLine._displayCurrent(form.currentComment),
+          currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+            form.currentComment,
+          ),
           suggestedText: comment,
           onAdopt: () => applyComment(comment),
         ),
@@ -905,7 +1264,9 @@ class AsanaCommentAiSuggestionBuilder {
     }
 
     if (applyWebsiteLink != null) {
-      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(raw['websiteLinks']);
+      final wList = AsanaTaskAiSuggestionBuilder._websiteLinksList(
+        raw['websiteLinks'],
+      );
       for (var i = 0; i < wList.length; i++) {
         final link = wList[i];
         final display = link.description.trim().isEmpty
@@ -987,17 +1348,23 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.projectApply,
     this.subtaskSnapshot,
     this.onApplySubtaskName,
+    this.onApplySubtaskDescription,
+    this.onApplySubtaskAssignees,
+    this.onApplySubtaskPic,
+    this.onApplySubtaskPriority,
+    this.onApplySubtaskStartDate,
+    this.onApplySubtaskDueDate,
     this.onApplyReason,
     this.auditContext,
-  })  : assert(
-          mode == AsanaTaskAiAssistantMode.taskFields
-              ? formSnapshot != null && apply != null
-              : mode == AsanaTaskAiAssistantMode.projectFields
-                  ? projectSnapshot != null && projectApply != null
-                  : mode == AsanaTaskAiAssistantMode.subtaskFields
-                      ? subtaskSnapshot != null && onApplyComment != null
-                      : commentSnapshot != null && onApplyComment != null,
-        );
+  }) : assert(
+         mode == AsanaTaskAiAssistantMode.taskFields
+             ? formSnapshot != null && apply != null
+             : mode == AsanaTaskAiAssistantMode.projectFields
+             ? projectSnapshot != null && projectApply != null
+             : mode == AsanaTaskAiAssistantMode.subtaskFields
+             ? subtaskSnapshot != null && onApplyComment != null
+             : commentSnapshot != null && onApplyComment != null,
+       );
 
   final AsanaTaskAiAssistantMode mode;
   final bool Function() readOnly;
@@ -1010,6 +1377,12 @@ class AsanaTaskAiController extends ChangeNotifier {
   final AsanaProjectAiApply? projectApply;
   final AsanaSubtaskAiFormSnapshot Function()? subtaskSnapshot;
   final void Function(String name)? onApplySubtaskName;
+  final void Function(String description)? onApplySubtaskDescription;
+  final void Function(Set<String> assigneeIds)? onApplySubtaskAssignees;
+  final void Function(String picAssigneeId)? onApplySubtaskPic;
+  final void Function(int priority)? onApplySubtaskPriority;
+  final void Function(DateTime start)? onApplySubtaskStartDate;
+  final void Function(DateTime due)? onApplySubtaskDueDate;
   final void Function(String reason)? onApplyReason;
   final AsanaAiAuditContext Function()? auditContext;
 
@@ -1114,7 +1487,9 @@ class AsanaTaskAiController extends ChangeNotifier {
     return fromLlm();
   }
 
-  static String _summaryFromAdoptable(List<AsanaTaskAiSuggestionLine> adoptable) {
+  static String _summaryFromAdoptable(
+    List<AsanaTaskAiSuggestionLine> adoptable,
+  ) {
     final labels = <String>[];
     for (final l in adoptable) {
       final label = l.fieldKey == AsanaTaskAiFieldKey.websiteLink
@@ -1181,7 +1556,10 @@ class AsanaTaskAiController extends ChangeNotifier {
     return out;
   }
 
-  String _auditSuggestionKey(AsanaTaskAiSuggestionLine line, int fallbackIndex) {
+  String _auditSuggestionKey(
+    AsanaTaskAiSuggestionLine line,
+    int fallbackIndex,
+  ) {
     if (line.fieldKey == AsanaTaskAiFieldKey.websiteLink) {
       return 'websiteLink_${line.linkIndex ?? fallbackIndex}';
     }
@@ -1204,10 +1582,7 @@ class AsanaTaskAiController extends ChangeNotifier {
       _auditFieldSuggestions[key] as Map,
     );
     existing['accepted'] = accepted;
-    _auditFieldSuggestions = {
-      ..._auditFieldSuggestions,
-      key: existing,
-    };
+    _auditFieldSuggestions = {..._auditFieldSuggestions, key: existing};
     final id = _auditLogId;
     if (id != null) {
       unawaited(
@@ -1288,6 +1663,12 @@ class AsanaTaskAiController extends ChangeNotifier {
           raw: raw,
           form: form,
           applyName: onApplySubtaskName,
+          applyDescription: onApplySubtaskDescription,
+          applyAssignees: onApplySubtaskAssignees,
+          applyPic: onApplySubtaskPic,
+          applyPriority: onApplySubtaskPriority,
+          applyStartDate: onApplySubtaskStartDate,
+          applyDueDate: onApplySubtaskDueDate,
           applyReason: onApplyReason,
           applyComment: onApplyComment!,
           applyWebsiteLink: onApplyWebsiteLink,
@@ -1382,9 +1763,7 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
       elevation: 4,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: widget.footerBorder),
-          ),
+          border: Border(top: BorderSide(color: widget.footerBorder)),
         ),
         child: SafeArea(
           top: false,
@@ -1437,9 +1816,7 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
                             ),
                           ),
                         ),
-                        if (!_expanded &&
-                            summary != null &&
-                            summary.isNotEmpty)
+                        if (!_expanded && summary != null && summary.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                             child: Text(
@@ -1513,8 +1890,8 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
               commentOnly
                   ? 'This assistant helps you write a better comment.'
                   : projectOnly
-                      ? 'Describe the project, then tap Analyse. Suggestions appear on matching fields.'
-                      : 'Describe the task, then tap Analyse. Suggestions appear on matching fields.',
+                  ? 'Describe the project, then tap Analyse. Suggestions appear on matching fields.'
+                  : 'Describe the task, then tap Analyse. Suggestions appear on matching fields.',
               style: asanaDetailLabelStyle(context),
             ),
             if (!configured) ...[
@@ -1522,9 +1899,9 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
               Text(
                 'Not configured. Run with secrets\\deepseek_api_key.txt or '
                 '--dart-define=DEEPSEEK_API_KEY=...',
-                style: asanaDetailLabelStyle(context).copyWith(
-                  color: const Color(0xFFC62828),
-                ),
+                style: asanaDetailLabelStyle(
+                  context,
+                ).copyWith(color: const Color(0xFFC62828)),
               ),
             ],
             const SizedBox(height: 10),
@@ -1614,17 +1991,15 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
               const SizedBox(height: 10),
               SelectableText(
                 controller.error!,
-                style: asanaDetailLabelStyle(context).copyWith(
-                  color: const Color(0xFFC62828),
-                ),
+                style: asanaDetailLabelStyle(
+                  context,
+                ).copyWith(color: const Color(0xFFC62828)),
               ),
             ],
             if (controller.overallFeedback != null &&
                 controller.overallFeedback!.trim().isNotEmpty) ...[
               const SizedBox(height: 12),
-              _OverallFeedbackBlock(
-                text: controller.overallFeedback!.trim(),
-              ),
+              _OverallFeedbackBlock(text: controller.overallFeedback!.trim()),
             ],
             if (globalLines.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -1673,15 +2048,10 @@ class AsanaTaskAiInlineSuggestions extends StatelessWidget {
                   ? const Color(0xFFFDBA74)
                   : colors.boxBorder,
               fillColor: line.adoptable || isWarning
-                  ? (isWarning
-                      ? const Color(0xFFFFF7ED)
-                      : colors.cardSurface)
+                  ? (isWarning ? const Color(0xFFFFF7ED) : colors.cardSurface)
                   : null,
               wrapField: line.adoptable
-                  ? (field) => _GlowingAdoptCard(
-                        colors: colors,
-                        child: field,
-                      )
+                  ? (field) => _GlowingAdoptCard(colors: colors, child: field)
                   : null,
               child: _SuggestionRow(
                 line: line,
@@ -1710,10 +2080,9 @@ class _OverallFeedbackBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return SelectableText(
       text,
-      style: asanaDetailLabelStyle(context).copyWith(
-        color: kAsanaTextSecondary,
-        height: 1.35,
-      ),
+      style: asanaDetailLabelStyle(
+        context,
+      ).copyWith(color: kAsanaTextSecondary, height: 1.35),
     );
   }
 }
@@ -1765,18 +2134,20 @@ class _SuggestionRow extends StatelessWidget {
             ),
           ),
         ),
-        if (onReject != null) _compactActionIcon(
-          tooltip: 'Dismiss suggestion',
-          icon: Icons.cancel_outlined,
-          color: _rejectColor,
-          onPressed: onReject,
-        ),
-        if (onAdopt != null) _compactActionIcon(
-          tooltip: 'Apply this suggestion',
-          icon: Icons.check_circle_outline,
-          color: colors.adoptIcon,
-          onPressed: onAdopt,
-        ),
+        if (onReject != null)
+          _compactActionIcon(
+            tooltip: 'Dismiss suggestion',
+            icon: Icons.cancel_outlined,
+            color: _rejectColor,
+            onPressed: onReject,
+          ),
+        if (onAdopt != null)
+          _compactActionIcon(
+            tooltip: 'Apply this suggestion',
+            icon: Icons.check_circle_outline,
+            color: colors.adoptIcon,
+            onPressed: onAdopt,
+          ),
       ],
     );
   }
@@ -1793,10 +2164,7 @@ class _SuggestionRow extends StatelessWidget {
         onPressed: onPressed,
         icon: Icon(icon, size: 20, color: color),
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(
-          minWidth: 28,
-          minHeight: 28,
-        ),
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
         visualDensity: VisualDensity.compact,
         style: IconButton.styleFrom(
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,

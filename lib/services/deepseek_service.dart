@@ -9,8 +9,7 @@ import 'package:http/http.dart' as http;
 class DeepseekService {
   DeepseekService._();
 
-  static const String _url =
-      'https://api.deepseek.com/v1/chat/completions';
+  static const String _url = 'https://api.deepseek.com/v1/chat/completions';
 
   static const String apiKey = String.fromEnvironment(
     'DEEPSEEK_API_KEY',
@@ -331,6 +330,12 @@ Schema:
   "message": "optional short note when nothing can be suggested",
   "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt",
   "name": "string or null",
+  "description": "sub-task description/details, or null",
+  "assigneeNames": ["names from available sub-task assignees list"] or [],
+  "picName": "one staff name (must be in assigneeNames if assignees set), or null",
+  "priority": "Standard" or "URGENT" or null,
+  "startDate": "YYYY-MM-DD" or null,
+  "dueDate": "YYYY-MM-DD" or null,
   "reason": "reason for needing a long time to complete the sub-task, or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
   "websiteLinks": [
@@ -342,12 +347,19 @@ Rules:
 - Set "related": false only if the prompt is clearly unrelated to updating a sub-task.
 - Only include fields the user clearly wants to set or change. Use null or omit for unsure fields.
 - NEVER echo unchanged values: compare each field to "Current form values" in context. If your suggestion would be identical, omit that field (null).
+- For sub-task creation or major clarification prompts, prioritize suggesting BOTH name and description when the user provides enough detail. The description should be useful execution detail, not just a repeat of the name.
+- Use assignee and PIC names only from the available sub-task assignees list in context.
+- Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
+- PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them.
+- Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
+- Relative dates such as "today", "tomorrow", "next week", or weekdays MUST be calculated from "Today (Hong Kong)" in the context, not from the current form's existing start/due dates.
+- Do not contradict yourself: startDate must be on or before dueDate when both are set.
 - comment: text for the Comments field. Compare to "comment (draft)" in context; omit if identical.
 - reason: only suggest when the context says reason is editable and the long duration needs explanation. It should explain why the sub-task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs, add each as an entry in websiteLinks with a concise description. Do not repeat URLs already listed under "Current website link attachments".
 - The user may or may not be the creator. If the user is NOT the creator, they cannot modify the name. The context will tell you if the name field is modifiable. If not modifiable, DO NOT suggest a name.
 - Use the parent task context provided to understand the context of the sub-task.
-- If assignees are discussed, treat the "Allowable sub-task assignees" list in the parent task context as the only valid people. Never suggest assigning someone outside the parent task assignees.
+- If assignees are discussed, treat the "Available sub-task assignees" list in context as the only valid people. Never suggest assigning someone outside that list.
 - Attachments are represented as websiteLinks. Include URLs in websiteLinks, not in the comment text, unless the user explicitly asks to write them into the comment.
 - overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
@@ -460,6 +472,5 @@ class DeepseekHttpException implements Exception {
   final String? detail;
 
   @override
-  String toString() =>
-      detail == null ? message : '$message\n$detail';
+  String toString() => detail == null ? message : '$message\n$detail';
 }

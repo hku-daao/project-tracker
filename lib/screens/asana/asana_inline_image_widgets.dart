@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../../services/backend_api.dart';
+import '../../utils/attachment_open_bytes.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/attachment_url_launch.dart';
 import 'asana_detail_widgets.dart';
@@ -50,32 +51,73 @@ class InlineImageToolbar extends StatelessWidget {
 }
 
 class InlineImagePreviewList extends StatelessWidget {
-  const InlineImagePreviewList({super.key, required this.images});
+  const InlineImagePreviewList({
+    super.key,
+    required this.images,
+    this.onRemove,
+  });
 
-  final List<InlineAttachmentRow> images;
+  final List<InlineImagePreviewItem> images;
+  final void Function(InlineImagePreviewItem image)? onRemove;
 
   @override
   Widget build(BuildContext context) {
     if (images.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          for (final image in images) ...[
-            _InlineImagePreview(image: image),
-            const SizedBox(height: 8),
-          ],
+          for (final image in images)
+            _InlineImagePreview(
+              key: ValueKey(image.id),
+              image: image,
+              onRemove: onRemove,
+            ),
         ],
       ),
     );
   }
 }
 
-class _InlineImagePreview extends StatefulWidget {
-  const _InlineImagePreview({required this.image});
+class InlineImagePreviewItem {
+  const InlineImagePreviewItem({
+    required this.id,
+    this.inlineAttachment,
+    this.bytes,
+    this.url,
+    this.description,
+    this.mimeType,
+    this.canRemove = false,
+  });
 
-  final InlineAttachmentRow image;
+  factory InlineImagePreviewItem.saved(InlineAttachmentRow row) {
+    return InlineImagePreviewItem(
+      id: row.id,
+      inlineAttachment: row,
+      url: row.url,
+      description: row.description,
+      mimeType: row.mimeType,
+    );
+  }
+
+  final String id;
+  final InlineAttachmentRow? inlineAttachment;
+  final Uint8List? bytes;
+  final String? url;
+  final String? description;
+  final String? mimeType;
+  final bool canRemove;
+
+  bool get isSaved => inlineAttachment != null;
+}
+
+class _InlineImagePreview extends StatefulWidget {
+  const _InlineImagePreview({super.key, required this.image, this.onRemove});
+
+  final InlineImagePreviewItem image;
+  final void Function(InlineImagePreviewItem image)? onRemove;
 
   @override
   State<_InlineImagePreview> createState() => _InlineImagePreviewState();
@@ -87,55 +129,219 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
   @override
   void initState() {
     super.initState();
-    _future = _loadInlineImageBytes(widget.image.url);
+    _future = _loadInlineImageBytes(widget.image);
   }
 
   @override
   void didUpdateWidget(covariant _InlineImagePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.image.url != widget.image.url) {
-      _future = _loadInlineImageBytes(widget.image.url);
+    if (oldWidget.image.id != widget.image.id ||
+        oldWidget.image.url != widget.image.url ||
+        oldWidget.image.bytes != widget.image.bytes) {
+      _future = _loadInlineImageBytes(widget.image);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        constraints: const BoxConstraints(maxHeight: 260),
-        color: const Color(0xFFF9FAFB),
-        child: FutureBuilder<_InlineImageBytes>(
-          future: _future,
-          builder: (context, snapshot) {
-            final data = snapshot.data;
-            if (data != null && data.bytes.isNotEmpty) {
-              return Image.memory(data.bytes, fit: BoxFit.contain);
-            }
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+    return SizedBox(
+      width: 92,
+      height: 92,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => _openInlineImageOverlay(context),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: FutureBuilder<_InlineImageBytes>(
+                      future: _future,
+                      builder: (context, snapshot) {
+                        final data = snapshot.data;
+                        if (data != null && data.bytes.isNotEmpty) {
+                          return Image.memory(data.bytes, fit: BoxFit.cover);
+                        }
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Center(
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          );
+                        }
+                        return Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.grey.shade500,
+                            size: 22,
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 ),
-              );
-            }
-            final label = widget.image.description?.trim().isNotEmpty == true
-                ? widget.image.description!.trim()
-                : widget.image.url;
-            return Container(
-              padding: const EdgeInsets.all(12),
-              color: const Color(0xFFF3F4F6),
-              child: Text(
-                data?.error == null ? label : '$label\n${data!.error}',
-                style: asanaDetailLabelStyle(context),
               ),
-            );
-          },
+            ),
+          ),
+          if (widget.image.canRemove && widget.onRemove != null)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: InkWell(
+                onTap: () => widget.onRemove!(widget.image),
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFD1D5DB)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x22000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openInlineImageOverlay(BuildContext context) async {
+    final data = await _future;
+    if (!context.mounted || data.bytes.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.72),
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          backgroundColor: Colors.transparent,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => Navigator.of(dialogContext).pop(),
+                ),
+              ),
+              Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(dialogContext).size.width * 0.88,
+                    maxHeight: MediaQuery.of(dialogContext).size.height * 0.84,
+                  ),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Material(
+                          color: Colors.white,
+                          child: InteractiveViewer(
+                            minScale: 0.5,
+                            maxScale: 4,
+                            child: Image.memory(
+                              data.bytes,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _OverlayCircleButton(
+                              icon: Icons.download_outlined,
+                              tooltip: 'Download',
+                              onTap: () async {
+                                await openAttachmentBytesInSystemViewer(
+                                  data.bytes,
+                                  data.contentType,
+                                  _downloadName(),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            _OverlayCircleButton(
+                              icon: Icons.close,
+                              tooltip: 'Close',
+                              onTap: () => Navigator.of(dialogContext).pop(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _downloadName() {
+    final raw = widget.image.description?.trim();
+    if (raw != null && raw.isNotEmpty) return raw;
+    return 'inline-image';
+  }
+}
+
+class _OverlayCircleButton extends StatelessWidget {
+  const _OverlayCircleButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 3,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Icon(icon, size: 20, color: const Color(0xFF374151)),
+          ),
         ),
       ),
     );
@@ -143,9 +349,14 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
 }
 
 class _InlineImageBytes {
-  const _InlineImageBytes({required this.bytes, this.error});
+  const _InlineImageBytes({
+    required this.bytes,
+    this.contentType = 'image/*',
+    this.error,
+  });
 
   final Uint8List bytes;
+  final String contentType;
   final String? error;
 }
 
@@ -164,8 +375,14 @@ String? _firebaseStorageObjectPathFromUrl(String raw) {
   }
 }
 
-Future<_InlineImageBytes> _loadInlineImageBytes(String rawUrl) async {
-  final url = rawUrl.trim();
+Future<_InlineImageBytes> _loadInlineImageBytes(
+  InlineImagePreviewItem image,
+) async {
+  final localBytes = image.bytes;
+  if (localBytes != null && localBytes.isNotEmpty) {
+    return _InlineImageBytes(bytes: localBytes);
+  }
+  final url = image.url?.trim() ?? '';
   if (url.isEmpty) {
     return _InlineImageBytes(bytes: Uint8List(0), error: 'Missing image URL.');
   }
@@ -186,7 +403,13 @@ Future<_InlineImageBytes> _loadInlineImageBytes(String rawUrl) async {
               .get(proxyUri, headers: {'Authorization': 'Bearer $idToken'})
               .timeout(const Duration(minutes: 2));
           if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
-            return _InlineImageBytes(bytes: resp.bodyBytes);
+            return _InlineImageBytes(
+              bytes: resp.bodyBytes,
+              contentType:
+                  resp.headers['content-type']?.split(';').first.trim() ??
+                  image.mimeType ??
+                  'image/*',
+            );
           }
           debugPrint(
             'inline image proxy HTTP ${resp.statusCode}: ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}...' : resp.body}',
@@ -205,7 +428,13 @@ Future<_InlineImageBytes> _loadInlineImageBytes(String rawUrl) async {
   try {
     final resp = await http.get(uri).timeout(const Duration(seconds: 30));
     if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
-      return _InlineImageBytes(bytes: resp.bodyBytes);
+      return _InlineImageBytes(
+        bytes: resp.bodyBytes,
+        contentType:
+            resp.headers['content-type']?.split(';').first.trim() ??
+            image.mimeType ??
+            'image/*',
+      );
     }
     return _InlineImageBytes(
       bytes: Uint8List(0),

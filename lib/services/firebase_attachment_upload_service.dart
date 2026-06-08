@@ -364,6 +364,53 @@ class FirebaseAttachmentUploadService {
     }
   }
 
+  static String? objectPathFromStorageDownloadUrl(String rawUrl) {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null) return null;
+    if (uri.host.toLowerCase() != 'firebasestorage.googleapis.com') return null;
+    final i = uri.path.indexOf('/o/');
+    if (i < 0) return null;
+    final encoded = uri.path.substring(i + 3);
+    if (encoded.isEmpty) return null;
+    try {
+      return Uri.decodeComponent(encoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool storageObjectPathBelongsToCurrentUser(String objectPath) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return false;
+    final path = objectPath.trim().replaceAll('\\', '/');
+    return path.startsWith('$_storageAppRoot/users/$uid/');
+  }
+
+  static bool storageDownloadUrlBelongsToCurrentUser(String rawUrl) {
+    final objectPath = objectPathFromStorageDownloadUrl(rawUrl);
+    if (objectPath == null || objectPath.isEmpty) return false;
+    return storageObjectPathBelongsToCurrentUser(objectPath);
+  }
+
+  static Future<String?> deleteUploadedObjectByUrl(String rawUrl) async {
+    final err = _guardSync();
+    if (err != null) return err;
+    final objectPath = objectPathFromStorageDownloadUrl(rawUrl);
+    if (objectPath == null || objectPath.isEmpty) {
+      return 'Could not identify Firebase Storage object path.';
+    }
+    if (!storageObjectPathBelongsToCurrentUser(objectPath)) {
+      return 'Only the uploader can delete this inline image.';
+    }
+    try {
+      await FirebaseStorage.instance.ref(objectPath).delete();
+      return null;
+    } catch (e, st) {
+      debugPrint('deleteUploadedObjectByUrl: $e\n$st');
+      return e.toString();
+    }
+  }
+
   /// Uploads [bytes] to `task_attachments/[taskId]` (after create or from a staged pick).
   static Future<({String? url, String? label, String? error})> uploadBytesForTask(
     String taskId, {
