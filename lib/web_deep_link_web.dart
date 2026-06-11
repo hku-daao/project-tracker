@@ -117,7 +117,7 @@ String? readTaskIdFromUrlOrSession() {
   return null;
 }
 
-/// `project` query / session — opens [ProjectDetailScreen] after refresh.
+/// `project` query / session — opens the Asana project slide after refresh.
 String? readProjectIdFromUrlOrSession() {
   final fromUrl = _paramFromLocation('project');
   if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
@@ -126,11 +126,12 @@ String? readProjectIdFromUrlOrSession() {
   return null;
 }
 
-/// `view` query / session: `default` (main dashboard), `original` (landing list),
-/// `asana` (new UI shell), legacy `overview`, or `project`.
+/// `view` query / session — old values map to the Asana shell.
 String? readDashboardViewFromUrlOrSession() {
   final fromUrl = _paramFromLocation('view');
-  if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
+  if (fromUrl != null && fromUrl.isNotEmpty) {
+    return _normalizeDashboardView(fromUrl);
+  }
   final ids = _idsFromLocation();
   final project = _paramFromLocation('project');
   if ((ids.$1 != null && ids.$1!.isNotEmpty) ||
@@ -147,8 +148,22 @@ String? readDashboardViewFromUrlOrSession() {
     return 'asana';
   }
   final s = html.window.sessionStorage[_kViewKey]?.trim();
-  if (s != null && s.isNotEmpty) return s;
+  if (s != null && s.isNotEmpty) return _normalizeDashboardView(s);
   return null;
+}
+
+String _normalizeDashboardView(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'original':
+    case 'overview':
+    case 'default':
+    case 'asana':
+    case 'newui':
+    case 'new-ui':
+      return 'asana';
+    default:
+      return raw.trim().toLowerCase();
+  }
 }
 
 void consumeSubtaskDeepLink() {
@@ -166,7 +181,7 @@ void clearDeepLinkQueryFromAddressBar() {
   html.window.history.replaceState(null, '', safePath);
 }
 
-/// Keeps `?task=` in the address bar and session so a browser refresh reopens [TaskDetailScreen].
+/// Keeps `?task=` in the address bar and session so a browser refresh reopens the task slide.
 void syncWebLocationForTaskDetail(String taskId) {
   final id = taskId.trim();
   if (id.isEmpty) return;
@@ -188,7 +203,7 @@ void clearWebTaskDetailFromLocation() {
   _replaceQueryParams((q) => q.remove('task'));
 }
 
-/// Keeps `?subtask=` so refresh stays on [SubtaskDetailScreen].
+/// Keeps `?subtask=` so refresh stays on the sub-task slide.
 void syncWebLocationForSubtaskDetail(String subtaskId) {
   final id = subtaskId.trim();
   if (id.isEmpty) return;
@@ -214,7 +229,7 @@ void clearWebSubtaskDetailFromLocation({String? parentTaskId}) {
   }
 }
 
-/// Keeps `?project=` so refresh stays on [ProjectDetailScreen].
+/// Keeps `?project=` so refresh stays on the project slide.
 void syncWebLocationForProjectDetail(String projectId) {
   final id = projectId.trim();
   if (id.isEmpty) return;
@@ -235,18 +250,9 @@ void clearWebProjectDetailFromLocation() {
   _replaceQueryParams((q) => q.remove('project'));
 }
 
-/// Original landing list ([HomeScreen]); refresh restores this tab.
+/// Legacy original home URL — now opens the Asana shell.
 void syncWebLocationForDefaultHome() {
-  html.window.sessionStorage.remove(_kTaskKey);
-  html.window.sessionStorage.remove(_kSubtaskKey);
-  html.window.sessionStorage.remove(_kProjectKey);
-  html.window.sessionStorage[_kViewKey] = 'original';
-  _replaceQueryParams((q) {
-    q['view'] = 'original';
-    q.remove('task');
-    q.remove('subtask');
-    q.remove('project');
-  });
+  syncWebLocationForAsanaDesign();
 }
 
 /// Asana-style landing shell ([AsanaLandingScreen]).
@@ -257,21 +263,12 @@ void syncWebLocationForAsanaDesign() {
   });
 }
 
-/// Default home dashboard (flat task / Overview layout).
+/// Legacy overview URL — now opens the Asana shell.
 void syncWebLocationForOverviewDashboard() {
-  html.window.sessionStorage.remove(_kTaskKey);
-  html.window.sessionStorage.remove(_kSubtaskKey);
-  html.window.sessionStorage.remove(_kProjectKey);
-  html.window.sessionStorage[_kViewKey] = 'default';
-  _replaceQueryParams((q) {
-    q['view'] = 'default';
-    q.remove('task');
-    q.remove('subtask');
-    q.remove('project');
-  });
+  syncWebLocationForAsanaDesign();
 }
 
-/// Project list dashboard route.
+/// Legacy project dashboard URL — selects Projects in the Asana shell.
 void syncWebLocationForProjectDashboard() {
   html.window.sessionStorage.remove(_kTaskKey);
   html.window.sessionStorage.remove(_kSubtaskKey);
@@ -331,9 +328,7 @@ void _replaceQueryParams(void Function(Map<String, String> q) mutate) {
   }
   final q = Map<String, String>.from(uri.queryParameters);
   mutate(q);
-  final newUri = uri.replace(
-    queryParameters: q.isEmpty ? null : q,
-  );
+  final newUri = uri.replace(queryParameters: q.isEmpty ? null : q);
   html.window.history.replaceState(null, '', newUri.toString());
 }
 

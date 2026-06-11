@@ -13,7 +13,7 @@ import 'attachment_storage_new_tab.dart';
 import 'copyable_snackbar.dart';
 
 /// True when [raw] is an `https://firebasestorage.googleapis.com/...` URL for this app’s
-/// Storage bucket (typically an uploaded file saved in Supabase `attachment.content`).
+/// Storage bucket (typically an uploaded file saved in Supabase `file_attachment.url`).
 bool isAppFirebaseStorageAttachmentUrl(String raw) {
   final uri = Uri.tryParse(raw.trim());
   if (uri == null) return false;
@@ -100,8 +100,9 @@ Future<String> _effectiveLaunchUrl(String raw) async {
   try {
     if (kIsWeb) {
       try {
-        final sdkUrl =
-            await FirebaseStorage.instance.ref(objectPath).getDownloadURL();
+        final sdkUrl = await FirebaseStorage.instance
+            .ref(objectPath)
+            .getDownloadURL();
         if (sdkUrl.contains('token=')) return sdkUrl;
       } catch (e, st) {
         debugPrint('openAttachmentUrl web getDownloadURL: $e\n$st');
@@ -151,7 +152,8 @@ Future<String> _resolveOpenedAttachmentFileNameAsync({
   final raw = displayFileName?.trim();
   String? trusted = (raw != null && raw.isNotEmpty) ? raw : null;
   if (trusted != null) {
-    if (_looksLikeHttpUrl(trusted) || looksLikeUuidStorageObjectFileName(trusted)) {
+    if (_looksLikeHttpUrl(trusted) ||
+        looksLikeUuidStorageObjectFileName(trusted)) {
       trusted = null;
     }
   }
@@ -226,13 +228,11 @@ Future<void> _openHttpsLaunchUri(
         return;
       }
       final resp = await http
-          .get(
-            u,
-            headers: {'Authorization': 'Bearer $idToken'},
-          )
+          .get(u, headers: {'Authorization': 'Bearer $idToken'})
           .timeout(const Duration(minutes: 2));
       if (resp.statusCode == 200) {
-        final ct = resp.headers['content-type']?.split(';').first.trim() ??
+        final ct =
+            resp.headers['content-type']?.split(';').first.trim() ??
             'application/octet-stream';
         final opened = await openAttachmentBytesInSystemViewer(
           resp.bodyBytes,
@@ -316,7 +316,7 @@ Future<void> openAttachmentUrl(
       context,
       _looksLikeJsonNotAUrl(t)
           ? 'This attachment is not a valid link (stored value looks like JSON). '
-              'Remove it and re-upload the file.'
+                'Remove it and re-upload the file.'
           : 'This attachment is not a valid web link',
       backgroundColor: Colors.orange,
     );
@@ -332,7 +332,8 @@ Future<void> openAttachmentUrl(
     );
     return;
   }
-  if (_isAppFirebaseStorageObjectUrl(uri) && _firebaseUserIfAvailable() == null) {
+  if (_isAppFirebaseStorageObjectUrl(uri) &&
+      _firebaseUserIfAvailable() == null) {
     if (!context.mounted) return;
     showCopyableSnackBar(
       context,

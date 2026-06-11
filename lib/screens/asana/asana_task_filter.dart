@@ -180,7 +180,7 @@ class AsanaTaskFilterState {
   }
 }
 
-/// Applies the same visibility rules as [InitiativeListScreen] Overview **Tasks** tab.
+/// Applies visibility and saved-filter rules for Asana task lists.
 class AsanaTaskFilter {
   AsanaTaskFilter._();
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);

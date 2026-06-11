@@ -1881,8 +1881,9 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
             if (!configured) ...[
               const SizedBox(height: 8),
               Text(
-                'Not configured. Run with secrets\\deepseek_api_key.txt or '
-                '--dart-define=DEEPSEEK_API_KEY=...',
+                'Not configured. Re-run with scripts\\run_chrome.ps1 or '
+                'scripts\\build_web.ps1 so secrets\\deepseek_api_key.txt is '
+                'passed as DEEPSEEK_API_KEY.',
                 style: asanaDetailLabelStyle(
                   context,
                 ).copyWith(color: const Color(0xFFC62828)),

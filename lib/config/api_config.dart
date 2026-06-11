@@ -2,7 +2,7 @@ import 'environment_config.dart';
 
 /// Backend API (Railway) — switches with [AppEnvironment].
 ///
-/// **Testing:** `project-tracker-test-production.up.railway.app`  
+/// **Testing:** `project-tracker-test-production.up.railway.app`
 /// **Production:** `project-tracker-production-1588.up.railway.app`
 ///
 /// Override with `--dart-define=API_BASE_URL=https://...` if needed.

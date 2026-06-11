@@ -40,8 +40,10 @@ Future<void> showAsanaAssigneePicker({
   final panelWidth = asanaAnchoredFieldWidth(anchorContext);
   final box = anchorContext.findRenderObject() as RenderBox?;
   final topEstimate = box?.localToGlobal(Offset.zero).dy ?? 0;
-  final maxPanelHeight =
-      (media.size.height - topEstimate - 80).clamp(200.0, 520.0);
+  final maxPanelHeight = (media.size.height - topEstimate - 80).clamp(
+    200.0,
+    520.0,
+  );
 
   return showAsanaAnchoredOverlay(
     anchorLink: anchorLink,
@@ -50,14 +52,14 @@ Future<void> showAsanaAssigneePicker({
     whenClosed: whenClosed,
     builder: (ctx, close) {
       return _AssigneePickerOverlay(
-          snapshot: snapshot,
-          initialSelected: selectedIds,
-          maxPanelHeight: maxPanelHeight,
-          onSelectionChanged: onSelectionChanged,
-          onDone: () {
-            close();
-          },
-        );
+        snapshot: snapshot,
+        initialSelected: selectedIds,
+        maxPanelHeight: maxPanelHeight,
+        onSelectionChanged: onSelectionChanged,
+        onDone: () {
+          close();
+        },
+      );
     },
   );
 }
@@ -171,7 +173,8 @@ class _AsanaAssigneePickerBody extends StatefulWidget {
   final VoidCallback onDone;
 
   @override
-  State<_AsanaAssigneePickerBody> createState() => _AsanaAssigneePickerBodyState();
+  State<_AsanaAssigneePickerBody> createState() =>
+      _AsanaAssigneePickerBodyState();
 }
 
 class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
@@ -218,10 +221,13 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
   Widget build(BuildContext context) {
     final snap = widget.snapshot;
     final teamChosen = _teamId != null && _teamId!.isNotEmpty;
-    final selectedTeamName = teamChosen ? (_teamName(_teamId) ?? 'Selected Team') : '';
+    final selectedTeamName = teamChosen
+        ? (_teamName(_teamId) ?? 'Selected Team')
+        : '';
     final members = _visibleMembers;
-    final selectedInView =
-        members.where((s) => widget.selectedIds.contains(s.assigneeId)).length;
+    final selectedInView = members
+        .where((s) => widget.selectedIds.contains(s.assigneeId))
+        .length;
     final showMemberGrid = _searching || teamChosen;
     final projectMembers = List<StaffForAssignment>.from(snap.projectStaff)
       ..sort((a, b) => a.name.compareTo(b.name));
@@ -314,9 +320,8 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
                     _AsanaPickerTeamRow(
                       label: 'Project Team',
                       open: _projectTeamOpen,
-                      onTap: () => setState(
-                        () => _projectTeamOpen = !_projectTeamOpen,
-                      ),
+                      onTap: () =>
+                          setState(() => _projectTeamOpen = !_projectTeamOpen),
                     ),
                     if (_projectTeamOpen) ...[
                       const SizedBox(height: 6),
@@ -353,7 +358,10 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
               behavior: HitTestBehavior.opaque,
               onTap: widget.onDone,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Text(
                   'Done',
                   style: asanaDetailValueStyle(
@@ -488,7 +496,10 @@ class _AsanaPickerTeamList extends StatelessWidget {
             InkWell(
               onTap: () => onPick(sorted[i].teamId),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
                 child: Text(
                   sorted[i].teamName,
                   style: asanaDetailValueStyle(
@@ -527,15 +538,16 @@ class _AsanaPickerNameGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columnCount = constraints.maxWidth < kAsanaAssigneeNameGridNarrowWidth
-            ? 2
-            : 3;
+        final columnCount =
+            constraints.maxWidth < kAsanaAssigneeNameGridNarrowWidth ? 2 : 3;
         final rows = <List<StaffForAssignment>>[];
         for (var i = 0; i < members.length; i += columnCount) {
           rows.add(
             members.sublist(
               i,
-              i + columnCount > members.length ? members.length : i + columnCount,
+              i + columnCount > members.length
+                  ? members.length
+                  : i + columnCount,
             ),
           );
         }

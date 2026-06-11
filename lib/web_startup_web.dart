@@ -29,7 +29,9 @@ void _clearStaleServiceWorkers() {
 /// Normal browsers may still have `pt_deeplink_view=original` from before the Asana shell.
 void _migrateTestHostSession() {
   if (!isTestWebHost) return;
-  final view = html.window.sessionStorage['pt_deeplink_view']?.trim().toLowerCase();
+  final view = html.window.sessionStorage['pt_deeplink_view']
+      ?.trim()
+      .toLowerCase();
   if (view == null || view.isEmpty || view == 'original' || view == 'default') {
     html.window.sessionStorage['pt_deeplink_view'] = 'asana';
   }

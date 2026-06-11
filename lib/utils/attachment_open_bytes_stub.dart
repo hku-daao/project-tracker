@@ -16,7 +16,10 @@ Future<bool> openAttachmentBytesInSystemViewer(
   return launchUrl(Uri.file(f.path), mode: LaunchMode.externalApplication);
 }
 
-String _normalizeTempAttachmentFilename(String suggestedName, String contentType) {
+String _normalizeTempAttachmentFilename(
+  String suggestedName,
+  String contentType,
+) {
   var name = suggestedName.trim().replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
   if (name.isEmpty) name = 'attachment';
   if (name.length > 180) name = '${name.substring(0, 177)}...';
@@ -30,8 +33,7 @@ bool _hasReasonableFileExtension(String name) {
   final dot = name.lastIndexOf('.');
   if (dot <= 0 || dot >= name.length - 1) return false;
   final ext = name.substring(dot).toLowerCase();
-  return ext.length <= 14 &&
-      RegExp(r'^\.[a-z0-9.]+$').hasMatch(ext);
+  return ext.length <= 14 && RegExp(r'^\.[a-z0-9.]+$').hasMatch(ext);
 }
 
 Future<String> _allocateUniqueTempFilePath(String fileName) async {
@@ -50,7 +52,10 @@ Future<String> _allocateUniqueTempFilePath(String fileName) async {
   return path;
 }
 
-String _inferExtensionFromContentType(String contentType, String suggestedName) {
+String _inferExtensionFromContentType(
+  String contentType,
+  String suggestedName,
+) {
   final fromName = suggestedName.trim();
   final dot = fromName.lastIndexOf('.');
   if (dot > 0 && dot < fromName.length - 1) {

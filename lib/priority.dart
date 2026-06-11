@@ -1,8 +1,5 @@
 /// Priority levels: 1 = Standard, 2 = Urgent (two levels only).
-const Map<int, String> priorityDisplayNames = {
-  1: 'Standard',
-  2: 'URGENT',
-};
+const Map<int, String> priorityDisplayNames = {1: 'Standard', 2: 'URGENT'};
 
 /// Order for UI: Standard, then URGENT.
 const List<int> priorityOptions = [1, 2];

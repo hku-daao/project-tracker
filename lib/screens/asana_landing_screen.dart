@@ -293,21 +293,11 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         searchQuery: searchQuery,
         flatTasksAndSubtasks: _selectedNav == 'All Tasks & Sub-tasks',
         refreshToken: _detailRefreshToken,
-        onOpenTask: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.task(id)),
-        ),
-        onOpenSubtask: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.subtask(id)),
-        ),
-        onCreateTask: () => setState(
-          () => _detailStack
-            ..clear()
-            ..add(const AsanaDetailSelection.createTask()),
-        ),
+        onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onOpenSubtask: (id) =>
+            _openRootDetail(AsanaDetailSelection.subtask(id)),
+        onCreateTask: () =>
+            _openRootDetail(const AsanaDetailSelection.createTask()),
       );
     }
     if (_selectedNav == 'Projects') {
@@ -315,37 +305,20 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         palette: palette,
         searchQuery: searchQuery,
         refreshToken: _detailRefreshToken,
-        onOpenProject: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.project(id)),
-        ),
-        onOpenTask: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.task(id)),
-        ),
-        onCreateProject: () => setState(
-          () => _detailStack
-            ..clear()
-            ..add(const AsanaDetailSelection.createProject()),
-        ),
+        onOpenProject: (id) =>
+            _openRootDetail(AsanaDetailSelection.project(id)),
+        onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onCreateProject: () =>
+            _openRootDetail(const AsanaDetailSelection.createProject()),
       );
     }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
         searchQuery: searchQuery,
-        onOpenTask: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.task(id)),
-        ),
-        onOpenProject: (id) => setState(
-          () => _detailStack
-            ..clear()
-            ..add(AsanaDetailSelection.project(id)),
-        ),
+        onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onOpenProject: (id) =>
+            _openRootDetail(AsanaDetailSelection.project(id)),
       );
     }
     return ColoredBox(color: palette.content);
@@ -361,6 +334,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (_detailStack.isEmpty) return;
     AsanaBlockingLoadingOverlay.hideAll();
     setState(_detailStack.clear);
+    _syncWebLocationToDetailStack();
   }
 
   void _popDetail() {
@@ -374,6 +348,40 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         _detailStack.clear();
       }
     });
+    _syncWebLocationToDetailStack();
+  }
+
+  void _syncWebLocationToDetailStack() {
+    if (!kIsWeb) return;
+    if (_detailStack.isEmpty) {
+      syncWebLocationForAsanaDesign();
+      return;
+    }
+    final top = _detailStack.last;
+    switch (top) {
+      case AsanaSubtaskDetailSelection(:final subtaskId):
+        syncWebLocationForSubtaskDetail(subtaskId);
+      case AsanaTaskDetailSelection(:final taskId):
+        syncWebLocationForTaskDetail(taskId);
+      case AsanaProjectDetailSelection(:final projectId):
+        syncWebLocationForProjectDetail(projectId);
+      default:
+        syncWebLocationForAsanaDesign();
+    }
+  }
+
+  void _openRootDetail(AsanaDetailSelection selection) {
+    setState(() {
+      _detailStack
+        ..clear()
+        ..add(selection);
+    });
+    _syncWebLocationToDetailStack();
+  }
+
+  void _pushDetail(AsanaDetailSelection selection) {
+    setState(() => _detailStack.add(selection));
+    _syncWebLocationToDetailStack();
   }
 
   void _handleSubtaskCreated(String parentTaskId, String subtaskId) {
@@ -397,6 +405,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         ..add(AsanaDetailSelection.task(taskId));
       _detailRefreshToken++;
     });
+    _syncWebLocationToDetailStack();
   }
 
   void _handleProjectChanged() {
@@ -410,6 +419,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         ..add(AsanaDetailSelection.project(projectId));
       _detailRefreshToken++;
     });
+    _syncWebLocationToDetailStack();
   }
 
   @override
@@ -423,11 +433,29 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         AsanaLandingPalette.all.any((p) => p.id == themeId)) {
       _themeId = themeId;
     }
-    if (kIsWeb) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _openInitialDeepLink();
-        syncWebLocationForAsanaDesign();
-      });
+    _applyInitialNavFromView();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openInitialDeepLink();
+      if (kIsWeb) {
+        _syncWebLocationToDetailStack();
+      }
+    });
+  }
+
+  void _applyInitialNavFromView() {
+    final view = readDashboardViewFromUrlOrSession()?.trim().toLowerCase();
+    if (view == null || view.isEmpty) return;
+    switch (view) {
+      case 'project':
+        _selectedNav = 'Projects';
+      case 'tasks':
+      case 'overview':
+      case 'default':
+        _selectedNav = 'Tasks';
+      case 'all':
+        _selectedNav = 'All Tasks & Sub-tasks';
+      default:
+        break;
     }
   }
 
@@ -773,22 +801,18 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                             onDismissAll: _dismissAllDetails,
                                             onPop: _popDetail,
                                             onPushCreateSubtask: (taskId) =>
-                                                setState(
-                                                  () => _detailStack.add(
-                                                    AsanaDetailSelection.createSubtask(
-                                                      taskId,
-                                                    ),
+                                                _pushDetail(
+                                                  AsanaDetailSelection.createSubtask(
+                                                    taskId,
                                                   ),
                                                 ),
                                             onPushSubtask: (id) {
                                               AsanaBlockingLoadingOverlay.show(
                                                 context,
                                               );
-                                              setState(
-                                                () => _detailStack.add(
-                                                  AsanaDetailSelection.subtask(
-                                                    id,
-                                                  ),
+                                              _pushDetail(
+                                                AsanaDetailSelection.subtask(
+                                                  id,
                                                 ),
                                               );
                                               WidgetsBinding.instance
@@ -804,20 +828,15 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                   });
                                             },
                                             onPushCreateTaskForProject:
-                                                (projectId) => setState(
-                                                  () => _detailStack.add(
-                                                    AsanaDetailSelection.createTask(
-                                                      initialProjectId:
-                                                          projectId,
-                                                    ),
+                                                (projectId) => _pushDetail(
+                                                  AsanaDetailSelection.createTask(
+                                                    initialProjectId: projectId,
                                                   ),
                                                 ),
                                             onPushTaskFromProject: (taskId) =>
-                                                setState(
-                                                  () => _detailStack.add(
-                                                    AsanaDetailSelection.task(
-                                                      taskId,
-                                                    ),
+                                                _pushDetail(
+                                                  AsanaDetailSelection.task(
+                                                    taskId,
                                                   ),
                                                 ),
                                             onTaskChanged: _handleTaskChanged,

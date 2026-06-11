@@ -38,8 +38,7 @@ bool _hasReasonableExtension(String name) {
   final dot = name.lastIndexOf('.');
   if (dot <= 0 || dot >= name.length - 1) return false;
   final ext = name.substring(dot).toLowerCase();
-  return ext.length <= 14 &&
-      RegExp(r'^\.[a-z0-9.]+$').hasMatch(ext);
+  return ext.length <= 14 && RegExp(r'^\.[a-z0-9.]+$').hasMatch(ext);
 }
 
 String _inferExtension(String contentType) {

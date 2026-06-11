@@ -26,7 +26,8 @@ class AsanaAssigneeFieldValue extends StatefulWidget {
   final void Function(String assigneeId)? onRemove;
 
   @override
-  State<AsanaAssigneeFieldValue> createState() => _AsanaAssigneeFieldValueState();
+  State<AsanaAssigneeFieldValue> createState() =>
+      _AsanaAssigneeFieldValueState();
 }
 
 class _AsanaAssigneeFieldValueState extends State<AsanaAssigneeFieldValue> {
@@ -83,9 +84,9 @@ class _AsanaAssigneeFieldValueState extends State<AsanaAssigneeFieldValue> {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     widget.emptyPlaceholder,
-                    style: asanaDetailValueStyle(context).copyWith(
-                      color: kAsanaTextSecondary,
-                    ),
+                    style: asanaDetailValueStyle(
+                      context,
+                    ).copyWith(color: kAsanaTextSecondary),
                   ),
                 ),
         ),
@@ -93,10 +94,7 @@ class _AsanaAssigneeFieldValueState extends State<AsanaAssigneeFieldValue> {
     );
 
     if (widget.anchorLink != null) {
-      inner = CompositedTransformTarget(
-        link: widget.anchorLink!,
-        child: inner,
-      );
+      inner = CompositedTransformTarget(link: widget.anchorLink!, child: inner);
     }
     return inner;
   }
@@ -124,14 +122,8 @@ class _AssigneeNameChipState extends State<_AssigneeNameChip> {
       clipBehavior: Clip.none,
       children: [
         Padding(
-          padding: EdgeInsets.only(
-            top: 2,
-            right: widget.canRemove ? 14 : 0,
-          ),
-          child: Text(
-            widget.name,
-            style: asanaDetailValueStyle(context),
-          ),
+          padding: EdgeInsets.only(top: 2, right: widget.canRemove ? 14 : 0),
+          child: Text(widget.name, style: asanaDetailValueStyle(context)),
         ),
         if (widget.canRemove)
           Positioned(
@@ -149,11 +141,7 @@ class _AssigneeNameChipState extends State<_AssigneeNameChip> {
                     color: Color(0xFF6D6E6F),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.close,
-                    size: 11,
-                    color: Colors.white,
-                  ),
+                  child: const Icon(Icons.close, size: 11, color: Colors.white),
                 ),
               ),
             ),

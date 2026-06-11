@@ -1,9 +1,6 @@
 /// Row from `team` for assignee filtering (join key: [teamId] == [StaffForAssignment.teamId]).
 class TeamOptionRow {
-  const TeamOptionRow({
-    required this.teamId,
-    required this.teamName,
-  });
+  const TeamOptionRow({required this.teamId, required this.teamName});
 
   final String teamId;
   final String teamName;
@@ -19,10 +16,7 @@ class StaffListRow {
 
 /// Result of loading `team` + `staff` for the assignee picker (join: `staff.team_id` = `team.team_id`).
 class StaffAssigneePickerData {
-  const StaffAssigneePickerData({
-    required this.teams,
-    required this.staff,
-  });
+  const StaffAssigneePickerData({required this.teams, required this.staff});
 
   final List<TeamOptionRow> teams;
   final List<StaffForAssignment> staff;

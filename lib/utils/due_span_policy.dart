@@ -18,8 +18,7 @@ bool dueDateExceedsPolicyForPriority(
 }) {
   if (start == null || due == null) return false;
   final n = allowedWorkingDaysAfterStartForPriority(priority);
-  final maxDue =
-      HkTime.addBusinessDaysAfter(start, n, calendarHolidayYmdSkip);
+  final maxDue = HkTime.addBusinessDaysAfter(start, n, calendarHolidayYmdSkip);
   final dDue = DateTime(due.year, due.month, due.day);
   final dMax = DateTime(maxDue.year, maxDue.month, maxDue.day);
   return dDue.isAfter(dMax);

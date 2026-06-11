@@ -3,6 +3,7 @@ class SingularCommentRowDisplay {
   final String id;
   final String description;
   final String status;
+
   /// `staff.id` uuid from `create_by` (for ownership checks).
   final String? createByStaffId;
   final String displayStaffName;

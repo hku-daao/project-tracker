@@ -86,7 +86,8 @@ class _HolidayDatePickerDialog extends StatefulWidget {
   final List<CalendarHoliday> holidays;
 
   @override
-  State<_HolidayDatePickerDialog> createState() => _HolidayDatePickerDialogState();
+  State<_HolidayDatePickerDialog> createState() =>
+      _HolidayDatePickerDialogState();
 }
 
 enum _CalendarPickerPane { days, months, years }
@@ -152,7 +153,9 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
     final a = _dateOnly(widget.firstDate);
     final b = _dateOnly(widget.lastDate);
     final start = _dateOnly(firstOfMonth);
-    final end = _dateOnly(DateTime(firstOfMonth.year, firstOfMonth.month + 1, 0));
+    final end = _dateOnly(
+      DateTime(firstOfMonth.year, firstOfMonth.month + 1, 0),
+    );
     return !end.isBefore(a) && !start.isAfter(b);
   }
 
@@ -173,11 +176,9 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
     return false;
   }
 
-  bool get _canDecPickerYear =>
-      _yearHasSelectableMonth(_pickerYear - 1);
+  bool get _canDecPickerYear => _yearHasSelectableMonth(_pickerYear - 1);
 
-  bool get _canIncPickerYear =>
-      _yearHasSelectableMonth(_pickerYear + 1);
+  bool get _canIncPickerYear => _yearHasSelectableMonth(_pickerYear + 1);
 
   void _openMonthPicker() {
     setState(() {
@@ -250,32 +251,28 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
   void _prevMonth() {
     if (!_canGoPrev) return;
     setState(() {
-      _displayMonth =
-          DateTime(_displayMonth.year, _displayMonth.month - 1, 1);
+      _displayMonth = DateTime(_displayMonth.year, _displayMonth.month - 1, 1);
     });
   }
 
   void _nextMonth() {
     if (!_canGoNext) return;
     setState(() {
-      _displayMonth =
-          DateTime(_displayMonth.year, _displayMonth.month + 1, 1);
+      _displayMonth = DateTime(_displayMonth.year, _displayMonth.month + 1, 1);
     });
   }
 
   void _prevYear() {
     if (!_canGoPrevYear) return;
     setState(() {
-      _displayMonth =
-          DateTime(_displayMonth.year - 1, _displayMonth.month, 1);
+      _displayMonth = DateTime(_displayMonth.year - 1, _displayMonth.month, 1);
     });
   }
 
   void _nextYear() {
     if (!_canGoNextYear) return;
     setState(() {
-      _displayMonth =
-          DateTime(_displayMonth.year + 1, _displayMonth.month, 1);
+      _displayMonth = DateTime(_displayMonth.year + 1, _displayMonth.month, 1);
     });
   }
 
@@ -306,8 +303,10 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
     final locale = Localizations.localeOf(context);
     final refSunday = DateTime(2024, 1, 7);
     final fmt = DateFormat.E(locale.toString());
-    final labels =
-        List.generate(7, (i) => fmt.format(refSunday.add(Duration(days: i))));
+    final labels = List.generate(
+      7,
+      (i) => fmt.format(refSunday.add(Duration(days: i))),
+    );
     final theme = Theme.of(context);
     final sunRed = Colors.red.shade800;
     return Row(
@@ -369,9 +368,9 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
       child: InkWell(
         onTap: inRange
             ? () => setState(() {
-                  _selected = d;
-                  _syncInputFromSelected();
-                })
+                _selected = d;
+                _syncInputFromSelected();
+              })
             : null,
         borderRadius: BorderRadius.circular(8),
         child: Container(
@@ -417,9 +416,7 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
       ),
     );
     if (!inRange) {
-      return Expanded(
-        child: Opacity(opacity: 0.35, child: child),
-      );
+      return Expanded(child: Opacity(opacity: 0.35, child: child));
     }
     return Expanded(child: child);
   }
@@ -432,9 +429,9 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
     }
     final parsed = _tryParseYmd(raw);
     if (parsed == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter date as yyyy-mm-dd')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter date as yyyy-mm-dd')));
       return;
     }
     final clamped = _clampDay(parsed, widget.firstDate, widget.lastDate);
@@ -590,8 +587,7 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
       itemCount: 12,
       itemBuilder: (context, i) {
         final m = i + 1;
-        final enabled =
-            _monthOverlapsAllowedRange(DateTime(_pickerYear, m, 1));
+        final enabled = _monthOverlapsAllowedRange(DateTime(_pickerYear, m, 1));
         final isCurrent =
             _displayMonth.year == _pickerYear && _displayMonth.month == m;
         return Material(
@@ -611,8 +607,8 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
                   fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
                   color: enabled
                       ? (isCurrent
-                          ? theme.colorScheme.onPrimaryContainer
-                          : theme.colorScheme.onSurface)
+                            ? theme.colorScheme.onPrimaryContainer
+                            : theme.colorScheme.onSurface)
                       : theme.colorScheme.onSurface.withValues(alpha: 0.38),
                 ),
               ),
@@ -636,9 +632,7 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
       return Material(
         color: isPicker
             ? theme.colorScheme.primaryContainer
-            : theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.35,
-              ),
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           onTap: enabled ? () => _selectYear(y) : null,
@@ -650,8 +644,8 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
                 fontWeight: isPicker ? FontWeight.w700 : FontWeight.w500,
                 color: enabled
                     ? (isPicker
-                        ? theme.colorScheme.onPrimaryContainer
-                        : theme.colorScheme.onSurface)
+                          ? theme.colorScheme.onPrimaryContainer
+                          : theme.colorScheme.onSurface)
                     : theme.colorScheme.onSurface.withValues(alpha: 0.38),
               ),
             ),
@@ -791,10 +785,7 @@ class _HolidayDatePickerDialogState extends State<_HolidayDatePickerDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: () => _onOk(context),
-          child: const Text('OK'),
-        ),
+        FilledButton(onPressed: () => _onOk(context), child: const Text('OK')),
       ],
     );
   }

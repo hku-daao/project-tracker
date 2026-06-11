@@ -2,7 +2,7 @@ import 'environment_config.dart';
 
 /// Supabase configuration (switches with [AppEnvironment]).
 ///
-/// **Testing** — project *DAAO Tests* (`kxrimbbeyirmcjtszsvm`)  
+/// **Testing** — project *DAAO Tests* (`kxrimbbeyirmcjtszsvm`)
 /// **Production** — project *DAAO Apps* (`cjeyowmqhluiilrhkvmj`)
 ///
 /// Paste the **anon public** key for *DAAO Tests* into [_testingAnonKey] below, or pass
@@ -12,8 +12,7 @@ import 'environment_config.dart';
 class SupabaseConfig {
   SupabaseConfig._();
 
-  static const String _testingUrl =
-      'https://kxrimbbeyirmcjtszsvm.supabase.co';
+  static const String _testingUrl = 'https://kxrimbbeyirmcjtszsvm.supabase.co';
   static const String _productionUrl =
       'https://cjeyowmqhluiilrhkvmj.supabase.co';
 
@@ -30,8 +29,10 @@ class SupabaseConfig {
       AppEnvironment.isProduction ? _productionUrl : _testingUrl;
 
   static String get anonKey {
-    const fromEnv =
-        String.fromEnvironment('SUPABASE_ANON_KEY', defaultValue: '');
+    const fromEnv = String.fromEnvironment(
+      'SUPABASE_ANON_KEY',
+      defaultValue: '',
+    );
     if (fromEnv.isNotEmpty) return fromEnv;
     return AppEnvironment.isProduction ? _productionAnonKey : _testingAnonKey;
   }

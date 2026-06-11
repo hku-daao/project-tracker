@@ -13,16 +13,21 @@ class StaffTeamLookupResult {
   });
 
   final String loginEmail;
+
   /// `staff.id` (uuid) when the login email matched a row.
   final String? staffId;
   final String? appId;
+
   /// `staff.display_name` when the login email matches a staff row.
   final String? staffDisplayName;
+
   /// `staff.name` (fallback if display_name is empty).
   final String? staffName;
+
   /// Value from `staff.team_id` (may match `team.id` or `team.app_id`).
   final String? staffTeamIdRaw;
   final String? teamName;
+
   /// `staff.email` from the matched row (for verification vs login email).
   final String? staffEmailFromDb;
   final String? errorMessage;

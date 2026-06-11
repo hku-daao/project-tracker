@@ -11,10 +11,7 @@ const double _kViewportMargin = 8;
 const double _kAnchorGap = 2;
 
 /// Vertical placement relative to the anchor widget.
-enum AsanaAnchoredVerticalPlacement {
-  below,
-  above,
-}
+enum AsanaAnchoredVerticalPlacement { below, above }
 
 /// Left offset so [panelWidth] fits inside [viewportWidth].
 double asanaClampPanelLeft({
@@ -53,6 +50,7 @@ class _AnchoredOverlayPosition extends StatefulWidget {
 
   final LayerLink anchorLink;
   final BuildContext anchorContext;
+
   /// When set, horizontal position and width follow this context; [anchorContext] sets vertical anchor.
   final BuildContext? widthAlignContext;
   final AsanaAnchoredVerticalPlacement placement;
@@ -121,8 +119,7 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
     );
 
     var placeAbove = widget.placement == AsanaAnchoredVerticalPlacement.above;
-    final childBox =
-        _childKey.currentContext?.findRenderObject() as RenderBox?;
+    final childBox = _childKey.currentContext?.findRenderObject() as RenderBox?;
     final panelHeight = childBox?.size.height ?? 0;
     if (placeAbove && panelHeight > 0) {
       final panelTop = anchorOffset.dy - _kAnchorGap - panelHeight;
@@ -141,7 +138,8 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
       bottom = null;
     }
 
-    final changed = !_laidOut ||
+    final changed =
+        !_laidOut ||
         (left - _left).abs() > 0.5 ||
         (_top != null && top != null && (top - _top!).abs() > 0.5) ||
         (_bottom != null &&
@@ -201,10 +199,9 @@ Future<void> showAsanaAnchoredOverlay({
   late OverlayEntry entry;
   var barrierActive = false;
   final viewportW = MediaQuery.sizeOf(anchorContext).width;
-  final width = math.min(
-    panelWidth,
-    viewportW - _kViewportMargin * 2,
-  ).clamp(120.0, viewportW);
+  final width = math
+      .min(panelWidth, viewportW - _kViewportMargin * 2)
+      .clamp(120.0, viewportW);
 
   void close() {
     if (entry.mounted) entry.remove();

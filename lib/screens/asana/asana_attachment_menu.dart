@@ -76,7 +76,7 @@ Future<AsanaAttachmentWebsiteLink?> showAsanaAnchoredLinkEditor({
 }) async {
   AsanaAttachmentWebsiteLink? picked;
   final alignCtx = widthAlignContext ?? anchorContext;
-  final menuWidth = asanaAnchoredFieldWidth(alignCtx);
+  final menuWidth = asanaAnchoredFieldWidth(alignCtx).clamp(280.0, 420.0);
   await showAsanaAnchoredOverlay(
     anchorLink: anchorLink,
     anchorContext: anchorContext,
@@ -226,9 +226,9 @@ class _AsanaAttachmentLinkEditorPanelState
                       ),
                       child: Text(
                         'Cancel',
-                        style: asanaDetailValueStyle(ctx).copyWith(
-                          color: kAsanaTextSecondary,
-                        ),
+                        style: asanaDetailValueStyle(
+                          ctx,
+                        ).copyWith(color: kAsanaTextSecondary),
                       ),
                     ),
                   ),
@@ -398,9 +398,9 @@ class _AsanaAttachmentMenuPanelState extends State<_AsanaAttachmentMenuPanel> {
                         ),
                         child: Text(
                           'Back',
-                          style: asanaDetailValueStyle(ctx).copyWith(
-                            color: kAsanaTextSecondary,
-                          ),
+                          style: asanaDetailValueStyle(
+                            ctx,
+                          ).copyWith(color: kAsanaTextSecondary),
                         ),
                       ),
                     ),

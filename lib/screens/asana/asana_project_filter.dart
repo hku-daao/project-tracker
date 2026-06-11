@@ -101,7 +101,7 @@ class AsanaProjectFilter {
     return _calendarDayInDueRange(_dateOnly(due), filters);
   }
 
-  /// Mirrors [InitiativeListScreen._projectIsVisibleToCurrentUser].
+  /// Applies the same supervisor/subordinate visibility rules as Asana tasks.
   static bool _projectVisible(
     ProjectRecord p,
     AppState state,

@@ -12,8 +12,7 @@ class CalendarHoliday {
   final DateTime date;
   final String fullOrPm;
 
-  bool get isHku =>
-      holidayType.trim().toUpperCase() == 'HKU';
+  bool get isHku => holidayType.trim().toUpperCase() == 'HKU';
 
   bool get isHk => holidayType.trim().toUpperCase() == 'HK';
 

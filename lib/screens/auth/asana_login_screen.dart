@@ -104,10 +104,7 @@ class _AsanaLoginScreenState extends State<AsanaLoginScreen> {
   @override
   Widget build(BuildContext context) {
     const palette = AsanaLandingPalette.asana;
-    final theme = buildAsanaTheme(
-      Theme.of(context),
-      seedColor: palette.accent,
-    );
+    final theme = buildAsanaTheme(Theme.of(context), seedColor: palette.accent);
 
     return Theme(
       data: theme,
@@ -163,8 +160,9 @@ class _AsanaLoginScreenState extends State<AsanaLoginScreen> {
                               style: FilledButton.styleFrom(
                                 backgroundColor: palette.accent,
                                 foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),
                                 ),
@@ -184,17 +182,16 @@ class _AsanaLoginScreenState extends State<AsanaLoginScreen> {
                                         ),
                                       ),
                                     )
-                                  : Text(_isSignUp
-                                      ? 'Create account'
-                                      : 'Sign in'),
+                                  : Text(
+                                      _isSignUp ? 'Create account' : 'Sign in',
+                                    ),
                             ),
                             const SizedBox(height: 12),
                             TextButton(
                               onPressed: _loading
                                   ? null
-                                  : () => setState(
-                                        () => _isSignUp = !_isSignUp,
-                                      ),
+                                  : () =>
+                                        setState(() => _isSignUp = !_isSignUp),
                               child: Text(
                                 _isSignUp
                                     ? 'Already have an account? Sign in'
@@ -262,22 +259,22 @@ class _AsanaLoginScreenState extends State<AsanaLoginScreen> {
         obscureText: _obscurePassword,
         textInputAction: TextInputAction.done,
         autofillHints: const [AutofillHints.password],
-        decoration: _inputDecoration(
-          label: _isSignUp ? 'Password (min 6 characters)' : 'Password',
-          hint: 'Enter password',
-          icon: Icons.lock_outline,
-        ).copyWith(
-          suffixIcon: IconButton(
-            focusNode: _passwordVisibilityFocus,
-            tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-            icon: Icon(
-              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+        decoration:
+            _inputDecoration(
+              label: _isSignUp ? 'Password (min 6 characters)' : 'Password',
+              hint: 'Enter password',
+              icon: Icons.lock_outline,
+            ).copyWith(
+              suffixIcon: IconButton(
+                focusNode: _passwordVisibilityFocus,
+                tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                ),
+                onPressed: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
+              ),
             ),
-            onPressed: () => setState(
-              () => _obscurePassword = !_obscurePassword,
-            ),
-          ),
-        ),
         onFieldSubmitted: (_) {
           if (!_loading) _submit();
         },

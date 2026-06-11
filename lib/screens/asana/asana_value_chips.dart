@@ -64,9 +64,7 @@ class AsanaTableCellChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Align(
       alignment: Alignment.centerLeft,
-      child: IntrinsicWidth(
-        child: child,
-      ),
+      child: IntrinsicWidth(child: child),
     );
   }
 }
@@ -126,7 +124,9 @@ class AsanaStatusChip extends StatelessWidget {
           height: 1.2,
         ),
         maxLines: 1,
-        overflow: preserveFullLabel ? TextOverflow.visible : TextOverflow.ellipsis,
+        overflow: preserveFullLabel
+            ? TextOverflow.visible
+            : TextOverflow.ellipsis,
         softWrap: false,
       ),
     );
@@ -188,6 +188,7 @@ class AsanaSubmissionChip extends StatelessWidget {
 
   final String? submission;
   final double fontSize;
+
   /// When true, the pill label is never ellipsized (e.g. home table last column).
   final bool preserveFullLabel;
 
@@ -230,8 +231,9 @@ class AsanaSubmissionChip extends StatelessWidget {
           height: 1.2,
         ),
         maxLines: 1,
-        overflow:
-            preserveFullLabel ? TextOverflow.visible : TextOverflow.ellipsis,
+        overflow: preserveFullLabel
+            ? TextOverflow.visible
+            : TextOverflow.ellipsis,
         softWrap: false,
       ),
     );

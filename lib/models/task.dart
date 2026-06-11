@@ -1,6 +1,3 @@
-import 'comment.dart';
-import 'milestone.dart';
-
 /// Status of a task (low-level view: Not started, In progress, Completed).
 enum TaskStatus { todo, inProgress, done }
 
@@ -27,8 +24,6 @@ class Task {
   final DateTime createdAt;
   final TaskStatus status; // Not started, In progress, Completed
   final int progressPercent; // 0-100 (low-level: optional, derived from status)
-  final List<Milestone> milestones;
-  final List<TaskComment> comments;
 
   /// True when this row comes from singular [`task`] (not legacy [`tasks`]).
   final bool isSingularTableRow;
@@ -93,8 +88,6 @@ class Task {
     required this.createdAt,
     this.status = TaskStatus.todo,
     this.progressPercent = 0,
-    this.milestones = const [],
-    this.comments = const [],
     this.isSingularTableRow = false,
     this.dbStatus,
     this.updateByStaffName,
@@ -126,8 +119,6 @@ class Task {
     DateTime? createdAt,
     TaskStatus? status,
     int? progressPercent,
-    List<Milestone>? milestones,
-    List<TaskComment>? comments,
     bool? isSingularTableRow,
     String? dbStatus,
     String? updateByStaffName,
@@ -162,8 +153,6 @@ class Task {
       createdAt: createdAt ?? this.createdAt,
       status: status ?? this.status,
       progressPercent: progressPercent ?? this.progressPercent,
-      milestones: milestones ?? this.milestones,
-      comments: comments ?? this.comments,
       isSingularTableRow: isSingularTableRow ?? this.isSingularTableRow,
       dbStatus: dbStatus ?? this.dbStatus,
       updateByStaffName: updateByStaffName ?? this.updateByStaffName,
@@ -171,8 +160,7 @@ class Task {
       createByAssigneeKey: createByAssigneeKey ?? this.createByAssigneeKey,
       pic: pic ?? this.pic,
       updateDate: updateDate ?? this.updateDate,
-      lastUpdated:
-          clearLastUpdated ? null : (lastUpdated ?? this.lastUpdated),
+      lastUpdated: clearLastUpdated ? null : (lastUpdated ?? this.lastUpdated),
       submission: submission ?? this.submission,
       submitDate: clearSubmitDate ? null : (submitDate ?? this.submitDate),
       completionDate: clearCompletionDate
@@ -185,8 +173,9 @@ class Task {
       overdue: overdue ?? this.overdue,
       projectId: clearProject ? null : (projectId ?? this.projectId),
       projectName: clearProject ? null : (projectName ?? this.projectName),
-      projectDescription:
-          clearProject ? null : (projectDescription ?? this.projectDescription),
+      projectDescription: clearProject
+          ? null
+          : (projectDescription ?? this.projectDescription),
     );
   }
 

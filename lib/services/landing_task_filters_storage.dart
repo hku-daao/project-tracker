@@ -22,7 +22,8 @@ class LandingTaskFilters {
     this.filterOverdueOnly = false,
     this.filterCreateDateStartMs,
     this.filterCreateDateEndMs,
-    /// Overview (`InitiativeListScreen.customizedFlat`): `all` | `project` | `task` | `subtask`.
+
+    /// Landing overview segment: `all` | `project` | `task` | `subtask`.
     this.overviewEntityTab,
   });
 
@@ -31,7 +32,7 @@ class LandingTaskFilters {
   final List<String> assigneeIds;
   final List<String> statuses;
 
-  /// Team roster for "Filter by assignee" submenu; staff ids filter tasks/initiatives.
+  /// Team roster for "Filter by assignee" submenu; staff ids filter tasks.
   final String? filterAssigneeTeamId;
   final List<String> filterAssigneeStaffIds;
 
@@ -63,26 +64,26 @@ class LandingTaskFilters {
   final bool sortAscending;
 
   Map<String, dynamic> toJson() => {
-        'filterType': filterType,
-        'teamIds': teamIds,
-        'assigneeIds': assigneeIds,
-        'statuses': statuses,
-        'submissionFilters': submissionFilters,
-        'filterOverdueOnly': filterOverdueOnly,
-        'search': search,
-        // Persist explicit null so clearing sort overwrites any previous column in storage.
-        'sortColumn': sortColumn,
-        'sortAscending': sortAscending,
-        'filterAssigneeTeamId': filterAssigneeTeamId,
-        'filterAssigneeStaffIds': filterAssigneeStaffIds,
-        'filterPicTeamId': filterPicTeamId,
-        'filterPicStaffIds': filterPicStaffIds,
-        'filterCreatorTeamId': filterCreatorTeamId,
-        'filterCreatorStaffIds': filterCreatorStaffIds,
-        'filterCreateDateStartMs': filterCreateDateStartMs,
-        'filterCreateDateEndMs': filterCreateDateEndMs,
-        'overviewEntityTab': overviewEntityTab,
-      };
+    'filterType': filterType,
+    'teamIds': teamIds,
+    'assigneeIds': assigneeIds,
+    'statuses': statuses,
+    'submissionFilters': submissionFilters,
+    'filterOverdueOnly': filterOverdueOnly,
+    'search': search,
+    // Persist explicit null so clearing sort overwrites any previous column in storage.
+    'sortColumn': sortColumn,
+    'sortAscending': sortAscending,
+    'filterAssigneeTeamId': filterAssigneeTeamId,
+    'filterAssigneeStaffIds': filterAssigneeStaffIds,
+    'filterPicTeamId': filterPicTeamId,
+    'filterPicStaffIds': filterPicStaffIds,
+    'filterCreatorTeamId': filterCreatorTeamId,
+    'filterCreatorStaffIds': filterCreatorStaffIds,
+    'filterCreateDateStartMs': filterCreateDateStartMs,
+    'filterCreateDateEndMs': filterCreateDateEndMs,
+    'overviewEntityTab': overviewEntityTab,
+  };
 
   static LandingTaskFilters? fromJson(Map<String, dynamic>? j) {
     if (j == null) return null;

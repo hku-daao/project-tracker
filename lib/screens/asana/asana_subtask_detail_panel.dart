@@ -19,11 +19,9 @@ import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/attachment_file_pick.dart';
-import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
 import 'asana_attachment_draft_tile.dart';
 import 'asana_attachment_menu.dart';
-import 'asana_anchored_overlay.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
 import 'asana_blocking_loading_overlay.dart';
@@ -214,6 +212,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final _commentController = TextEditingController();
   final List<_SubtaskAttachmentDraft> _attachments = [];
   List<SubtaskCommentRowDisplay> _comments = [];
+  final Map<String, TextEditingController> _postedCommentControllers = {};
+  final Map<String, String> _postedCommentSavedText = {};
+  String? _savingPostedCommentId;
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
   final List<_SubtaskInlineImageDraft> _pendingInlineImageAdds = [];
@@ -242,6 +243,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final LayerLink _priorityAnchorLink = LayerLink();
   final LayerLink _statusAnchorLink = LayerLink();
   final LayerLink _attachmentAddAnchorLink = LayerLink();
+  final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
   int _anchoredPickerReopenBlockedUntilMs = 0;
   Set<String> _holidaySkipYmd = {};
 
@@ -353,6 +355,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _descController.dispose();
     _reasonController.dispose();
     _commentController.dispose();
+    _disposePostedCommentControllers();
     _clearAttachments();
     _subtaskAi?.dispose();
     _assigneeSnapshot.dispose();
@@ -461,9 +464,46 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     try {
       final list = await SupabaseService.fetchSubtaskComments(row.id);
       if (!mounted) return;
-      setState(() => _comments = list);
+      setState(() {
+        _comments = list;
+        _syncPostedCommentControllers();
+      });
       await _loadCommentInlineImages(list);
     } catch (_) {}
+  }
+
+  void _disposePostedCommentControllers() {
+    for (final c in _postedCommentControllers.values) {
+      c.dispose();
+    }
+    _postedCommentControllers.clear();
+    _postedCommentSavedText.clear();
+  }
+
+  void _syncPostedCommentControllers() {
+    final ids = _comments.map((c) => c.id).toSet();
+    for (final id in _postedCommentControllers.keys.toList()) {
+      if (!ids.contains(id)) {
+        _postedCommentControllers[id]!.dispose();
+        _postedCommentControllers.remove(id);
+        _postedCommentSavedText.remove(id);
+      }
+    }
+    for (final c in _comments) {
+      if (!_postedCommentControllers.containsKey(c.id)) {
+        final cleaned = stripInlineImageMarkers(c.description);
+        _postedCommentControllers[c.id] = TextEditingController(text: cleaned);
+        _postedCommentSavedText[c.id] = cleaned;
+      } else {
+        final ctrl = _postedCommentControllers[c.id]!;
+        final saved = _postedCommentSavedText[c.id] ?? '';
+        final cleaned = stripInlineImageMarkers(c.description);
+        if (ctrl.text == saved && ctrl.text != cleaned) {
+          ctrl.text = cleaned;
+          _postedCommentSavedText[c.id] = cleaned;
+        }
+      }
+    }
   }
 
   Future<void> _loadSubtaskDescriptionInlineImages(SingularSubtask? row) async {
@@ -505,6 +545,69 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   String _date(DateTime? d) {
     if (d == null) return '';
     return HkTime.formatInstantAsHk(d, 'MMM d, yyyy');
+  }
+
+  Widget _buildCommentDisplayTile(
+    AppState state,
+    SubtaskCommentRowDisplay comment,
+    SingularSubtask? subtask,
+  ) {
+    final inlineImages = _inlinePreviewItems(
+      entityType: 'subtask_comment',
+      entityId: comment.id,
+      saved: _commentInlineImages[comment.id] ?? const [],
+    );
+    final ownComment = _isOwnComment(state, comment);
+    if (ownComment && !_postedCommentControllers.containsKey(comment.id)) {
+      final cleaned = stripInlineImageMarkers(comment.description);
+      _postedCommentControllers[comment.id] = TextEditingController(
+        text: cleaned,
+      );
+      _postedCommentSavedText[comment.id] = cleaned;
+    }
+    if (ownComment) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Focus(
+              onFocusChange: (hasFocus) {
+                if (!hasFocus) {
+                  _savePostedCommentOnBlur(state, comment);
+                }
+              },
+              child: AsanaHoverTextField(
+                controller: _postedCommentControllers[comment.id]!,
+                canEdit: true,
+                readOnly: _saving || _savingPostedCommentId == comment.id,
+                maxLines: 8,
+                minLines: 2,
+                style: asanaDetailMultilineValueStyle(context),
+              ),
+            ),
+            InlineImageToolbar(
+              enabled: !_saving && subtask != null,
+              onAdd: subtask == null
+                  ? () {}
+                  : () => _addExistingCommentInlineImage(subtask, comment),
+            ),
+            InlineImagePreviewList(
+              images: inlineImages,
+              onRemove: _removeInlineImagePreview,
+            ),
+          ],
+        ),
+      );
+    }
+    return _SubtaskCommentDisplayTile(
+      comment: comment,
+      inlineImages: inlineImages,
+      canAddInlineImage: false,
+      inlineImageEnabled: !_saving,
+      onAddInlineImage: () {},
+      onRemoveInlineImage: _removeInlineImagePreview,
+    );
   }
 
   Future<void> _showEmailWarning(String label, String error) async {
@@ -616,6 +719,55 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     if (myAppId != null && myAppId.isNotEmpty && myAppId == key) return true;
     final myUuid = state.userStaffId?.trim();
     return myUuid != null && myUuid.isNotEmpty && myUuid == key;
+  }
+
+  bool _isOwnComment(AppState state, SubtaskCommentRowDisplay comment) {
+    return !comment.isDeleted &&
+        _matchesCurrentStaff(state, comment.createByStaffId);
+  }
+
+  Future<void> _savePostedCommentOnBlur(
+    AppState state,
+    SubtaskCommentRowDisplay comment,
+  ) async {
+    if (_savingPostedCommentId == comment.id) return;
+    final ctrl = _postedCommentControllers[comment.id];
+    if (ctrl == null) return;
+
+    final newBody = stripInlineImageMarkers(ctrl.text);
+    final saved = stripInlineImageMarkers(
+      _postedCommentSavedText[comment.id] ?? comment.description,
+    );
+    if (newBody == saved) return;
+    if (newBody.isEmpty) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Comment required',
+        content: 'Comment cannot be empty.',
+        palette: widget.palette,
+      );
+      return;
+    }
+
+    _savingPostedCommentId = comment.id;
+    final err = await SupabaseService.updateSubtaskCommentRow(
+      commentId: comment.id,
+      description: newBody,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    _savingPostedCommentId = null;
+    if (!mounted) return;
+    if (err != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not update comment',
+        content: err,
+        palette: widget.palette,
+      );
+      return;
+    }
+    _postedCommentSavedText[comment.id] = newBody;
+    await _loadComments(_subtask);
   }
 
   bool _canMarkComplete(SingularSubtask s) {
@@ -1142,7 +1294,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         .toList();
   }
 
-  Future<String?> _replaceSubtaskAttachments(String subtaskId) async {
+  Future<String?> _replaceSubtaskFileAndUrlAttachments(String subtaskId) async {
     final fileErr = await SupabaseService.replaceFileAttachments(
       entityType: 'subtask',
       entityId: subtaskId,
@@ -1294,7 +1446,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         if (newSubtaskId != null &&
             newSubtaskId.isNotEmpty &&
             _attachments.isNotEmpty) {
-          final attErr = await _replaceSubtaskAttachments(newSubtaskId);
+          final attErr = await _replaceSubtaskFileAndUrlAttachments(
+            newSubtaskId,
+          );
           if (attErr != null && mounted) {
             await showAsanaInfoDialog(
               context: context,
@@ -1420,7 +1574,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         return;
       }
       if (isCreator) {
-        final attErr = await _replaceSubtaskAttachments(s!.id);
+        final attErr = await _replaceSubtaskFileAndUrlAttachments(s!.id);
         if (attErr != null && mounted) {
           await showAsanaInfoDialog(
             context: context,
@@ -1546,7 +1700,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final attErr = await _replaceSubtaskAttachments(s.id);
+      final attErr = await _replaceSubtaskFileAndUrlAttachments(s.id);
       if (attErr != null && mounted) {
         await showAsanaInfoDialog(
           context: context,
@@ -1815,10 +1969,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker || _saving) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
     final result = await showAsanaAnchoredLinkEditor(
       anchorLink: _attachmentAddAnchorLink,
       anchorContext: anchorContext,
-      widthAlignContext: anchorContext,
+      widthAlignContext: widthAlignContext,
       initialUrl: '',
       initialDescription: '',
       onClosed: _blockAnchoredPickerReopen,
@@ -1862,7 +2019,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     required String entityType,
     required String entityId,
   }) async {
-    final picked = await pickOneFileWithBytes();
+    final picked = await _withBlockingLoading(pickOneFileWithBytes);
     if (!mounted || picked == null) return;
     if (picked.bytes.isEmpty) {
       await showAsanaInfoDialog(
@@ -2056,10 +2213,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     BuildContext anchorContext,
     _SubtaskAttachmentDraft draft,
   ) async {
+    if (!_canOpenAnchoredPicker || _saving) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
     final result = await showAsanaAnchoredLinkEditor(
       anchorLink: _attachmentAddAnchorLink,
       anchorContext: anchorContext,
-      widthAlignContext: anchorContext,
+      widthAlignContext: widthAlignContext,
       initialUrl: draft.urlController.text,
       initialDescription: draft.descController.text,
       onClosed: _blockAnchoredPickerReopen,
@@ -2524,26 +2684,29 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ),
           AsanaDetailTwoColumnRow(
             label: 'Assignees',
-            child: Builder(
-              builder: (anchorContext) => CompositedTransformTarget(
-                link: _assigneeAnchorLink,
-                child: isCreator
-                    ? AsanaAssigneeFieldValue(
-                        assignees: _assigneeRowsForDisplay(state),
-                        canEdit: true,
-                        onOpenPicker: _saving
-                            ? null
-                            : (_) => _pickAssignees(anchorContext),
-                        onRemove: _saving ? null : _removeAssignee,
-                      )
-                    : AsanaDetailPlainValue(
-                        text:
-                            s?.assigneeIds
-                                .map((id) => _nameFor(state, id))
-                                .where((n) => n.isNotEmpty)
-                                .join(', ') ??
-                            '',
-                      ),
+            child: KeyedSubtree(
+              key: _detailPopupWidthAlignKey,
+              child: Builder(
+                builder: (anchorContext) => CompositedTransformTarget(
+                  link: _assigneeAnchorLink,
+                  child: isCreator
+                      ? AsanaAssigneeFieldValue(
+                          assignees: _assigneeRowsForDisplay(state),
+                          canEdit: true,
+                          onOpenPicker: _saving
+                              ? null
+                              : (_) => _pickAssignees(anchorContext),
+                          onRemove: _saving ? null : _removeAssignee,
+                        )
+                      : AsanaDetailPlainValue(
+                          text:
+                              s?.assigneeIds
+                                  .map((id) => _nameFor(state, id))
+                                  .where((n) => n.isNotEmpty)
+                                  .join(', ') ??
+                              '',
+                        ),
+                ),
               ),
             ),
           ),
@@ -2735,24 +2898,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ),
           AsanaDetailSectionHeader(title: 'Comments', showAddButton: false),
           if (!_effectiveCreateMode && _comments.isNotEmpty) ...[
-            for (final c in _comments)
-              _SubtaskCommentDisplayTile(
-                comment: c,
-                inlineImages: _inlinePreviewItems(
-                  entityType: 'subtask_comment',
-                  entityId: c.id,
-                  saved: _commentInlineImages[c.id] ?? const [],
-                ),
-                canAddInlineImage: _matchesCurrentStaff(
-                  state,
-                  c.createByStaffId,
-                ),
-                inlineImageEnabled: !_saving,
-                onAddInlineImage: s == null
-                    ? () {}
-                    : () => _addExistingCommentInlineImage(s, c),
-                onRemoveInlineImage: _removeInlineImagePreview,
-              ),
+            for (final c in _comments) _buildCommentDisplayTile(state, c, s),
             const SizedBox(height: 8),
           ],
           AsanaDetailLabelValue(

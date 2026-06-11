@@ -4,54 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../config/supabase_config.dart';
-import '../navigator_keys.dart';
 import '../services/staff_team_lookup_service.dart';
 import '../services/supabase_service.dart';
 import '../services/task_fetch_visibility.dart';
-import '../utils/home_navigation.dart';
-import '../utils/pinned_dashboard_registry.dart';
 import '../web_deep_link.dart';
-import 'high_level/project_detail_screen.dart';
-import 'high_level/subtask_detail_screen.dart';
-import '../config/environment_config.dart';
-import '../web_host_env.dart';
 import 'asana_landing_screen.dart';
-import 'home_screen.dart';
-import 'task_detail_screen.dart';
 
-/// Web: root shell matches `view` / session so [HomeScreen] is not painted before Overview.
-/// Mobile: unchanged — [HomeScreen]; pinned Overview still opens via [_StartupShell._maybeOpenPinnedView].
-bool _preferAsanaShellOnWeb(String? view) {
-  if (!kIsWeb) return false;
-  if (view == 'project') return false;
-  if (view == 'original') return false;
-  if (view == 'asana' || view == 'newui' || view == 'new-ui') return true;
-  return view == null ||
-      view.isEmpty ||
-      view == 'default' ||
-      view == 'overview';
-}
-
-Widget _bootstrapShellChild() {
-  if (!kIsWeb) {
-    return const HomeScreen();
-  }
-  final raw = readDashboardViewFromUrlOrSession();
-  final view = raw?.trim().toLowerCase();
-  if (_preferAsanaShellOnWeb(view)) {
-    return const AsanaLandingScreen();
-  }
-  if (view == 'original') {
-    return const HomeScreen();
-  }
-  if (view == 'project') {
-    return buildProjectDashboardPage();
-  }
-  if (view == 'asana' || view == 'newui' || view == 'new-ui') {
-    return const AsanaLandingScreen();
-  }
-  return buildOverviewDashboardPage();
-}
+/// All platforms use the Asana shell; legacy Home / Overview routes are removed in phase 2.
+Widget _bootstrapShellChild() => const AsanaLandingScreen();
 
 /// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from Supabase.
 class AppBootstrap extends StatefulWidget {
@@ -89,11 +49,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
           state.setUserStaffContext(
             staffAppId: lookup.appId,
             staffUuid: lookup.staffId,
-            assignableStaff: const [],
           );
-          final subIds = await SupabaseService.fetchSubordinateAppIdsForSupervisor(
-            lookup.appId ?? '',
-          );
+          final subIds =
+              await SupabaseService.fetchSubordinateAppIdsForSupervisor(
+                lookup.appId ?? '',
+              );
           if (mounted) state.setSubordinateAppIds(subIds);
         }
       }
@@ -113,43 +73,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
           state.setUserStaffContext(
             staffAppId: state.userStaffAppId,
             staffUuid: resolvedUuid,
-            assignableStaff: state.assignableStaffFromServer,
           );
         }
       }
     }
 
-    /*
-    // --- LEGACY (commented for revamp): RBAC via Railway + load teams/staff ---
-    if (kIsWeb) {
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        final token = await user?.getIdToken(true);
-        if (token != null) {
-          var profile = await BackendApi().getMe(token);
-          final email = user?.email?.toLowerCase();
-          debugPrint('AppBootstrap: email=$email, profile=$profile');
-          if (profile != null && profile.staffAppId != null) {
-            if (mounted) {
-              state.setUserStaffContext(
-                staffAppId: profile.staffAppId,
-                assignableStaff: profile.assignableStaff,
-              );
-            }
-          }
-          if (mounted && token != null) {
-            await state.loadTeamsAndStaff(token);
-          }
-        }
-      } catch (e) {
-        debugPrint('AppBootstrap: Error loading user profile: $e');
-      }
-      if (!mounted) return;
-    }
-    */
-
-    // Load low-level tasks from Supabase (plural `tasks` + singular `task`) and deleted-task audit.
-    // Initiatives remain unloaded here unless you restore fetchInitiativesFromSupabase.
+    // Load Asana tasks/projects from Supabase.
     if (!SupabaseConfig.isConfigured) {
       if (mounted) {
         setState(() => _ready = true);
@@ -176,11 +105,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
         'staffAppId=${state.userStaffAppId}, '
         'lookupKeys=${state.taskVisibilityLookupKeys.length})',
       );
-      final deletedAudit = await SupabaseService.fetchDeletedTasksFromSupabase();
-      if (!mounted) return;
-      state.applyDeletedTasksFromSupabase(deletedAudit);
-      final filterTeams = await SupabaseService.fetchTeamsForFilterFromSupabase();
-      final staffLabels = await SupabaseService.fetchStaffAssigneesFromSupabase();
+      final filterTeams =
+          await SupabaseService.fetchTeamsForFilterFromSupabase();
+      final staffLabels =
+          await SupabaseService.fetchStaffAssigneesFromSupabase();
       final appIdToTeamId = await SupabaseService.fetchStaffAppIdToTeamIdMap();
       if (!mounted) return;
       if (filterTeams.isNotEmpty) {
@@ -196,7 +124,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       if (!mounted) return;
       state.applyProjects(projects);
     } catch (e) {
-      debugPrint('AppBootstrap: load tasks/deleted from Supabase: $e');
+      debugPrint('AppBootstrap: load tasks/projects from Supabase: $e');
     }
     if (mounted) {
       setState(() => _ready = true);
@@ -208,62 +136,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
     if (!kIsWeb) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _openWebDeepLinkIfPending();
+      syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
     });
-  }
-
-  void _openWebDeepLinkIfPending() {
-    // Prefer URL, then session (populated by [captureWebDeepLinkForSession] before path strategy).
-    // URL-only would miss deep links after [usePathUrlStrategy] strips the query from [href].
-    final rawView = readDashboardViewFromUrlOrSession();
-    final viewTag = rawView?.trim().toLowerCase();
-    if (_preferAsanaShellOnWeb(viewTag)) {
-      return;
-    }
-    final subId = readSubtaskIdFromUrlOrSession();
-    if (subId != null && subId.isNotEmpty) {
-      rootNavigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => SubtaskDetailScreen(
-            subtaskId: subId,
-            replaceWithParentTaskOnBack: true,
-          ),
-        ),
-      );
-      return;
-    }
-    final taskId = readTaskIdFromUrlOrSession();
-    if (taskId != null && taskId.isNotEmpty) {
-      rootNavigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => TaskDetailScreen(taskId: taskId),
-        ),
-      );
-      return;
-    }
-    final projectId = readProjectIdFromUrlOrSession();
-    if (projectId != null && projectId.isNotEmpty) {
-      rootNavigatorKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => ProjectDetailScreen(
-            projectId: projectId,
-            openedFromLanding: true,
-            openedFromOverview: false,
-          ),
-        ),
-      );
-      return;
-    }
-    // Shell already shows Overview / Project / Original — avoid a second route (flash of Home).
-    if (viewTag == 'overview' || viewTag == 'default') {
-      syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
-      return;
-    }
-    if (viewTag == 'project') {
-      syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
-      return;
-    }
-    syncWebStaleDetailSessionsIfUrlHasNoTaskOrSubtask();
   }
 
   @override
@@ -381,56 +255,11 @@ class StartupLoadingView extends StatelessWidget {
   }
 }
 
-/// After load, opens [CustomizedDashboardPage] (Default) unless a deep link wins.
-class _StartupShell extends StatefulWidget {
+class _StartupShell extends StatelessWidget {
   const _StartupShell({required this.child});
 
   final Widget child;
 
   @override
-  State<_StartupShell> createState() => _StartupShellState();
-}
-
-class _StartupShellState extends State<_StartupShell> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeOpenPinnedView());
-  }
-
-  Future<void> _maybeOpenPinnedView() async {
-    final subId = readSubtaskIdFromUrlOrSession();
-    final taskId = readTaskIdFromUrlOrSession();
-    if (subId != null && subId.isNotEmpty) return;
-    if (taskId != null && taskId.isNotEmpty) return;
-    final projectId = readProjectIdFromUrlOrSession();
-    if (projectId != null && projectId.isNotEmpty) return;
-    final rawView = readDashboardViewFromUrlOrSession();
-    final urlView = rawView?.trim().toLowerCase();
-    if (urlView == 'overview' ||
-        urlView == 'project' ||
-        urlView == 'default' ||
-        urlView == 'original' ||
-        urlView == 'asana' ||
-        urlView == 'newui' ||
-        urlView == 'new-ui') {
-      return;
-    }
-    // Web: shell already defaults to Overview when view is unset — do not stack a duplicate route.
-    if (kIsWeb && (urlView == null || urlView.isEmpty)) {
-      return;
-    }
-
-    if (!mounted || !context.mounted) return;
-    if (Navigator.of(context).canPop()) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: kOverviewDashboardRouteName),
-        builder: (context) => buildOverviewDashboardPage(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) => child;
 }

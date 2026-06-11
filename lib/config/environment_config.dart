@@ -23,11 +23,12 @@ class AppEnvironment {
   AppEnvironment._();
 
   /// `testing` (default) or `production`.
-  static const String deployEnv =
-      String.fromEnvironment('DEPLOY_ENV', defaultValue: 'testing');
+  static const String deployEnv = String.fromEnvironment(
+    'DEPLOY_ENV',
+    defaultValue: 'testing',
+  );
 
-  static bool get isProduction =>
-      deployEnv.toLowerCase() == 'production';
+  static bool get isProduction => deployEnv.toLowerCase() == 'production';
 
   static bool get isTesting => !isProduction;
 

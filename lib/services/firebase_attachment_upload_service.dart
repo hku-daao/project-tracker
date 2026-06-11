@@ -10,7 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../utils/attachment_file_pick.dart';
 
 /// Picks a file and uploads to Firebase Storage; callers store [downloadUrl] in Supabase
-/// `attachment.content` / `subtask_attachment.content` and [suggestedLabel] in `description`.
+/// `file_attachment` rows and [suggestedLabel] in `label`.
 ///
 /// **Access control (no Firestore):** each object stores up to 10 staff identifiers in
 /// custom metadata keys `m0`…`m9` (creator, PIC, assignees — same strings you use in

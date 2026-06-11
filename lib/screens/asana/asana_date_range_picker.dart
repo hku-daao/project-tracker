@@ -117,8 +117,9 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
       ),
     );
     final today = HkTime.todayDateOnlyHk();
-    final monthLabel = MaterialLocalizations.of(context)
-        .formatMonthYear(DateTime(_displayYear, _displayMonth));
+    final monthLabel = MaterialLocalizations.of(
+      context,
+    ).formatMonthYear(DateTime(_displayYear, _displayMonth));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -163,10 +164,8 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
                       ),
                       items: _yearOptions
                           .map(
-                            (y) => DropdownMenuItem(
-                              value: y,
-                              child: Text('$y'),
-                            ),
+                            (y) =>
+                                DropdownMenuItem(value: y, child: Text('$y')),
                           )
                           .toList(),
                       onChanged: (y) {
@@ -192,8 +191,9 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
                       ),
                       items: List.generate(12, (i) {
                         final m = i + 1;
-                        final monthName =
-                            DateFormat.MMM().format(DateTime(2000, m));
+                        final monthName = DateFormat.MMM().format(
+                          DateTime(2000, m),
+                        );
                         return DropdownMenuItem(
                           value: m,
                           child: Text(monthName),
@@ -337,9 +337,9 @@ class _MonthDayGrid extends StatelessWidget {
                     child: Text(
                       w,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: kAsanaTextSecondary,
-                          ),
+                        fontWeight: FontWeight.w600,
+                        color: kAsanaTextSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -362,7 +362,8 @@ class _MonthDayGrid extends StatelessWidget {
                 final start = isRangeStart(day);
                 final end = isRangeEnd(day);
                 final mid = inRange(day) && !start && !end;
-                final isToday = day.year == today.year &&
+                final isToday =
+                    day.year == today.year &&
                     day.month == today.month &&
                     day.day == today.day;
 
@@ -398,8 +399,9 @@ class _MonthDayGrid extends StatelessWidget {
                             '$dayNum',
                             style: TextStyle(
                               fontSize: 13,
-                              fontWeight:
-                                  start || end ? FontWeight.w600 : FontWeight.w400,
+                              fontWeight: start || end
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
                               color: enabled ? fg : fg.withValues(alpha: 0.45),
                             ),
                           ),

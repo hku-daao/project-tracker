@@ -13,8 +13,6 @@ import 'firebase_options.dart';
 import 'navigator_keys.dart';
 import 'screens/auth/auth_gate.dart';
 import 'screens/app_bootstrap.dart';
-import 'screens/home_screen.dart';
-import 'utils/pinned_dashboard_registry.dart';
 import 'web_startup.dart';
 
 void main() async {
@@ -28,7 +26,9 @@ void main() async {
     if (kIsWeb) {
       // Use DefaultFirebaseOptions (FlutterFire pattern). Do not call firebase.initializeApp() in
       // index.html — that can prevent Pigeon from wiring FirebaseCoreHostApi and causes channel-error.
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
       // Bind Storage to the JS SDK. If this is skipped, [FirebaseStorage.instance] may keep using
       // Pigeon/MethodChannel (no web host) → uploads throw in messages.pigeon.dart.
       FirebaseStorageWeb.registerWith(Registrar());
@@ -43,10 +43,6 @@ void main() async {
     initError = e.toString();
     debugPrint('Init error: $e\n$st');
   }
-  registerPinnedHomeDashboardPages(
-    overview: () => const CustomizedDashboardPage(),
-    project: () => const ProjectDashboardPage(),
-  );
   runApp(MyApp(initError: initError));
 }
 
@@ -82,7 +78,11 @@ class MyApp extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.error_outline, size: 48, color: Colors.orange),
+                  const Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: Colors.orange,
+                  ),
                   const SizedBox(height: 16),
                   const Text(
                     'App failed to start',

@@ -21,7 +21,9 @@ void showCopyableSnackBar(
       behavior: SnackBarBehavior.floating,
       content: SelectableText(
         message,
-        style: foregroundColor != null ? TextStyle(color: foregroundColor) : null,
+        style: foregroundColor != null
+            ? TextStyle(color: foregroundColor)
+            : null,
       ),
       duration: duration,
       backgroundColor: backgroundColor,

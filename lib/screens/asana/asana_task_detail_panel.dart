@@ -1338,7 +1338,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     required String entityType,
     required String entityId,
   }) async {
-    final picked = await pickOneFileWithBytes();
+    final picked = await _withBlockingLoading(pickOneFileWithBytes);
     if (!mounted || picked == null) return;
     if (picked.bytes.isEmpty) {
       await _showInfo(
