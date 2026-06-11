@@ -30,6 +30,7 @@ class AsanaProjectDetailPanel extends StatefulWidget {
     required this.projectId,
     required this.palette,
     required this.onClose,
+    this.refreshToken = 0,
     this.onChanged,
     this.onPushCreateTask,
     this.onPushTask,
@@ -37,6 +38,7 @@ class AsanaProjectDetailPanel extends StatefulWidget {
 
   final String projectId;
   final AsanaLandingPalette palette;
+  final int refreshToken;
   final VoidCallback onClose;
   final VoidCallback? onChanged;
   final VoidCallback? onPushCreateTask;
@@ -92,7 +94,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   @override
   void didUpdateWidget(covariant AsanaProjectDetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.projectId != widget.projectId) _bootstrap();
+    if (oldWidget.projectId != widget.projectId) {
+      _bootstrap();
+    } else if (oldWidget.refreshToken != widget.refreshToken) {
+      _loadProjectTasks();
+    }
   }
 
   @override

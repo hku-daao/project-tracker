@@ -24,6 +24,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
     this.onProjectChanged,
     this.onSubtaskCreated,
     this.onSubtaskChanged,
+    this.onTaskChanged,
     this.detailRefreshToken = 0,
   });
 
@@ -40,6 +41,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
   final VoidCallback? onSubtaskChanged;
+  final VoidCallback? onTaskChanged;
   final int detailRefreshToken;
 
   @override
@@ -50,6 +52,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
         palette: palette,
         refreshToken: detailRefreshToken,
         onClose: onClose,
+        onChanged: onTaskChanged,
         onPushCreateSubtask: onPushCreateSubtask == null
             ? null
             : () => onPushCreateSubtask!(taskId),
@@ -64,6 +67,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
       AsanaProjectDetailSelection(:final projectId) => AsanaProjectDetailPanel(
         projectId: projectId,
         palette: palette,
+        refreshToken: detailRefreshToken,
         onClose: onClose,
         onChanged: onProjectChanged,
         onPushCreateTask: onPushCreateTaskForProject == null

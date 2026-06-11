@@ -7,8 +7,6 @@ import 'package:http/http.dart' as http;
 import '../../services/backend_api.dart';
 import '../../utils/attachment_open_bytes.dart';
 import '../../services/supabase_service.dart';
-import '../../utils/attachment_url_launch.dart';
-import 'asana_detail_widgets.dart';
 
 final RegExp _inlineImageMarkerPattern = RegExp(
   r'(?:^|\n)\s*\[image:[^\]]+\]\s*',
@@ -26,7 +24,11 @@ String stripInlineImageMarkers(String text) {
 }
 
 class InlineImageToolbar extends StatelessWidget {
-  const InlineImageToolbar({super.key, required this.enabled, required this.onAdd});
+  const InlineImageToolbar({
+    super.key,
+    required this.enabled,
+    required this.onAdd,
+  });
 
   final bool enabled;
   final VoidCallback onAdd;
@@ -81,6 +83,31 @@ class InlineImagePreviewList extends StatelessWidget {
   }
 }
 
+class InlineImageThumbnail extends StatelessWidget {
+  const InlineImageThumbnail({
+    super.key,
+    required this.image,
+    this.onRemove,
+    this.width = 92,
+    this.height = 92,
+  });
+
+  final InlineImagePreviewItem image;
+  final void Function(InlineImagePreviewItem image)? onRemove;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InlineImagePreview(
+      image: image,
+      onRemove: onRemove,
+      width: width,
+      height: height,
+    );
+  }
+}
+
 class InlineImagePreviewItem {
   const InlineImagePreviewItem({
     required this.id,
@@ -114,10 +141,18 @@ class InlineImagePreviewItem {
 }
 
 class _InlineImagePreview extends StatefulWidget {
-  const _InlineImagePreview({super.key, required this.image, this.onRemove});
+  const _InlineImagePreview({
+    super.key,
+    required this.image,
+    this.onRemove,
+    this.width = 92,
+    this.height = 92,
+  });
 
   final InlineImagePreviewItem image;
   final void Function(InlineImagePreviewItem image)? onRemove;
+  final double width;
+  final double height;
 
   @override
   State<_InlineImagePreview> createState() => _InlineImagePreviewState();
@@ -145,8 +180,8 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 92,
-      height: 92,
+      width: widget.width,
+      height: widget.height,
       child: Stack(
         children: [
           Positioned.fill(
@@ -363,7 +398,16 @@ class _InlineImageBytes {
 String? _firebaseStorageObjectPathFromUrl(String raw) {
   final uri = Uri.tryParse(raw.trim());
   if (uri == null) return null;
-  if (!isAppFirebaseStorageAttachmentUrl(raw)) return null;
+  final host = uri.host.toLowerCase();
+  if (host != 'firebasestorage.googleapis.com' &&
+      host != 'storage.googleapis.com') {
+    return null;
+  }
+  if (host == 'storage.googleapis.com') {
+    final segments = uri.pathSegments;
+    if (segments.length < 2) return null;
+    return segments.skip(1).join('/');
+  }
   final i = uri.path.indexOf('/o/');
   if (i < 0) return null;
   final encoded = uri.path.substring(i + 3);
@@ -384,13 +428,26 @@ Future<_InlineImageBytes> _loadInlineImageBytes(
   }
   final url = image.url?.trim() ?? '';
   if (url.isEmpty) {
+    debugPrint(
+      'attachment thumbnail load failed: missing image URL id=${image.id}',
+    );
     return _InlineImageBytes(bytes: Uint8List(0), error: 'Missing image URL.');
   }
 
   final objectPath = _firebaseStorageObjectPathFromUrl(url);
+  debugPrint(
+    'attachment thumbnail load start: id=${image.id} urlHost=${Uri.tryParse(url)?.host ?? '(invalid)'} objectPath=${objectPath ?? '(none)'} mimeType=${image.mimeType ?? '(none)'}',
+  );
   if (objectPath != null && objectPath.isNotEmpty) {
     final user = FirebaseAuth.instance.currentUser;
     final idToken = await user?.getIdToken();
+    if (user == null) {
+      debugPrint('attachment thumbnail proxy skipped: Firebase user is null');
+    } else if (idToken == null || idToken.isEmpty) {
+      debugPrint(
+        'attachment thumbnail proxy skipped: Firebase ID token is empty',
+      );
+    }
     if (idToken != null && idToken.isNotEmpty) {
       try {
         final proxy = await BackendApi().createAttachmentProxyStreamUrl(
@@ -398,11 +455,17 @@ Future<_InlineImageBytes> _loadInlineImageBytes(
           objectPath: objectPath,
         );
         final proxyUri = proxy == null ? null : Uri.tryParse(proxy);
+        debugPrint(
+          'attachment thumbnail proxy session: objectPath=$objectPath proxy=${proxyUri == null ? '(null/invalid)' : proxyUri.toString()}',
+        );
         if (proxyUri != null && proxyUri.hasScheme) {
           final resp = await http
               .get(proxyUri, headers: {'Authorization': 'Bearer $idToken'})
               .timeout(const Duration(minutes: 2));
           if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
+            debugPrint(
+              'attachment thumbnail proxy success: bytes=${resp.bodyBytes.length} contentType=${resp.headers['content-type'] ?? '(none)'}',
+            );
             return _InlineImageBytes(
               bytes: resp.bodyBytes,
               contentType:
@@ -412,22 +475,30 @@ Future<_InlineImageBytes> _loadInlineImageBytes(
             );
           }
           debugPrint(
-            'inline image proxy HTTP ${resp.statusCode}: ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}...' : resp.body}',
+            'attachment thumbnail proxy HTTP ${resp.statusCode}: ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}...' : resp.body}',
           );
         }
       } catch (e, st) {
-        debugPrint('inline image proxy load: $e\n$st');
+        debugPrint('attachment thumbnail proxy exception: $e\n$st');
       }
     }
+  } else {
+    debugPrint(
+      'attachment thumbnail proxy skipped: no Firebase object path parsed',
+    );
   }
 
   final uri = Uri.tryParse(url);
   if (uri == null || !uri.hasScheme) {
+    debugPrint('attachment thumbnail direct skipped: invalid URL $url');
     return _InlineImageBytes(bytes: Uint8List(0), error: 'Invalid image URL.');
   }
   try {
     final resp = await http.get(uri).timeout(const Duration(seconds: 30));
     if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
+      debugPrint(
+        'attachment thumbnail direct success: bytes=${resp.bodyBytes.length} contentType=${resp.headers['content-type'] ?? '(none)'}',
+      );
       return _InlineImageBytes(
         bytes: resp.bodyBytes,
         contentType:
@@ -436,12 +507,18 @@ Future<_InlineImageBytes> _loadInlineImageBytes(
             'image/*',
       );
     }
+    debugPrint(
+      'attachment thumbnail direct HTTP ${resp.statusCode}: ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}...' : resp.body}',
+    );
     return _InlineImageBytes(
       bytes: Uint8List(0),
       error: 'Could not load image (HTTP ${resp.statusCode}).',
     );
   } catch (e, st) {
-    debugPrint('inline image direct load: $e\n$st');
-    return _InlineImageBytes(bytes: Uint8List(0), error: 'Could not load image.');
+    debugPrint('attachment thumbnail direct exception: $e\n$st');
+    return _InlineImageBytes(
+      bytes: Uint8List(0),
+      error: 'Could not load image.',
+    );
   }
 }

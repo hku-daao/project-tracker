@@ -47,6 +47,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
     this.onPushCreateSubtask,
     this.onPushSubtask,
     this.onCreated,
+    this.onChanged,
     this.initialProjectId,
   }) : assert(createMode || taskId != null);
 
@@ -55,6 +56,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
   final AsanaLandingPalette palette;
   final int refreshToken;
   final VoidCallback onClose;
+  final VoidCallback? onChanged;
   final VoidCallback? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
   final void Function(String taskId)? onCreated;
@@ -71,6 +73,7 @@ class _AttachmentDraft {
     String? desc,
     this.pendingBytes,
     this.pendingFilename,
+    this.mimeType,
     this.isWebsiteLink = false,
   }) : urlController = TextEditingController(text: url ?? ''),
        descController = TextEditingController(text: desc ?? '');
@@ -80,9 +83,10 @@ class _AttachmentDraft {
   final TextEditingController descController;
   Uint8List? pendingBytes;
   String? pendingFilename;
+  String? mimeType;
   bool isWebsiteLink;
 
-  bool get isPendingFile => pendingBytes != null && pendingBytes!.isNotEmpty;
+  bool get isPendingFile => pendingBytes != null;
 
   void dispose() {
     urlController.dispose();
@@ -181,6 +185,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       _bootstrap();
     } else if (oldWidget.refreshToken != widget.refreshToken) {
+      final id = widget.taskId?.trim();
+      if (id != null && id.isNotEmpty) {
+        SupabaseService.invalidateSubtasksCacheForTask(id);
+      }
       _loadSubtasks();
     }
   }
@@ -211,6 +219,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
   }
 
+  void _notifyChanged() => widget.onChanged?.call();
+
   Future<T?> _withBlockingLoading<T>(Future<T?> Function() action) async {
     if (!mounted) return null;
     AsanaBlockingLoadingOverlay.show(context);
@@ -236,7 +246,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         persistedId.isNotEmpty &&
         !widget.createMode &&
         SupabaseConfig.isConfigured) {
-      final err = await SupabaseService.deleteAttachmentById(persistedId);
+      final err = _draftShowsAsWebsiteLink(e)
+          ? await SupabaseService.deleteUrlAttachmentById(persistedId)
+          : await SupabaseService.deleteFileAttachmentById(persistedId);
       if (!mounted) return;
       if (err != null) {
         await _showInfo('Could not remove attachment', err);
@@ -254,6 +266,55 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (e.isWebsiteLink) return true;
     final url = e.urlController.text.trim();
     return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+  }
+
+  String? _attachmentMimeTypeFromName(String? name) {
+    final n = name?.toLowerCase().trim() ?? '';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return null;
+  }
+
+  bool _attachmentDraftIsImage(_AttachmentDraft e) {
+    final mime = e.mimeType?.toLowerCase().trim() ?? '';
+    if (mime.startsWith('image/')) return true;
+    final name = e.pendingFilename?.trim().isNotEmpty == true
+        ? e.pendingFilename!.trim()
+        : e.descController.text.trim();
+    if (_attachmentMimeTypeFromName(name) != null) return true;
+    final rawUrl = e.urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    final urlPath = uri?.path;
+    if (_attachmentMimeTypeFromName(urlPath) != null) return true;
+    final objectPath = _firebaseStorageObjectPathFromUrl(rawUrl);
+    return _attachmentMimeTypeFromName(objectPath) != null;
+  }
+
+  bool _shouldAttemptAttachmentImagePreview(_AttachmentDraft e) {
+    if (_attachmentDraftIsImage(e)) return true;
+    return !e.isPendingFile &&
+        isAppFirebaseStorageAttachmentUrl(e.urlController.text.trim());
+  }
+
+  String? _firebaseStorageObjectPathFromUrl(String raw) {
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null) return null;
+    if (uri.host.toLowerCase() == 'storage.googleapis.com') {
+      final segments = uri.pathSegments;
+      if (segments.length < 2) return null;
+      return segments.skip(1).join('/');
+    }
+    final i = uri.path.indexOf('/o/');
+    if (i < 0) return null;
+    final encoded = uri.path.substring(i + 3);
+    if (encoded.isEmpty) return null;
+    try {
+      return Uri.decodeComponent(encoded);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _editAttachmentLink(
@@ -738,20 +799,37 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final id = widget.taskId;
     if (id == null || !SupabaseConfig.isConfigured) return;
     try {
-      final rows = await SupabaseService.fetchAttachmentsForTask(id);
+      final files = await SupabaseService.fetchFileAttachments(
+        entityType: 'task',
+        entityId: id,
+      );
+      final urls = await SupabaseService.fetchUrlAttachments(
+        entityType: 'task',
+        entityId: id,
+      );
       if (!mounted) return;
       setState(() {
         _clearAttachments();
-        for (final r in rows) {
-          final content = r.content?.trim() ?? '';
+        for (final r in files) {
           _attachments.add(
             _AttachmentDraft(
               id: r.id,
-              url: r.content,
-              desc: r.description,
-              isWebsiteLink:
-                  content.isNotEmpty &&
-                  !isAppFirebaseStorageAttachmentUrl(content),
+              url: r.url,
+              desc: (r.description?.trim().isNotEmpty == true)
+                  ? r.description
+                  : r.filename,
+              mimeType: r.mimeType,
+              isWebsiteLink: false,
+            ),
+          );
+        }
+        for (final r in urls) {
+          _attachments.add(
+            _AttachmentDraft(
+              id: r.id,
+              url: r.url,
+              desc: r.label,
+              isWebsiteLink: true,
             ),
           );
         }
@@ -1162,70 +1240,83 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return [state.userStaffAppId, picKey, ..._selectedAssigneeIds];
   }
 
-  Future<void> _showAttachmentSourceMenu(
-    BuildContext anchorContext, {
-    Task? task,
-  }) async {
+  Future<void> _addFileAttachment({Task? task}) async {
+    if (task != null) {
+      final state = context.read<AppState>();
+      final picKey = _picAssigneeId ?? task.pic ?? '';
+      final r = await _withBlockingLoading(
+        () => FirebaseAttachmentUploadService.pickUploadFilesForTask(
+          task.id,
+          aclStaffKeys: _createAttachmentAclKeys(state, picKey),
+        ),
+      );
+      if (!mounted) return;
+      if (r?.error != null) {
+        await _showInfo('Attachment upload failed', r!.error!);
+        return;
+      }
+      final files = r?.files ?? const <({String url, String label})>[];
+      if (files.isEmpty) return;
+      setState(() {
+        for (final file in files) {
+          _attachments.add(
+            _AttachmentDraft(
+              url: file.url,
+              desc: file.label,
+              mimeType: _attachmentMimeTypeFromName(file.label),
+            ),
+          );
+        }
+      });
+    } else {
+      final picked = await _withBlockingLoading(
+        FirebaseAttachmentUploadService.pickFilesForUpload,
+      );
+      if (!mounted) return;
+      if (picked?.error != null) {
+        await _showInfo('Attachment upload failed', picked!.error!);
+        return;
+      }
+      final files =
+          picked?.files ?? const <({Uint8List bytes, String label})>[];
+      if (files.isEmpty) return;
+      setState(() {
+        for (final file in files) {
+          _attachments.add(
+            _AttachmentDraft(
+              pendingBytes: file.bytes,
+              pendingFilename: file.label,
+              desc: file.label,
+              mimeType: _attachmentMimeTypeFromName(file.label),
+            ),
+          );
+        }
+      });
+    }
+  }
+
+  Future<void> _addUrlAttachment(BuildContext anchorContext) async {
     if (!_canOpenAnchoredPicker) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
-    final result = await showAsanaAnchoredAttachmentMenu(
+    final result = await showAsanaAnchoredLinkEditor(
       anchorLink: _attachmentAddAnchorLink,
       anchorContext: anchorContext,
       widthAlignContext: widthAlignContext,
+      initialUrl: '',
+      initialDescription: '',
       onClosed: _blockAnchoredPickerReopen,
     );
     if (!mounted || result == null) return;
-    if (result is AsanaAttachmentUploadFile) {
-      if (task != null) {
-        final state = context.read<AppState>();
-        final picKey = _picAssigneeId ?? task.pic ?? '';
-        final r = await _withBlockingLoading(
-          () => FirebaseAttachmentUploadService.pickUploadForTask(
-            task.id,
-            aclStaffKeys: _createAttachmentAclKeys(state, picKey),
-          ),
-        );
-        if (!mounted) return;
-        if (r?.error != null) {
-          await _showInfo('Attachment upload failed', r!.error!);
-          return;
-        }
-        if (r?.url == null) return;
-        setState(() {
-          _attachments.add(_AttachmentDraft(url: r!.url, desc: r.label));
-        });
-      } else {
-        final picked = await _withBlockingLoading(
-          FirebaseAttachmentUploadService.pickFileForUpload,
-        );
-        if (!mounted) return;
-        if (picked?.error != null) {
-          await _showInfo('Attachment upload failed', picked!.error!);
-          return;
-        }
-        if (picked?.bytes == null) return;
-        setState(() {
-          _attachments.add(
-            _AttachmentDraft(
-              pendingBytes: picked!.bytes,
-              pendingFilename: picked.label,
-              desc: picked.label,
-            ),
-          );
-        });
-      }
-    } else if (result is AsanaAttachmentWebsiteLink) {
-      setState(() {
-        _attachments.add(
-          _AttachmentDraft(
-            url: result.url,
-            desc: result.description,
-            isWebsiteLink: true,
-          ),
-        );
-      });
-    }
+    setState(() {
+      _attachments.add(
+        _AttachmentDraft(
+          url: result.url,
+          desc: result.description,
+          isWebsiteLink: true,
+        ),
+      );
+    });
   }
 
   Future<void> _addTaskDescriptionInlineImage(Task task) async {
@@ -1512,6 +1603,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return 'File upload did not return a download link.';
       }
       draft.urlController.text = r.url!.trim();
+      draft.mimeType = _attachmentMimeTypeFromName(
+        draft.pendingFilename ?? draft.descController.text,
+      );
       if (draft.descController.text.trim().isEmpty) {
         draft.descController.text =
             r.label?.trim() ?? draft.pendingFilename ?? 'attachment';
@@ -1562,8 +1656,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       return;
     }
-    _setSaving(true);
-    AsanaBlockingLoadingOverlay.show(context);
+    if (mounted) setState(() => _saving = true);
+    await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
       final slots = await SupabaseService.assigneeSlotsForTask(directorIds);
       final ins = await SupabaseService.insertTaskTableRow(
@@ -1640,10 +1734,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return;
       }
       if (_attachments.isNotEmpty) {
-        await SupabaseService.replaceAttachmentsForTask(
-          taskId: newId,
-          rows: _attachmentPayload(),
-        );
+        final attErr = await _replaceTaskAttachments(newId);
+        if (attErr != null && mounted) {
+          await _showInfo('Could not save attachments', attErr);
+          return;
+        }
       }
       final model = await SupabaseService.fetchSingularTaskModelById(newId);
       if (model != null) {
@@ -1686,7 +1781,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (mounted) widget.onCreated?.call(newId);
     } finally {
       AsanaBlockingLoadingOverlay.hide();
-      if (mounted) _setSaving(false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -1773,10 +1868,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return;
       }
       if (_canEditAttachments(state, task)) {
-        final errA = await SupabaseService.replaceAttachmentsForTask(
-          taskId: task.id,
-          rows: _attachmentPayload(),
-        );
+        final errA = await _replaceTaskAttachments(task.id);
         if (errA != null && mounted) {
           await _showInfo('Task saved, attachments failed', errA);
         } else {
@@ -1847,10 +1939,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.replaceAttachmentsForTask(
-        taskId: task.id,
-        rows: _attachmentPayload(),
-      );
+      final err = await _replaceTaskAttachments(task.id);
       if (err != null && mounted) {
         await _showInfo('Could not save attachments', err);
       } else {
@@ -1944,6 +2033,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           completionDate: completedAt,
         ),
       );
+      _notifyChanged();
       if (task.submission?.trim() == 'Submitted') {
         await _notifyEmail(
           'Task accepted email',
@@ -1985,6 +2075,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           submitDate: DateTime.now().toUtc(),
         ),
       );
+      _notifyChanged();
       await _notifyEmail(
         'Task submission email',
         (token) =>
@@ -2015,6 +2106,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(task.copyWith(submission: 'Returned'));
+      _notifyChanged();
       await _notifyEmail(
         'Task returned email',
         (token) =>
@@ -2056,6 +2148,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           clearCompletionDate: true,
         ),
       );
+      _notifyChanged();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -2079,6 +2172,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       state.replaceTask(
         task.copyWith(dbStatus: 'Incomplete', status: TaskStatus.todo),
       );
+      _notifyChanged();
       await _loadSubtasks();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2114,6 +2208,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         updateByStaffLookupKey: state.userStaffAppId,
       );
       state.replaceTask(task.copyWith(dbStatus: 'Deleted'));
+      _notifyChanged();
       await _loadSubtasks();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2153,26 +2248,190 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
   }
 
-  List<({String? content, String? description})> _attachmentPayload() {
+  List<({String? url, String? filename, String? description})>
+  _fileAttachmentPayload() {
     return _attachments
-        .map(
-          (e) => (
-            content: e.urlController.text.trim().isEmpty
-                ? null
-                : e.urlController.text.trim(),
-            description: e.descController.text.trim().isEmpty
-                ? null
-                : e.descController.text.trim(),
-          ),
-        )
-        .where((r) => (r.content ?? '').isNotEmpty)
+        .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            url: url.isEmpty ? null : url,
+            filename: desc.isEmpty ? null : desc,
+            description: desc.isEmpty ? null : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
         .toList();
+  }
+
+  List<({String? url, String? label})> _urlAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            url: url.isEmpty ? null : url,
+            label: desc.isEmpty ? url : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _replaceTaskAttachments(String taskId) async {
+    final fileErr = await SupabaseService.replaceFileAttachments(
+      entityType: 'task',
+      entityId: taskId,
+      rows: _fileAttachmentPayload(),
+    );
+    if (fileErr != null) return fileErr;
+    return SupabaseService.replaceUrlAttachments(
+      entityType: 'task',
+      entityId: taskId,
+      rows: _urlAttachmentPayload(),
+    );
+  }
+
+  List<_AttachmentDraft> get _fileAttachments => _attachments
+      .where((a) => a.isPendingFile || !_draftShowsAsWebsiteLink(a))
+      .toList();
+
+  List<_AttachmentDraft> get _urlAttachments => _attachments
+      .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+      .toList();
+
+  Widget _attachmentFieldLabel({
+    required String label,
+    required bool showAdd,
+    required bool enabled,
+    required String tooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? anchorLink,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: Text(label, style: asanaDetailLabelStyle(context))),
+        if (showAdd) ...[
+          const SizedBox(width: 8),
+          AsanaDetailCircleAddButton(
+            onTap: onAdd,
+            enabled: enabled,
+            tooltip: tooltip,
+            size: 22,
+            anchorLink: anchorLink,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _attachmentValueList(
+    BuildContext context,
+    List<_AttachmentDraft> attachments, {
+    required bool createMode,
+    required bool allowRemove,
+    BuildContext? editAnchorContext,
+  }) {
+    if (attachments.isEmpty) return const SizedBox.shrink();
+    final imageAttachments = attachments
+        .where(
+          (e) => !_draftShowsAsWebsiteLink(e) && _attachmentDraftIsImage(e),
+        )
+        .toList();
+    final otherAttachments = attachments
+        .where(
+          (e) => _draftShowsAsWebsiteLink(e) || !_attachmentDraftIsImage(e),
+        )
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (imageAttachments.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: otherAttachments.isNotEmpty ? 8 : 0,
+            ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: imageAttachments
+                  .map(
+                    (e) => _attachmentDraftTile(
+                      context,
+                      e,
+                      createMode: createMode,
+                      allowRemove: allowRemove,
+                      editAnchorContext: editAnchorContext,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ...otherAttachments.map(
+          (e) => _attachmentDraftTile(
+            context,
+            e,
+            createMode: createMode,
+            allowRemove: allowRemove,
+            editAnchorContext: editAnchorContext,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _attachmentTwoColumnRow({
+    required String label,
+    required List<_AttachmentDraft> attachments,
+    required bool createMode,
+    required bool showAdd,
+    required bool addEnabled,
+    required String addTooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? addAnchorLink,
+    bool allowRemove = true,
+    BuildContext? editAnchorContext,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: MediaQuery.sizeOf(context).width < 600
+                ? kAsanaDetailLabelColumnWidth / 2
+                : kAsanaDetailLabelColumnWidth,
+            child: _attachmentFieldLabel(
+              label: label,
+              showAdd: showAdd,
+              enabled: addEnabled,
+              tooltip: addTooltip,
+              onAdd: onAdd,
+              anchorLink: addAnchorLink,
+            ),
+          ),
+          Expanded(
+            child: _attachmentValueList(
+              context,
+              attachments,
+              createMode: createMode,
+              allowRemove: allowRemove,
+              editAnchorContext: editAnchorContext,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _attachmentDraftTile(
     BuildContext context,
     _AttachmentDraft e, {
     required bool createMode,
+    required bool allowRemove,
     BuildContext? editAnchorContext,
   }) {
     if (e.isPendingFile) {
@@ -2186,7 +2445,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ? 'Uploads when you create the task'
             : 'Uploads when you save',
         enabled: !_saving,
-        onRemove: () => _removeAttachmentDraft(e),
+        onRemove: allowRemove ? () => _removeAttachmentDraft(e) : null,
+        imageBytes: e.pendingBytes,
+        mimeType: e.mimeType,
+        showImagePreview: _shouldAttemptAttachmentImagePreview(e),
       );
     }
     final url = e.urlController.text.trim();
@@ -2197,15 +2459,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return AsanaAttachmentDraftTile(
       isWebsiteLink: isLink,
       title: title,
-      url: isLink ? url : null,
+      url: url,
       enabled: !_saving,
-      onRemove: () => _removeAttachmentDraft(e),
+      onRemove: allowRemove ? () => _removeAttachmentDraft(e) : null,
       onEditLink: isLink && editAnchorContext != null
           ? () => _editAttachmentLink(editAnchorContext, e)
           : null,
-      onOpenFile: !isLink
+      onDownload: !isLink
           ? () => openAttachmentUrl(context, url, displayFileName: title)
           : null,
+      imageBytes: e.pendingBytes,
+      mimeType: e.mimeType,
+      showImagePreview: !isLink && _attachmentDraftIsImage(e),
     );
   }
 
@@ -2546,21 +2811,27 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             label: 'Submission',
             child: AsanaDetailSubmissionPill(submission: 'Pending'),
           ),
-          AsanaDetailSectionHeader(
-            title: 'Attachments',
-            showAddButton: true,
-            addTooltip: 'Add attachment',
-            addAnchorLink: _attachmentAddAnchorLink,
-            onAdd: (ctx) => _showAttachmentSourceMenu(ctx),
+          _attachmentTwoColumnRow(
+            label: 'Files',
+            attachments: _fileAttachments,
+            createMode: true,
+            showAdd: true,
             addEnabled: !_saving,
+            addTooltip: 'Add file',
+            onAdd: (_) => _addFileAttachment(),
+            allowRemove: true,
           ),
-          ..._attachments.map(
-            (e) => _attachmentDraftTile(
-              context,
-              e,
-              createMode: true,
-              editAnchorContext: context,
-            ),
+          _attachmentTwoColumnRow(
+            label: 'Links',
+            attachments: _urlAttachments,
+            createMode: true,
+            showAdd: true,
+            addEnabled: !_saving,
+            addTooltip: 'Add link',
+            addAnchorLink: _attachmentAddAnchorLink,
+            onAdd: _addUrlAttachment,
+            allowRemove: true,
+            editAnchorContext: context,
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
           AsanaDetailLabelValue(
@@ -2829,34 +3100,34 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 text: _formatDateTime(task.lastUpdated),
               ),
             ),
-          AsanaDetailSectionHeader(
-            title: 'Attachments',
-            showAddButton: true,
-            addTooltip: 'Add attachment',
-            addAnchorLink: _attachmentAddAnchorLink,
-            onAdd: (ctx) => _showAttachmentSourceMenu(ctx, task: task),
-            addEnabled: _canEditAttachments(state, task) && !_saving,
-          ),
           if (_loadingExtras)
             const LinearProgressIndicator()
-          else if (_attachments.isEmpty)
-            const SizedBox(height: 4)
-          else
+          else ...[
+            _attachmentTwoColumnRow(
+              label: 'Files',
+              attachments: _fileAttachments,
+              createMode: false,
+              showAdd: true,
+              addEnabled: _canEditAttachments(state, task) && !_saving,
+              addTooltip: 'Add file',
+              onAdd: (_) => _addFileAttachment(task: task),
+              allowRemove: _canEditAttachments(state, task),
+            ),
             Builder(
-              builder: (attachmentCtx) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _attachments
-                    .map(
-                      (e) => _attachmentDraftTile(
-                        context,
-                        e,
-                        createMode: false,
-                        editAnchorContext: attachmentCtx,
-                      ),
-                    )
-                    .toList(),
+              builder: (attachmentCtx) => _attachmentTwoColumnRow(
+                label: 'Links',
+                attachments: _urlAttachments,
+                createMode: false,
+                showAdd: true,
+                addEnabled: _canEditAttachments(state, task) && !_saving,
+                addTooltip: 'Add link',
+                addAnchorLink: _attachmentAddAnchorLink,
+                onAdd: _addUrlAttachment,
+                allowRemove: _canEditAttachments(state, task),
+                editAnchorContext: attachmentCtx,
               ),
             ),
+          ],
           if (canEdit)
             _aiSuggestions(AsanaTaskAiFieldKey.websiteLink)
           else if (showCommentAi)

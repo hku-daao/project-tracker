@@ -25,6 +25,12 @@ import '../utils/attachment_file_pick.dart';
 class FirebaseAttachmentUploadService {
   FirebaseAttachmentUploadService._();
 
+  static const List<({Uint8List bytes, String label})> _emptyPickedUploads =
+      <({Uint8List bytes, String label})>[];
+
+  static const List<({String url, String label})> _emptyUploadedFiles =
+      <({String url, String label})>[];
+
   /// Root prefix in Firebase Storage (no spaces — Storage rules path segments cannot contain spaces).
   static const String _storageAppRoot = 'project_tracker';
 
@@ -37,14 +43,16 @@ class FirebaseAttachmentUploadService {
   static const String storageMetadataOriginalFileNameKey = 'originalFileName';
 
   /// Reads [storageMetadataOriginalFileNameKey] from the object (null if missing / error).
-  static Future<String?> fetchOriginalFileNameFromMetadata(String objectPath) async {
+  static Future<String?> fetchOriginalFileNameFromMetadata(
+    String objectPath,
+  ) async {
     if (Firebase.apps.isEmpty) return null;
     final path = objectPath.trim();
     if (path.isEmpty) return null;
     try {
       final meta = await FirebaseStorage.instance.ref(path).getMetadata();
-      final v =
-          meta.customMetadata?[storageMetadataOriginalFileNameKey]?.trim();
+      final v = meta.customMetadata?[storageMetadataOriginalFileNameKey]
+          ?.trim();
       if (v != null && v.isNotEmpty) return v;
     } catch (e, st) {
       debugPrint('fetchOriginalFileNameFromMetadata: $e\n$st');
@@ -220,7 +228,11 @@ class FirebaseAttachmentUploadService {
         );
         continue;
       }
-      final url = _downloadUrlFromStorageResponseBody(resp.body, bucket, trimmed);
+      final url = _downloadUrlFromStorageResponseBody(
+        resp.body,
+        bucket,
+        trimmed,
+      );
       if (url != null && url.contains('token=')) {
         return url;
       }
@@ -268,11 +280,13 @@ class FirebaseAttachmentUploadService {
       body: bytes,
     );
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final bodyShort =
-          resp.body.length > 400 ? '${resp.body.substring(0, 400)}…' : resp.body;
+      final bodyShort = resp.body.length > 400
+          ? '${resp.body.substring(0, 400)}…'
+          : resp.body;
       var msg = 'Storage upload failed (HTTP ${resp.statusCode}). $bodyShort';
       if (resp.statusCode == 403) {
-        msg += ' Deploy Storage rules (firebase deploy --only storage) and sign in.';
+        msg +=
+            ' Deploy Storage rules (firebase deploy --only storage) and sign in.';
       }
       return (error: msg);
     }
@@ -338,29 +352,49 @@ class FirebaseAttachmentUploadService {
 
   /// Picks one file without uploading (e.g. create-task draft before task id exists).
   static Future<({Uint8List? bytes, String? label, String? error})>
-      pickFileForUpload() async {
+  pickFileForUpload() async {
+    final picked = await pickFilesForUpload(allowMultiple: false);
+    if (picked.error != null) {
+      return (bytes: null, label: null, error: picked.error);
+    }
+    if (picked.files.isEmpty) {
+      return (bytes: null, label: null, error: null);
+    }
+    final first = picked.files.first;
+    return (bytes: first.bytes, label: first.label, error: null);
+  }
+
+  static Future<
+    ({List<({Uint8List bytes, String label})> files, String? error})
+  >
+  pickFilesForUpload({bool allowMultiple = true}) async {
     try {
       final err = _guardSync();
-      if (err != null) return (bytes: null, label: null, error: err);
+      if (err != null) return (files: _emptyPickedUploads, error: err);
 
-      final picked = await pickOneFileWithBytes();
-      if (picked == null) {
-        return (bytes: null, label: null, error: null);
+      final picked = await pickFilesWithBytes(allowMultiple: allowMultiple);
+      if (picked.isEmpty) {
+        return (files: _emptyPickedUploads, error: null);
       }
 
-      final label =
-          picked.name.trim().isEmpty ? 'attachment' : picked.name.trim();
-      final bytes = picked.bytes;
-      if (bytes.isEmpty) {
-        return (bytes: null, label: null, error: 'Could not read file data.');
+      final files = <({Uint8List bytes, String label})>[];
+      for (final file in picked) {
+        final label = file.name.trim().isEmpty
+            ? 'attachment'
+            : file.name.trim();
+        final bytes = file.bytes;
+        if (bytes.length > _maxBytes) {
+          return (
+            files: _emptyPickedUploads,
+            error: 'File too large (max 50 MB): $label',
+          );
+        }
+        files.add((bytes: bytes, label: label));
       }
-      if (bytes.length > _maxBytes) {
-        return (bytes: null, label: null, error: 'File too large (max 50 MB).');
-      }
-      return (bytes: bytes, label: label, error: null);
+      return (files: files, error: null);
     } catch (e, st) {
-      debugPrint('pickFileForUpload: $e\n$st');
-      return (bytes: null, label: null, error: e.toString());
+      debugPrint('pickFilesForUpload: $e\n$st');
+      return (files: _emptyPickedUploads, error: e.toString());
     }
   }
 
@@ -412,7 +446,8 @@ class FirebaseAttachmentUploadService {
   }
 
   /// Uploads [bytes] to `task_attachments/[taskId]` (after create or from a staged pick).
-  static Future<({String? url, String? label, String? error})> uploadBytesForTask(
+  static Future<({String? url, String? label, String? error})>
+  uploadBytesForTask(
     String taskId, {
     required Uint8List bytes,
     required String originalFilename,
@@ -422,7 +457,9 @@ class FirebaseAttachmentUploadService {
   }) async {
     try {
       final tid = taskId.trim();
-      if (tid.isEmpty) return (url: null, label: null, error: 'Missing task id');
+      if (tid.isEmpty) {
+        return (url: null, label: null, error: 'Missing task id');
+      }
 
       final err = _guardSync();
       if (err != null) return (url: null, label: null, error: err);
@@ -430,9 +467,6 @@ class FirebaseAttachmentUploadService {
       final label = originalFilename.trim().isEmpty
           ? 'attachment'
           : originalFilename.trim();
-      if (bytes.isEmpty) {
-        return (url: null, label: null, error: 'Could not read file data.');
-      }
       if (bytes.length > _maxBytes) {
         return (url: null, label: null, error: 'File too large (max 50 MB).');
       }
@@ -467,32 +501,103 @@ class FirebaseAttachmentUploadService {
   /// Returns `(url, label)` on success, `error` on failure, all null if user cancelled pick.
   ///
   /// [onUploadPhaseStarted] / [onUploadPhaseEnded] wrap the Storage upload only (after pick).
-  static Future<({String? url, String? label, String? error})> pickUploadForTask(
+  static Future<({String? url, String? label, String? error})>
+  pickUploadForTask(
     String taskId, {
     required List<String?> aclStaffKeys,
     void Function()? onUploadPhaseStarted,
     void Function()? onUploadPhaseEnded,
   }) async {
-    final picked = await pickFileForUpload();
-    if (picked.error != null) {
-      return (url: null, label: null, error: picked.error);
-    }
-    if (picked.bytes == null) {
-      return (url: null, label: null, error: null);
-    }
-    return uploadBytesForTask(
+    final uploaded = await pickUploadFilesForTask(
       taskId,
-      bytes: picked.bytes!,
-      originalFilename: picked.label ?? 'attachment',
       aclStaffKeys: aclStaffKeys,
       onUploadPhaseStarted: onUploadPhaseStarted,
       onUploadPhaseEnded: onUploadPhaseEnded,
+      allowMultiple: false,
     );
+    if (uploaded.error != null) {
+      return (url: null, label: null, error: uploaded.error);
+    }
+    if (uploaded.files.isEmpty) {
+      return (url: null, label: null, error: null);
+    }
+    final first = uploaded.files.first;
+    return (url: first.url, label: first.label, error: null);
+  }
+
+  static Future<({List<({String url, String label})> files, String? error})>
+  pickUploadFilesForTask(
+    String taskId, {
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+    bool allowMultiple = true,
+  }) async {
+    final picked = await pickFilesForUpload(allowMultiple: allowMultiple);
+    if (picked.error != null) {
+      return (files: _emptyUploadedFiles, error: picked.error);
+    }
+    final uploaded = <({String url, String label})>[];
+    for (final file in picked.files) {
+      final upload = await uploadBytesForTask(
+        taskId,
+        bytes: file.bytes,
+        originalFilename: file.label,
+        aclStaffKeys: aclStaffKeys,
+        onUploadPhaseStarted: onUploadPhaseStarted,
+        onUploadPhaseEnded: onUploadPhaseEnded,
+      );
+      if (upload.error != null) return (files: uploaded, error: upload.error);
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return (
+          files: uploaded,
+          error: 'File upload did not return a download link.',
+        );
+      }
+      uploaded.add((url: url, label: upload.label ?? file.label));
+    }
+    return (files: uploaded, error: null);
+  }
+
+  static Future<({List<({String url, String label})> files, String? error})>
+  pickUploadFilesForSubtask(
+    String subtaskId, {
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+    bool allowMultiple = true,
+  }) async {
+    final picked = await pickFilesForUpload(allowMultiple: allowMultiple);
+    if (picked.error != null) {
+      return (files: _emptyUploadedFiles, error: picked.error);
+    }
+    final uploaded = <({String url, String label})>[];
+    for (final file in picked.files) {
+      final upload = await uploadBytesForSubtask(
+        subtaskId,
+        bytes: file.bytes,
+        originalFilename: file.label,
+        aclStaffKeys: aclStaffKeys,
+        onUploadPhaseStarted: onUploadPhaseStarted,
+        onUploadPhaseEnded: onUploadPhaseEnded,
+      );
+      if (upload.error != null) return (files: uploaded, error: upload.error);
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return (
+          files: uploaded,
+          error: 'File upload did not return a download link.',
+        );
+      }
+      uploaded.add((url: url, label: upload.label ?? file.label));
+    }
+    return (files: uploaded, error: null);
   }
 
   /// Uploads [bytes] to `subtask_attachments/[subtaskId]` after a create draft has an id.
   static Future<({String? url, String? label, String? error})>
-      uploadBytesForSubtask(
+  uploadBytesForSubtask(
     String subtaskId, {
     required Uint8List bytes,
     required String originalFilename,
@@ -512,9 +617,6 @@ class FirebaseAttachmentUploadService {
       final label = originalFilename.trim().isEmpty
           ? 'attachment'
           : originalFilename.trim();
-      if (bytes.isEmpty) {
-        return (url: null, label: null, error: 'Could not read file data.');
-      }
       if (bytes.length > _maxBytes) {
         return (url: null, label: null, error: 'File too large (max 50 MB).');
       }
@@ -547,61 +649,28 @@ class FirebaseAttachmentUploadService {
   }
 
   /// Same contract as [pickUploadForTask] for sub-task rows.
-  static Future<({String? url, String? label, String? error})> pickUploadForSubtask(
+  static Future<({String? url, String? label, String? error})>
+  pickUploadForSubtask(
     String subtaskId, {
     required List<String?> aclStaffKeys,
     void Function()? onUploadPhaseStarted,
     void Function()? onUploadPhaseEnded,
   }) async {
-    try {
-      final sid = subtaskId.trim();
-      if (sid.isEmpty) {
-        return (url: null, label: null, error: 'Missing sub-task id');
-      }
-
-      final err = _guardSync();
-      if (err != null) return (url: null, label: null, error: err);
-
-      final picked = await pickOneFileWithBytes();
-      if (picked == null) {
-        return (url: null, label: null, error: null);
-      }
-
-      final label =
-          picked.name.trim().isEmpty ? 'attachment' : picked.name.trim();
-      final bytes = picked.bytes;
-      if (bytes.isEmpty) {
-        return (url: null, label: null, error: 'Could not read file data.');
-      }
-      if (bytes.length > _maxBytes) {
-        return (url: null, label: null, error: 'File too large (max 50 MB).');
-      }
-
-      final acl = aclMetadataFromStaffKeys(aclStaffKeys);
-      if (acl.isEmpty) {
-        return (
-          url: null,
-          label: null,
-          error:
-              'Cannot upload: no staff keys for attachment access (creator / PIC / assignees).',
-        );
-      }
-
-      try {
-        onUploadPhaseStarted?.call();
-        return await _putBytes(
-          storageRelativeFolder: 'subtask_attachments/$sid',
-          originalFilename: label,
-          bytes: bytes,
-          aclMetadata: acl,
-        );
-      } finally {
-        onUploadPhaseEnded?.call();
-      }
-    } catch (e, st) {
-      debugPrint('pickUploadForSubtask: $e\n$st');
-      return (url: null, label: null, error: e.toString());
+    final uploaded = await pickUploadFilesForSubtask(
+      subtaskId,
+      aclStaffKeys: aclStaffKeys,
+      onUploadPhaseStarted: onUploadPhaseStarted,
+      onUploadPhaseEnded: onUploadPhaseEnded,
+      allowMultiple: false,
+    );
+    if (uploaded.error != null) {
+      return (url: null, label: null, error: uploaded.error);
     }
+    if (uploaded.files.isEmpty) {
+      return (url: null, label: null, error: null);
+    }
+    final first = uploaded.files.first;
+    return (url: first.url, label: first.label, error: null);
   }
 
   static Future<({String? url, String? label, String? error})> _putBytes({

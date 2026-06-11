@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_panel_host.dart';
 import 'asana_detail_selection.dart';
+import 'asana_project_detail_panel.dart';
 import 'asana_task_detail_panel.dart';
 
 /// Right-hand slide: task panel stays mounted; sub-task / create sub-task slide over it.
@@ -23,6 +24,7 @@ class AsanaDetailSlidePanel extends StatefulWidget {
     this.onProjectChanged,
     this.onSubtaskCreated,
     this.onSubtaskChanged,
+    this.onTaskChanged,
     this.detailRefreshToken = 0,
   });
 
@@ -41,6 +43,7 @@ class AsanaDetailSlidePanel extends StatefulWidget {
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
   final VoidCallback? onSubtaskChanged;
+  final VoidCallback? onTaskChanged;
 
   @override
   State<AsanaDetailSlidePanel> createState() => _AsanaDetailSlidePanelState();
@@ -69,6 +72,26 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
     };
   }
 
+  static String? _baseProjectId(List<AsanaDetailSelection> stack) {
+    if (stack.isEmpty) return null;
+    return switch (stack.first) {
+      AsanaProjectDetailSelection(:final projectId) => projectId,
+      _ => null,
+    };
+  }
+
+  static String? _taskIdUnderProject(List<AsanaDetailSelection> stack) {
+    if (stack.isEmpty || stack.first is! AsanaProjectDetailSelection) {
+      return null;
+    }
+    for (final selection in stack) {
+      if (selection case AsanaTaskDetailSelection(:final taskId)) {
+        return taskId;
+      }
+    }
+    return null;
+  }
+
   /// Top overlay when drilling in from a task; sole panel when opened without a task base.
   static AsanaDetailSelection? _overlaySelection(
     List<AsanaDetailSelection> stack,
@@ -90,6 +113,8 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
 
     final chrome = AsanaSlideChrome(widget.palette);
     final baseTaskId = _baseTaskId(widget.stack);
+    final baseProjectId = _baseProjectId(widget.stack);
+    final taskIdUnderProject = _taskIdUnderProject(widget.stack);
     final overlay = _overlaySelection(widget.stack);
     final hasOverlay = overlay != null;
     final subtaskOverlay =
@@ -151,7 +176,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
             ),
             Divider(height: 1, color: chrome.footerBorder),
             Expanded(
-              child: baseTaskId != null
+              child: baseTaskId != null && baseProjectId == null
                   ? _TaskWithOverlayStack(
                       taskPanelKey: _taskPanelKey(baseTaskId),
                       taskId: baseTaskId,
@@ -170,6 +195,31 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
                       onProjectChanged: widget.onProjectChanged,
                       onSubtaskCreated: widget.onSubtaskCreated,
                       onSubtaskChanged: widget.onSubtaskChanged,
+                      onTaskChanged: widget.onTaskChanged,
+                    )
+                  : baseProjectId != null
+                  ? _ProjectWithOverlayStack(
+                      projectId: baseProjectId,
+                      taskPanelKey: taskIdUnderProject == null
+                          ? null
+                          : _taskPanelKey(taskIdUnderProject),
+                      taskIdUnderProject: taskIdUnderProject,
+                      palette: widget.palette,
+                      detailRefreshToken: widget.detailRefreshToken,
+                      overlay: overlay,
+                      onDismissAll: widget.onDismissAll,
+                      onPop: widget.onPop,
+                      onPushCreateSubtask: widget.onPushCreateSubtask,
+                      onPushSubtask: widget.onPushSubtask,
+                      onPushCreateTaskForProject:
+                          widget.onPushCreateTaskForProject,
+                      onPushTaskFromProject: widget.onPushTaskFromProject,
+                      onTaskCreated: widget.onTaskCreated,
+                      onProjectCreated: widget.onProjectCreated,
+                      onProjectChanged: widget.onProjectChanged,
+                      onSubtaskCreated: widget.onSubtaskCreated,
+                      onSubtaskChanged: widget.onSubtaskChanged,
+                      onTaskChanged: widget.onTaskChanged,
                     )
                   : AsanaDetailPanelHost(
                       selection: widget.stack.last,
@@ -186,6 +236,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
                       onProjectChanged: widget.onProjectChanged,
                       onSubtaskCreated: widget.onSubtaskCreated,
                       onSubtaskChanged: widget.onSubtaskChanged,
+                      onTaskChanged: widget.onTaskChanged,
                       detailRefreshToken: widget.detailRefreshToken,
                     ),
             ),
@@ -215,6 +266,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
     this.onProjectChanged,
     this.onSubtaskCreated,
     this.onSubtaskChanged,
+    this.onTaskChanged,
   });
 
   final GlobalKey taskPanelKey;
@@ -233,6 +285,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
   final VoidCallback? onSubtaskChanged;
+  final VoidCallback? onTaskChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +299,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
             palette: palette,
             refreshToken: detailRefreshToken,
             onClose: onDismissAll,
+            onChanged: onTaskChanged,
             onPushCreateSubtask: onPushCreateSubtask == null
                 ? null
                 : () => onPushCreateSubtask!(taskId),
@@ -268,6 +322,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
               onProjectChanged: onProjectChanged,
               onSubtaskCreated: onSubtaskCreated,
               onSubtaskChanged: onSubtaskChanged,
+              onTaskChanged: onTaskChanged,
               detailRefreshToken: detailRefreshToken,
             ),
           ),
@@ -298,6 +353,7 @@ class _DetailOverlayLayer extends StatefulWidget {
     this.onProjectChanged,
     this.onSubtaskCreated,
     this.onSubtaskChanged,
+    this.onTaskChanged,
     required this.detailRefreshToken,
   });
 
@@ -313,6 +369,7 @@ class _DetailOverlayLayer extends StatefulWidget {
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
   final VoidCallback? onSubtaskChanged;
+  final VoidCallback? onTaskChanged;
   final int detailRefreshToken;
 
   @override
@@ -364,9 +421,122 @@ class _DetailOverlayLayerState extends State<_DetailOverlayLayer>
           onProjectChanged: widget.onProjectChanged,
           onSubtaskCreated: widget.onSubtaskCreated,
           onSubtaskChanged: widget.onSubtaskChanged,
+          onTaskChanged: widget.onTaskChanged,
           detailRefreshToken: widget.detailRefreshToken,
         ),
       ),
+    );
+  }
+}
+
+/// Project detail stays mounted; task / sub-task layers slide over it.
+class _ProjectWithOverlayStack extends StatelessWidget {
+  const _ProjectWithOverlayStack({
+    required this.projectId,
+    required this.taskPanelKey,
+    required this.taskIdUnderProject,
+    required this.palette,
+    required this.detailRefreshToken,
+    required this.overlay,
+    required this.onDismissAll,
+    required this.onPop,
+    this.onPushCreateSubtask,
+    this.onPushSubtask,
+    this.onPushCreateTaskForProject,
+    this.onPushTaskFromProject,
+    this.onTaskCreated,
+    this.onProjectCreated,
+    this.onProjectChanged,
+    this.onSubtaskCreated,
+    this.onSubtaskChanged,
+    this.onTaskChanged,
+  });
+
+  final String projectId;
+  final GlobalKey? taskPanelKey;
+  final String? taskIdUnderProject;
+  final AsanaLandingPalette palette;
+  final int detailRefreshToken;
+  final AsanaDetailSelection? overlay;
+  final VoidCallback onDismissAll;
+  final VoidCallback onPop;
+  final void Function(String parentTaskId)? onPushCreateSubtask;
+  final void Function(String subtaskId)? onPushSubtask;
+  final void Function(String projectId)? onPushCreateTaskForProject;
+  final void Function(String taskId)? onPushTaskFromProject;
+  final void Function(String taskId)? onTaskCreated;
+  final void Function(String projectId)? onProjectCreated;
+  final VoidCallback? onProjectChanged;
+  final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
+  final VoidCallback? onSubtaskChanged;
+  final VoidCallback? onTaskChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(
+          child: AsanaProjectDetailPanel(
+            projectId: projectId,
+            palette: palette,
+            refreshToken: detailRefreshToken,
+            onClose: onDismissAll,
+            onChanged: onProjectChanged,
+            onPushCreateTask: onPushCreateTaskForProject == null
+                ? null
+                : () => onPushCreateTaskForProject!(projectId),
+            onPushTask: onPushTaskFromProject,
+          ),
+        ),
+        if (overlay != null) Positioned.fill(child: _buildOverlay()),
+      ],
+    );
+  }
+
+  Widget _buildOverlay() {
+    final layer = overlay!;
+    final taskId = taskIdUnderProject;
+    final isSubtaskOverlay =
+        layer is AsanaSubtaskDetailSelection ||
+        layer is AsanaCreateSubtaskDetailSelection;
+    if (isSubtaskOverlay && taskId != null && taskPanelKey != null) {
+      return _TaskWithOverlayStack(
+        taskPanelKey: taskPanelKey!,
+        taskId: taskId,
+        palette: palette,
+        detailRefreshToken: detailRefreshToken,
+        overlay: layer,
+        onDismissAll: onDismissAll,
+        onPop: onPop,
+        onPushCreateSubtask: onPushCreateSubtask,
+        onPushSubtask: onPushSubtask,
+        onPushCreateTaskForProject: onPushCreateTaskForProject,
+        onPushTaskFromProject: onPushTaskFromProject,
+        onTaskCreated: onTaskCreated,
+        onProjectCreated: onProjectCreated,
+        onProjectChanged: onProjectChanged,
+        onSubtaskCreated: onSubtaskCreated,
+        onSubtaskChanged: onSubtaskChanged,
+        onTaskChanged: onTaskChanged,
+      );
+    }
+    return _DetailOverlayLayer(
+      key: ValueKey(_TaskWithOverlayStack._overlayKey(layer)),
+      selection: layer,
+      palette: palette,
+      onPop: onPop,
+      onPushCreateSubtask: onPushCreateSubtask,
+      onPushSubtask: onPushSubtask,
+      onPushCreateTaskForProject: onPushCreateTaskForProject,
+      onPushTaskFromProject: onPushTaskFromProject,
+      onTaskCreated: onTaskCreated,
+      onProjectCreated: onProjectCreated,
+      onProjectChanged: onProjectChanged,
+      onSubtaskCreated: onSubtaskCreated,
+      onSubtaskChanged: onSubtaskChanged,
+      onTaskChanged: onTaskChanged,
+      detailRefreshToken: detailRefreshToken,
     );
   }
 }

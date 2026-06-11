@@ -444,7 +444,7 @@ class _AsanaCreateProjectDetailPanelState
       return;
     }
     setState(() => _saving = true);
-    AsanaBlockingLoadingOverlay.show(context);
+    await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
       final slots = await SupabaseService.assigneeSlotsForTask(
         _assigneeIds.toList(),

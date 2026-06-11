@@ -41,6 +41,62 @@ class SubtaskAttachmentRow {
   final String? description;
 }
 
+class FileAttachmentRow {
+  const FileAttachmentRow({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.url,
+    this.storagePath,
+    this.filename,
+    this.description,
+    this.mimeType,
+    this.fileSizeBytes,
+    this.createdBy,
+    this.createdAt,
+    this.sortOrder = 0,
+    this.status = 'Active',
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final String url;
+  final String? storagePath;
+  final String? filename;
+  final String? description;
+  final String? mimeType;
+  final int? fileSizeBytes;
+  final String? createdBy;
+  final DateTime? createdAt;
+  final int sortOrder;
+  final String status;
+}
+
+class UrlAttachmentRow {
+  const UrlAttachmentRow({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.url,
+    required this.label,
+    this.createdBy,
+    this.createdAt,
+    this.sortOrder = 0,
+    this.status = 'Active',
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final String url;
+  final String label;
+  final String? createdBy;
+  final DateTime? createdAt;
+  final int sortOrder;
+  final String status;
+}
+
 class InlineAttachmentRow {
   const InlineAttachmentRow({
     required this.id,
@@ -208,6 +264,24 @@ class SupabaseService {
     )) {
       f(tid);
     }
+  }
+
+  static Future<void> _invalidateSubtasksCacheForSubtaskId(
+    String subtaskId,
+  ) async {
+    final sid = subtaskId.trim();
+    if (!_enabled || sid.isEmpty) return;
+    try {
+      final row = await Supabase.instance.client
+          .from('subtask')
+          .select('task_id')
+          .eq('id', sid)
+          .maybeSingle();
+      final taskId = row?['task_id']?.toString().trim();
+      if (taskId != null && taskId.isNotEmpty) {
+        invalidateSubtasksCacheForTask(taskId);
+      }
+    } catch (_) {}
   }
 
   static void _storeSubtaskListMemoryCache(
@@ -832,6 +906,202 @@ class SupabaseService {
     );
   }
 
+  static Future<List<FileAttachmentRow>> fetchFileAttachments({
+    required String entityType,
+    required String entityId,
+  }) async {
+    if (!_enabled) return [];
+    final type = entityType.trim();
+    final id = entityId.trim();
+    if (type.isEmpty || id.isEmpty) return [];
+    final res = await Supabase.instance.client
+        .from('file_attachment')
+        .select(
+          'id,entity_type,entity_id,url,storage_path,filename,description,mime_type,file_size_bytes,created_by,created_at,sort_order,status',
+        )
+        .eq('entity_type', type)
+        .eq('entity_id', id)
+        .eq('status', 'Active')
+        .order('sort_order', ascending: true)
+        .order('created_at', ascending: true);
+    final out = <FileAttachmentRow>[];
+    for (final raw in (res as List)) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final rowId = m['id']?.toString().trim() ?? '';
+      final url = m['url']?.toString().trim() ?? '';
+      if (rowId.isEmpty || url.isEmpty) continue;
+      out.add(
+        FileAttachmentRow(
+          id: rowId,
+          entityType: m['entity_type']?.toString().trim() ?? type,
+          entityId: m['entity_id']?.toString().trim() ?? id,
+          url: url,
+          storagePath: m['storage_path']?.toString(),
+          filename: m['filename']?.toString(),
+          description: m['description']?.toString(),
+          mimeType: m['mime_type']?.toString(),
+          fileSizeBytes: _flexIntFromRow(m['file_size_bytes']),
+          createdBy: m['created_by']?.toString(),
+          createdAt: _parseDateTimeNullable(m['created_at']),
+          sortOrder: _flexIntFromRow(m['sort_order']),
+          status: m['status']?.toString().trim().isNotEmpty == true
+              ? m['status'].toString().trim()
+              : 'Active',
+        ),
+      );
+    }
+    return out;
+  }
+
+  static Future<List<UrlAttachmentRow>> fetchUrlAttachments({
+    required String entityType,
+    required String entityId,
+  }) async {
+    if (!_enabled) return [];
+    final type = entityType.trim();
+    final id = entityId.trim();
+    if (type.isEmpty || id.isEmpty) return [];
+    final res = await Supabase.instance.client
+        .from('url_attachment')
+        .select(
+          'id,entity_type,entity_id,url,label,created_by,created_at,sort_order,status',
+        )
+        .eq('entity_type', type)
+        .eq('entity_id', id)
+        .eq('status', 'Active')
+        .order('sort_order', ascending: true)
+        .order('created_at', ascending: true);
+    final out = <UrlAttachmentRow>[];
+    for (final raw in (res as List)) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final rowId = m['id']?.toString().trim() ?? '';
+      final url = m['url']?.toString().trim() ?? '';
+      final label = m['label']?.toString().trim() ?? '';
+      if (rowId.isEmpty || url.isEmpty) continue;
+      out.add(
+        UrlAttachmentRow(
+          id: rowId,
+          entityType: m['entity_type']?.toString().trim() ?? type,
+          entityId: m['entity_id']?.toString().trim() ?? id,
+          url: url,
+          label: label.isEmpty ? url : label,
+          createdBy: m['created_by']?.toString(),
+          createdAt: _parseDateTimeNullable(m['created_at']),
+          sortOrder: _flexIntFromRow(m['sort_order']),
+          status: m['status']?.toString().trim().isNotEmpty == true
+              ? m['status'].toString().trim()
+              : 'Active',
+        ),
+      );
+    }
+    return out;
+  }
+
+  static Future<String?> replaceFileAttachments({
+    required String entityType,
+    required String entityId,
+    required List<({String? url, String? filename, String? description})> rows,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final type = entityType.trim();
+    final id = entityId.trim();
+    if (type.isEmpty || id.isEmpty) return 'Missing attachment owner';
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase
+          .from('file_attachment')
+          .delete()
+          .eq('entity_type', type)
+          .eq('entity_id', id);
+      for (var i = 0; i < rows.length; i++) {
+        final r = rows[i];
+        final url = r.url?.trim() ?? '';
+        if (url.isEmpty) continue;
+        final filename = r.filename?.trim();
+        final description = r.description?.trim();
+        await supabase.from('file_attachment').insert({
+          'entity_type': type,
+          'entity_id': id,
+          'url': url,
+          if (filename != null && filename.isNotEmpty) 'filename': filename,
+          if (description != null && description.isNotEmpty)
+            'description': description,
+          'sort_order': i,
+          'status': 'Active',
+        });
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> deleteFileAttachmentById(String attachmentId) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = attachmentId.trim();
+    if (id.isEmpty) return 'Missing attachment id';
+    try {
+      await Supabase.instance.client
+          .from('file_attachment')
+          .delete()
+          .eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> replaceUrlAttachments({
+    required String entityType,
+    required String entityId,
+    required List<({String? url, String? label})> rows,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final type = entityType.trim();
+    final id = entityId.trim();
+    if (type.isEmpty || id.isEmpty) return 'Missing attachment owner';
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase
+          .from('url_attachment')
+          .delete()
+          .eq('entity_type', type)
+          .eq('entity_id', id);
+      for (var i = 0; i < rows.length; i++) {
+        final r = rows[i];
+        final url = r.url?.trim() ?? '';
+        if (url.isEmpty) continue;
+        final label = r.label?.trim();
+        await supabase.from('url_attachment').insert({
+          'entity_type': type,
+          'entity_id': id,
+          'url': url,
+          'label': label == null || label.isEmpty ? url : label,
+          'sort_order': i,
+          'status': 'Active',
+        });
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> deleteUrlAttachmentById(String attachmentId) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = attachmentId.trim();
+    if (id.isEmpty) return 'Missing attachment id';
+    try {
+      await Supabase.instance.client
+          .from('url_attachment')
+          .delete()
+          .eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   static Future<List<InlineAttachmentRow>> fetchInlineAttachments({
     required String entityType,
     required String entityId,
@@ -881,7 +1151,9 @@ class SupabaseService {
     }
   }
 
-  static Future<String?> markInlineAttachmentDeleted(String inlineAttachmentId) async {
+  static Future<String?> markInlineAttachmentDeleted(
+    String inlineAttachmentId,
+  ) async {
     if (!_enabled) return 'Supabase not configured';
     final id = inlineAttachmentId.trim();
     if (id.isEmpty) return 'inline attachment id is required';
@@ -3308,6 +3580,7 @@ class SupabaseService {
           creatorStaffLookupKey: creatorStaffLookupKey,
         );
       }
+      invalidateSubtasksCacheForTask(taskId);
       return (error: null, subtaskId: sid);
     } catch (e) {
       return (error: e.toString(), subtaskId: null);
@@ -3406,6 +3679,7 @@ class SupabaseService {
           .from('subtask')
           .update(map)
           .eq('id', subtaskId);
+      await _invalidateSubtasksCacheForSubtaskId(subtaskId);
       if (map.containsKey('update_date')) {
         final projectTouchError = await _touchProjectFromSubtaskRow(subtaskId);
         if (projectTouchError != null) return projectTouchError;

@@ -70,7 +70,29 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   @override
   void initState() {
     super.initState();
+    SupabaseService.addSubtaskCacheInvalidateListener(
+      _onSubtasksCacheInvalidated,
+    );
     _loadSavedFilters();
+  }
+
+  @override
+  void dispose() {
+    SupabaseService.removeSubtaskCacheInvalidateListener(
+      _onSubtasksCacheInvalidated,
+    );
+    super.dispose();
+  }
+
+  void _onSubtasksCacheInvalidated(String taskId) {
+    if (!mounted || !_filtersReady) return;
+    final tid = taskId.trim();
+    if (tid.isEmpty) return;
+    final visible =
+        _displayTasks.any((t) => t.id == tid) ||
+        _displayFlatRows.any((r) => r.task.id == tid);
+    if (!visible && !_expandedTaskIds.contains(tid)) return;
+    unawaited(_rebuildTaskList(showBlockingOverlay: false));
   }
 
   @override

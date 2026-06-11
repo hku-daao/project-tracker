@@ -17,6 +17,7 @@ import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/attachment_url_launch.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
@@ -40,6 +41,8 @@ class _SubtaskAttachmentDraft {
     String? desc,
     this.pendingBytes,
     this.pendingFilename,
+    this.mimeType,
+    this.isWebsiteLink = false,
   }) : urlController = TextEditingController(text: url ?? ''),
        descController = TextEditingController(text: desc ?? '');
 
@@ -48,8 +51,10 @@ class _SubtaskAttachmentDraft {
   final TextEditingController descController;
   Uint8List? pendingBytes;
   String? pendingFilename;
+  String? mimeType;
+  bool isWebsiteLink;
 
-  bool get isPendingFile => pendingBytes != null && pendingBytes!.isNotEmpty;
+  bool get isPendingFile => pendingBytes != null;
 
   void dispose() {
     urlController.dispose();
@@ -323,6 +328,24 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
   }
 
+  Future<T?> _withBlockingLoading<T>(Future<T?> Function() action) async {
+    if (!mounted) return null;
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      return await action();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+    }
+  }
+
+  void _notifyParentTaskOfSubtaskChange() {
+    final taskId = (_subtask?.taskId ?? widget.parentTaskId ?? '').trim();
+    if (taskId.isNotEmpty) {
+      SupabaseService.invalidateSubtasksCacheForTask(taskId);
+    }
+    widget.onChanged?.call();
+  }
+
   @override
   void dispose() {
     AsanaBlockingLoadingOverlay.hideAll();
@@ -395,16 +418,37 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   Future<void> _loadAttachments(SingularSubtask? row) async {
     if (row == null || !SupabaseConfig.isConfigured) return;
     try {
-      final rows = await SupabaseService.fetchSubtaskAttachments(row.id);
+      final files = await SupabaseService.fetchFileAttachments(
+        entityType: 'subtask',
+        entityId: row.id,
+      );
+      final urls = await SupabaseService.fetchUrlAttachments(
+        entityType: 'subtask',
+        entityId: row.id,
+      );
       if (!mounted) return;
       setState(() {
         _clearAttachments();
-        for (final r in rows) {
+        for (final r in files) {
           _attachments.add(
             _SubtaskAttachmentDraft(
               id: r.id,
-              url: r.content,
-              desc: r.description,
+              url: r.url,
+              desc: (r.description?.trim().isNotEmpty == true)
+                  ? r.description
+                  : r.filename,
+              mimeType: r.mimeType,
+              isWebsiteLink: false,
+            ),
+          );
+        }
+        for (final r in urls) {
+          _attachments.add(
+            _SubtaskAttachmentDraft(
+              id: r.id,
+              url: r.url,
+              desc: r.label,
+              isWebsiteLink: true,
             ),
           );
         }
@@ -930,6 +974,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   List<({String url, String description})> _websiteAttachmentsForAi() {
     return _attachments
+        .where(_draftShowsAsWebsiteLink)
         .map(
           (a) => (
             url: a.urlController.text.trim(),
@@ -1003,24 +1048,112 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   void _applyWebsiteLinkFromAi(String url, String desc) {
     setState(() {
-      _attachments.add(_SubtaskAttachmentDraft(url: url, desc: desc));
+      _attachments.add(
+        _SubtaskAttachmentDraft(url: url, desc: desc, isWebsiteLink: true),
+      );
     });
   }
 
-  List<({String? content, String? description})> _attachmentPayload() {
+  bool _draftShowsAsWebsiteLink(_SubtaskAttachmentDraft draft) {
+    if (draft.isPendingFile) return false;
+    if (draft.isWebsiteLink) return true;
+    final url = draft.urlController.text.trim();
+    return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+  }
+
+  String? _attachmentMimeTypeFromName(String? name) {
+    final n = name?.toLowerCase().trim() ?? '';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return null;
+  }
+
+  bool _attachmentDraftIsImage(_SubtaskAttachmentDraft draft) {
+    final mime = draft.mimeType?.toLowerCase().trim() ?? '';
+    if (mime.startsWith('image/')) return true;
+    final name = draft.pendingFilename?.trim().isNotEmpty == true
+        ? draft.pendingFilename!.trim()
+        : draft.descController.text.trim();
+    if (_attachmentMimeTypeFromName(name) != null) return true;
+    final rawUrl = draft.urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    final urlPath = uri?.path;
+    if (_attachmentMimeTypeFromName(urlPath) != null) return true;
+    final objectPath = _firebaseStorageObjectPathFromUrl(rawUrl);
+    return _attachmentMimeTypeFromName(objectPath) != null;
+  }
+
+  bool _shouldAttemptAttachmentImagePreview(_SubtaskAttachmentDraft draft) {
+    if (_attachmentDraftIsImage(draft)) return true;
+    return !draft.isPendingFile &&
+        isAppFirebaseStorageAttachmentUrl(draft.urlController.text.trim());
+  }
+
+  String? _firebaseStorageObjectPathFromUrl(String raw) {
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null) return null;
+    if (uri.host.toLowerCase() == 'storage.googleapis.com') {
+      final segments = uri.pathSegments;
+      if (segments.length < 2) return null;
+      return segments.skip(1).join('/');
+    }
+    final i = uri.path.indexOf('/o/');
+    if (i < 0) return null;
+    final encoded = uri.path.substring(i + 3);
+    if (encoded.isEmpty) return null;
+    try {
+      return Uri.decodeComponent(encoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<({String? url, String? filename, String? description})>
+  _fileAttachmentPayload() {
     return _attachments
-        .map(
-          (a) => (
-            content: a.urlController.text.trim().isEmpty
-                ? null
-                : a.urlController.text.trim(),
-            description: a.descController.text.trim().isEmpty
-                ? null
-                : a.descController.text.trim(),
-          ),
-        )
-        .where((r) => (r.content ?? '').isNotEmpty)
+        .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            url: url.isEmpty ? null : url,
+            filename: desc.isEmpty ? null : desc,
+            description: desc.isEmpty ? null : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
         .toList();
+  }
+
+  List<({String? url, String? label})> _urlAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            url: url.isEmpty ? null : url,
+            label: desc.isEmpty ? url : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _replaceSubtaskAttachments(String subtaskId) async {
+    final fileErr = await SupabaseService.replaceFileAttachments(
+      entityType: 'subtask',
+      entityId: subtaskId,
+      rows: _fileAttachmentPayload(),
+    );
+    if (fileErr != null) return fileErr;
+    return SupabaseService.replaceUrlAttachments(
+      entityType: 'subtask',
+      entityId: subtaskId,
+      rows: _urlAttachmentPayload(),
+    );
   }
 
   Future<void> _save() async {
@@ -1070,7 +1203,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     }
 
     setState(() => _saving = true);
-    AsanaBlockingLoadingOverlay.show(context);
+    await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
       if (_effectiveCreateMode) {
         final commentText = stripInlineImageMarkers(_commentController.text);
@@ -1161,11 +1294,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         if (newSubtaskId != null &&
             newSubtaskId.isNotEmpty &&
             _attachments.isNotEmpty) {
-          final attErr = await SupabaseService.replaceSubtaskAttachments(
-            subtaskId: newSubtaskId,
-            taskId: widget.parentTaskId!,
-            rows: _attachmentPayload(),
-          );
+          final attErr = await _replaceSubtaskAttachments(newSubtaskId);
           if (attErr != null && mounted) {
             await showAsanaInfoDialog(
               context: context,
@@ -1291,11 +1420,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         return;
       }
       if (isCreator) {
-        final attErr = await SupabaseService.replaceSubtaskAttachments(
-          subtaskId: s!.id,
-          taskId: s.taskId,
-          rows: _attachmentPayload(),
-        );
+        final attErr = await _replaceSubtaskAttachments(s!.id);
         if (attErr != null && mounted) {
           await showAsanaInfoDialog(
             context: context,
@@ -1309,7 +1434,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
       _subtaskAi?.clearAllSuggestions();
       await _load();
-      widget.onChanged?.call();
+      _notifyParentTaskOfSubtaskChange();
       if (isCreator) {
         await _notifyEmail(
           'Sub-task update email',
@@ -1378,7 +1503,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
-      widget.onChanged?.call();
+      _notifyParentTaskOfSubtaskChange();
       if (mounted) widget.onClose?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -1421,11 +1546,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final attErr = await SupabaseService.replaceSubtaskAttachments(
-        subtaskId: s.id,
-        taskId: s.taskId,
-        rows: _attachmentPayload(),
-      );
+      final attErr = await _replaceSubtaskAttachments(s.id);
       if (attErr != null && mounted) {
         await showAsanaInfoDialog(
           context: context,
@@ -1529,7 +1650,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       }
       _subtaskAi?.clearAllSuggestions();
       await _load();
-      widget.onChanged?.call();
+      _notifyParentTaskOfSubtaskChange();
       _notifyEmailInBackground(
         'Sub-task submission email',
         (token) => BackendApi().notifySubtaskSubmission(
@@ -1610,7 +1731,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       }
       _subtaskAi?.clearAllSuggestions();
       await _load();
-      widget.onChanged?.call();
+      _notifyParentTaskOfSubtaskChange();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -1627,68 +1748,91 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     );
   }
 
-  Future<void> _showAttachmentMenu(BuildContext anchorContext) async {
-    final result = await showAsanaAnchoredAttachmentMenu(
+  Future<void> _addFileAttachment() async {
+    if (widget.createMode) {
+      final picked = await _withBlockingLoading(
+        FirebaseAttachmentUploadService.pickFilesForUpload,
+      );
+      if (!mounted) return;
+      if (picked?.error != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Attachment upload failed',
+          content: picked!.error!,
+          palette: widget.palette,
+        );
+        return;
+      }
+      final files =
+          picked?.files ?? const <({Uint8List bytes, String label})>[];
+      if (files.isEmpty) return;
+      setState(() {
+        for (final file in files) {
+          _attachments.add(
+            _SubtaskAttachmentDraft(
+              pendingBytes: file.bytes,
+              pendingFilename: file.label,
+              desc: file.label,
+              mimeType: _attachmentMimeTypeFromName(file.label),
+            ),
+          );
+        }
+      });
+    } else {
+      final s = _subtask;
+      if (s == null) return;
+      final state = context.read<AppState>();
+      final r = await _withBlockingLoading(
+        () => FirebaseAttachmentUploadService.pickUploadFilesForSubtask(
+          s.id,
+          aclStaffKeys: _subtaskAttachmentAclKeys(state),
+        ),
+      );
+      if (!mounted) return;
+      if (r?.error != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Attachment upload failed',
+          content: r!.error!,
+          palette: widget.palette,
+        );
+        return;
+      }
+      final files = r?.files ?? const <({String url, String label})>[];
+      if (files.isEmpty) return;
+      setState(() {
+        for (final file in files) {
+          _attachments.add(
+            _SubtaskAttachmentDraft(
+              url: file.url,
+              desc: file.label,
+              mimeType: _attachmentMimeTypeFromName(file.label),
+            ),
+          );
+        }
+      });
+    }
+  }
+
+  Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    final result = await showAsanaAnchoredLinkEditor(
       anchorLink: _attachmentAddAnchorLink,
       anchorContext: anchorContext,
       widthAlignContext: anchorContext,
+      initialUrl: '',
+      initialDescription: '',
       onClosed: _blockAnchoredPickerReopen,
     );
-    if (!mounted) return;
-    if (result is AsanaAttachmentUploadFile) {
-      if (widget.createMode) {
-        final picked =
-            await FirebaseAttachmentUploadService.pickFileForUpload();
-        if (!mounted) return;
-        if (picked.error != null) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Attachment upload failed',
-            content: picked.error!,
-            palette: widget.palette,
-          );
-          return;
-        }
-        if (picked.bytes == null) return;
-        setState(() {
-          _attachments.add(
-            _SubtaskAttachmentDraft(
-              pendingBytes: picked.bytes,
-              pendingFilename: picked.label,
-              desc: picked.label,
-            ),
-          );
-        });
-      } else {
-        final s = _subtask;
-        if (s == null) return;
-        final state = context.read<AppState>();
-        final r = await FirebaseAttachmentUploadService.pickUploadForSubtask(
-          s.id,
-          aclStaffKeys: _subtaskAttachmentAclKeys(state),
-        );
-        if (!mounted) return;
-        if (r.error != null) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Attachment upload failed',
-            content: r.error!,
-            palette: widget.palette,
-          );
-          return;
-        }
-        if (r.url == null) return;
-        setState(() {
-          _attachments.add(_SubtaskAttachmentDraft(url: r.url, desc: r.label));
-        });
-      }
-    } else if (result is AsanaAttachmentWebsiteLink) {
-      setState(() {
-        _attachments.add(
-          _SubtaskAttachmentDraft(url: result.url, desc: result.description),
-        );
-      });
-    }
+    if (!mounted || result == null) return;
+    setState(() {
+      _attachments.add(
+        _SubtaskAttachmentDraft(
+          url: result.url,
+          desc: result.description,
+          isWebsiteLink: true,
+        ),
+      );
+    });
   }
 
   Future<void> _addSubtaskDescriptionInlineImage(
@@ -1895,6 +2039,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         return 'File upload did not return a download link.';
       }
       draft.urlController.text = r.url!.trim();
+      draft.mimeType = _attachmentMimeTypeFromName(
+        draft.pendingFilename ?? draft.descController.text,
+      );
       if (draft.descController.text.trim().isEmpty) {
         draft.descController.text =
             r.label?.trim() ?? draft.pendingFilename ?? 'attachment';
@@ -1924,14 +2071,176 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     });
   }
 
-  void _removeAttachment(_SubtaskAttachmentDraft draft) {
+  Future<void> _removeAttachment(_SubtaskAttachmentDraft draft) async {
+    final persistedId = draft.id?.trim();
+    if (persistedId != null &&
+        persistedId.isNotEmpty &&
+        !_effectiveCreateMode &&
+        SupabaseConfig.isConfigured) {
+      final err = _draftShowsAsWebsiteLink(draft)
+          ? await SupabaseService.deleteUrlAttachmentById(persistedId)
+          : await SupabaseService.deleteFileAttachmentById(persistedId);
+      if (!mounted) return;
+      if (err != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not remove attachment',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+    }
     setState(() {
       _attachments.remove(draft);
       draft.dispose();
     });
   }
 
-  Widget _attachmentTile(BuildContext context, _SubtaskAttachmentDraft draft) {
+  List<_SubtaskAttachmentDraft> get _fileAttachments => _attachments
+      .where((a) => a.isPendingFile || !_draftShowsAsWebsiteLink(a))
+      .toList();
+
+  List<_SubtaskAttachmentDraft> get _urlAttachments => _attachments
+      .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+      .toList();
+
+  Widget _attachmentFieldLabel({
+    required String label,
+    required bool showAdd,
+    required bool enabled,
+    required String tooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? anchorLink,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: Text(label, style: asanaDetailLabelStyle(context))),
+        if (showAdd) ...[
+          const SizedBox(width: 8),
+          AsanaDetailCircleAddButton(
+            onTap: onAdd,
+            enabled: enabled,
+            tooltip: tooltip,
+            size: 22,
+            anchorLink: anchorLink,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _attachmentValueList(
+    BuildContext context,
+    List<_SubtaskAttachmentDraft> attachments,
+    bool allowRemove, {
+    required bool createMode,
+    BuildContext? editAnchorContext,
+  }) {
+    if (attachments.isEmpty) return const SizedBox.shrink();
+    final imageAttachments = attachments
+        .where(
+          (draft) =>
+              !_draftShowsAsWebsiteLink(draft) &&
+              _attachmentDraftIsImage(draft),
+        )
+        .toList();
+    final otherAttachments = attachments
+        .where(
+          (draft) =>
+              _draftShowsAsWebsiteLink(draft) ||
+              !_attachmentDraftIsImage(draft),
+        )
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (imageAttachments.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: otherAttachments.isNotEmpty ? 8 : 0,
+            ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: imageAttachments
+                  .map(
+                    (a) => _attachmentTile(
+                      context,
+                      a,
+                      createMode: createMode,
+                      allowRemove: allowRemove,
+                      editAnchorContext: editAnchorContext,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ...otherAttachments.map(
+          (a) => _attachmentTile(
+            context,
+            a,
+            createMode: createMode,
+            allowRemove: allowRemove,
+            editAnchorContext: editAnchorContext,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _attachmentTwoColumnRow({
+    required String label,
+    required List<_SubtaskAttachmentDraft> attachments,
+    required bool createMode,
+    required bool showAdd,
+    required bool addEnabled,
+    required String addTooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? addAnchorLink,
+    bool allowRemove = true,
+    BuildContext? editAnchorContext,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: MediaQuery.sizeOf(context).width < 600
+                ? kAsanaDetailLabelColumnWidth / 2
+                : kAsanaDetailLabelColumnWidth,
+            child: _attachmentFieldLabel(
+              label: label,
+              showAdd: showAdd,
+              enabled: addEnabled,
+              tooltip: addTooltip,
+              onAdd: onAdd,
+              anchorLink: addAnchorLink,
+            ),
+          ),
+          Expanded(
+            child: _attachmentValueList(
+              context,
+              attachments,
+              allowRemove,
+              createMode: createMode,
+              editAnchorContext: editAnchorContext,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attachmentTile(
+    BuildContext context,
+    _SubtaskAttachmentDraft draft, {
+    required bool createMode,
+    required bool allowRemove,
+    BuildContext? editAnchorContext,
+  }) {
     if (draft.isPendingFile) {
       final name = draft.pendingFilename?.trim().isNotEmpty == true
           ? draft.pendingFilename!.trim()
@@ -1939,23 +2248,36 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return AsanaAttachmentDraftTile(
         isWebsiteLink: false,
         title: name,
-        subtitle: _effectiveCreateMode
+        subtitle: createMode
             ? 'Uploads when you create the sub-task'
             : 'Uploads when you save',
         enabled: !_saving,
-        onRemove: () => _removeAttachment(draft),
+        onRemove: allowRemove ? () => _removeAttachment(draft) : null,
+        imageBytes: draft.pendingBytes,
+        mimeType: draft.mimeType,
+        showImagePreview: _shouldAttemptAttachmentImagePreview(draft),
       );
     }
     final url = draft.urlController.text.trim();
     if (url.isEmpty) return const SizedBox.shrink();
     final desc = draft.descController.text.trim();
+    final isLink = _draftShowsAsWebsiteLink(draft);
+    final title = desc.isNotEmpty ? desc : url;
     return AsanaAttachmentDraftTile(
-      isWebsiteLink: true,
-      title: desc.isNotEmpty ? desc : url,
+      isWebsiteLink: isLink,
+      title: title,
       url: url,
       enabled: !_saving,
-      onRemove: () => _removeAttachment(draft),
-      onEditLink: () => _editAttachmentLink(context, draft),
+      onRemove: allowRemove ? () => _removeAttachment(draft) : null,
+      onEditLink: isLink && editAnchorContext != null
+          ? () => _editAttachmentLink(editAnchorContext, draft)
+          : null,
+      onDownload: !isLink
+          ? () => openAttachmentUrl(context, url, displayFileName: title)
+          : null,
+      imageBytes: draft.pendingBytes,
+      mimeType: draft.mimeType,
+      showImagePreview: !isLink && _attachmentDraftIsImage(draft),
     );
   }
 
@@ -2094,6 +2416,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     _parentTask =
         state.taskById(widget.parentTaskId ?? s?.taskId ?? '') ?? _parentTask;
     final parent = _parentTask;
+    final canEditAttachments =
+        _effectiveCreateMode ||
+        (s != null && !s.isDeleted && (isCreator || isPic || isAssigneeOnly));
     final footerButtons = _buildFooterButtons(
       state: state,
       subtask: s,
@@ -2360,29 +2685,30 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               submission: _effectiveCreateMode ? 'Pending' : s?.submission,
             ),
           ),
-          AsanaDetailSectionHeader(
-            title: 'Attachments',
-            showAddButton: true,
-            addTooltip: 'Add attachment',
-            addAnchorLink: _attachmentAddAnchorLink,
-            onAdd: _saving ? null : _showAttachmentMenu,
+          _attachmentTwoColumnRow(
+            label: 'Files',
+            attachments: _fileAttachments,
+            createMode: _effectiveCreateMode,
+            showAdd: true,
+            addEnabled: canEditAttachments && !_saving,
+            addTooltip: 'Add file',
+            onAdd: (_) => _addFileAttachment(),
+            allowRemove: canEditAttachments,
           ),
-          if (_attachments.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'No attachments yet',
-                style: asanaDetailLabelStyle(context),
-              ),
-            )
-          else
-            Builder(
-              builder: (attachmentContext) => Column(
-                children: _attachments
-                    .map((a) => _attachmentTile(attachmentContext, a))
-                    .toList(),
-              ),
+          Builder(
+            builder: (attachmentCtx) => _attachmentTwoColumnRow(
+              label: 'Links',
+              attachments: _urlAttachments,
+              createMode: _effectiveCreateMode,
+              showAdd: true,
+              addEnabled: canEditAttachments && !_saving,
+              addTooltip: 'Add link',
+              addAnchorLink: _attachmentAddAnchorLink,
+              onAdd: _addUrlAttachment,
+              allowRemove: canEditAttachments,
+              editAnchorContext: attachmentCtx,
             ),
+          ),
           _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
           if (!_effectiveCreateMode) ...[
             if ((s?.updateByStaffName ?? '').trim().isNotEmpty)

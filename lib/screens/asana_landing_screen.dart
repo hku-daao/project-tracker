@@ -369,6 +369,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     setState(() {
       if (_detailStack.length > 1) {
         _detailStack.removeLast();
+        _detailRefreshToken++;
       } else {
         _detailStack.clear();
       }
@@ -382,6 +383,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   }
 
   void _handleSubtaskChanged() {
+    setState(() => _detailRefreshToken++);
+  }
+
+  void _handleTaskChanged() {
     setState(() => _detailRefreshToken++);
   }
 
@@ -809,14 +814,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                 ),
                                             onPushTaskFromProject: (taskId) =>
                                                 setState(
-                                                  () => _detailStack
-                                                    ..clear()
-                                                    ..add(
-                                                      AsanaDetailSelection.task(
-                                                        taskId,
-                                                      ),
+                                                  () => _detailStack.add(
+                                                    AsanaDetailSelection.task(
+                                                      taskId,
                                                     ),
+                                                  ),
                                                 ),
+                                            onTaskChanged: _handleTaskChanged,
                                             onTaskCreated: _handleTaskCreated,
                                             onProjectCreated:
                                                 _handleProjectCreated,

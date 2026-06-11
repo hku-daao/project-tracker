@@ -85,6 +85,11 @@ class AsanaBlockingLoadingOverlay {
     overlay.insert(_entry!);
   }
 
+  static Future<void> showAfterFrame(BuildContext context) async {
+    show(context);
+    await WidgetsBinding.instance.endOfFrame;
+  }
+
   static void hide() {
     if (_depth <= 0) return;
     _depth--;
