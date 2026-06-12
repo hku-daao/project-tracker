@@ -1430,6 +1430,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               subtask: created,
               state: state,
               entityIdOverrides: {
+                'draft_description': newSubtaskId,
                 newSubtaskId: newSubtaskId,
                 if (draftCommentId != null) 'draft': draftCommentId,
               },
@@ -2003,6 +2004,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     );
   }
 
+  Future<void> _addDraftSubtaskDescriptionInlineImage() async {
+    await _stageInlineImage(
+      entityType: 'subtask_description',
+      entityId: 'draft_description',
+    );
+  }
+
   Future<void> _addExistingCommentInlineImage(
     SingularSubtask subtask,
     SubtaskCommentRowDisplay comment,
@@ -2013,7 +2021,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     );
   }
 
-  Future<void> _addDraftCommentInlineImage(SingularSubtask subtask) async {
+  Future<void> _addDraftCommentInlineImage() async {
     await _stageInlineImage(entityType: 'subtask_comment', entityId: 'draft');
   }
 
@@ -2671,7 +2679,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                   style: asanaDetailMultilineValueStyle(context),
                   hintText: 'Please fill in sub-task description',
                 ),
-                if (!_effectiveCreateMode && isCreator && s != null)
+                if (_effectiveCreateMode)
+                  InlineImageToolbar(
+                    enabled: !_saving,
+                    onAdd: _addDraftSubtaskDescriptionInlineImage,
+                  )
+                else if (isCreator && s != null)
                   InlineImageToolbar(
                     enabled: !_saving,
                     onAdd: () => _addSubtaskDescriptionInlineImage(s),
@@ -2679,7 +2692,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                 InlineImagePreviewList(
                   images: _inlinePreviewItems(
                     entityType: 'subtask_description',
-                    entityId: s?.id ?? '',
+                    entityId: _effectiveCreateMode
+                        ? 'draft_description'
+                        : (s?.id ?? ''),
                     saved: _descriptionInlineImages,
                   ),
                   onRemove: _removeInlineImagePreview,
@@ -2933,11 +2948,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                   minLines: 2,
                   hintText: 'Ask a question or post an update...',
                 ),
-                if (!_effectiveCreateMode && s != null)
-                  InlineImageToolbar(
-                    enabled: !_saving,
-                    onAdd: () => _addDraftCommentInlineImage(s),
-                  ),
+                InlineImageToolbar(
+                  enabled: !_saving,
+                  onAdd: _addDraftCommentInlineImage,
+                ),
                 InlineImagePreviewList(
                   images: _inlinePreviewItems(
                     entityType: 'subtask_comment',

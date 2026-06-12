@@ -1335,6 +1335,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     await _stageInlineImage(entityType: 'task_description', entityId: task.id);
   }
 
+  Future<void> _addDraftTaskDescriptionInlineImage() async {
+    await _stageInlineImage(
+      entityType: 'task_description',
+      entityId: 'draft_description',
+    );
+  }
+
   Future<void> _addExistingCommentInlineImage(
     Task task,
     SingularCommentRowDisplay comment,
@@ -1342,7 +1349,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     await _stageInlineImage(entityType: 'task_comment', entityId: comment.id);
   }
 
-  Future<void> _addDraftCommentInlineImage(Task task) async {
+  Future<void> _addDraftCommentInlineImage() async {
     await _stageInlineImage(entityType: 'task_comment', entityId: 'draft');
   }
 
@@ -1738,8 +1745,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         state: state,
         picKey: picKey,
         entityIdOverrides: draftCommentId == null
-            ? const {}
-            : {'draft': draftCommentId},
+            ? {'draft_description': newId}
+            : {'draft_description': newId, 'draft': draftCommentId},
       );
       if (inlineErr != null && mounted) {
         await _showInfo('Could not save inline image', inlineErr);
@@ -2725,15 +2732,32 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           const SizedBox(height: 12),
           AsanaDetailLabelValue(
             label: 'Description',
-            child: AsanaHoverTextField(
-              controller: _descController,
-              canEdit: canEdit,
-              readOnly: _saving,
-              showOutline: true,
-              maxLines: 8,
-              minLines: 3,
-              hintText: 'Please fill in task description',
-              style: asanaDetailMultilineValueStyle(context),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _descController,
+                  canEdit: canEdit,
+                  readOnly: _saving,
+                  showOutline: true,
+                  maxLines: 8,
+                  minLines: 3,
+                  hintText: 'Please fill in task description',
+                  style: asanaDetailMultilineValueStyle(context),
+                ),
+                InlineImageToolbar(
+                  enabled: !_saving,
+                  onAdd: _addDraftTaskDescriptionInlineImage,
+                ),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'task_description',
+                    entityId: 'draft_description',
+                    saved: const [],
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
+              ],
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.description),
@@ -2850,15 +2874,32 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
           AsanaDetailLabelValue(
             label: 'Comments',
-            child: AsanaHoverTextField(
-              controller: _commentController,
-              canEdit: canEdit,
-              readOnly: _saving,
-              showOutline: true,
-              maxLines: 4,
-              minLines: 2,
-              hintText: 'Optional comment',
-              style: asanaDetailMultilineValueStyle(context),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _commentController,
+                  canEdit: canEdit,
+                  readOnly: _saving,
+                  showOutline: true,
+                  maxLines: 4,
+                  minLines: 2,
+                  hintText: 'Optional comment',
+                  style: asanaDetailMultilineValueStyle(context),
+                ),
+                InlineImageToolbar(
+                  enabled: !_saving,
+                  onAdd: _addDraftCommentInlineImage,
+                ),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'task_comment',
+                    entityId: 'draft',
+                    saved: const [],
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
+              ],
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.comment),
@@ -3165,7 +3206,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   ),
                   InlineImageToolbar(
                     enabled: !_saving,
-                    onAdd: () => _addDraftCommentInlineImage(task),
+                    onAdd: _addDraftCommentInlineImage,
                   ),
                   InlineImagePreviewList(
                     images: _inlinePreviewItems(
