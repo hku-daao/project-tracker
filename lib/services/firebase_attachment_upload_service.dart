@@ -294,16 +294,16 @@ class FirebaseAttachmentUploadService {
   }
 
   /// Merges ACL keys (`m0`…) into object `metadata` via GET + PATCH (keeps download tokens).
-  static Future<void> _mergePatchAclMetadataRest({
+  static Future<String?> _mergePatchAclMetadataRest({
     required String objectPath,
     required Map<String, String> aclMetadata,
     String? originalFileName,
   }) async {
-    if (aclMetadata.isEmpty) return;
+    if (aclMetadata.isEmpty) return 'Missing attachment access metadata.';
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) return 'Not signed in.';
     final bucket = Firebase.app().options.storageBucket?.trim() ?? '';
-    if (bucket.isEmpty) return;
+    if (bucket.isEmpty) return 'Firebase app has no storageBucket in options.';
     final enc = Uri.encodeComponent(objectPath.trim());
     final objectUri = Uri.parse(
       'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$enc',
@@ -315,11 +315,10 @@ class FirebaseAttachmentUploadService {
         headers: {'Authorization': 'Bearer $idToken'},
       );
       if (getResp.statusCode != 200) {
-        debugPrint('ACL metadata GET failed HTTP ${getResp.statusCode}');
-        return;
+        return 'Could not verify uploaded file metadata (HTTP ${getResp.statusCode}).';
       }
       final decoded = jsonDecode(getResp.body);
-      if (decoded is! Map) return;
+      if (decoded is! Map) return 'Invalid uploaded file metadata response.';
       final root = Map<String, dynamic>.from(decoded);
       final md = root['metadata'];
       final meta = md is Map
@@ -341,12 +340,12 @@ class FirebaseAttachmentUploadService {
         body: jsonEncode({'metadata': meta}),
       );
       if (patchResp.statusCode < 200 || patchResp.statusCode >= 300) {
-        debugPrint(
-          'ACL metadata PATCH failed HTTP ${patchResp.statusCode} ${patchResp.body.length > 200 ? '${patchResp.body.substring(0, 200)}…' : patchResp.body}',
-        );
+        return 'Could not save uploaded file access metadata (HTTP ${patchResp.statusCode}).';
       }
+      return null;
     } catch (e, st) {
       debugPrint('mergePatchAclMetadata: $e\n$st');
+      return e.toString();
     }
   }
 
@@ -434,7 +433,7 @@ class FirebaseAttachmentUploadService {
       return 'Could not identify Firebase Storage object path.';
     }
     if (!storageObjectPathBelongsToCurrentUser(objectPath)) {
-      return 'Only the uploader can delete this inline image.';
+      return 'Only the uploader can delete this uploaded file.';
     }
     try {
       await FirebaseStorage.instance.ref(objectPath).delete();
@@ -695,11 +694,17 @@ class FirebaseAttachmentUploadService {
           return (url: null, label: null, error: mediaErr.error);
         }
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        await _mergePatchAclMetadataRest(
+        final metadataErr = await _mergePatchAclMetadataRest(
           objectPath: path,
           aclMetadata: aclMetadata,
           originalFileName: originalFilename,
         );
+        if (metadataErr != null) {
+          try {
+            await FirebaseStorage.instance.ref(path).delete();
+          } catch (_) {}
+          return (url: null, label: null, error: metadataErr);
+        }
         final downloadUrl = await fetchStorageDownloadUrlRest(path);
         if (!_isValidStorageDownloadUrlForPersist(downloadUrl)) {
           return (

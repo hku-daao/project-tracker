@@ -1,3 +1,7 @@
+param(
+    [string]$ApiBaseUrl
+)
+
 # Run Flutter web (Chrome) with DEEPSEEK_API_KEY from secrets/deepseek_api_key.txt
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -26,6 +30,10 @@ if ($args -contains "-Clean") {
 }
 
 $defines = @(Get-DeepseekDartDefineArgs)
+if ($ApiBaseUrl -and $ApiBaseUrl.Trim().Length -gt 0) {
+    $defines += "--dart-define=API_BASE_URL=$($ApiBaseUrl.Trim())"
+    Write-Host "Using backend API: $($ApiBaseUrl.Trim())"
+}
 if ($defines.Length -eq 0) {
     Write-Warning "No key found. Create secrets\deepseek_api_key.txt (see secrets\deepseek_api_key.txt.example)."
 } else {

@@ -1262,7 +1262,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     }
   }
 
-  List<({String? url, String? filename, String? description})>
+  List<({String? id, String? url, String? filename, String? description})>
   _fileAttachmentPayload() {
     return _attachments
         .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
@@ -1270,6 +1270,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           final url = a.urlController.text.trim();
           final desc = a.descController.text.trim();
           return (
+            id: a.id,
             url: url.isEmpty ? null : url,
             filename: desc.isEmpty ? null : desc,
             description: desc.isEmpty ? null : desc,
@@ -1279,13 +1280,14 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         .toList();
   }
 
-  List<({String? url, String? label})> _urlAttachmentPayload() {
+  List<({String? id, String? url, String? label})> _urlAttachmentPayload() {
     return _attachments
         .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
         .map((a) {
           final url = a.urlController.text.trim();
           final desc = a.descController.text.trim();
           return (
+            id: a.id,
             url: url.isEmpty ? null : url,
             label: desc.isEmpty ? url : desc,
           );
@@ -2237,7 +2239,24 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         persistedId.isNotEmpty &&
         !_effectiveCreateMode &&
         SupabaseConfig.isConfigured) {
-      final err = _draftShowsAsWebsiteLink(draft)
+      final isWebsiteLink = _draftShowsAsWebsiteLink(draft);
+      if (!isWebsiteLink) {
+        final storageErr =
+            await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+              draft.urlController.text.trim(),
+            );
+        if (!mounted) return;
+        if (storageErr != null) {
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Could not remove uploaded file',
+            content: storageErr,
+            palette: widget.palette,
+          );
+          return;
+        }
+      }
+      final err = isWebsiteLink
           ? await SupabaseService.deleteUrlAttachmentById(persistedId)
           : await SupabaseService.deleteFileAttachmentById(persistedId);
       if (!mounted) return;

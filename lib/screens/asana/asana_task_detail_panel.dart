@@ -246,7 +246,19 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         persistedId.isNotEmpty &&
         !widget.createMode &&
         SupabaseConfig.isConfigured) {
-      final err = _draftShowsAsWebsiteLink(e)
+      final isWebsiteLink = _draftShowsAsWebsiteLink(e);
+      if (!isWebsiteLink) {
+        final storageErr =
+            await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+              e.urlController.text.trim(),
+            );
+        if (!mounted) return;
+        if (storageErr != null) {
+          await _showInfo('Could not remove uploaded file', storageErr);
+          return;
+        }
+      }
+      final err = isWebsiteLink
           ? await SupabaseService.deleteUrlAttachmentById(persistedId)
           : await SupabaseService.deleteFileAttachmentById(persistedId);
       if (!mounted) return;
@@ -2248,7 +2260,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
   }
 
-  List<({String? url, String? filename, String? description})>
+  List<({String? id, String? url, String? filename, String? description})>
   _fileAttachmentPayload() {
     return _attachments
         .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
@@ -2256,6 +2268,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           final url = a.urlController.text.trim();
           final desc = a.descController.text.trim();
           return (
+            id: a.id,
             url: url.isEmpty ? null : url,
             filename: desc.isEmpty ? null : desc,
             description: desc.isEmpty ? null : desc,
@@ -2265,13 +2278,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         .toList();
   }
 
-  List<({String? url, String? label})> _urlAttachmentPayload() {
+  List<({String? id, String? url, String? label})> _urlAttachmentPayload() {
     return _attachments
         .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
         .map((a) {
           final url = a.urlController.text.trim();
           final desc = a.descController.text.trim();
           return (
+            id: a.id,
             url: url.isEmpty ? null : url,
             label: desc.isEmpty ? url : desc,
           );

@@ -822,7 +822,10 @@ class SupabaseService {
   static Future<String?> replaceFileAttachments({
     required String entityType,
     required String entityId,
-    required List<({String? url, String? filename, String? description})> rows,
+    required List<
+      ({String? id, String? url, String? filename, String? description})
+    >
+    rows,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     final type = entityType.trim();
@@ -830,18 +833,25 @@ class SupabaseService {
     if (type.isEmpty || id.isEmpty) return 'Missing attachment owner';
     try {
       final supabase = Supabase.instance.client;
-      await supabase
+      final existing = await supabase
           .from('file_attachment')
-          .delete()
+          .select('id')
           .eq('entity_type', type)
-          .eq('entity_id', id);
+          .eq('entity_id', id)
+          .eq('status', 'Active');
+      final existingIds = (existing as List)
+          .map((row) => (row as Map)['id']?.toString().trim() ?? '')
+          .where((rowId) => rowId.isNotEmpty)
+          .toSet();
+      final keptIds = <String>{};
       for (var i = 0; i < rows.length; i++) {
         final r = rows[i];
         final url = r.url?.trim() ?? '';
         if (url.isEmpty) continue;
+        final rowId = r.id?.trim() ?? '';
         final filename = r.filename?.trim();
         final description = r.description?.trim();
-        await supabase.from('file_attachment').insert({
+        final payload = {
           'entity_type': type,
           'entity_id': id,
           'url': url,
@@ -850,7 +860,23 @@ class SupabaseService {
             'description': description,
           'sort_order': i,
           'status': 'Active',
-        });
+        };
+        if (rowId.isNotEmpty) {
+          keptIds.add(rowId);
+          await supabase
+              .from('file_attachment')
+              .update(payload)
+              .eq('id', rowId);
+        } else {
+          await supabase.from('file_attachment').insert(payload);
+        }
+      }
+      final deleteIds = existingIds.difference(keptIds).toList();
+      if (deleteIds.isNotEmpty) {
+        await supabase
+            .from('file_attachment')
+            .update({'status': 'Deleted'})
+            .inFilter('id', deleteIds);
       }
       return null;
     } catch (e) {
@@ -865,7 +891,7 @@ class SupabaseService {
     try {
       await Supabase.instance.client
           .from('file_attachment')
-          .delete()
+          .update({'status': 'Deleted'})
           .eq('id', id);
       return null;
     } catch (e) {
@@ -876,7 +902,7 @@ class SupabaseService {
   static Future<String?> replaceUrlAttachments({
     required String entityType,
     required String entityId,
-    required List<({String? url, String? label})> rows,
+    required List<({String? id, String? url, String? label})> rows,
   }) async {
     if (!_enabled) return 'Supabase not configured';
     final type = entityType.trim();
@@ -884,24 +910,44 @@ class SupabaseService {
     if (type.isEmpty || id.isEmpty) return 'Missing attachment owner';
     try {
       final supabase = Supabase.instance.client;
-      await supabase
+      final existing = await supabase
           .from('url_attachment')
-          .delete()
+          .select('id')
           .eq('entity_type', type)
-          .eq('entity_id', id);
+          .eq('entity_id', id)
+          .eq('status', 'Active');
+      final existingIds = (existing as List)
+          .map((row) => (row as Map)['id']?.toString().trim() ?? '')
+          .where((rowId) => rowId.isNotEmpty)
+          .toSet();
+      final keptIds = <String>{};
       for (var i = 0; i < rows.length; i++) {
         final r = rows[i];
         final url = r.url?.trim() ?? '';
         if (url.isEmpty) continue;
+        final rowId = r.id?.trim() ?? '';
         final label = r.label?.trim();
-        await supabase.from('url_attachment').insert({
+        final payload = {
           'entity_type': type,
           'entity_id': id,
           'url': url,
           'label': label == null || label.isEmpty ? url : label,
           'sort_order': i,
           'status': 'Active',
-        });
+        };
+        if (rowId.isNotEmpty) {
+          keptIds.add(rowId);
+          await supabase.from('url_attachment').update(payload).eq('id', rowId);
+        } else {
+          await supabase.from('url_attachment').insert(payload);
+        }
+      }
+      final deleteIds = existingIds.difference(keptIds).toList();
+      if (deleteIds.isNotEmpty) {
+        await supabase
+            .from('url_attachment')
+            .update({'status': 'Deleted'})
+            .inFilter('id', deleteIds);
       }
       return null;
     } catch (e) {
@@ -916,7 +962,7 @@ class SupabaseService {
     try {
       await Supabase.instance.client
           .from('url_attachment')
-          .delete()
+          .update({'status': 'Deleted'})
           .eq('id', id);
       return null;
     } catch (e) {

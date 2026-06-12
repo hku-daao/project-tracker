@@ -274,18 +274,74 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
+async function resolveStaffKeyForFirebaseSession(uid, email) {
+  if (!supabase) return null;
+  const firebaseUid = String(uid || '').trim();
+  const emailNorm = String(email || '').trim().toLowerCase();
+  if (!firebaseUid && !emailNorm) return null;
+  const resolveByStaffEmail = async () => {
+    if (!emailNorm) return null;
+    const { data, error } = await supabase
+      .from('staff')
+      .select('app_id')
+      .ilike('email', emailNorm)
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    const appId = data.app_id;
+    return typeof appId === 'string' && appId.trim() ? appId.trim() : null;
+  };
+  try {
+    let query = supabase
+      .from('app_users')
+      .select('staff ( app_id )')
+      .limit(1);
+    if (firebaseUid) {
+      query = query.eq('firebase_uid', firebaseUid);
+    } else {
+      query = query.eq('email', emailNorm);
+    }
+    let { data, error } = await query.maybeSingle();
+    if ((!data || error) && emailNorm && firebaseUid) {
+      const fallback = await supabase
+        .from('app_users')
+        .select('staff ( app_id )')
+        .eq('email', emailNorm)
+        .limit(1)
+        .maybeSingle();
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error || !data) return await resolveByStaffEmail();
+    const staff = Array.isArray(data.staff) ? data.staff[0] : data.staff;
+    const appId = staff?.app_id;
+    return typeof appId === 'string' && appId.trim()
+      ? appId.trim()
+      : await resolveByStaffEmail();
+  } catch (e) {
+    return await resolveByStaffEmail();
+  }
+}
+
 async function verifyFirebaseToken(authHeader) {
   if (!firebaseAdmin || !authHeader || !authHeader.startsWith('Bearer ')) return null;
   const idToken = authHeader.slice(7);
   try {
     const decoded = await firebaseAdmin.auth().verifyIdToken(idToken);
     const sk = decoded.staffKey;
-    const staffKey =
+    const tokenStaffKey =
       typeof sk === 'string' && sk.trim() ? sk.trim() : null;
+    const email = (decoded.email || '').toLowerCase();
+    const resolvedStaffKey = await resolveStaffKeyForFirebaseSession(
+      decoded.uid,
+      email,
+    );
+    const staffKeys = [...new Set([tokenStaffKey, resolvedStaffKey].filter(Boolean))];
     return {
       uid: decoded.uid,
-      email: (decoded.email || '').toLowerCase(),
-      staffKey,
+      email,
+      staffKey: staffKeys[0] || null,
+      staffKeys,
     };
   } catch (_) {
     return null;
@@ -407,11 +463,34 @@ function metadataMatchesStaffKey(gcsMetadata, staffKey) {
   return false;
 }
 
-function canReadAttachmentObject(sessionUid, staffKey, objectPath, gcsMetadata) {
+function metadataMatchesAnyStaffKey(gcsMetadata, staffKeys) {
+  const keys = Array.isArray(staffKeys) ? staffKeys : [staffKeys];
+  return keys.some((key) => metadataMatchesStaffKey(gcsMetadata, key));
+}
+
+function canReadAttachmentObject(sessionUid, staffKeys, objectPath, gcsMetadata) {
   const uploaderUid = extractUploaderUidFromAttachmentPath(objectPath);
   if (!uploaderUid) return false;
   if (sessionUid === uploaderUid) return true;
-  return metadataMatchesStaffKey(gcsMetadata, staffKey);
+  return metadataMatchesAnyStaffKey(gcsMetadata, staffKeys);
+}
+
+function attachmentAuthDebugPayload(session, objectPath, gcsMetadata) {
+  const custom = gcsMetadata?.metadata || {};
+  const metadataAcl = {};
+  for (let i = 0; i < 10; i++) {
+    const key = `m${i}`;
+    if (typeof custom[key] === 'string') metadataAcl[key] = custom[key];
+  }
+  return {
+    uid: session?.uid || null,
+    email: session?.email || null,
+    staffKey: session?.staffKey || null,
+    staffKeys: session?.staffKeys || [],
+    uploaderUid: extractUploaderUidFromAttachmentPath(objectPath),
+    objectPath,
+    metadataAcl,
+  };
 }
 
 async function handleAttachmentOpenSession(req, res) {
@@ -455,7 +534,11 @@ async function handleAttachmentOpenSession(req, res) {
     sendJson(req, res, 404, { error: 'Not found' });
     return;
   }
-  if (!canReadAttachmentObject(session.uid, session.staffKey, objectPath, meta)) {
+  if (!canReadAttachmentObject(session.uid, session.staffKeys, objectPath, meta)) {
+    console.warn(
+      'attachment open-session forbidden',
+      JSON.stringify(attachmentAuthDebugPayload(session, objectPath, meta)),
+    );
     sendJson(req, res, 403, { error: 'Forbidden' });
     return;
   }
@@ -520,11 +603,15 @@ async function handleAttachmentStream(req, res) {
   if (
     !canReadAttachmentObject(
       authSession.uid,
-      authSession.staffKey,
+      authSession.staffKeys,
       sess.objectPath,
       liveMeta,
     )
   ) {
+    console.warn(
+      'attachment stream forbidden',
+      JSON.stringify(attachmentAuthDebugPayload(authSession, sess.objectPath, liveMeta)),
+    );
     sendJson(req, res, 403, { error: 'Forbidden' });
     return;
   }

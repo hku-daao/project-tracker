@@ -3,7 +3,8 @@
 # Closes ALL Chrome windows, removes build/.dart_tool, then runs.
 param(
     [switch]$SkipKillChrome,
-    [switch]$SkipClean
+    [switch]$SkipClean,
+    [string]$ApiBaseUrl
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
@@ -30,6 +31,10 @@ if (-not $SkipClean) {
 flutter pub get
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $defines = @(Get-DeepseekDartDefineArgs)
+if ($ApiBaseUrl -and $ApiBaseUrl.Trim().Length -gt 0) {
+    $defines += "--dart-define=API_BASE_URL=$($ApiBaseUrl.Trim())"
+    Write-Host "Using backend API: $($ApiBaseUrl.Trim())"
+}
 if ($defines.Length -eq 0) {
     Write-Warning "No DeepSeek key found. Create secrets\deepseek_api_key.txt or pass --dart-define=DEEPSEEK_API_KEY=..."
 } else {
