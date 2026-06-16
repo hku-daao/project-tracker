@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../../services/backend_api.dart';
 import '../../utils/attachment_open_bytes.dart';
 import '../../services/supabase_service.dart';
+import 'asana_blocking_loading_overlay.dart';
 
 final RegExp _inlineImageMarkerPattern = RegExp(
   r'(?:^|\n)\s*\[image:[^\]]+\]\s*',
@@ -266,6 +267,8 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
   }
 
   Future<void> _openInlineImageOverlay(BuildContext context) async {
+    // Keep the preview controls usable even if a previous global loading overlay is stale.
+    AsanaBlockingLoadingOverlay.hideAll();
     final data = await _future;
     if (!context.mounted || data.bytes.isEmpty) return;
     await showDialog<void>(
@@ -316,6 +319,7 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
                               icon: Icons.download_outlined,
                               tooltip: 'Download',
                               onTap: () async {
+                                AsanaBlockingLoadingOverlay.hideAll();
                                 await openAttachmentBytesInSystemViewer(
                                   data.bytes,
                                   data.contentType,
@@ -327,7 +331,10 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
                             _OverlayCircleButton(
                               icon: Icons.close,
                               tooltip: 'Close',
-                              onTap: () => Navigator.of(dialogContext).pop(),
+                              onTap: () {
+                                AsanaBlockingLoadingOverlay.hideAll();
+                                Navigator.of(dialogContext).pop();
+                              },
                             ),
                           ],
                         ),

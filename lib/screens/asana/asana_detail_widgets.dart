@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../asana_landing_screen.dart';
+import 'asana_blocking_loading_overlay.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
@@ -255,13 +256,27 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
 
   @override
   Widget build(BuildContext context) {
-    final showBorder =
-        widget.showOutline || (widget.canEdit && _hovering && !widget.readOnly);
     final baseStyle =
         widget.style ??
         (widget.maxLines > 1
             ? asanaDetailMultilineValueStyle(context)
             : asanaDetailValueStyle(context));
+    if (!widget.canEdit) {
+      final text = widget.controller.text;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Text(
+          text.isEmpty ? (widget.hintText ?? '') : text,
+          style: text.isEmpty
+              ? baseStyle.copyWith(color: kAsanaTextSecondary)
+              : baseStyle,
+          maxLines: widget.maxLines,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+
+    final showBorder = widget.showOutline || (_hovering && !widget.readOnly);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
@@ -281,6 +296,9 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
         child: TextField(
           controller: widget.controller,
           readOnly: widget.readOnly || !widget.canEdit,
+          onTap: widget.readOnly
+              ? null
+              : () => AsanaBlockingLoadingOverlay.hideAll(),
           maxLines: widget.maxLines,
           minLines: widget.minLines,
           style: baseStyle,
@@ -429,9 +447,10 @@ class AsanaDetailStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Align(
+    return UnconstrainedBox(
       alignment: Alignment.centerLeft,
-      child: AsanaTableCellChip(child: AsanaStatusChip(status: status)),
+      constrainedAxis: Axis.vertical,
+      child: AsanaStatusChip(status: status, preserveFullLabel: true),
     );
   }
 }
@@ -895,10 +914,12 @@ class AsanaDetailSubmissionPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Align(
+    return UnconstrainedBox(
       alignment: Alignment.centerLeft,
-      child: AsanaTableCellChip(
-        child: AsanaSubmissionChip(submission: submission),
+      constrainedAxis: Axis.vertical,
+      child: AsanaSubmissionChip(
+        submission: submission,
+        preserveFullLabel: true,
       ),
     );
   }

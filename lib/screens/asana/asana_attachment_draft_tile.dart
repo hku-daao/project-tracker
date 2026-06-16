@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'asana_detail_widgets.dart';
+import 'asana_blocking_loading_overlay.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_website_link_launch.dart';
 import 'asana_theme.dart';
@@ -166,6 +167,8 @@ class _AsanaAttachmentDraftTileState extends State<AsanaAttachmentDraftTile> {
   }
 
   Future<void> _openFilePreviewOverlay() async {
+    // A read-only preview should never be blocked by a stale save/upload overlay.
+    AsanaBlockingLoadingOverlay.hideAll();
     final kind = _fileKindFor(
       filename: widget.title,
       mimeType: widget.mimeType,
@@ -240,14 +243,20 @@ class _AsanaAttachmentDraftTileState extends State<AsanaAttachmentDraftTile> {
                               _OverlayCircleButton(
                                 icon: Icons.download_outlined,
                                 tooltip: 'Download',
-                                onTap: widget.onDownload!,
+                                onTap: () {
+                                  AsanaBlockingLoadingOverlay.hideAll();
+                                  widget.onDownload!();
+                                },
                               ),
                               const SizedBox(width: 8),
                             ],
                             _OverlayCircleButton(
                               icon: Icons.close,
                               tooltip: 'Close',
-                              onTap: () => Navigator.of(dialogContext).pop(),
+                              onTap: () {
+                                AsanaBlockingLoadingOverlay.hideAll();
+                                Navigator.of(dialogContext).pop();
+                              },
                             ),
                           ],
                         ),

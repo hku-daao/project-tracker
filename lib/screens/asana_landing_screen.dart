@@ -1068,6 +1068,7 @@ class _SidebarUserAvatar extends StatelessWidget {
   final AsanaLandingPalette palette;
 
   Future<void> _confirmLogOut(BuildContext context) async {
+    AsanaBlockingLoadingOverlay.hideAll();
     final ok = await showAsanaConfirmDialog(
       context: context,
       title: 'Log out',
@@ -1077,7 +1078,12 @@ class _SidebarUserAvatar extends StatelessWidget {
       palette: palette,
     );
     if (ok == true) {
-      await FirebaseAuth.instance.signOut();
+      AsanaBlockingLoadingOverlay.hideAll();
+      try {
+        await FirebaseAuth.instance.signOut();
+      } finally {
+        AsanaBlockingLoadingOverlay.hideAll();
+      }
     }
   }
 

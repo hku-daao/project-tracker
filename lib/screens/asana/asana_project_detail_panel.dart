@@ -265,16 +265,16 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
-  void _showEmailWarning(String label, String error) {
+  Future<void> _showEmailWarning(String label, String error) async {
     debugPrint('$label: $error');
     if (!mounted) return;
     final short = error.length > 160 ? '${error.substring(0, 160)}...' : error;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$label: $short'),
-        backgroundColor: Colors.orange,
-        duration: const Duration(seconds: 4),
-      ),
+    AsanaBlockingLoadingOverlay.hideAll();
+    await showAsanaInfoDialog(
+      context: context,
+      title: label,
+      content: short,
+      palette: widget.palette,
     );
   }
 
@@ -285,13 +285,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     try {
       final token = await FirebaseAuth.instance.currentUser?.getIdToken();
       if (token == null) {
-        _showEmailWarning(label, 'sign-in token missing');
+        await _showEmailWarning(label, 'sign-in token missing');
         return;
       }
       final err = await send(token);
-      if (err != null) _showEmailWarning(label, err);
+      if (err != null) await _showEmailWarning(label, err);
     } catch (e) {
-      _showEmailWarning(label, e.toString());
+      await _showEmailWarning(label, e.toString());
     }
   }
 
@@ -922,6 +922,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       await _loadProject();
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
       await _notifyEmail(
         'Project update email',
         (token) => BackendApi().notifyProjectUpdated(
@@ -1158,13 +1160,15 @@ class _ProjectDetailTaskList extends StatelessWidget {
         ? viewportWidth
         : viewportWidth.clamp(360.0, double.infinity);
     final dueCol = compactMobile ? 56.0 : 69.0;
-    final statusCol = compactMobile ? 86.0 : 120.0;
+    final statusCol = compactMobile ? 48.0 : 108.0;
+    final submissionCol = compactMobile ? 48.0 : 86.4;
     final textGap = compactMobile ? 8.0 : kAsanaTextColumnGap;
     final minNameCol = compactMobile ? 48.0 : 120.0;
-    final nameCol = (tableWidth - 24 - textGap - dueCol - statusCol).clamp(
-      minNameCol,
-      double.infinity,
-    );
+    final nameCol =
+        (tableWidth - 24 - textGap - dueCol - statusCol - submissionCol).clamp(
+          minNameCol,
+          double.infinity,
+        );
     final header = asanaTableHeaderStyle(context);
 
     Widget table = Column(
@@ -1182,13 +1186,19 @@ class _ProjectDetailTaskList extends StatelessWidget {
               SizedBox(width: textGap),
               asanaTableHeaderLabel(
                 width: dueCol,
-                label: 'Due Date',
+                label: compactMobile ? 'Due' : 'Due Date',
                 style: header,
                 rowHeight: 24,
               ),
               asanaTableHeaderLabel(
                 width: statusCol,
-                label: 'Status',
+                label: compactMobile ? 'Sta' : 'Status',
+                style: header,
+                rowHeight: 24,
+              ),
+              asanaTableHeaderLabel(
+                width: submissionCol,
+                label: compactMobile ? 'Sub' : 'Submission',
                 style: header,
                 rowHeight: 24,
               ),
@@ -1197,6 +1207,7 @@ class _ProjectDetailTaskList extends StatelessWidget {
         ),
         ...tasks.map((task) {
           final completed = isCompleted(task);
+          final status = statusLabel(task);
           final rowStyle = asanaTableRowValueStyle(
             context,
             completed: completed,
@@ -1241,7 +1252,24 @@ class _ProjectDetailTaskList extends StatelessWidget {
                       width: statusCol,
                       child: AsanaTableCellChip(
                         child: AsanaStatusChip(
-                          status: statusLabel(task),
+                          status: status,
+                          displayLabel: compactMobile
+                              ? _mobileStatusLabel(status)
+                              : null,
+                          fontSize: compactMobile
+                              ? 12
+                              : kAsanaTableChipFontSize,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: submissionCol,
+                      child: AsanaTableCellChip(
+                        child: AsanaSubmissionChip(
+                          submission: task.submission,
+                          displayLabel: compactMobile
+                              ? _mobileSubmissionLabel(task.submission)
+                              : null,
                           fontSize: compactMobile
                               ? 12
                               : kAsanaTableChipFontSize,
@@ -1268,5 +1296,31 @@ class _ProjectDetailTaskList extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: ClipRRect(borderRadius: BorderRadius.circular(8), child: table),
     );
+  }
+
+  static String _mobileStatusLabel(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s == 'completed' || s == 'complete') return 'COM';
+    if (s == 'deleted' || s == 'delete') return 'DEL';
+    if (s == 'not started') return 'NST';
+    if (s == 'in progress') return 'INP';
+    if (s.isEmpty || s == 'incomplete') return 'INC';
+    final trimmed = raw.trim();
+    return trimmed.length <= 3
+        ? trimmed.toUpperCase()
+        : trimmed.substring(0, 3).toUpperCase();
+  }
+
+  static String? _mobileSubmissionLabel(String? raw) {
+    final s = raw?.trim().toLowerCase() ?? '';
+    if (s.isEmpty || s == 'pending') return 'PEN';
+    if (s == 'submitted') return 'SUB';
+    if (s == 'accepted') return 'ACC';
+    if (s == 'returned') return 'RET';
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed.length <= 3
+        ? trimmed.toUpperCase()
+        : trimmed.substring(0, 3).toUpperCase();
   }
 }

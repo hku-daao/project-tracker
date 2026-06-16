@@ -76,11 +76,13 @@ class AsanaStatusChip extends StatelessWidget {
     required this.status,
     this.fontSize = kAsanaTableChipFontSize,
     this.preserveFullLabel = false,
+    this.displayLabel,
   });
 
   final String status;
   final double fontSize;
   final bool preserveFullLabel;
+  final String? displayLabel;
 
   static (String label, Color bg, Color fg) statusStyle(String raw) {
     final s = raw.trim().toLowerCase();
@@ -108,6 +110,7 @@ class AsanaStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, bg, fg) = statusStyle(status);
+    final visibleLabel = displayLabel ?? label;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -115,7 +118,7 @@ class AsanaStatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        label,
+        visibleLabel,
         style: asanaTextStyle(
           Theme.of(context).textTheme.bodyMedium,
           fontSize: fontSize,
@@ -184,10 +187,12 @@ class AsanaSubmissionChip extends StatelessWidget {
     required this.submission,
     this.fontSize = kAsanaTableChipFontSize,
     this.preserveFullLabel = false,
+    this.displayLabel,
   });
 
   final String? submission;
   final double fontSize;
+  final String? displayLabel;
 
   /// When true, the pill label is never ellipsized (e.g. home table last column).
   final bool preserveFullLabel;
@@ -215,6 +220,7 @@ class AsanaSubmissionChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, bg, fg) = submissionStyle(submission);
+    final visibleLabel = displayLabel ?? label;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -222,7 +228,7 @@ class AsanaSubmissionChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        label,
+        visibleLabel,
         style: asanaTextStyle(
           Theme.of(context).textTheme.bodyMedium,
           fontSize: fontSize,

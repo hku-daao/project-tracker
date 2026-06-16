@@ -2477,12 +2477,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final desc = e.descController.text.trim();
     final isLink = _draftShowsAsWebsiteLink(e);
     final title = desc.isNotEmpty ? desc : url;
+    final canRemove =
+        allowRemove &&
+        (isLink ||
+            FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+              url,
+            ));
     return AsanaAttachmentDraftTile(
       isWebsiteLink: isLink,
       title: title,
       url: url,
       enabled: !_saving,
-      onRemove: allowRemove ? () => _removeAttachmentDraft(e) : null,
+      onRemove: canRemove ? () => _removeAttachmentDraft(e) : null,
       onEditLink: isLink && editAnchorContext != null
           ? () => _editAttachmentLink(editAnchorContext, e)
           : null,

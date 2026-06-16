@@ -2450,12 +2450,18 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     final desc = draft.descController.text.trim();
     final isLink = _draftShowsAsWebsiteLink(draft);
     final title = desc.isNotEmpty ? desc : url;
+    final canRemove =
+        allowRemove &&
+        (isLink ||
+            FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+              url,
+            ));
     return AsanaAttachmentDraftTile(
       isWebsiteLink: isLink,
       title: title,
       url: url,
       enabled: !_saving,
-      onRemove: allowRemove ? () => _removeAttachment(draft) : null,
+      onRemove: canRemove ? () => _removeAttachment(draft) : null,
       onEditLink: isLink && editAnchorContext != null
           ? () => _editAttachmentLink(editAnchorContext, draft)
           : null,

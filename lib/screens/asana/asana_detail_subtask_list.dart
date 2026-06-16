@@ -64,6 +64,32 @@ bool _subCompleted(SingularSubtask s) {
   return x == 'completed' || x == 'complete';
 }
 
+String _mobileStatusLabel(String raw) {
+  final s = raw.trim().toLowerCase();
+  if (s == 'completed' || s == 'complete') return 'COM';
+  if (s == 'deleted' || s == 'delete') return 'DEL';
+  if (s == 'not started') return 'NST';
+  if (s == 'in progress') return 'INP';
+  if (s.isEmpty || s == 'incomplete') return 'INC';
+  final trimmed = raw.trim();
+  return trimmed.length <= 3
+      ? trimmed.toUpperCase()
+      : trimmed.substring(0, 3).toUpperCase();
+}
+
+String? _mobileSubmissionLabel(String? raw) {
+  final s = raw?.trim().toLowerCase() ?? '';
+  if (s.isEmpty || s == 'pending') return 'PEN';
+  if (s == 'submitted') return 'SUB';
+  if (s == 'accepted') return 'ACC';
+  if (s == 'returned') return 'RET';
+  final trimmed = raw?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed.length <= 3
+      ? trimmed.toUpperCase()
+      : trimmed.substring(0, 3).toUpperCase();
+}
+
 /// Sub-tasks in the same horizontal row layout as the task list.
 class AsanaDetailSubtaskList extends StatelessWidget {
   const AsanaDetailSubtaskList({
@@ -89,26 +115,35 @@ class AsanaDetailSubtaskList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (subtasks.isEmpty) return const SizedBox.shrink();
 
-    final compactMobile = nameAndDueOnly && viewportWidth < 480;
+    final compactMobile = nameAndDueOnly && viewportWidth < 600;
     final minWidth = nameAndDueOnly
         ? AsanaDetailSubtaskTableLayout.minNameDueTableWidth
         : AsanaDetailSubtaskTableLayout.minTableWidth;
-    final tableWidth = compactMobile
-        ? viewportWidth
+    final tableWidth = nameAndDueOnly
+        ? (compactMobile
+              ? viewportWidth
+              : viewportWidth.clamp(360.0, double.infinity))
         : (viewportWidth < minWidth ? minWidth : viewportWidth);
     final cols = AsanaDetailSubtaskTableLayout(
       tableWidth,
       nameAndDueOnly: nameAndDueOnly,
     );
-    final compactDueCol = compactMobile ? 56.0 : cols.dueCol;
-    final compactNameStatusPool =
-        tableWidth - AsanaDetailSubtaskTableLayout.hPad * 2 - 8 - compactDueCol;
-    final compactStatusCol = compactMobile ? 86.0 : cols.compactStatusCol;
-    final compactNameCol = compactMobile
-        ? (compactNameStatusPool - compactStatusCol).clamp(
-            48.0,
-            double.infinity,
-          )
+    final compactDueCol = nameAndDueOnly
+        ? (compactMobile ? 56.0 : 69.0)
+        : cols.dueCol;
+    final compactStatusCol = nameAndDueOnly
+        ? (compactMobile ? 48.0 : 108.0)
+        : cols.compactStatusCol;
+    final compactSubmissionCol = compactMobile ? 48.0 : 86.4;
+    final compactGap = compactMobile ? 8.0 : kAsanaTextColumnGap;
+    final compactNameCol = nameAndDueOnly
+        ? (tableWidth -
+                  AsanaDetailSubtaskTableLayout.hPad * 2 -
+                  compactGap -
+                  compactDueCol -
+                  compactStatusCol -
+                  compactSubmissionCol)
+              .clamp(48.0, double.infinity)
         : cols.nameCol;
     final header = _headerStyle(context);
 
@@ -145,7 +180,7 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                       ),
                     Expanded(
                       child: Text(
-                        'Sub-task Name',
+                        nameAndDueOnly ? 'Task Name' : 'Sub-task Name',
                         style: header,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -154,20 +189,27 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox(width: compactMobile ? 8 : kAsanaTextColumnGap),
+              SizedBox(width: compactGap),
               asanaTableHeaderLabel(
                 width: compactDueCol,
-                label: 'Due Date',
+                label: compactMobile ? 'Due' : 'Due Date',
                 style: header,
                 rowHeight: AsanaDetailSubtaskTableLayout.singleLineExtent,
               ),
-              if (nameAndDueOnly)
+              if (nameAndDueOnly) ...[
                 asanaTableHeaderLabel(
                   width: compactStatusCol,
-                  label: 'Status',
+                  label: compactMobile ? 'Sta' : 'Status',
                   style: header,
                   rowHeight: AsanaDetailSubtaskTableLayout.singleLineExtent,
                 ),
+                asanaTableHeaderLabel(
+                  width: compactSubmissionCol,
+                  label: compactMobile ? 'Sub' : 'Submission',
+                  style: header,
+                  rowHeight: AsanaDetailSubtaskTableLayout.singleLineExtent,
+                ),
+              ],
               if (!nameAndDueOnly) ...[
                 asanaTextColumnGap(),
                 asanaTableHeaderLabel(
@@ -273,7 +315,7 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                         ],
                       ),
                     ),
-                    SizedBox(width: compactMobile ? 8 : kAsanaTextColumnGap),
+                    SizedBox(width: compactGap),
                     SizedBox(
                       width: compactDueCol,
                       child: Text(
@@ -289,6 +331,24 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                         child: AsanaTableCellChip(
                           child: AsanaStatusChip(
                             status: s.status,
+                            displayLabel: compactMobile
+                                ? _mobileStatusLabel(s.status)
+                                : null,
+                            fontSize: compactMobile
+                                ? 12
+                                : kAsanaTableChipFontSize,
+                          ),
+                        ),
+                      ),
+                    if (nameAndDueOnly)
+                      SizedBox(
+                        width: compactSubmissionCol,
+                        child: AsanaTableCellChip(
+                          child: AsanaSubmissionChip(
+                            submission: s.submission,
+                            displayLabel: compactMobile
+                                ? _mobileSubmissionLabel(s.submission)
+                                : null,
                             fontSize: compactMobile
                                 ? 12
                                 : kAsanaTableChipFontSize,
