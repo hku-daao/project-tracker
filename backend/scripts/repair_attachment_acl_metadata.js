@@ -71,7 +71,7 @@ function normalizeStorageObjectPath(rawPath) {
 }
 
 function isAllowedAttachmentPath(path) {
-  return /^project_tracker\/users\/[^/]+\/(task_attachments|subtask_attachments)\/[^/]+\/.+$/i.test(
+  return /^project_tracker\/users\/[^/]+\/(project_attachments|task_attachments|subtask_attachments)\/[^/]+\/.+$/i.test(
     String(path || '').trim(),
   );
 }

@@ -1363,6 +1363,198 @@ class SupabaseService {
     }
   }
 
+  static Future<({String? error, String? commentId})> insertProjectCommentRow({
+    required String projectId,
+    required String description,
+    String status = 'Active',
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return (error: 'Supabase not configured', commentId: null);
+    final pid = projectId.trim();
+    final d = description.trim();
+    if (pid.isEmpty) return (error: 'Project id is required', commentId: null);
+    if (d.isEmpty) return (error: null, commentId: null);
+    try {
+      final id = const Uuid().v4();
+      final map = <String, dynamic>{
+        'id': id,
+        'project_id': pid,
+        'description': d,
+        'status': status.trim().isEmpty ? 'Active' : status.trim(),
+        'create_date': HkTime.timestampForDb(),
+      };
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['create_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client.from('project_comment').insert(map);
+      return (error: null, commentId: id);
+    } catch (e) {
+      return (error: e.toString(), commentId: null);
+    }
+  }
+
+  static Future<String?> updateProjectCommentRow({
+    required String commentId,
+    required String description,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final d = description.trim();
+    if (d.isEmpty) return 'Comment is empty';
+    try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to update this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
+      final map = <String, dynamic>{
+        'description': d,
+        'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
+      };
+      final res = await Supabase.instance.client
+          .from('project_comment')
+          .update(map)
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only update comments made by you.';
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> touchProjectCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    final id = commentId.trim();
+    if (id.isEmpty) return 'Comment id is empty';
+    try {
+      final map = <String, dynamic>{'update_date': HkTime.timestampForDb()};
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await Supabase.instance.client
+          .from('project_comment')
+          .update(map)
+          .eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> softDeleteProjectCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Supabase not configured';
+    try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to remove this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
+      };
+      final res = await Supabase.instance.client
+          .from('project_comment')
+          .update(map)
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only remove comments made by you.';
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<List<ProjectCommentRowDisplay>> fetchProjectComments(
+    String projectId,
+  ) async {
+    if (!_enabled) return [];
+    final pid = projectId.trim();
+    if (pid.isEmpty) return [];
+    try {
+      final res = await Supabase.instance.client
+          .from('project_comment')
+          .select()
+          .eq('project_id', pid);
+      final rows = <Map<String, dynamic>>[];
+      for (final raw in (res as List)) {
+        rows.add(Map<String, dynamic>.from(raw as Map));
+      }
+      final idSet = <String>{};
+      for (final r in rows) {
+        final cb = r['create_by']?.toString().trim();
+        if (cb != null && cb.isNotEmpty) idSet.add(cb);
+      }
+      final names = <String, String>{};
+      for (final id in idSet) {
+        names[id] = await staffDisplayNameForKey(id);
+      }
+      final out = <ProjectCommentRowDisplay>[];
+      for (final r in rows) {
+        final id = r['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final cb = r['create_by']?.toString().trim();
+        final name = (cb != null && cb.isNotEmpty) ? (names[cb] ?? cb) : '-';
+        final statusStr = r['status']?.toString() ?? '';
+        out.add(
+          ProjectCommentRowDisplay(
+            id: id,
+            description: r['description']?.toString() ?? '',
+            status: statusStr,
+            createByStaffId: cb,
+            displayStaffName: name,
+            createTimestampUtc: _parseDateTimeNullable(r['create_date']),
+            updateTimestampUtc: _parseDateTimeNullable(r['update_date']),
+          ),
+        );
+      }
+      out.sort((a, b) {
+        if (a.isDeleted != b.isDeleted) {
+          return a.isDeleted ? 1 : -1;
+        }
+        final ac =
+            a.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bc =
+            b.createTimestampUtc ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bc.compareTo(ac);
+      });
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
   static Future<List<Task>> fetchSingularTasksForProject(
     String projectId,
   ) async {

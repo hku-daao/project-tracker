@@ -51,6 +51,16 @@ service firebase.storage {
       allow delete: if canDelete(uploaderUid);
     }
 
+    match /project_tracker/users/{uploaderUid}/project_attachments/{projectId}/{fileName} {
+      allow read: if canRead(uploaderUid);
+
+      allow create: if canCreateOrUpdate(uploaderUid);
+
+      allow update: if canCreateOrUpdate(uploaderUid);
+
+      allow delete: if canDelete(uploaderUid);
+    }
+
     match /project_tracker/users/{uploaderUid}/subtask_attachments/{subtaskId}/{fileName} {
       allow read: if canRead(uploaderUid);
 

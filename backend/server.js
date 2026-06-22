@@ -438,7 +438,7 @@ function getFirebaseStorageBucketName() {
 function isAllowedProjectAttachmentObjectPath(p) {
   const s = String(p || '').trim().replace(/^\/+/, '');
   if (!s || s.includes('..')) return false;
-  return /^project_tracker\/users\/[^/]+\/(task_attachments|subtask_attachments)\/[^/]+\/.+$/i.test(
+  return /^project_tracker\/users\/[^/]+\/(project_attachments|task_attachments|subtask_attachments)\/[^/]+\/.+$/i.test(
     s,
   );
 }

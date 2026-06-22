@@ -823,7 +823,7 @@ Future<bool?> showAsanaConfirmDialog({
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
+              SelectableText(
                 title,
                 style: asanaTextStyle(
                   theme.textTheme.titleMedium,
@@ -833,7 +833,7 @@ Future<bool?> showAsanaConfirmDialog({
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
+              SelectableText(
                 content,
                 style: asanaTextStyle(
                   theme.textTheme.bodyMedium,

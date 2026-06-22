@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -5,23 +7,76 @@ import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../config/supabase_config.dart';
 import '../../models/project_record.dart';
+import '../../models/singular_comment.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../models/task.dart';
 import '../../services/backend_api.dart';
+import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/attachment_file_pick.dart';
+import '../../utils/attachment_url_launch.dart';
 import '../../utils/hk_time.dart';
 import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
+import 'asana_attachment_draft_tile.dart';
+import 'asana_attachment_menu.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_inline_image_widgets.dart';
 import 'asana_project_ai_assistant.dart';
 import 'asana_project_filter.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
+
+class _ProjectAttachmentDraft {
+  _ProjectAttachmentDraft({
+    this.id,
+    String? url,
+    String? desc,
+    this.mimeType,
+    this.isWebsiteLink = false,
+  }) : urlController = TextEditingController(text: url ?? ''),
+       descController = TextEditingController(text: desc ?? '');
+
+  final String? id;
+  final TextEditingController urlController;
+  final TextEditingController descController;
+  Uint8List? pendingBytes;
+  String? pendingFilename;
+  String? mimeType;
+  bool isWebsiteLink;
+
+  bool get isPendingFile => pendingBytes != null;
+
+  void dispose() {
+    urlController.dispose();
+    descController.dispose();
+  }
+}
+
+class _ProjectInlineImageDraft {
+  _ProjectInlineImageDraft({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.bytes,
+    required this.label,
+    this.mimeType = 'image/*',
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final Uint8List bytes;
+  final String label;
+  final String mimeType;
+  final int sortOrder;
+}
 
 /// Project slide — creator can edit all project fields (matches task slide layout).
 class AsanaProjectDetailPanel extends StatefulWidget {
@@ -52,9 +107,19 @@ class AsanaProjectDetailPanel extends StatefulWidget {
 class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
+  final _commentController = TextEditingController();
 
   ProjectRecord? _project;
   List<Task> _tasks = [];
+  List<ProjectCommentRowDisplay> _comments = [];
+  final Map<String, TextEditingController> _postedCommentControllers = {};
+  final Map<String, String> _postedCommentSavedText = {};
+  String? _savingPostedCommentId;
+  final List<_ProjectAttachmentDraft> _attachments = [];
+  List<InlineAttachmentRow> _descriptionInlineImages = [];
+  Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
+  final List<_ProjectInlineImageDraft> _pendingInlineImageAdds = [];
+  final List<InlineAttachmentRow> _pendingInlineImageDeletes = [];
   bool _loading = true;
   bool _saving = false;
   String? _myStaffUuid;
@@ -82,6 +147,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _statusAnchorLink = LayerLink();
+  final LayerLink _attachmentAddAnchorLink = LayerLink();
   final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
   int _anchoredPickerReopenBlockedUntilMs = 0;
 
@@ -106,6 +172,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     AsanaBlockingLoadingOverlay.hideAll();
     _nameController.dispose();
     _descController.dispose();
+    _commentController.dispose();
+    for (final ctrl in _postedCommentControllers.values) {
+      ctrl.dispose();
+    }
+    for (final attachment in _attachments) {
+      attachment.dispose();
+    }
     _assigneeSnapshot.dispose();
     _picSnapshot.dispose();
     _projectAi?.dispose();
@@ -121,6 +194,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     await Future.wait([
       _loadProject(),
       _loadProjectTasks(),
+      _loadComments(),
+      _loadAttachments(),
+      _loadProjectDescriptionInlineImages(),
       _loadAssigneePicker(),
     ]);
   }
@@ -157,6 +233,92 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       if (!mounted) return;
       setState(() => _tasks = list.where((t) => !_taskDeleted(t)).toList());
     } catch (_) {}
+  }
+
+  Future<void> _loadComments() async {
+    if (!SupabaseConfig.isConfigured) return;
+    try {
+      final list = await SupabaseService.fetchProjectComments(widget.projectId);
+      if (!mounted) return;
+      setState(() => _comments = list);
+      await _loadCommentInlineImages(list);
+    } catch (_) {}
+  }
+
+  Future<void> _loadProjectDescriptionInlineImages() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final list = await SupabaseService.fetchInlineAttachments(
+      entityType: 'project_description',
+      entityId: widget.projectId,
+    );
+    if (mounted) setState(() => _descriptionInlineImages = list);
+  }
+
+  Future<void> _loadCommentInlineImages(
+    List<ProjectCommentRowDisplay> comments,
+  ) async {
+    if (!SupabaseConfig.isConfigured || comments.isEmpty) return;
+    final next = <String, List<InlineAttachmentRow>>{};
+    for (final comment in comments) {
+      final list = await SupabaseService.fetchInlineAttachments(
+        entityType: 'project_comment',
+        entityId: comment.id,
+      );
+      if (list.isNotEmpty) next[comment.id] = list;
+    }
+    if (mounted) setState(() => _commentInlineImages = next);
+  }
+
+  Future<void> _loadAttachments() async {
+    if (!SupabaseConfig.isConfigured) return;
+    try {
+      final files = await SupabaseService.fetchFileAttachments(
+        entityType: 'project',
+        entityId: widget.projectId,
+      );
+      final urls = await SupabaseService.fetchUrlAttachments(
+        entityType: 'project',
+        entityId: widget.projectId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _clearAttachments();
+        for (final r in files) {
+          _attachments.add(
+            _ProjectAttachmentDraft(
+              id: r.id,
+              url: r.url,
+              desc: (r.description?.trim().isNotEmpty == true)
+                  ? r.description
+                  : r.filename,
+              mimeType: r.mimeType,
+            ),
+          );
+        }
+        for (final r in urls) {
+          _attachments.add(
+            _ProjectAttachmentDraft(
+              id: r.id,
+              url: r.url,
+              desc: r.label,
+              isWebsiteLink: true,
+            ),
+          );
+        }
+      });
+    } catch (_) {}
+  }
+
+  void _clearAttachments() {
+    for (final a in _attachments) {
+      a.dispose();
+    }
+    _attachments.clear();
+  }
+
+  void _clearInlineImageDrafts() {
+    _pendingInlineImageAdds.clear();
+    _pendingInlineImageDeletes.clear();
   }
 
   Future<void> _syncAssigneeKeysFromProject(ProjectRecord p) async {
@@ -720,6 +882,830 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     );
   }
 
+  Future<T?> _withBlockingLoading<T>(Future<T?> Function() action) async {
+    if (!mounted) return null;
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      return await action();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+    }
+  }
+
+  Future<void> _showInfo(String title, String content) {
+    AsanaBlockingLoadingOverlay.hideAll();
+    if (mounted && _saving) {
+      setState(() => _saving = false);
+    }
+    return showAsanaInfoDialog(
+      context: context,
+      title: title,
+      content: content,
+      palette: widget.palette,
+    );
+  }
+
+  static bool _uuidEquals(String? a, String? b) {
+    final x = a?.trim().toLowerCase() ?? '';
+    final y = b?.trim().toLowerCase() ?? '';
+    if (x.isEmpty || y.isEmpty) return false;
+    return x == y;
+  }
+
+  bool _isOwnComment(ProjectCommentRowDisplay comment) =>
+      !comment.isDeleted && _uuidEquals(comment.createByStaffId, _myStaffUuid);
+
+  DateTime? _commentDisplayTimestamp(ProjectCommentRowDisplay comment) {
+    final created = comment.createTimestampUtc;
+    final updated = comment.updateTimestampUtc;
+    if (updated != null && created != null && updated.isAfter(created)) {
+      return updated;
+    }
+    return created ?? updated;
+  }
+
+  String _formatCommentPostedTs(DateTime? stored) {
+    if (stored == null) return '';
+    return HkTime.formatInstantAsHk(stored, 'yyyy-MM-dd HH:mm');
+  }
+
+  List<String?> _projectAttachmentAclKeys(AppState state, ProjectRecord p) {
+    return [
+      state.userStaffAppId,
+      p.createByStaffUuid,
+      ..._picAssigneeIds,
+      ..._assigneeIds,
+    ];
+  }
+
+  Future<void> _removeAttachmentDraft(_ProjectAttachmentDraft draft) async {
+    final persistedId = draft.id?.trim();
+    if (persistedId != null &&
+        persistedId.isNotEmpty &&
+        SupabaseConfig.isConfigured) {
+      final isWebsiteLink = _draftShowsAsWebsiteLink(draft);
+      if (!isWebsiteLink) {
+        final storageErr =
+            await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+              draft.urlController.text.trim(),
+            );
+        if (!mounted) return;
+        if (storageErr != null) {
+          await _showInfo('Could not remove uploaded file', storageErr);
+          return;
+        }
+      }
+      final err = isWebsiteLink
+          ? await SupabaseService.deleteUrlAttachmentById(persistedId)
+          : await SupabaseService.deleteFileAttachmentById(persistedId);
+      if (!mounted) return;
+      if (err != null) {
+        await _showInfo('Could not remove attachment', err);
+        return;
+      }
+    }
+    setState(() {
+      draft.dispose();
+      _attachments.remove(draft);
+    });
+  }
+
+  bool _draftShowsAsWebsiteLink(_ProjectAttachmentDraft draft) {
+    if (draft.isPendingFile) return false;
+    if (draft.isWebsiteLink) return true;
+    final url = draft.urlController.text.trim();
+    return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+  }
+
+  String? _attachmentMimeTypeFromName(String? name) {
+    final n = name?.toLowerCase().trim() ?? '';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return null;
+  }
+
+  bool _attachmentDraftIsImage(_ProjectAttachmentDraft draft) {
+    final mime = draft.mimeType?.toLowerCase().trim() ?? '';
+    if (mime.startsWith('image/')) return true;
+    final name = draft.pendingFilename?.trim().isNotEmpty == true
+        ? draft.pendingFilename!.trim()
+        : draft.descController.text.trim();
+    if (_attachmentMimeTypeFromName(name) != null) return true;
+    final rawUrl = draft.urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    if (_attachmentMimeTypeFromName(uri?.path) != null) return true;
+    final objectPath =
+        FirebaseAttachmentUploadService.objectPathFromStorageDownloadUrl(
+          rawUrl,
+        );
+    return _attachmentMimeTypeFromName(objectPath) != null;
+  }
+
+  bool _shouldAttemptAttachmentImagePreview(_ProjectAttachmentDraft draft) {
+    if (_attachmentDraftIsImage(draft)) return true;
+    return !draft.isPendingFile &&
+        isAppFirebaseStorageAttachmentUrl(draft.urlController.text.trim());
+  }
+
+  Future<void> _editAttachmentLink(
+    BuildContext anchorContext,
+    _ProjectAttachmentDraft draft,
+  ) async {
+    if (!_canOpenAnchoredPicker || _saving) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
+    final updated = await showAsanaAnchoredLinkEditor(
+      anchorLink: _attachmentAddAnchorLink,
+      anchorContext: anchorContext,
+      widthAlignContext: widthAlignContext,
+      initialUrl: draft.urlController.text,
+      initialDescription: draft.descController.text,
+      onClosed: _blockAnchoredPickerReopen,
+    );
+    if (!mounted || updated == null) return;
+    setState(() {
+      draft.urlController.text = updated.url;
+      draft.descController.text = updated.description;
+      draft.isWebsiteLink = true;
+    });
+  }
+
+  Future<void> _addFileAttachment(ProjectRecord p) async {
+    final state = context.read<AppState>();
+    final r = await _withBlockingLoading(
+      () => FirebaseAttachmentUploadService.pickUploadFilesForProject(
+        p.id,
+        aclStaffKeys: _projectAttachmentAclKeys(state, p),
+      ),
+    );
+    if (!mounted) return;
+    if (r?.error != null) {
+      await _showInfo('Attachment upload failed', r!.error!);
+      return;
+    }
+    final files = r?.files ?? const <({String url, String label})>[];
+    if (files.isEmpty) return;
+    setState(() {
+      for (final file in files) {
+        _attachments.add(
+          _ProjectAttachmentDraft(
+            url: file.url,
+            desc: file.label,
+            mimeType: _attachmentMimeTypeFromName(file.label),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
+    final result = await showAsanaAnchoredLinkEditor(
+      anchorLink: _attachmentAddAnchorLink,
+      anchorContext: anchorContext,
+      widthAlignContext: widthAlignContext,
+      initialUrl: '',
+      initialDescription: '',
+      onClosed: _blockAnchoredPickerReopen,
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      _attachments.add(
+        _ProjectAttachmentDraft(
+          url: result.url,
+          desc: result.description,
+          isWebsiteLink: true,
+        ),
+      );
+    });
+  }
+
+  Future<void> _stageInlineImage({
+    required String entityType,
+    required String entityId,
+  }) async {
+    final picked = await _withBlockingLoading(pickOneFileWithBytes);
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
+      await _showInfo(
+        'Inline image upload failed',
+        'Could not read file data.',
+      );
+      return;
+    }
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
+    setState(
+      () => _pendingInlineImageAdds.add(
+        _ProjectInlineImageDraft(
+          id: id,
+          entityType: entityType,
+          entityId: entityId,
+          bytes: picked.bytes,
+          label: label,
+          mimeType: 'image/*',
+          sortOrder: _pendingInlineImageAdds
+              .where(
+                (draft) =>
+                    draft.entityType == entityType &&
+                    draft.entityId == entityId,
+              )
+              .length,
+        ),
+      ),
+    );
+  }
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    setState(() {
+      final saved = image.inlineAttachment;
+      if (saved != null) {
+        if (!_pendingInlineImageDeletes.any((row) => row.id == saved.id)) {
+          _pendingInlineImageDeletes.add(saved);
+        }
+      } else {
+        _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      }
+    });
+  }
+
+  bool _canRemoveInlineAttachment(InlineAttachmentRow row) {
+    return FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+      row.url,
+    );
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems({
+    required String entityType,
+    required String entityId,
+    required List<InlineAttachmentRow> saved,
+  }) {
+    final deletedIds = _pendingInlineImageDeletes.map((row) => row.id).toSet();
+    final savedItems = saved
+        .where((row) => !deletedIds.contains(row.id))
+        .map(
+          (row) => InlineImagePreviewItem(
+            id: row.id,
+            inlineAttachment: row,
+            url: row.url,
+            description: row.description,
+            mimeType: row.mimeType,
+            canRemove: _canRemoveInlineAttachment(row),
+          ),
+        );
+    final draftItems = _pendingInlineImageAdds
+        .where(
+          (draft) =>
+              draft.entityType == entityType && draft.entityId == entityId,
+        )
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        );
+    return [...savedItems, ...draftItems];
+  }
+
+  Future<String?> _commitPendingInlineImages({
+    required ProjectRecord project,
+    required AppState state,
+    Map<String, String> entityIdOverrides = const {},
+  }) async {
+    for (final draft in List<_ProjectInlineImageDraft>.from(
+      _pendingInlineImageAdds,
+    )) {
+      final resolvedEntityId =
+          entityIdOverrides[draft.entityId] ?? draft.entityId;
+      if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
+        continue;
+      }
+      final upload =
+          await FirebaseAttachmentUploadService.uploadBytesForProject(
+            project.id,
+            bytes: draft.bytes,
+            originalFilename: draft.label,
+            aclStaffKeys: _projectAttachmentAclKeys(state, project),
+          );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
+      final ins = await SupabaseService.insertInlineAttachment(
+        entityType: draft.entityType,
+        entityId: resolvedEntityId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.userStaffAppId,
+        sortOrder: draft.sortOrder,
+      );
+      if (ins.error != null) return ins.error;
+    }
+    for (final row in List<InlineAttachmentRow>.from(
+      _pendingInlineImageDeletes,
+    )) {
+      final deleteErr =
+          await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+            row.url,
+          );
+      if (deleteErr != null) return deleteErr;
+      final markErr = await SupabaseService.markInlineAttachmentDeleted(row.id);
+      if (markErr != null) return markErr;
+      if (row.entityType == 'project_comment') {
+        final touchErr = await SupabaseService.touchProjectCommentRow(
+          commentId: row.entityId,
+          updaterStaffLookupKey: state.userStaffAppId,
+        );
+        if (touchErr != null) return touchErr;
+      }
+    }
+    _clearInlineImageDrafts();
+    return null;
+  }
+
+  List<({String? id, String? url, String? filename, String? description})>
+  _fileAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            id: a.id,
+            url: url.isEmpty ? null : url,
+            filename: desc.isEmpty ? null : desc,
+            description: desc.isEmpty ? null : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  List<({String? id, String? url, String? label})> _urlAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            id: a.id,
+            url: url.isEmpty ? null : url,
+            label: desc.isEmpty ? url : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _replaceProjectAttachments() async {
+    final fileErr = await SupabaseService.replaceFileAttachments(
+      entityType: 'project',
+      entityId: widget.projectId,
+      rows: _fileAttachmentPayload(),
+    );
+    if (fileErr != null) return fileErr;
+    return SupabaseService.replaceUrlAttachments(
+      entityType: 'project',
+      entityId: widget.projectId,
+      rows: _urlAttachmentPayload(),
+    );
+  }
+
+  List<_ProjectAttachmentDraft> get _fileAttachments => _attachments
+      .where((a) => a.isPendingFile || !_draftShowsAsWebsiteLink(a))
+      .toList();
+
+  List<_ProjectAttachmentDraft> get _urlAttachments => _attachments
+      .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+      .toList();
+
+  Future<void> _savePostedCommentOnBlur(
+    ProjectCommentRowDisplay comment,
+  ) async {
+    if (_savingPostedCommentId == comment.id) return;
+    final ctrl = _postedCommentControllers[comment.id];
+    if (ctrl == null) return;
+    final newBody = stripInlineImageMarkers(ctrl.text);
+    final saved = stripInlineImageMarkers(
+      _postedCommentSavedText[comment.id] ?? comment.description,
+    );
+    if (newBody == saved) return;
+    if (newBody.isEmpty) {
+      ctrl.text = saved;
+      await _showInfo('Comment required', 'Comment cannot be empty.');
+      return;
+    }
+    final state = context.read<AppState>();
+    _savingPostedCommentId = comment.id;
+    final err = await SupabaseService.updateProjectCommentRow(
+      commentId: comment.id,
+      description: newBody,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    _savingPostedCommentId = null;
+    if (!mounted) return;
+    if (err != null) {
+      ctrl.text = saved;
+      await _showInfo('Could not update comment', err);
+      return;
+    }
+    _postedCommentSavedText[comment.id] = newBody;
+    await _loadComments();
+  }
+
+  Future<bool> _saveDirtyPostedComments(AppState state) async {
+    for (final comment in _comments) {
+      if (!_isOwnComment(comment)) continue;
+      final ctrl = _postedCommentControllers[comment.id];
+      if (ctrl == null) continue;
+      final newBody = stripInlineImageMarkers(ctrl.text);
+      final saved = stripInlineImageMarkers(
+        _postedCommentSavedText[comment.id] ?? comment.description,
+      );
+      if (newBody == saved) continue;
+      if (newBody.isEmpty) {
+        ctrl.text = saved;
+        await _showInfo('Comment required', 'Comment cannot be empty.');
+        return false;
+      }
+      _savingPostedCommentId = comment.id;
+      final err = await SupabaseService.updateProjectCommentRow(
+        commentId: comment.id,
+        description: newBody,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      _savingPostedCommentId = null;
+      if (!mounted) return false;
+      if (err != null) {
+        ctrl.text = saved;
+        await _showInfo('Could not update comment', err);
+        return false;
+      }
+      _postedCommentSavedText[comment.id] = newBody;
+    }
+    return true;
+  }
+
+  Future<String?> _postDraftCommentWithoutOverlay(AppState state) async {
+    final text = stripInlineImageMarkers(_commentController.text);
+    final hasInlineDraft = _pendingInlineImageAdds.any(
+      (draft) =>
+          draft.entityType == 'project_comment' && draft.entityId == 'draft',
+    );
+    if (text.isEmpty && !hasInlineDraft) return null;
+    final c = await SupabaseService.insertProjectCommentRow(
+      projectId: widget.projectId,
+      description: text.isNotEmpty ? text : inlineImageOnlyCommentPlaceholder,
+      creatorStaffLookupKey: state.userStaffAppId,
+    );
+    if (c.error != null) {
+      await _showInfo('Could not add comment', c.error!);
+      return null;
+    }
+    final commentId = c.commentId;
+    if (commentId == null || commentId.isEmpty) {
+      await _showInfo(
+        'Could not add comment',
+        'The comment was not saved because Supabase did not return a comment id.',
+      );
+      return null;
+    }
+    _commentController.clear();
+    return commentId;
+  }
+
+  Future<void> _deletePostedComment(ProjectCommentRowDisplay comment) async {
+    if (!_isOwnComment(comment) || _saving) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove comment',
+      content: 'Remove this comment?',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    final state = context.read<AppState>();
+    _setSaving(true);
+    try {
+      final err = await SupabaseService.softDeleteProjectCommentRow(
+        commentId: comment.id,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null && mounted) {
+        await _showInfo('Could not remove comment', err);
+        return;
+      }
+      _postedCommentControllers.remove(comment.id)?.dispose();
+      _postedCommentSavedText.remove(comment.id);
+      await _loadComments();
+    } finally {
+      if (mounted) _setSaving(false);
+    }
+  }
+
+  Widget _attachmentFieldLabel({
+    required String label,
+    required bool showAdd,
+    required bool enabled,
+    required String tooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? anchorLink,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: Text(label, style: asanaDetailLabelStyle(context))),
+        if (showAdd) ...[
+          const SizedBox(width: 8),
+          AsanaDetailCircleAddButton(
+            onTap: onAdd,
+            enabled: enabled,
+            tooltip: tooltip,
+            size: 22,
+            anchorLink: anchorLink,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _attachmentValueList(
+    BuildContext context,
+    List<_ProjectAttachmentDraft> attachments, {
+    required bool allowRemove,
+    BuildContext? editAnchorContext,
+  }) {
+    if (attachments.isEmpty) return const SizedBox.shrink();
+    final imageAttachments = attachments
+        .where(
+          (e) => !_draftShowsAsWebsiteLink(e) && _attachmentDraftIsImage(e),
+        )
+        .toList();
+    final otherAttachments = attachments
+        .where(
+          (e) => _draftShowsAsWebsiteLink(e) || !_attachmentDraftIsImage(e),
+        )
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (imageAttachments.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: otherAttachments.isNotEmpty ? 8 : 0,
+            ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: imageAttachments
+                  .map(
+                    (e) => _attachmentDraftTile(
+                      context,
+                      e,
+                      allowRemove: allowRemove,
+                      editAnchorContext: editAnchorContext,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ...otherAttachments.map(
+          (e) => _attachmentDraftTile(
+            context,
+            e,
+            allowRemove: allowRemove,
+            editAnchorContext: editAnchorContext,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _attachmentTwoColumnRow({
+    required String label,
+    required List<_ProjectAttachmentDraft> attachments,
+    required bool showAdd,
+    required bool addEnabled,
+    required String addTooltip,
+    required void Function(BuildContext buttonContext)? onAdd,
+    LayerLink? addAnchorLink,
+    bool allowRemove = true,
+    BuildContext? editAnchorContext,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: MediaQuery.sizeOf(context).width < 600
+                ? kAsanaDetailLabelColumnWidth / 2
+                : kAsanaDetailLabelColumnWidth,
+            child: _attachmentFieldLabel(
+              label: label,
+              showAdd: showAdd,
+              enabled: addEnabled,
+              tooltip: addTooltip,
+              onAdd: onAdd,
+              anchorLink: addAnchorLink,
+            ),
+          ),
+          Expanded(
+            child: _attachmentValueList(
+              context,
+              attachments,
+              allowRemove: allowRemove,
+              editAnchorContext: editAnchorContext,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attachmentDraftTile(
+    BuildContext context,
+    _ProjectAttachmentDraft draft, {
+    required bool allowRemove,
+    BuildContext? editAnchorContext,
+  }) {
+    if (draft.isPendingFile) {
+      final name = draft.pendingFilename?.trim().isNotEmpty == true
+          ? draft.pendingFilename!.trim()
+          : 'File';
+      return AsanaAttachmentDraftTile(
+        isWebsiteLink: false,
+        title: name,
+        subtitle: 'Uploads when you save',
+        enabled: !_saving,
+        onRemove: allowRemove ? () => _removeAttachmentDraft(draft) : null,
+        imageBytes: draft.pendingBytes,
+        mimeType: draft.mimeType,
+        showImagePreview: _shouldAttemptAttachmentImagePreview(draft),
+      );
+    }
+    final url = draft.urlController.text.trim();
+    if (url.isEmpty) return const SizedBox.shrink();
+    final desc = draft.descController.text.trim();
+    final isLink = _draftShowsAsWebsiteLink(draft);
+    final title = desc.isNotEmpty ? desc : url;
+    final canRemove =
+        allowRemove &&
+        (isLink ||
+            FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+              url,
+            ));
+    return AsanaAttachmentDraftTile(
+      isWebsiteLink: isLink,
+      title: title,
+      url: url,
+      enabled: !_saving,
+      onRemove: canRemove ? () => _removeAttachmentDraft(draft) : null,
+      onEditLink: isLink && editAnchorContext != null
+          ? () => _editAttachmentLink(editAnchorContext, draft)
+          : null,
+      onDownload: !isLink
+          ? () => openAttachmentUrl(context, url, displayFileName: title)
+          : null,
+      imageBytes: draft.pendingBytes,
+      mimeType: draft.mimeType,
+      showImagePreview: !isLink && _attachmentDraftIsImage(draft),
+    );
+  }
+
+  Widget _buildCommentDisplayTile(ProjectCommentRowDisplay comment) {
+    if (_isOwnComment(comment) &&
+        !_postedCommentControllers.containsKey(comment.id)) {
+      final cleaned = stripInlineImageMarkers(comment.description);
+      _postedCommentControllers[comment.id] = TextEditingController(
+        text: cleaned,
+      );
+      _postedCommentSavedText[comment.id] = cleaned;
+    }
+    final deleted = comment.isDeleted;
+    final canEdit = _isOwnComment(comment);
+    final postedAt = _commentDisplayTimestamp(comment);
+    final edited =
+        comment.updateTimestampUtc != null &&
+        comment.createTimestampUtc != null &&
+        comment.updateTimestampUtc!.isAfter(comment.createTimestampUtc!);
+    final body = canEdit
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Focus(
+                onFocusChange: (hasFocus) {
+                  if (!hasFocus) _savePostedCommentOnBlur(comment);
+                },
+                child: AsanaHoverTextField(
+                  controller: _postedCommentControllers[comment.id]!,
+                  canEdit: true,
+                  readOnly: _saving || _savingPostedCommentId == comment.id,
+                  maxLines: 8,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                ),
+              ),
+              InlineImageToolbar(
+                enabled: !_saving,
+                onAdd: () => _stageInlineImage(
+                  entityType: 'project_comment',
+                  entityId: comment.id,
+                ),
+              ),
+              InlineImagePreviewList(
+                images: _inlinePreviewItems(
+                  entityType: 'project_comment',
+                  entityId: comment.id,
+                  saved: _commentInlineImages[comment.id] ?? const [],
+                ),
+                onRemove: _removeInlineImagePreview,
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () => _deletePostedComment(comment),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Remove'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFC62828),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                stripInlineImageMarkers(comment.description),
+                style: asanaDetailMultilineValueStyle(context).copyWith(
+                  color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
+                ),
+              ),
+              InlineImagePreviewList(
+                images: _inlinePreviewItems(
+                  entityType: 'project_comment',
+                  entityId: comment.id,
+                  saved: _commentInlineImages[comment.id] ?? const [],
+                ),
+              ),
+            ],
+          );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(comment.displayStaffName, style: asanaDetailLabelStyle(context)),
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            decoration: BoxDecoration(
+              color: deleted ? const Color(0xFFF9FAFB) : Colors.white,
+              border: Border.all(color: const Color(0xFFEDEAE9)),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                body,
+                if (postedAt != null) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '${edited ? 'Edited' : 'Posted'} ${_formatCommentPostedTs(postedAt)}',
+                      style: asanaDetailLabelStyle(
+                        context,
+                      ).copyWith(fontSize: 11),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget? _buildSlideFooter({
     required AsanaSlideChrome chrome,
     required bool canEdit,
@@ -875,7 +1861,6 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     }
 
     _setSaving(true);
-    AsanaBlockingLoadingOverlay.show(context);
     try {
       final slots = await SupabaseService.assigneeSlotsForProject(
         _assigneeIds.toList(),
@@ -919,9 +1904,38 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
+      if (!await _saveDirtyPostedComments(state)) return;
+      final hasDraftComment =
+          stripInlineImageMarkers(_commentController.text).isNotEmpty ||
+          _pendingInlineImageAdds.any(
+            (draft) =>
+                draft.entityType == 'project_comment' &&
+                draft.entityId == 'draft',
+          );
+      final draftCommentId = await _postDraftCommentWithoutOverlay(state);
+      if (hasDraftComment && draftCommentId == null) return;
+      final inlineErr = await _commitPendingInlineImages(
+        project: p,
+        state: state,
+        entityIdOverrides: draftCommentId == null
+            ? const {}
+            : {'draft': draftCommentId},
+      );
+      if (inlineErr != null && mounted) {
+        await _showInfo('Could not save inline image', inlineErr);
+        return;
+      }
+      final attachmentErr = await _replaceProjectAttachments();
+      if (attachmentErr != null && mounted) {
+        await _showInfo('Could not save attachments', attachmentErr);
+        return;
+      }
       final projects = await SupabaseService.fetchAllProjectsFromSupabase();
       if (mounted) state.applyProjects(projects);
       await _loadProject();
+      await _loadComments();
+      await _loadAttachments();
+      await _loadProjectDescriptionInlineImages();
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
       AsanaBlockingLoadingOverlay.hide();
@@ -986,14 +2000,35 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           const SizedBox(height: 12),
           AsanaDetailLabelValue(
             label: 'Description',
-            child: AsanaHoverTextField(
-              controller: _descController,
-              canEdit: canEdit,
-              readOnly: _saving,
-              maxLines: 8,
-              minLines: 2,
-              style: asanaDetailMultilineValueStyle(context),
-              hintText: 'Please fill in project description',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _descController,
+                  canEdit: canEdit,
+                  readOnly: _saving,
+                  maxLines: 8,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                  hintText: 'Please fill in project description',
+                ),
+                if (canEdit)
+                  InlineImageToolbar(
+                    enabled: !_saving,
+                    onAdd: () => _stageInlineImage(
+                      entityType: 'project_description',
+                      entityId: widget.projectId,
+                    ),
+                  ),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'project_description',
+                    entityId: widget.projectId,
+                    saved: _descriptionInlineImages,
+                  ),
+                  onRemove: canEdit ? _removeInlineImagePreview : null,
+                ),
+              ],
             ),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.description),
@@ -1118,6 +2153,30 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             ),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+          Builder(
+            builder: (anchorContext) => _attachmentTwoColumnRow(
+              label: 'Files',
+              attachments: _fileAttachments,
+              showAdd: canEdit,
+              addEnabled: canEdit && !_saving,
+              addTooltip: 'Add file',
+              onAdd: canEdit ? (_) => _addFileAttachment(p) : null,
+              allowRemove: canEdit,
+            ),
+          ),
+          Builder(
+            builder: (anchorContext) => _attachmentTwoColumnRow(
+              label: 'Links',
+              attachments: _urlAttachments,
+              showAdd: canEdit,
+              addEnabled: canEdit && !_saving,
+              addTooltip: 'Add website link',
+              onAdd: canEdit ? _addUrlAttachment : null,
+              addAnchorLink: _attachmentAddAnchorLink,
+              allowRemove: canEdit,
+              editAnchorContext: anchorContext,
+            ),
+          ),
           if ((p.updateByDisplayName ?? '').trim().isNotEmpty)
             AsanaDetailTwoColumnRow(
               label: 'Last updated by',
@@ -1128,6 +2187,41 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
               label: 'Last updated',
               child: AsanaDetailPlainValue(text: _formatDate(p.updateDate)),
             ),
+          AsanaDetailLabelValue(
+            label: 'Comments',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final comment in _comments)
+                  _buildCommentDisplayTile(comment),
+                if (canEdit) ...[
+                  AsanaHoverTextField(
+                    controller: _commentController,
+                    canEdit: true,
+                    readOnly: _saving,
+                    maxLines: 5,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
+                  InlineImageToolbar(
+                    enabled: !_saving,
+                    onAdd: () => _stageInlineImage(
+                      entityType: 'project_comment',
+                      entityId: 'draft',
+                    ),
+                  ),
+                  InlineImagePreviewList(
+                    images: _inlinePreviewItems(
+                      entityType: 'project_comment',
+                      entityId: 'draft',
+                      saved: const [],
+                    ),
+                    onRemove: _removeInlineImagePreview,
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

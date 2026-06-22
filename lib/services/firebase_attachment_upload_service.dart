@@ -560,6 +560,93 @@ class FirebaseAttachmentUploadService {
   }
 
   static Future<({List<({String url, String label})> files, String? error})>
+  pickUploadFilesForProject(
+    String projectId, {
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+    bool allowMultiple = true,
+  }) async {
+    final picked = await pickFilesForUpload(allowMultiple: allowMultiple);
+    if (picked.error != null) {
+      return (files: _emptyUploadedFiles, error: picked.error);
+    }
+    final uploaded = <({String url, String label})>[];
+    for (final file in picked.files) {
+      final upload = await uploadBytesForProject(
+        projectId,
+        bytes: file.bytes,
+        originalFilename: file.label,
+        aclStaffKeys: aclStaffKeys,
+        onUploadPhaseStarted: onUploadPhaseStarted,
+        onUploadPhaseEnded: onUploadPhaseEnded,
+      );
+      if (upload.error != null) return (files: uploaded, error: upload.error);
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return (
+          files: uploaded,
+          error: 'File upload did not return a download link.',
+        );
+      }
+      uploaded.add((url: url, label: upload.label ?? file.label));
+    }
+    return (files: uploaded, error: null);
+  }
+
+  static Future<({String? url, String? label, String? error})>
+  uploadBytesForProject(
+    String projectId, {
+    required Uint8List bytes,
+    required String originalFilename,
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+  }) async {
+    try {
+      final pid = projectId.trim();
+      if (pid.isEmpty) {
+        return (url: null, label: null, error: 'Missing project id');
+      }
+
+      final err = _guardSync();
+      if (err != null) return (url: null, label: null, error: err);
+
+      final label = originalFilename.trim().isEmpty
+          ? 'attachment'
+          : originalFilename.trim();
+      if (bytes.length > _maxBytes) {
+        return (url: null, label: null, error: 'File too large (max 50 MB).');
+      }
+
+      final acl = aclMetadataFromStaffKeys(aclStaffKeys);
+      if (acl.isEmpty) {
+        return (
+          url: null,
+          label: null,
+          error:
+              'Cannot upload: no staff keys for attachment access (creator / PIC / assignees).',
+        );
+      }
+
+      try {
+        onUploadPhaseStarted?.call();
+        return await _putBytes(
+          storageRelativeFolder: 'project_attachments/$pid',
+          originalFilename: label,
+          bytes: bytes,
+          aclMetadata: acl,
+        );
+      } finally {
+        onUploadPhaseEnded?.call();
+      }
+    } catch (e, st) {
+      debugPrint('uploadBytesForProject: $e\n$st');
+      return (url: null, label: null, error: e.toString());
+    }
+  }
+
+  static Future<({List<({String url, String label})> files, String? error})>
   pickUploadFilesForSubtask(
     String subtaskId, {
     required List<String?> aclStaffKeys,

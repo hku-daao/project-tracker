@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,16 +8,66 @@ import '../../app_state.dart';
 import '../../config/supabase_config.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../services/backend_api.dart';
+import '../../services/firebase_attachment_upload_service.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/attachment_file_pick.dart';
+import '../../utils/attachment_url_launch.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
+import 'asana_attachment_draft_tile.dart';
+import 'asana_attachment_menu.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_inline_image_widgets.dart';
 import 'asana_project_ai_assistant.dart';
 import 'asana_task_ai_assistant.dart';
+
+class _CreateProjectAttachmentDraft {
+  _CreateProjectAttachmentDraft({
+    String? url,
+    String? desc,
+    this.mimeType,
+    this.isWebsiteLink = false,
+  }) : urlController = TextEditingController(text: url ?? ''),
+       descController = TextEditingController(text: desc ?? '');
+
+  final TextEditingController urlController;
+  final TextEditingController descController;
+  Uint8List? pendingBytes;
+  String? pendingFilename;
+  String? mimeType;
+  bool isWebsiteLink;
+
+  bool get isPendingFile => pendingBytes != null;
+
+  void dispose() {
+    urlController.dispose();
+    descController.dispose();
+  }
+}
+
+class _CreateProjectInlineImageDraft {
+  _CreateProjectInlineImageDraft({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.bytes,
+    required this.label,
+    required this.mimeType,
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final Uint8List bytes;
+  final String label;
+  final String mimeType;
+  final int sortOrder;
+}
 
 /// New project slide — empty fields, Create in footer.
 class AsanaCreateProjectDetailPanel extends StatefulWidget {
@@ -39,6 +91,9 @@ class _AsanaCreateProjectDetailPanelState
     extends State<AsanaCreateProjectDetailPanel> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
+  final _commentController = TextEditingController();
+  final List<_CreateProjectAttachmentDraft> _attachments = [];
+  final List<_CreateProjectInlineImageDraft> _pendingInlineImageAdds = [];
   DateTime? _startDate;
   DateTime? _endDate;
   String _draftStatus = 'Not started';
@@ -57,6 +112,8 @@ class _AsanaCreateProjectDetailPanelState
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _statusAnchorLink = LayerLink();
+  final LayerLink _attachmentAddAnchorLink = LayerLink();
+  final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
   int _anchoredPickerReopenBlockedUntilMs = 0;
   AsanaTaskAiController? _projectAi;
 
@@ -70,6 +127,10 @@ class _AsanaCreateProjectDetailPanelState
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
+    _commentController.dispose();
+    for (final attachment in _attachments) {
+      attachment.dispose();
+    }
     _assigneeSnapshot.dispose();
     _picSnapshot.dispose();
     _projectAi?.dispose();
@@ -374,6 +435,452 @@ class _AsanaCreateProjectDetailPanelState
     );
   }
 
+  Future<T?> _withBlockingLoading<T>(Future<T?> Function() action) async {
+    if (!mounted) return null;
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      return await action();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+    }
+  }
+
+  Future<void> _showInfo(String title, String content) {
+    AsanaBlockingLoadingOverlay.hideAll();
+    if (mounted && _saving) setState(() => _saving = false);
+    return showAsanaInfoDialog(
+      context: context,
+      title: title,
+      content: content,
+      palette: widget.palette,
+    );
+  }
+
+  bool _draftShowsAsWebsiteLink(_CreateProjectAttachmentDraft draft) {
+    if (draft.isPendingFile) return false;
+    if (draft.isWebsiteLink) return true;
+    final url = draft.urlController.text.trim();
+    return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+  }
+
+  String? _attachmentMimeTypeFromName(String? name) {
+    final n = name?.toLowerCase().trim() ?? '';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return null;
+  }
+
+  bool _attachmentDraftIsImage(_CreateProjectAttachmentDraft draft) {
+    final mime = draft.mimeType?.toLowerCase().trim() ?? '';
+    if (mime.startsWith('image/')) return true;
+    final name = draft.pendingFilename?.trim().isNotEmpty == true
+        ? draft.pendingFilename!.trim()
+        : draft.descController.text.trim();
+    return _attachmentMimeTypeFromName(name) != null;
+  }
+
+  bool _shouldAttemptAttachmentImagePreview(
+    _CreateProjectAttachmentDraft draft,
+  ) {
+    return _attachmentDraftIsImage(draft);
+  }
+
+  List<String?> _projectAttachmentAclKeys(AppState state) {
+    return [state.userStaffAppId, ..._picAssigneeIds, ..._assigneeIds];
+  }
+
+  Future<void> _addFileAttachment() async {
+    final picked = await _withBlockingLoading(
+      FirebaseAttachmentUploadService.pickFilesForUpload,
+    );
+    if (!mounted) return;
+    if (picked?.error != null) {
+      await _showInfo('Attachment upload failed', picked!.error!);
+      return;
+    }
+    final files = picked?.files ?? const <({Uint8List bytes, String label})>[];
+    if (files.isEmpty) return;
+    setState(() {
+      for (final file in files) {
+        final draft = _CreateProjectAttachmentDraft(
+          desc: file.label,
+          mimeType: _attachmentMimeTypeFromName(file.label),
+        );
+        draft.pendingBytes = file.bytes;
+        draft.pendingFilename = file.label;
+        _attachments.add(draft);
+      }
+    });
+  }
+
+  Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker || _saving) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
+    final result = await showAsanaAnchoredLinkEditor(
+      anchorLink: _attachmentAddAnchorLink,
+      anchorContext: anchorContext,
+      widthAlignContext: widthAlignContext,
+      initialUrl: '',
+      initialDescription: '',
+      onClosed: _blockAnchoredPickerReopen,
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      _attachments.add(
+        _CreateProjectAttachmentDraft(
+          url: result.url,
+          desc: result.description,
+          isWebsiteLink: true,
+        ),
+      );
+    });
+  }
+
+  void _removeAttachmentDraft(_CreateProjectAttachmentDraft draft) {
+    setState(() {
+      draft.dispose();
+      _attachments.remove(draft);
+    });
+  }
+
+  Future<void> _stageInlineImage({
+    required String entityType,
+    required String entityId,
+  }) async {
+    final picked = await _withBlockingLoading(pickOneFileWithBytes);
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
+      await _showInfo(
+        'Inline image upload failed',
+        'Could not read file data.',
+      );
+      return;
+    }
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
+    setState(
+      () => _pendingInlineImageAdds.add(
+        _CreateProjectInlineImageDraft(
+          id: id,
+          entityType: entityType,
+          entityId: entityId,
+          bytes: picked.bytes,
+          label: label,
+          mimeType: 'image/*',
+          sortOrder: _pendingInlineImageAdds
+              .where(
+                (draft) =>
+                    draft.entityType == entityType &&
+                    draft.entityId == entityId,
+              )
+              .length,
+        ),
+      ),
+    );
+  }
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    setState(() {
+      _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+    });
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems({
+    required String entityType,
+    required String entityId,
+  }) {
+    return _pendingInlineImageAdds
+        .where(
+          (draft) =>
+              draft.entityType == entityType && draft.entityId == entityId,
+        )
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        )
+        .toList();
+  }
+
+  Future<String?> _uploadPendingFileAttachments(
+    String projectId,
+    AppState state,
+  ) async {
+    for (final draft in _attachments) {
+      if (!draft.isPendingFile) continue;
+      final upload =
+          await FirebaseAttachmentUploadService.uploadBytesForProject(
+            projectId,
+            bytes: draft.pendingBytes!,
+            originalFilename: draft.pendingFilename ?? 'attachment',
+            aclStaffKeys: _projectAttachmentAclKeys(state),
+          );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'File upload did not return a download link.';
+      }
+      draft.urlController.text = url;
+      draft.mimeType = _attachmentMimeTypeFromName(
+        draft.pendingFilename ?? draft.descController.text,
+      );
+      if (draft.descController.text.trim().isEmpty) {
+        draft.descController.text =
+            upload.label?.trim() ?? draft.pendingFilename ?? 'attachment';
+      }
+      draft.pendingBytes = null;
+      draft.pendingFilename = null;
+    }
+    return null;
+  }
+
+  Future<String?> _commitPendingInlineImages({
+    required String projectId,
+    required AppState state,
+    Map<String, String> entityIdOverrides = const {},
+  }) async {
+    for (final draft in List<_CreateProjectInlineImageDraft>.from(
+      _pendingInlineImageAdds,
+    )) {
+      final resolvedEntityId =
+          entityIdOverrides[draft.entityId] ?? draft.entityId;
+      if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
+        continue;
+      }
+      final upload =
+          await FirebaseAttachmentUploadService.uploadBytesForProject(
+            projectId,
+            bytes: draft.bytes,
+            originalFilename: draft.label,
+            aclStaffKeys: _projectAttachmentAclKeys(state),
+          );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
+      final ins = await SupabaseService.insertInlineAttachment(
+        entityType: draft.entityType,
+        entityId: resolvedEntityId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.userStaffAppId,
+        sortOrder: draft.sortOrder,
+      );
+      if (ins.error != null) return ins.error;
+    }
+    _pendingInlineImageAdds.clear();
+    return null;
+  }
+
+  List<({String? id, String? url, String? filename, String? description})>
+  _fileAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && !_draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            id: null,
+            url: url.isEmpty ? null : url,
+            filename: desc.isEmpty ? null : desc,
+            description: desc.isEmpty ? null : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  List<({String? id, String? url, String? label})> _urlAttachmentPayload() {
+    return _attachments
+        .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+        .map((a) {
+          final url = a.urlController.text.trim();
+          final desc = a.descController.text.trim();
+          return (
+            id: null,
+            url: url.isEmpty ? null : url,
+            label: desc.isEmpty ? url : desc,
+          );
+        })
+        .where((r) => (r.url ?? '').isNotEmpty)
+        .toList();
+  }
+
+  Future<String?> _replaceProjectAttachments(String projectId) async {
+    final fileErr = await SupabaseService.replaceFileAttachments(
+      entityType: 'project',
+      entityId: projectId,
+      rows: _fileAttachmentPayload(),
+    );
+    if (fileErr != null) return fileErr;
+    return SupabaseService.replaceUrlAttachments(
+      entityType: 'project',
+      entityId: projectId,
+      rows: _urlAttachmentPayload(),
+    );
+  }
+
+  List<_CreateProjectAttachmentDraft> get _fileAttachments => _attachments
+      .where((a) => a.isPendingFile || !_draftShowsAsWebsiteLink(a))
+      .toList();
+
+  List<_CreateProjectAttachmentDraft> get _urlAttachments => _attachments
+      .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+      .toList();
+
+  Future<void> _editAttachmentLink(
+    BuildContext anchorContext,
+    _CreateProjectAttachmentDraft draft,
+  ) async {
+    if (!_canOpenAnchoredPicker || _saving) return;
+    final widthAlignContext =
+        _detailPopupWidthAlignKey.currentContext ?? anchorContext;
+    final updated = await showAsanaAnchoredLinkEditor(
+      anchorLink: _attachmentAddAnchorLink,
+      anchorContext: anchorContext,
+      widthAlignContext: widthAlignContext,
+      initialUrl: draft.urlController.text,
+      initialDescription: draft.descController.text,
+      onClosed: _blockAnchoredPickerReopen,
+    );
+    if (!mounted || updated == null) return;
+    setState(() {
+      draft.urlController.text = updated.url;
+      draft.descController.text = updated.description;
+      draft.isWebsiteLink = true;
+    });
+  }
+
+  Widget _attachmentTwoColumnRow({
+    required String label,
+    required List<_CreateProjectAttachmentDraft> attachments,
+    required String addTooltip,
+    required void Function(BuildContext buttonContext) onAdd,
+    LayerLink? addAnchorLink,
+    BuildContext? editAnchorContext,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: MediaQuery.sizeOf(context).width < 600
+                ? kAsanaDetailLabelColumnWidth / 2
+                : kAsanaDetailLabelColumnWidth,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(label, style: asanaDetailLabelStyle(context)),
+                ),
+                const SizedBox(width: 8),
+                AsanaDetailCircleAddButton(
+                  onTap: onAdd,
+                  enabled: !_saving,
+                  tooltip: addTooltip,
+                  size: 22,
+                  anchorLink: addAnchorLink,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _attachmentValueList(
+              attachments,
+              editAnchorContext: editAnchorContext,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attachmentValueList(
+    List<_CreateProjectAttachmentDraft> attachments, {
+    BuildContext? editAnchorContext,
+  }) {
+    if (attachments.isEmpty) return const SizedBox.shrink();
+    final imageAttachments = attachments
+        .where(
+          (e) => !_draftShowsAsWebsiteLink(e) && _attachmentDraftIsImage(e),
+        )
+        .toList();
+    final otherAttachments = attachments
+        .where(
+          (e) => _draftShowsAsWebsiteLink(e) || !_attachmentDraftIsImage(e),
+        )
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (imageAttachments.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: otherAttachments.isNotEmpty ? 8 : 0,
+            ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: imageAttachments.map(_attachmentDraftTile).toList(),
+            ),
+          ),
+        ...otherAttachments.map(
+          (draft) =>
+              _attachmentDraftTile(draft, editAnchorContext: editAnchorContext),
+        ),
+      ],
+    );
+  }
+
+  Widget _attachmentDraftTile(
+    _CreateProjectAttachmentDraft draft, {
+    BuildContext? editAnchorContext,
+  }) {
+    if (draft.isPendingFile) {
+      final name = draft.pendingFilename?.trim().isNotEmpty == true
+          ? draft.pendingFilename!.trim()
+          : 'File';
+      return AsanaAttachmentDraftTile(
+        isWebsiteLink: false,
+        title: name,
+        subtitle: 'Uploads when you create the project',
+        enabled: !_saving,
+        onRemove: () => _removeAttachmentDraft(draft),
+        imageBytes: draft.pendingBytes,
+        mimeType: draft.mimeType,
+        showImagePreview: _shouldAttemptAttachmentImagePreview(draft),
+      );
+    }
+    final url = draft.urlController.text.trim();
+    if (url.isEmpty) return const SizedBox.shrink();
+    final desc = draft.descController.text.trim();
+    final isLink = _draftShowsAsWebsiteLink(draft);
+    final title = desc.isNotEmpty ? desc : url;
+    return AsanaAttachmentDraftTile(
+      isWebsiteLink: isLink,
+      title: title,
+      url: url,
+      enabled: !_saving,
+      onRemove: () => _removeAttachmentDraft(draft),
+      onEditLink: isLink && editAnchorContext != null
+          ? () => _editAttachmentLink(editAnchorContext, draft)
+          : null,
+      imageBytes: draft.pendingBytes,
+      mimeType: draft.mimeType,
+      showImagePreview: !isLink && _attachmentDraftIsImage(draft),
+    );
+  }
+
   Future<void> _create(AppState state) async {
     if (!SupabaseConfig.isConfigured) {
       await showAsanaInfoDialog(
@@ -467,17 +974,63 @@ class _AsanaCreateProjectDetailPanelState
         creatorStaffLookupKey: state.userStaffAppId,
       );
       if (ins.error != null && mounted) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Could not create project',
-          content: ins.error!,
-          palette: widget.palette,
-        );
+        await _showInfo('Could not create project', ins.error!);
         return;
       }
       final newId = ins.projectId;
       if (newId != null && newId.isNotEmpty) {
         _projectAi?.attachCreatedEntityId(newId);
+        final commentText = stripInlineImageMarkers(_commentController.text);
+        final hasDraftComment =
+            commentText.isNotEmpty ||
+            _pendingInlineImageAdds.any(
+              (draft) =>
+                  draft.entityType == 'project_comment' &&
+                  draft.entityId == 'draft',
+            );
+        String? draftCommentId;
+        if (hasDraftComment) {
+          final comment = await SupabaseService.insertProjectCommentRow(
+            projectId: newId,
+            description: commentText.isNotEmpty
+                ? commentText
+                : inlineImageOnlyCommentPlaceholder,
+            creatorStaffLookupKey: state.userStaffAppId,
+          );
+          if (comment.error != null) {
+            await _showInfo('Could not add comment', comment.error!);
+            return;
+          }
+          draftCommentId = comment.commentId;
+          if (draftCommentId == null || draftCommentId.isEmpty) {
+            await _showInfo(
+              'Could not add comment',
+              'The comment was not saved because Supabase did not return a comment id.',
+            );
+            return;
+          }
+        }
+        final inlineErr = await _commitPendingInlineImages(
+          projectId: newId,
+          state: state,
+          entityIdOverrides: draftCommentId == null
+              ? {'draft_description': newId}
+              : {'draft_description': newId, 'draft': draftCommentId},
+        );
+        if (inlineErr != null) {
+          await _showInfo('Could not save inline image', inlineErr);
+          return;
+        }
+        final uploadErr = await _uploadPendingFileAttachments(newId, state);
+        if (uploadErr != null) {
+          await _showInfo('Attachment upload failed', uploadErr);
+          return;
+        }
+        final attachmentErr = await _replaceProjectAttachments(newId);
+        if (attachmentErr != null) {
+          await _showInfo('Could not save attachments', attachmentErr);
+          return;
+        }
         final p = await SupabaseService.fetchProjectById(newId);
         if (p != null) state.upsertProject(p);
         await _notifyEmail(
@@ -558,14 +1111,33 @@ class _AsanaCreateProjectDetailPanelState
           const SizedBox(height: 12),
           AsanaDetailLabelValue(
             label: 'Description',
-            child: AsanaHoverTextField(
-              controller: _descController,
-              canEdit: true,
-              readOnly: _saving,
-              maxLines: 8,
-              minLines: 2,
-              style: asanaDetailMultilineValueStyle(context),
-              hintText: 'Please fill in project description',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _descController,
+                  canEdit: true,
+                  readOnly: _saving,
+                  maxLines: 8,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                  hintText: 'Please fill in project description',
+                ),
+                InlineImageToolbar(
+                  enabled: !_saving,
+                  onAdd: () => _stageInlineImage(
+                    entityType: 'project_description',
+                    entityId: 'draft_description',
+                  ),
+                ),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'project_description',
+                    entityId: 'draft_description',
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
+              ],
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.description),
@@ -575,12 +1147,15 @@ class _AsanaCreateProjectDetailPanelState
           ),
           AsanaDetailTwoColumnRow(
             label: 'Assignees',
-            child: AsanaAssigneeFieldValue(
-              anchorLink: _assigneeAnchorLink,
-              assignees: _rowsForIds(_assigneeIds, state),
-              canEdit: !_saving,
-              onOpenPicker: _pickAssignees,
-              onRemove: _removeAssignee,
+            child: KeyedSubtree(
+              key: _detailPopupWidthAlignKey,
+              child: AsanaAssigneeFieldValue(
+                anchorLink: _assigneeAnchorLink,
+                assignees: _rowsForIds(_assigneeIds, state),
+                canEdit: !_saving,
+                onOpenPicker: _pickAssignees,
+                onRemove: _removeAssignee,
+              ),
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.assignees),
@@ -639,6 +1214,54 @@ class _AsanaCreateProjectDetailPanelState
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+          Builder(
+            builder: (anchorContext) => _attachmentTwoColumnRow(
+              label: 'Files',
+              attachments: _fileAttachments,
+              addTooltip: 'Add file',
+              onAdd: (_) => _addFileAttachment(),
+            ),
+          ),
+          Builder(
+            builder: (anchorContext) => _attachmentTwoColumnRow(
+              label: 'Links',
+              attachments: _urlAttachments,
+              addTooltip: 'Add website link',
+              onAdd: _addUrlAttachment,
+              addAnchorLink: _attachmentAddAnchorLink,
+              editAnchorContext: anchorContext,
+            ),
+          ),
+          AsanaDetailLabelValue(
+            label: 'Comments',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AsanaHoverTextField(
+                  controller: _commentController,
+                  canEdit: true,
+                  readOnly: _saving,
+                  maxLines: 5,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                ),
+                InlineImageToolbar(
+                  enabled: !_saving,
+                  onAdd: () => _stageInlineImage(
+                    entityType: 'project_comment',
+                    entityId: 'draft',
+                  ),
+                ),
+                InlineImagePreviewList(
+                  images: _inlinePreviewItems(
+                    entityType: 'project_comment',
+                    entityId: 'draft',
+                  ),
+                  onRemove: _removeInlineImagePreview,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
