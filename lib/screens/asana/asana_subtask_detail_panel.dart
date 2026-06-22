@@ -87,7 +87,6 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
     required this.canAddInlineImage,
     required this.inlineImageEnabled,
     required this.onAddInlineImage,
-    required this.onRemoveInlineImage,
   });
 
   final SubtaskCommentRowDisplay comment;
@@ -95,7 +94,6 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
   final bool canAddInlineImage;
   final bool inlineImageEnabled;
   final VoidCallback onAddInlineImage;
-  final void Function(InlineImagePreviewItem image) onRemoveInlineImage;
 
   DateTime? get _displayTimestamp {
     final created = comment.createTimestampUtc;
@@ -143,10 +141,7 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
                     enabled: inlineImageEnabled,
                     onAdd: onAddInlineImage,
                   ),
-                InlineImagePreviewList(
-                  images: inlineImages,
-                  onRemove: onRemoveInlineImage,
-                ),
+                InlineImagePreviewList(images: inlineImages),
                 if (timestamp != null) ...[
                   const SizedBox(height: 6),
                   Align(
@@ -596,6 +591,22 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
               images: inlineImages,
               onRemove: _removeInlineImagePreview,
             ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _saving
+                    ? null
+                    : () => _deletePostedComment(state, comment),
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('Remove'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFC62828),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -606,7 +617,6 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       canAddInlineImage: false,
       inlineImageEnabled: !_saving,
       onAddInlineImage: () {},
-      onRemoveInlineImage: _removeInlineImagePreview,
     );
   }
 
@@ -807,6 +817,45 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       _postedCommentSavedText[comment.id] = newBody;
     }
     return true;
+  }
+
+  Future<void> _deletePostedComment(
+    AppState state,
+    SubtaskCommentRowDisplay comment,
+  ) async {
+    if (!_isOwnComment(state, comment) || _saving) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove comment',
+      content: 'Remove this comment?',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _saving = true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final err = await SupabaseService.softDeleteSubtaskCommentRow(
+        commentId: comment.id,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not remove comment',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+      _postedCommentControllers.remove(comment.id)?.dispose();
+      _postedCommentSavedText.remove(comment.id);
+      await _loadComments(_subtask);
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   bool _canMarkComplete(SingularSubtask s) {

@@ -2286,21 +2286,29 @@ class SupabaseService {
     final d = description.trim();
     if (d.isEmpty) return 'Comment is empty';
     try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to update this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
       final map = <String, dynamic>{
         'description': d,
         'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
       };
-      final lookup = updaterStaffLookupKey?.trim();
-      if (lookup != null && lookup.isNotEmpty) {
-        final staffId = await _staffRowIdForAssigneeKey(lookup);
-        if (staffId != null && staffId.isNotEmpty) {
-          map['update_by'] = staffId;
-        }
-      }
-      await Supabase.instance.client
+      final res = await Supabase.instance.client
           .from('comment')
           .update(map)
-          .eq('id', commentId);
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only update comments made by you.';
+      }
       return null;
     } catch (e) {
       return e.toString();
@@ -2337,21 +2345,29 @@ class SupabaseService {
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to remove this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
       final map = <String, dynamic>{
         'status': 'Deleted',
         'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
       };
-      final lookup = updaterStaffLookupKey?.trim();
-      if (lookup != null && lookup.isNotEmpty) {
-        final staffId = await _staffRowIdForAssigneeKey(lookup);
-        if (staffId != null && staffId.isNotEmpty) {
-          map['update_by'] = staffId;
-        }
-      }
-      await Supabase.instance.client
+      final res = await Supabase.instance.client
           .from('comment')
           .update(map)
-          .eq('id', commentId);
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only remove comments made by you.';
+      }
       return null;
     } catch (e) {
       return e.toString();
@@ -3083,21 +3099,29 @@ class SupabaseService {
     final d = description.trim();
     if (d.isEmpty) return 'Comment is empty';
     try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to update this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
       final map = <String, dynamic>{
         'description': d,
         'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
       };
-      final lookup = updaterStaffLookupKey?.trim();
-      if (lookup != null && lookup.isNotEmpty) {
-        final staffId = await _staffRowIdForAssigneeKey(lookup);
-        if (staffId != null && staffId.isNotEmpty) {
-          map['update_by'] = staffId;
-        }
-      }
-      await Supabase.instance.client
+      final res = await Supabase.instance.client
           .from('subtask_comment')
           .update(map)
-          .eq('id', commentId);
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only update comments made by you.';
+      }
       return null;
     } catch (e) {
       return e.toString();
@@ -3136,21 +3160,29 @@ class SupabaseService {
   }) async {
     if (!_enabled) return 'Supabase not configured';
     try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to remove this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
       final map = <String, dynamic>{
         'status': 'Deleted',
         'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
       };
-      final lookup = updaterStaffLookupKey?.trim();
-      if (lookup != null && lookup.isNotEmpty) {
-        final staffId = await _staffRowIdForAssigneeKey(lookup);
-        if (staffId != null && staffId.isNotEmpty) {
-          map['update_by'] = staffId;
-        }
-      }
-      await Supabase.instance.client
+      final res = await Supabase.instance.client
           .from('subtask_comment')
           .update(map)
-          .eq('id', commentId);
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only remove comments made by you.';
+      }
       return null;
     } catch (e) {
       return e.toString();

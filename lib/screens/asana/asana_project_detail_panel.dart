@@ -1163,7 +1163,7 @@ class _ProjectDetailTaskList extends StatelessWidget {
         : viewportWidth.clamp(360.0, double.infinity);
     final dueCol = compactMobile ? 56.0 : 69.0;
     final statusCol = compactMobile ? 48.0 : 108.0;
-    final submissionCol = compactMobile ? 48.0 : 86.4;
+    final submissionCol = compactMobile ? 48.0 : 90.72;
     final textGap = compactMobile ? 8.0 : kAsanaTextColumnGap;
     final minNameCol = compactMobile ? 48.0 : 120.0;
     final nameCol =

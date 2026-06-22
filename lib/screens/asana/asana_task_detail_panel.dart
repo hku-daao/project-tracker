@@ -134,6 +134,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _loadingExtras = true;
   bool _saving = false;
   String? _myStaffUuid;
+  String? _myStaffLookupKey;
 
   int _localPriority = priorityStandard;
   DateTime? _startDate;
@@ -232,6 +233,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _showInfo(String title, String content) {
+    dismissAsanaCheckboxFilterPanels();
     return showAsanaInfoDialog(
       context: context,
       title: title,
@@ -648,6 +650,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     final lk = context.read<AppState>().userStaffAppId?.trim();
     if (lk != null && lk.isNotEmpty) {
+      _myStaffLookupKey = lk;
       _myStaffUuid = await SupabaseService.staffRowIdForAssigneeKey(lk);
     }
     final loads = <Future<void>>[_loadProjectsIfCreator()];
@@ -855,6 +858,38 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       _postedCommentSavedText[c.id] = newBody;
     }
     return true;
+  }
+
+  Future<void> _deletePostedComment(SingularCommentRowDisplay c) async {
+    if (!_isOwnComment(c) || _saving) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove comment',
+      content: 'Remove this comment?',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    final state = context.read<AppState>();
+    _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final err = await SupabaseService.softDeleteSingularCommentRow(
+        commentId: c.id,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null && mounted) {
+        await _showInfo('Could not remove comment', err);
+        return;
+      }
+      _postedCommentControllers.remove(c.id)?.dispose();
+      _postedCommentSavedText.remove(c.id);
+      await _loadComments();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
+    }
   }
 
   Future<void> _loadAttachments() async {
@@ -1095,8 +1130,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return HkTime.formatInstantAsHk(stored, 'yyyy-MM-dd HH:mm');
   }
 
-  bool _isOwnComment(SingularCommentRowDisplay c) =>
-      !c.isDeleted && _uuidEquals(c.createByStaffId, _myStaffUuid);
+  bool _isOwnComment(SingularCommentRowDisplay c) {
+    if (c.isDeleted) return false;
+    final author = c.createByStaffId?.trim();
+    if (author == null || author.isEmpty) return false;
+    final myLookupKey = _myStaffLookupKey?.trim();
+    if (myLookupKey != null &&
+        myLookupKey.isNotEmpty &&
+        author == myLookupKey) {
+      return true;
+    }
+    return _uuidEquals(author, _myStaffUuid);
+  }
 
   DateTime? _commentDisplayTimestamp(SingularCommentRowDisplay c) {
     final created = c.createTimestampUtc;
@@ -1156,6 +1201,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 ),
                 onRemove: _removeInlineImagePreview,
               ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _saving ? null : () => _deletePostedComment(c),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Remove'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFC62828),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
             ],
           )
         : Column(
@@ -1173,7 +1232,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   entityId: c.id,
                   saved: _commentInlineImages[c.id] ?? const [],
                 ),
-                onRemove: _removeInlineImagePreview,
               ),
             ],
           );

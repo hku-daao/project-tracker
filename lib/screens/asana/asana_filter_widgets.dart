@@ -55,7 +55,10 @@ class AsanaFilterDropdown extends StatelessWidget {
               return SizedBox(
                 width: buttonWidth,
                 child: OutlinedButton(
-                  onPressed: () => onPressed(buttonContext),
+                  onPressed: () {
+                    dismissAsanaCheckboxFilterPanels();
+                    onPressed(buttonContext);
+                  },
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
                     minimumSize: Size(buttonWidth, 34),
@@ -270,12 +273,21 @@ class AsanaFilterCheckboxOption {
   final bool isAll;
 }
 
+VoidCallback? _activeCheckboxFilterDismiss;
+
+void dismissAsanaCheckboxFilterPanels() {
+  final dismiss = _activeCheckboxFilterDismiss;
+  _activeCheckboxFilterDismiss = null;
+  dismiss?.call();
+}
+
 /// Shows a small menu under the filter button (not full-screen).
 Future<Set<String>?> showAsanaCheckboxFilterPanel({
   required BuildContext anchorContext,
   required List<AsanaFilterCheckboxOption> options,
   required Set<String> initialSelection,
 }) {
+  dismissAsanaCheckboxFilterPanels();
   final completer = Completer<Set<String>?>();
   final box = anchorContext.findRenderObject() as RenderBox?;
   if (box == null || !box.hasSize) {
@@ -311,8 +323,14 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
   var top = openAbove ? offset.dy - gap - maxPanelHeight : belowTop;
   if (top < margin) top = margin;
   late OverlayEntry entry;
+  var closed = false;
 
   void close([Set<String>? result]) {
+    if (closed) return;
+    closed = true;
+    if (_activeCheckboxFilterDismiss == close) {
+      _activeCheckboxFilterDismiss = null;
+    }
     if (entry.mounted) entry.remove();
     if (!completer.isCompleted) completer.complete(result);
   }
@@ -351,10 +369,12 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
       ],
     ),
   );
+  _activeCheckboxFilterDismiss = close;
 
   WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (closed) return;
     if (!anchorContext.mounted) {
-      completer.complete(null);
+      close(null);
       return;
     }
     overlay.insert(entry);
