@@ -531,6 +531,15 @@ async function handleAttachmentOpenSession(req, res) {
   try {
     [meta] = await bucket.file(objectPath).getMetadata();
   } catch (e) {
+    console.warn(
+      'attachment open-session metadata not found',
+      JSON.stringify({
+        bucketName,
+        objectPath,
+        code: e && e.code,
+        message: e && e.message,
+      }),
+    );
     sendJson(req, res, 404, { error: 'Not found' });
     return;
   }
