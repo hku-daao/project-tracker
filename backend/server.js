@@ -435,6 +435,59 @@ function getFirebaseStorageBucketName() {
   return '';
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function storageErrorDebugPayload(bucketName, objectPath, e) {
+  return {
+    bucketName,
+    objectPath,
+    code: e && e.code,
+    message: e && e.message,
+  };
+}
+
+function isStorageObjectNotFoundError(e) {
+  const code = e && e.code;
+  return code === 404 || code === '404';
+}
+
+function isTransientStorageAuthOrNetworkError(e) {
+  const code = String((e && e.code) || '');
+  const message = String((e && e.message) || '').toLowerCase();
+  return (
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'EAI_AGAIN' ||
+    code === 'ENOTFOUND' ||
+    message.includes('premature close') ||
+    message.includes('socket hang up') ||
+    message.includes('fetch failed') ||
+    message.includes('trying to fetch https://www.googleapis.com/oauth2')
+  );
+}
+
+async function getStorageMetadataWithRetry(bucketName, objectPath) {
+  const bucket = firebaseAdmin.storage().bucket(bucketName);
+  const file = bucket.file(objectPath);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const [meta] = await file.getMetadata();
+      return meta;
+    } catch (e) {
+      lastError = e;
+      if (isStorageObjectNotFoundError(e) || !isTransientStorageAuthOrNetworkError(e)) {
+        throw e;
+      }
+      await delay(250 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 function isAllowedProjectAttachmentObjectPath(p) {
   const s = String(p || '').trim().replace(/^\/+/, '');
   if (!s || s.includes('..')) return false;
@@ -526,28 +579,28 @@ async function handleAttachmentOpenSession(req, res) {
     sendJson(req, res, 400, { error: 'Invalid object path' });
     return;
   }
-  const bucket = firebaseAdmin.storage().bucket(bucketName);
   let meta;
   try {
-    [meta] = await bucket.file(objectPath).getMetadata();
+    meta = await getStorageMetadataWithRetry(bucketName, objectPath);
   } catch (e) {
-    const debugPayload = {
-      bucketName,
-      objectPath,
-      code: e && e.code,
-      message: e && e.message,
-    };
+    const debugPayload = storageErrorDebugPayload(bucketName, objectPath, e);
+    const isNotFound = isStorageObjectNotFoundError(e);
     console.warn(
-      'attachment open-session metadata not found',
+      isNotFound
+        ? 'attachment open-session metadata not found'
+        : 'attachment open-session metadata unavailable',
       JSON.stringify(debugPayload),
     );
     sendJson(
       req,
       res,
-      404,
+      isNotFound ? 404 : 502,
       process.env.ATTACHMENT_DEBUG_RESPONSE === 'true'
-        ? { error: 'Not found', debug: debugPayload }
-        : { error: 'Not found' },
+        ? {
+            error: isNotFound ? 'Not found' : 'Storage metadata unavailable',
+            debug: debugPayload,
+          }
+        : { error: isNotFound ? 'Not found' : 'Storage metadata unavailable' },
     );
     return;
   }
@@ -609,14 +662,32 @@ async function handleAttachmentStream(req, res) {
     sendJson(req, res, 503, { error: 'Storage bucket not configured' });
     return;
   }
-  const bucket = firebaseAdmin.storage().bucket(bucketName);
   let liveMeta;
   try {
-    [liveMeta] = await bucket.file(sess.objectPath).getMetadata();
-  } catch (_) {
-    sendJson(req, res, 404, { error: 'Not found' });
+    liveMeta = await getStorageMetadataWithRetry(bucketName, sess.objectPath);
+  } catch (e) {
+    const debugPayload = storageErrorDebugPayload(bucketName, sess.objectPath, e);
+    const isNotFound = isStorageObjectNotFoundError(e);
+    console.warn(
+      isNotFound
+        ? 'attachment stream metadata not found'
+        : 'attachment stream metadata unavailable',
+      JSON.stringify(debugPayload),
+    );
+    sendJson(
+      req,
+      res,
+      isNotFound ? 404 : 502,
+      process.env.ATTACHMENT_DEBUG_RESPONSE === 'true'
+        ? {
+            error: isNotFound ? 'Not found' : 'Storage metadata unavailable',
+            debug: debugPayload,
+          }
+        : { error: isNotFound ? 'Not found' : 'Storage metadata unavailable' },
+    );
     return;
   }
+  const bucket = firebaseAdmin.storage().bucket(bucketName);
   if (
     !canReadAttachmentObject(
       authSession.uid,
