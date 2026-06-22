@@ -1,7 +1,7 @@
 # Use Docker instead of Railpack so secrets are NOT required at build time.
 # Only env vars at runtime are needed (set in Railway Variables).
 
-FROM node:22-alpine
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
@@ -16,5 +16,6 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
 CMD ["node", "server.js"]
