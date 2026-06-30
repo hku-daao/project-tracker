@@ -1741,16 +1741,41 @@ function taskStatusBlocksUrgentReminder(statusRaw) {
   return s === 'completed' || s === 'deleted';
 }
 
-/** Task ids whose parent row is soft-deleted — sub-task reminder emails must not run until the task is undone. */
-async function fetchDeletedParentTaskIdSet(supabaseClient) {
-  const { data, error } = await supabaseClient.from('task').select('id,status');
+function isPausedStatus(pauseStatusRaw) {
+  return String(pauseStatusRaw || '').trim().toLowerCase() === 'paused';
+}
+
+async function fetchPausedProjectIdSet(supabaseClient) {
+  const { data, error } = await supabaseClient
+    .from('project')
+    .select('id,pause_status')
+    .eq('pause_status', 'Paused');
+  if (error || !data) return new Set();
+  const set = new Set();
+  for (const row of data) {
+    const id = String(row.id || '').trim();
+    if (id) set.add(id);
+  }
+  return set;
+}
+
+function taskReminderPaused(taskRow, pausedProjectIds) {
+  if (isPausedStatus(taskRow?.pause_status)) return true;
+  const projectId = String(taskRow?.project_id || '').trim();
+  return !!projectId && pausedProjectIds.has(projectId);
+}
+
+/** Task ids whose parent row blocks sub-task reminder emails until it is restored/resumed. */
+async function fetchSubtaskReminderBlockedParentTaskIdSet(supabaseClient) {
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabaseClient);
+  const { data, error } = await supabaseClient.from('task').select('id,status,pause_status,project_id');
   if (error || !data) return new Set();
   const set = new Set();
   for (const row of data) {
     const st = String(row.status ?? '')
       .trim()
       .toLowerCase();
-    if (st === 'deleted') {
+    if (st === 'deleted' || taskReminderPaused(row, pausedProjectIds)) {
       const id = String(row.id || '').trim();
       if (id) set.add(id);
     }
@@ -2354,12 +2379,13 @@ async function runAssigneeUrgentSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     if (isCalendarDueToday(todayYmd, row.due_date)) continue;
     if (!isCalendarStrictlyBeforeDue(todayYmd, row.due_date)) continue;
     if (!hasReachedEightyPercentWindow(row.start_date, row.due_date, nowMs)) {
@@ -2486,12 +2512,13 @@ async function runCreatorUrgentSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     // HK due date = today: only runCreatorDueTodaySubtaskReminderJob (not this urgent job).
     if (isCalendarDueToday(todayYmd, row.due_date)) continue;
     if (!isCalendarStrictlyBeforeDue(todayYmd, row.due_date)) continue;
@@ -2650,9 +2677,11 @@ async function runUrgentTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     if (!isCalendarStrictlyBeforeDue(todayYmd, taskRow.due_date)) continue;
     if (!hasReachedEightyPercentWindow(taskRow.start_date, taskRow.due_date, nowMs)) {
       continue;
@@ -2768,9 +2797,11 @@ async function runCreatorUrgentTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     // On the due calendar day (HK), do not run creator urgent — use creator due-today only.
     if (isCalendarDueToday(todayYmd, taskRow.due_date)) continue;
     if (!isCalendarStrictlyBeforeDue(todayYmd, taskRow.due_date)) continue;
@@ -2921,9 +2952,11 @@ async function runDueTodayTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     if (!isCalendarDueToday(todayYmd, taskRow.due_date)) continue;
 
     const lastDue = taskRow.due_today_reminder_sent_on;
@@ -3029,12 +3062,13 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     if (!isCalendarDueToday(todayYmd, row.due_date)) continue;
 
     const lastDue = row.subtask_assignee_due_today_reminder_sent_on;
@@ -3150,9 +3184,11 @@ async function runCreatorDueTodayReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     if (!isCalendarDueToday(todayYmd, taskRow.due_date)) continue;
 
     const lastCreator = taskRow.creator_due_today_reminder_sent_on;
@@ -3299,12 +3335,13 @@ async function runCreatorDueTodaySubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     if (!isCalendarDueToday(todayYmd, row.due_date)) continue;
 
     const lastCreator = row.subtask_creator_due_today_reminder_sent_on;
@@ -3448,9 +3485,11 @@ async function runCreatorOverdueTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
 
     const lastCreator = taskRow.creator_overdue_reminder_last_sent_on;
@@ -3596,9 +3635,11 @@ async function runAssigneeOverdueTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
+  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
     if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
     if (!submissionAllowsAssigneeOverdueReminder(taskRow.submission)) continue;
 
@@ -3719,12 +3760,13 @@ async function runCreatorOverdueSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
 
     const lastCreator = row.subtask_creator_overdue_reminder_last_sent_on;
@@ -3869,12 +3911,13 @@ async function runAssigneeOverdueSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const deletedParentIds = await fetchDeletedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
     const taskFk = String(row.task_id || '').trim();
-    if (taskFk && deletedParentIds.has(taskFk)) continue;
+    if (taskFk && blockedParentIds.has(taskFk)) continue;
     if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
     if (!submissionAllowsAssigneeOverdueReminder(row.submission)) continue;
 
