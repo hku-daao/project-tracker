@@ -4,20 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if [[ ! -f .env ]]; then
-  echo "Missing .env — copy from .env.example"
-  exit 1
-fi
-set -a
 # shellcheck disable=SC1091
-source .env
-set +a
+source "$ROOT/scripts/lib/load_project_env.sh"
+load_project_env "$ROOT"
 
 : "${POSTGRES_USER:=project_tracker}"
 : "${POSTGRES_DB:=project_tracker}"
 : "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
-: "${POSTGREST_PORT:=3001}"
-: "${PGRST_JWT_SECRET:=local-postgrest-jwt-secret-dev-change-me}"
+: "${HOST_POSTGREST_PORT:?Set HOST_POSTGREST_PORT in .env}"
+POSTGREST_PORT="$HOST_POSTGREST_PORT"
 
 mkdir -p secrets
 python3 scripts/generate_local_postgrest_anon_jwt.py > secrets/local_postgrest_anon_jwt.txt
@@ -34,7 +29,7 @@ sleep 3
 ANON_JWT="$(tr -d '\r\n' < secrets/local_postgrest_anon_jwt.txt)"
 for i in $(seq 1 30); do
   if curl -sf --max-time 3 \
-    "http://127.0.0.1:${POSTGREST_PORT}/rest/v1/staff?select=email&limit=1" \
+    "${LOCAL_POSTGREST_URL%/}/rest/v1/staff?select=email&limit=1" \
     -H "apikey: ${ANON_JWT}" \
     -H "Authorization: Bearer ${ANON_JWT}" \
     >/tmp/pt-step5-rest.json 2>/dev/null; then
@@ -50,7 +45,7 @@ done
 
 TASK_COUNT="$(
   curl -sf --max-time 5 \
-    "http://127.0.0.1:${POSTGREST_PORT}/rest/v1/task?select=count" \
+    "${LOCAL_POSTGREST_URL%/}/rest/v1/task?select=count" \
     -H "Prefer: count=exact" \
     -H "apikey: ${ANON_JWT}" \
     -H "Authorization: Bearer ${ANON_JWT}" \

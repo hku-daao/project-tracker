@@ -41,7 +41,13 @@ function publicFileUrl(relativePath, req) {
   if (base) {
     return `${base.replace(/\/+$/, '')}/api/files/${relativePath.replace(/\\/g, '/')}`;
   }
-  const host = req.headers.host || '127.0.0.1:3000';
+  const hostPort =
+    process.env.HOST_BACKEND_PORT ||
+    process.env.PORT ||
+    '';
+  const host =
+    req.headers.host ||
+    (hostPort ? `127.0.0.1:${hostPort}` : '127.0.0.1');
   const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
   return `${proto}://${host}/api/files/${relativePath.replace(/\\/g, '/')}`;
 }

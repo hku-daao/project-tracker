@@ -6,21 +6,18 @@ cd "$ROOT"
 UPLOADS="${ROOT}/data/uploads"
 LEGACY="${HOME}/Desktop/project_tracker_files"
 
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib/load_project_env.sh"
+load_project_env "$ROOT"
 
-PSQL=(docker exec pt-test-postgres psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -v ON_ERROR_STOP=1 -t -A)
+PSQL=(docker exec "$POSTGRES_CONTAINER" psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -v ON_ERROR_STOP=1 -t -A)
 
 run_sql() {
   "${PSQL[@]}" -c "$1"
 }
 
 echo "==> Active attachment URL breakdown"
-docker exec pt-test-postgres psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
+docker exec "$POSTGRES_CONTAINER" psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
 SELECT 'file_attachment' AS tbl,
   count(*) FILTER (WHERE url ILIKE '%firebasestorage%' OR url ILIKE '%storage.googleapis%') AS firebase,
   count(*) FILTER (WHERE url ILIKE '%/api/files/%') AS local_api,
@@ -38,7 +35,7 @@ FROM inline_attachment WHERE status = 'Active';
 
 echo ""
 echo "==> Firebase URLs in ALL statuses (including Deleted)"
-docker exec pt-test-postgres psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
+docker exec "$POSTGRES_CONTAINER" psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
 SELECT 'file_attachment' AS tbl, status,
   count(*) FILTER (WHERE url ILIKE '%firebasestorage%' OR url ILIKE '%storage.googleapis%') AS firebase,
   count(*) AS total
@@ -53,7 +50,7 @@ ORDER BY tbl, status;
 
 echo ""
 echo "==> url_attachment table (website links)"
-docker exec pt-test-postgres psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
+docker exec "$POSTGRES_CONTAINER" psql -U "${POSTGRES_USER:-project_tracker}" -d "${POSTGRES_DB:-project_tracker}" -c "
 SELECT count(*) FILTER (WHERE url ILIKE '%firebasestorage%') AS firebase,
        count(*) AS total FROM url_attachment WHERE status='Active';
 " 2>/dev/null || echo "(url_attachment table check skipped)"

@@ -10,6 +10,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+from project_env import stack_settings  # noqa: E402
 
 
 def main() -> int:
@@ -35,8 +37,16 @@ def main() -> int:
 
     print(f"JWT role claim: {claims.get('role')}")
 
+    cfg = stack_settings()
+    postgrest_container = cfg["POSTGREST_CONTAINER"]
     env = subprocess.check_output(
-        ["docker", "inspect", "pt-test-postgrest", "--format", "{{json .Config.Env}}"],
+        [
+            "docker",
+            "inspect",
+            postgrest_container,
+            "--format",
+            "{{json .Config.Env}}",
+        ],
         text=True,
     )
     env_list = json.loads(env)
@@ -44,15 +54,8 @@ def main() -> int:
     secret_len = len(secret_entry.split("=", 1)[1]) if secret_entry else 0
     print(f"PostgREST PGRST_JWT_SECRET length: {secret_len}")
 
-    port = "3001"
-    env_file = ROOT / ".env"
-    if env_file.is_file():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("POSTGREST_PORT="):
-                port = line.split("=", 1)[1].strip().strip('"').strip("'")
-                break
-
-    url = f"http://127.0.0.1:{port}/rest/v1/staff?select=email&limit=1"
+    base = cfg["LOCAL_POSTGREST_URL"].rstrip("/")
+    url = f"{base}/rest/v1/staff?select=email&limit=1"
     req = urllib.request.Request(
         url,
         headers={"apikey": token, "Authorization": f"Bearer {token}"},

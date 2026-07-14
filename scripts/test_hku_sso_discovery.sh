@@ -26,8 +26,7 @@ if [[ -n "${PUBLIC_WEB_APP_URL:-}" ]]; then
   HEALTH_URLS+=("${PUBLIC_WEB_APP_URL}/health")
 fi
 HEALTH_URLS+=(
-  "http://127.0.0.1:${POSTGREST_PORT:-3001}/health"
-  "http://127.0.0.1:3000/health"
+  "${LOCAL_API_BASE_URL%/}/health"
 )
 
 found=0

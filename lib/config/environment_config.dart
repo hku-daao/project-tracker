@@ -1,16 +1,13 @@
 /// Compile-time deploy target for the Flutter app.
 ///
-/// | `DEPLOY_ENV`   | PostgREST API | Backend API |
-/// |----------------|---------------|-------------|
-/// | `testing` (default) | local / env override | local / Railway |
-/// | `production`   | env override  | Railway |
+/// URLs and ports are **not** stored here. Pass them at build/run time from `.env`:
+/// - `--dart-define=API_BASE_URL=...`
+/// - `--dart-define=POSTGREST_URL=...`
+/// - `--dart-define=POSTGREST_ANON_KEY=...`
+/// - `--dart-define=DEPLOY_ENV=testing|production`
 ///
-/// Firebase uses the **same** project (`daao-a20c6`) for both; only hosting URL differs.
-///
-/// ### Optional overrides
-/// - `--dart-define=POSTGREST_URL=...` — PostgREST base URL
-/// - `--dart-define=POSTGREST_ANON_KEY=...` — anon JWT for PostgREST
-/// - `--dart-define=API_BASE_URL=...` — overrides [ApiConfig.baseUrl].
+/// Use `./scripts/build_web_for_hku_test.sh` (deploy) or
+/// `./scripts/run_flutter_web_local.sh` (local).
 class AppEnvironment {
   AppEnvironment._();
 

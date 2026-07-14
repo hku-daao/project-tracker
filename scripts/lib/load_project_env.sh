@@ -27,6 +27,24 @@ load_project_env() {
 
   export DEPLOY_ENV="${DEPLOY_ENV:-testing}"
   export ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+
+  # Host bind ports / container names (set in .env — no hardcoding in app code)
+  export HOST_POSTGRES_PORT="${HOST_POSTGRES_PORT:-5432}"
+  export HOST_BACKEND_PORT="${HOST_BACKEND_PORT:-3000}"
+  export HOST_POSTGREST_PORT="${HOST_POSTGREST_PORT:-${POSTGREST_PORT:-3001}}"
+  export POSTGREST_PORT="${POSTGREST_PORT:-$HOST_POSTGREST_PORT}"
+
+  export STACK_NAME="${STACK_NAME:-pt-test}"
+  export POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-${STACK_NAME}-postgres}"
+  export BACKEND_CONTAINER="${BACKEND_CONTAINER:-${STACK_NAME}-backend}"
+  export POSTGREST_CONTAINER="${POSTGREST_CONTAINER:-${STACK_NAME}-postgrest}"
+  export REST_GATEWAY_CONTAINER="${REST_GATEWAY_CONTAINER:-${STACK_NAME}-rest-gateway}"
+  export NGINX_CONTAINER="${NGINX_CONTAINER:-${STACK_NAME}-nginx}"
+  export FRONTEND_CONTAINER="${FRONTEND_CONTAINER:-pt-frontend}"
+
+  export LOCAL_API_BASE_URL="${LOCAL_API_BASE_URL:-http://127.0.0.1:${HOST_BACKEND_PORT}}"
+  export LOCAL_POSTGREST_URL="${LOCAL_POSTGREST_URL:-http://127.0.0.1:${HOST_POSTGREST_PORT}}"
+  export LOCAL_FILES_API_BASE="${LOCAL_FILES_API_BASE:-${LOCAL_API_BASE_URL}/api/files}"
 }
 
 require_public_web_app_url() {

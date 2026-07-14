@@ -11,21 +11,30 @@ import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+from project_env import stack_settings  # noqa: E402
+
 SOURCE_ROOT = ROOT.parent / "project_tracker_files"
 UPLOAD_ROOT = ROOT / "data" / "uploads"
-API_BASE = os.environ.get("LOCAL_FILES_API_BASE", "http://127.0.0.1:3000/api/files")
+_STACK = stack_settings()
+API_BASE = os.environ.get("LOCAL_FILES_API_BASE", _STACK["LOCAL_FILES_API_BASE"])
+POSTGRES_CONTAINER = os.environ.get(
+    "POSTGRES_CONTAINER", _STACK["POSTGRES_CONTAINER"]
+)
+POSTGRES_USER = os.environ.get("POSTGRES_USER", _STACK["POSTGRES_USER"])
+POSTGRES_DB = os.environ.get("POSTGRES_DB", _STACK["POSTGRES_DB"])
 
 
 def psql_csv(sql: str) -> list[list[str]]:
     cmd = [
         "docker",
         "exec",
-        "pt-test-postgres",
+        POSTGRES_CONTAINER,
         "psql",
         "-U",
-        "project_tracker",
+        POSTGRES_USER,
         "-d",
-        "project_tracker",
+        POSTGRES_DB,
         "-t",
         "-A",
         "-F",
@@ -169,12 +178,12 @@ def copy_attachment_rows(
             [
                 "docker",
                 "exec",
-                "pt-test-postgres",
+                POSTGRES_CONTAINER,
                 "psql",
                 "-U",
-                "project_tracker",
+                POSTGRES_USER,
                 "-d",
-                "project_tracker",
+                POSTGRES_DB,
                 "-c",
                 update_sql,
             ]

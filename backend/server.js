@@ -220,7 +220,8 @@ function cronEmailBlockedReason() {
   return null;
 }
 
-const PORT = process.env.PORT || 3000;
+// Container listen port (compose sets PORT=3000). Host publish uses HOST_BACKEND_PORT in .env.
+const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
 
 // Trim — copy/paste in Railway sometimes adds trailing newlines.
@@ -228,17 +229,12 @@ const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'test-admin@test.com').toLowerCase();
 
 /// Origins allowed to call this API from the browser (Flutter web).
-/// Override or extend with Railway env: CORS_ORIGINS=https://a.com,https://b.com
-const DEFAULT_CORS_ORIGINS = [
-  'https://project-tracker-test.web.app',
-  'https://project-tracker-test.firebaseapp.com',
-  'https://project-tracker-production.web.app',
-  'https://project-tracker-production.firebaseapp.com',
-  'https://daao-a20c6.web.app',
-  'https://testprojectmanagementtracking.firebaseapp.com',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-];
+/// Prefer CORS_ORIGINS / PUBLIC_WEB_APP_URL in .env — no hardcoded host ports here.
+function localDevCorsOrigins() {
+  const port = String(process.env.HOST_BACKEND_PORT || process.env.PORT || '').trim();
+  if (!port) return [];
+  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+}
 
 function allowedOriginsSet() {
   const fromEnv = (process.env.CORS_ORIGINS || '')
@@ -246,7 +242,9 @@ function allowedOriginsSet() {
     .map((s) => s.trim())
     .filter(Boolean);
   const site = PUBLIC_WEB_APP_URL ? [PUBLIC_WEB_APP_URL] : [];
-  return new Set([...DEFAULT_CORS_ORIGINS, ...fromEnv, ...site]);
+  const localApi = (process.env.LOCAL_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  const localExtra = localApi ? [localApi] : [];
+  return new Set([...localDevCorsOrigins(), ...localExtra, ...fromEnv, ...site]);
 }
 
 /** Per-request CORS: echo preflight headers + allowlist Origin (required for browser + Authorization). */
