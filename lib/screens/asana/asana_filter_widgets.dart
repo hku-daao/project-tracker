@@ -371,14 +371,18 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
   );
   _activeCheckboxFilterDismiss = close;
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
+  void insertPanel() {
     if (closed) return;
     if (!anchorContext.mounted) {
       close(null);
       return;
     }
     overlay.insert(entry);
-  });
+  }
+
+  // Insert on the next frame so layout is settled; a second click on another
+  // filter dismisses this panel before insert runs (avoids stale popovers).
+  SchedulerBinding.instance.scheduleFrameCallback((_) => insertPanel());
 
   return completer.future;
 }

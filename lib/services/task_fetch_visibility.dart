@@ -1,4 +1,4 @@
-/// Scope for loading tasks from Supabase at login (supervisor + subordinates).
+/// Scope for loading tasks from the database at login (supervisor + subordinates).
 class TaskFetchVisibility {
   const TaskFetchVisibility({
     this.supervisorStaffAppId,

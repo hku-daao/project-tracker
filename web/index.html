@@ -45,90 +45,9 @@
       height: 100%;
       background: #2A2B2C;
     }
-
-    #loading {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: Arial, Helvetica, sans-serif;
-      background: #2A2B2C;
-      color: #FFFFFF;
-    }
-
-    .startup-loader {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .startup-brand {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-    }
-
-    .startup-brand img {
-      height: 48px;
-      width: auto;
-      display: block;
-    }
-
-    .startup-brand-text {
-      font-size: 18px;
-      line-height: 1.05;
-      font-weight: 700;
-      letter-spacing: 0.2px;
-    }
-
-    .startup-label {
-      margin-top: 18px;
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
-    }
-
-    .startup-bar {
-      margin-top: 12px;
-      width: 220px;
-      height: 6px;
-      border-radius: 999px;
-      overflow: hidden;
-      background: rgba(255, 255, 255, 0.4);
-    }
-
-    .startup-bar::before {
-      content: "";
-      display: block;
-      width: 45%;
-      height: 100%;
-      border-radius: inherit;
-      background: #FFFFFF;
-      animation: startup-indeterminate 1.15s ease-in-out infinite;
-    }
-
-    @keyframes startup-indeterminate {
-      0% {
-        transform: translateX(-120%);
-      }
-      100% {
-        transform: translateX(260%);
-      }
-    }
   </style>
 </head>
 <body>
-  <div id="loading">
-    <div class="startup-loader">
-      <div class="startup-brand" aria-label="Project Tracker">
-        <img src="assets/assets/images/logo.png" alt="Project Tracker logo">
-        <div class="startup-brand-text">Project<br>Tracker</div>
-      </div>
-      <div class="startup-label">Loading</div>
-      <div class="startup-bar" aria-hidden="true"></div>
-    </div>
-  </div>
   <!-- Drop stale Flutter service workers so normal browsers load the latest deploy. -->
   <script>
     if ('serviceWorker' in navigator) {

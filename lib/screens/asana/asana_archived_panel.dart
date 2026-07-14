@@ -7,7 +7,7 @@ import '../../app_state.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
-import '../../services/supabase_service.dart';
+import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../../widgets/task_list_card.dart';
 import '../asana_landing_screen.dart';
@@ -72,7 +72,7 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
     setState(() => _loadingSubtasks = true);
     try {
       final grouped =
-          await SupabaseService.fetchSubtasksGroupedIncludingDeleted(taskIds);
+          await DatabaseService.fetchSubtasksGroupedIncludingDeleted(taskIds);
       if (mounted) setState(() => _subtasksByTask = grouped);
     } finally {
       if (mounted) setState(() => _loadingSubtasks = false);
@@ -126,7 +126,7 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
   Future<void> _unarchiveTask(AppState state, Task task) async {
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updateByStaffLookupKey: state.userStaffAppId,
         clearArchive: true,

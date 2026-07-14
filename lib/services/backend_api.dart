@@ -25,46 +25,8 @@ class BackendApi {
   static const String notifySubtaskUpdatedBackendNotDeployed =
       'NOTIFY_SUBTASK_UPDATED_BACKEND_NOT_DEPLOYED';
 
-  /// Creates a one-time Railway URL that streams the file (no Firebase `token=` in the address bar).
-  ///
-  /// Requires [BackendApi] deployment with `POST /api/attachment/open-session` and
-  /// `GET /api/attachment/stream/:id`. Server enforces the same rules as [storage.rules]
-  /// (uploader or `staffKey` claim vs object `m0`…`m9` metadata).
-  Future<String?> createAttachmentProxyStreamUrl({
-    required String idToken,
-    required String objectPath,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/attachment/open-session'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'objectPath': objectPath}),
-          )
-          .timeout(const Duration(seconds: 30));
-      if (response.statusCode != 200) {
-        debugPrint(
-          'BackendApi.createAttachmentProxyStreamUrl: HTTP ${response.statusCode} ${response.body}',
-        );
-        return null;
-      }
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final p = json['path'] as String?;
-      if (p == null || p.isEmpty) return null;
-      final base = _baseUrl.endsWith('/')
-          ? _baseUrl.substring(0, _baseUrl.length - 1)
-          : _baseUrl;
-      return p.startsWith('/') ? '$base$p' : '$base/$p';
-    } catch (e) {
-      debugPrint('BackendApi.createAttachmentProxyStreamUrl: $e');
-      return null;
-    }
-  }
-
-  /// Emails sub-task assignees after creation (creator only). Requires Mailgun.
+  /// Emails sub-task assignees after creation (creator only). No-op when server has
+  /// `EMAIL_SENDING_ENABLED=false`.
   Future<String?> notifySubtaskAssigned({
     required String idToken,
     required String subtaskId,
@@ -92,8 +54,8 @@ class BackendApi {
     }
   }
 
-  /// Emails each assignee (assignee_01..10) after task creation. Requires Mailgun on Railway.
-  /// Returns `null` on success, or an error message (caller may log and ignore).
+  /// Emails each assignee (assignee_01..10) after task creation.
+  /// Server returns `{ ok: true, skipped: true }` when email sending is disabled.
   Future<String?> notifyTaskAssigned({
     required String idToken,
     required String taskId,
@@ -186,7 +148,7 @@ class BackendApi {
   }
 
   /// Emails the task creator after a comment is saved (not when the creator comments on own task).
-  /// Server: `POST /api/notify/task-comment` (`handleNotifyTaskComment`). Requires Mailgun;
+  /// Server: `POST /api/notify/task-comment` (`handleNotifyTaskComment`).
   /// enable with `TASK_COMMENT_EMAIL_ENABLED` on the backend (on by default unless set to false).
   Future<String?> notifyTaskCommentAdded({
     required String idToken,
@@ -305,7 +267,7 @@ class BackendApi {
     }
   }
 
-  /// Emails assignees and creator after a task row is updated (Update button). Requires Mailgun.
+  /// Emails assignees and creator after a task row is updated (Update button).
   ///
   /// [changes]: each `{ 'field': 'taskName'|'description'|... , 'value': '...' }` for email lines.
   /// [commentAddedText]: when a comment was saved in the same update, avoids a duplicate comment-only email.
@@ -353,11 +315,11 @@ class BackendApi {
     }
   }
 
-  /// Sub-task update notification (`POST /api/notify/subtask-updated`). Requires Mailgun.
+  /// Sub-task update notification (`POST /api/notify/subtask-updated`).
   ///
   /// The server **only sends** when `subtask.update_by` is the sub-task **creator** (`create_by`)
   /// and the signed-in user matches that staff row. Recipients: non-empty `assignee_01`…`assignee_10`
-  /// plus `create_by`, deduped (one Mailgun message each).
+  /// plus `create_by`, deduped.
   ///
   /// [changes]: `{ 'field': 'subtaskName'|'description'|'assignees'|'priority'|'startDate'|'dueDate', 'value': '...' }`.
   /// [commentAddedText]: optional; when the creator saved a comment in the same action, body includes

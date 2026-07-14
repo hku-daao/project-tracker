@@ -1,15 +1,15 @@
 import 'dart:typed_data';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
-import '../../config/supabase_config.dart';
+import '../../config/dev_auth_context.dart';
+import '../../config/postgrest_config.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../services/backend_api.dart';
-import '../../services/firebase_attachment_upload_service.dart';
-import '../../services/supabase_service.dart';
+import '../../services/attachment_upload_service.dart';
+import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/hk_time.dart';
@@ -152,9 +152,9 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   Future<void> _loadAssigneePicker() async {
-    if (!SupabaseConfig.isConfigured) {
+    if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
-      _assigneePickerError = 'Supabase not configured';
+      _assigneePickerError = 'Database not configured';
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshots();
@@ -166,11 +166,12 @@ class _AsanaCreateProjectDetailPanelState
     _publishAssigneeSnapshots();
     if (mounted) setState(() {});
     try {
-      final data = await SupabaseService.fetchStaffAssigneePickerData();
+      final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
-      _pickerTeams = data?.teams ?? [];
-      _pickerStaff = data?.staff ?? [];
+      _pickerTeams = data.teams;
+      _pickerStaff = data.staff;
+      _assigneePickerError = null;
       _publishAssigneeSnapshots();
       setState(() {});
     } catch (e) {
@@ -232,7 +233,6 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   void _showEmailWarning(String label, String error) {
-    if (error.trim().toLowerCase() == 'mailgun not configured') return;
     debugPrint('$label: $error');
   }
 
@@ -241,7 +241,7 @@ class _AsanaCreateProjectDetailPanelState
     Future<String?> Function(String idToken) send,
   ) async {
     try {
-      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      final token = await activeUserIdToken();
       if (token == null) {
         _showEmailWarning(label, 'sign-in token missing');
         return;
@@ -272,6 +272,21 @@ class _AsanaCreateProjectDetailPanelState
 
   Future<void> _pickAssignees(BuildContext anchorContext) async {
     if (!_canOpenAnchoredPicker || _saving) return;
+    if (_assigneePickerLoading || !_assigneeSnapshot.value.hasData) {
+      await _loadAssigneePicker();
+    }
+    if (!mounted || !_assigneeSnapshot.value.hasData) {
+      final err = _assigneePickerError?.trim();
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not load teammates',
+        content: err != null && err.isNotEmpty
+            ? err
+            : 'Please try again in a moment.',
+        palette: widget.palette,
+      );
+      return;
+    }
     await showAsanaAssigneePicker(
       anchorLink: _assigneeAnchorLink,
       anchorContext: anchorContext,
@@ -472,7 +487,7 @@ class _AsanaCreateProjectDetailPanelState
     if (draft.isPendingFile) return false;
     if (draft.isWebsiteLink) return true;
     final url = draft.urlController.text.trim();
-    return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+    return url.isNotEmpty && !isUploadedFileAttachmentUrl(url);
   }
 
   String? _attachmentMimeTypeFromName(String? name) {
@@ -505,7 +520,7 @@ class _AsanaCreateProjectDetailPanelState
 
   Future<void> _addFileAttachment() async {
     final picked = await _withBlockingLoading(
-      FirebaseAttachmentUploadService.pickFilesForUpload,
+      AttachmentUploadService.pickFilesForUpload,
     );
     if (!mounted) return;
     if (picked?.error != null) {
@@ -628,7 +643,7 @@ class _AsanaCreateProjectDetailPanelState
     for (final draft in _attachments) {
       if (!draft.isPendingFile) continue;
       final upload =
-          await FirebaseAttachmentUploadService.uploadBytesForProject(
+          await AttachmentUploadService.uploadBytesForProject(
             projectId,
             bytes: draft.pendingBytes!,
             originalFilename: draft.pendingFilename ?? 'attachment',
@@ -667,7 +682,7 @@ class _AsanaCreateProjectDetailPanelState
         continue;
       }
       final upload =
-          await FirebaseAttachmentUploadService.uploadBytesForProject(
+          await AttachmentUploadService.uploadBytesForProject(
             projectId,
             bytes: draft.bytes,
             originalFilename: draft.label,
@@ -678,7 +693,7 @@ class _AsanaCreateProjectDetailPanelState
       if (url == null || url.isEmpty) {
         return 'Inline image upload did not return a download link.';
       }
-      final ins = await SupabaseService.insertInlineAttachment(
+      final ins = await DatabaseService.insertInlineAttachment(
         entityType: draft.entityType,
         entityId: resolvedEntityId,
         url: url,
@@ -728,13 +743,13 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   Future<String?> _replaceProjectAttachments(String projectId) async {
-    final fileErr = await SupabaseService.replaceFileAttachments(
+    final fileErr = await DatabaseService.replaceFileAttachments(
       entityType: 'project',
       entityId: projectId,
       rows: _fileAttachmentPayload(),
     );
     if (fileErr != null) return fileErr;
-    return SupabaseService.replaceUrlAttachments(
+    return DatabaseService.replaceUrlAttachments(
       entityType: 'project',
       entityId: projectId,
       rows: _urlAttachmentPayload(),
@@ -907,11 +922,11 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   Future<void> _create(AppState state) async {
-    if (!SupabaseConfig.isConfigured) {
+    if (!PostgrestConfig.isConfigured) {
       await showAsanaInfoDialog(
         context: context,
-        title: 'Supabase not configured',
-        content: 'Please configure Supabase before continuing.',
+        title: 'Database not configured',
+        content: 'Please configure the database API before continuing.',
         palette: widget.palette,
       );
       return;
@@ -980,15 +995,15 @@ class _AsanaCreateProjectDetailPanelState
     setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
-      final slots = await SupabaseService.assigneeSlotsForProject(
+      final slots = await DatabaseService.assigneeSlotsForProject(
         _assigneeIds.toList(),
       );
       final picUuids = <String>[];
       for (final key in _picAssigneeIds) {
-        final u = await SupabaseService.resolveStaffRowIdForAssigneeKey(key);
+        final u = await DatabaseService.resolveStaffRowIdForAssigneeKey(key);
         if (u != null && u.trim().isNotEmpty) picUuids.add(u.trim());
       }
-      final ins = await SupabaseService.insertProjectRow(
+      final ins = await DatabaseService.insertProjectRow(
         name: name,
         assignees: slots,
         picStaffUuids: picUuids,
@@ -1015,7 +1030,7 @@ class _AsanaCreateProjectDetailPanelState
             );
         String? draftCommentId;
         if (hasDraftComment) {
-          final comment = await SupabaseService.insertProjectCommentRow(
+          final comment = await DatabaseService.insertProjectCommentRow(
             projectId: newId,
             description: commentText.isNotEmpty
                 ? commentText
@@ -1030,7 +1045,7 @@ class _AsanaCreateProjectDetailPanelState
           if (draftCommentId == null || draftCommentId.isEmpty) {
             await _showInfo(
               'Could not add comment',
-              'The comment was not saved because Supabase did not return a comment id.',
+              'The comment was not saved because the database did not return a comment id.',
             );
             return;
           }
@@ -1056,7 +1071,7 @@ class _AsanaCreateProjectDetailPanelState
           await _showInfo('Could not save attachments', attachmentErr);
           return;
         }
-        final p = await SupabaseService.fetchProjectById(newId);
+        final p = await DatabaseService.fetchProjectById(newId);
         if (p != null) state.upsertProject(p);
         await _notifyEmail(
           'Project assignment email',

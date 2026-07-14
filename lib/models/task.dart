@@ -46,7 +46,7 @@ class Task {
   /// Last update time from singular `task.update_date`.
   final DateTime? updateDate;
 
-  /// Denormalized last activity: task row updates vs `comment` (Supabase `task.last_updated`).
+  /// Denormalized last activity: task row updates vs `comment` (Postgres `task.last_updated`).
   final DateTime? lastUpdated;
 
   /// PIC/creator workflow: `Submitted`, `Accepted`, `Returned`, or null.

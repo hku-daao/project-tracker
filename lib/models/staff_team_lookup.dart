@@ -32,7 +32,33 @@ class StaffTeamLookupResult {
   final String? staffEmailFromDb;
   final String? errorMessage;
 
-  bool get isSuccess => errorMessage == null && appId != null;
+  bool get isSuccess => errorMessage == null && staffId != null;
+
+  /// `staff.app_id` when set; otherwise derived from login email local-part.
+  String? get resolvedAppId {
+    final direct = appId?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    if (staffId == null) return null;
+    return _appIdGuessFromEmail(loginEmail);
+  }
+
+  String? get resolvedDisplayName {
+    final dn = staffDisplayName?.trim();
+    if (dn != null && dn.isNotEmpty) return dn;
+    final sn = staffName?.trim();
+    if (sn != null && sn.isNotEmpty) return sn;
+    return null;
+  }
+
+  static String? _appIdGuessFromEmail(String normalized) {
+    final email = normalized.trim().toLowerCase();
+    if (email.isEmpty) return null;
+    final at = email.indexOf('@');
+    if (at <= 0) return email.replaceAll('.', '_');
+    final local = email.substring(0, at).trim();
+    if (local.isEmpty) return null;
+    return local.replaceAll('.', '_');
+  }
 
   /// Plain text for clipboard / selection.
   String get copyableSummary {

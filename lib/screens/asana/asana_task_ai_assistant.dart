@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../priority.dart';
-import '../../services/deepseek_service.dart';
-import '../../services/supabase_service.dart';
+import '../../services/llm_service.dart';
+import '../../services/database_service.dart';
 import 'asana_project_ai_assistant.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
@@ -1498,7 +1498,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     if (ctx == null) return;
     final suggestions = _buildAuditSuggestions(lines);
     _auditFieldSuggestions = suggestions;
-    _auditLogId = await SupabaseService.insertAiAssistantAuditLog(
+    _auditLogId = await DatabaseService.insertAiAssistantAuditLog(
       entityType: ctx.entityType,
       entityId: ctx.entityId,
       staffId: ctx.staffId,
@@ -1514,7 +1514,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     final id = _auditLogId;
     if (id == null || entityId.trim().isEmpty) return;
     unawaited(
-      SupabaseService.updateAiAssistantAuditEntityId(
+      DatabaseService.updateAiAssistantAuditEntityId(
         auditLogId: id,
         entityId: entityId,
       ),
@@ -1570,7 +1570,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     final id = _auditLogId;
     if (id != null) {
       unawaited(
-        SupabaseService.updateAiAssistantAuditSuggestions(
+        DatabaseService.updateAiAssistantAuditSuggestions(
           auditLogId: id,
           fieldSuggestions: _auditFieldSuggestions,
         ),
@@ -1601,7 +1601,7 @@ class AsanaTaskAiController extends ChangeNotifier {
   }
 
   Future<void> analyse() async {
-    if (readOnly() || !DeepseekService.isConfigured) return;
+    if (readOnly() || !LlmService.isConfigured) return;
     busy = true;
     error = null;
     lines = [];
@@ -1612,7 +1612,7 @@ class AsanaTaskAiController extends ChangeNotifier {
       final prompt = promptController.text;
       if (mode == AsanaTaskAiAssistantMode.commentOnly) {
         final form = commentSnapshot!();
-        final raw = await DeepseekService.suggestCommentDraft(
+        final raw = await LlmService.suggestCommentDraft(
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
@@ -1626,7 +1626,7 @@ class AsanaTaskAiController extends ChangeNotifier {
         unawaited(_recordAudit(prompt: prompt, raw: raw));
       } else if (mode == AsanaTaskAiAssistantMode.projectFields) {
         final form = projectSnapshot!();
-        final raw = await DeepseekService.suggestAsanaProjectDraft(
+        final raw = await LlmService.suggestAsanaProjectDraft(
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
@@ -1639,7 +1639,7 @@ class AsanaTaskAiController extends ChangeNotifier {
         unawaited(_recordAudit(prompt: prompt, raw: raw));
       } else if (mode == AsanaTaskAiAssistantMode.subtaskFields) {
         final form = subtaskSnapshot!();
-        final raw = await DeepseekService.suggestAsanaSubtaskDraft(
+        final raw = await LlmService.suggestAsanaSubtaskDraft(
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
@@ -1661,7 +1661,7 @@ class AsanaTaskAiController extends ChangeNotifier {
         unawaited(_recordAudit(prompt: prompt, raw: raw));
       } else {
         final form = formSnapshot!();
-        final raw = await DeepseekService.suggestAsanaTaskDraft(
+        final raw = await LlmService.suggestAsanaTaskDraft(
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
@@ -1859,7 +1859,7 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final configured = DeepseekService.isConfigured;
+    final configured = LlmService.isConfigured;
     final enterSubmits = _enterSubmitsPrompt(context);
     final readOnly = controller.readOnly();
 
@@ -1881,9 +1881,9 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
             if (!configured) ...[
               const SizedBox(height: 8),
               Text(
-                'Not configured. Re-run with scripts\\run_chrome.ps1 or '
-                'scripts\\build_web.ps1 so secrets\\deepseek_api_key.txt is '
-                'passed as DEEPSEEK_API_KEY.',
+                'HKU IT LLM not configured. Set LOCAL_LLM_BASE_URL, '
+                'LOCAL_LLM_MODEL, and LOCAL_LLM_API_KEY '
+                '(see scripts/local_llm.env.example).',
                 style: asanaDetailLabelStyle(
                   context,
                 ).copyWith(color: const Color(0xFFC62828)),

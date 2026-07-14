@@ -15,6 +15,11 @@ void configureWebStartup() {
   captureWebDeepLinkForSession(clearStaleWhenUrlEmpty: false);
 }
 
+/// Removes the static `#loading` shell from [web/index.html] once Flutter paints startup UI.
+void dismissHtmlStartupLoader() {
+  html.document.getElementById('loading')?.remove();
+}
+
 /// Old Flutter PWA workers often keep serving previous `main.dart.js` after deploy.
 void _clearStaleServiceWorkers() {
   final sw = html.window.navigator.serviceWorker;

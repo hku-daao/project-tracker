@@ -1,20 +1,20 @@
 import 'dart:typed_data';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
-import '../../config/supabase_config.dart';
+import '../../config/dev_auth_context.dart';
+import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_comment.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../models/task.dart';
 import '../../priority.dart';
-import '../../services/firebase_attachment_upload_service.dart';
+import '../../services/attachment_upload_service.dart';
 import '../../services/backend_api.dart';
-import '../../services/supabase_service.dart';
+import '../../services/database_service.dart';
 import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/holiday_date_picker.dart';
@@ -188,7 +188,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     } else if (oldWidget.refreshToken != widget.refreshToken) {
       final id = widget.taskId?.trim();
       if (id != null && id.isNotEmpty) {
-        SupabaseService.invalidateSubtasksCacheForTask(id);
+        DatabaseService.invalidateSubtasksCacheForTask(id);
       }
       _loadSubtasks();
     }
@@ -248,11 +248,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (persistedId != null &&
         persistedId.isNotEmpty &&
         !widget.createMode &&
-        SupabaseConfig.isConfigured) {
+        PostgrestConfig.isConfigured) {
       final isWebsiteLink = _draftShowsAsWebsiteLink(e);
       if (!isWebsiteLink) {
         final storageErr =
-            await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+            await AttachmentUploadService.deleteUploadedObjectByUrl(
               e.urlController.text.trim(),
             );
         if (!mounted) return;
@@ -262,8 +262,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         }
       }
       final err = isWebsiteLink
-          ? await SupabaseService.deleteUrlAttachmentById(persistedId)
-          : await SupabaseService.deleteFileAttachmentById(persistedId);
+          ? await DatabaseService.deleteUrlAttachmentById(persistedId)
+          : await DatabaseService.deleteFileAttachmentById(persistedId);
       if (!mounted) return;
       if (err != null) {
         await _showInfo('Could not remove attachment', err);
@@ -280,7 +280,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (e.isPendingFile) return false;
     if (e.isWebsiteLink) return true;
     final url = e.urlController.text.trim();
-    return url.isNotEmpty && !isAppFirebaseStorageAttachmentUrl(url);
+    return url.isNotEmpty && !isUploadedFileAttachmentUrl(url);
   }
 
   String? _attachmentMimeTypeFromName(String? name) {
@@ -303,33 +303,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final uri = Uri.tryParse(rawUrl);
     final urlPath = uri?.path;
     if (_attachmentMimeTypeFromName(urlPath) != null) return true;
-    final objectPath = _firebaseStorageObjectPathFromUrl(rawUrl);
-    return _attachmentMimeTypeFromName(objectPath) != null;
+    final storagePath =
+        AttachmentUploadService.objectPathFromStorageDownloadUrl(rawUrl);
+    return _attachmentMimeTypeFromName(storagePath) != null;
   }
 
   bool _shouldAttemptAttachmentImagePreview(_AttachmentDraft e) {
     if (_attachmentDraftIsImage(e)) return true;
     return !e.isPendingFile &&
-        isAppFirebaseStorageAttachmentUrl(e.urlController.text.trim());
-  }
-
-  String? _firebaseStorageObjectPathFromUrl(String raw) {
-    final uri = Uri.tryParse(raw.trim());
-    if (uri == null) return null;
-    if (uri.host.toLowerCase() == 'storage.googleapis.com') {
-      final segments = uri.pathSegments;
-      if (segments.length < 2) return null;
-      return segments.skip(1).join('/');
-    }
-    final i = uri.path.indexOf('/o/');
-    if (i < 0) return null;
-    final encoded = uri.path.substring(i + 3);
-    if (encoded.isEmpty) return null;
-    try {
-      return Uri.decodeComponent(encoded);
-    } catch (_) {
-      return null;
-    }
+        isUploadedFileAttachmentUrl(e.urlController.text.trim());
   }
 
   Future<void> _editAttachmentLink(
@@ -404,9 +386,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _loadCalendarHolidaysForCreate() async {
     Set<String> skip = {};
-    if (SupabaseConfig.isConfigured) {
+    if (PostgrestConfig.isConfigured) {
       try {
-        final rows = await SupabaseService.fetchCalendarHolidaysBetween(
+        final rows = await DatabaseService.fetchCalendarHolidaysBetween(
           kHolidayPickerWideFirstDate,
           kHolidayPickerWideLastDate,
         );
@@ -461,9 +443,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _loadAssigneePicker() async {
-    if (!SupabaseConfig.isConfigured) {
+    if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
-      _assigneePickerError = 'Supabase not configured';
+      _assigneePickerError = 'Database not configured';
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -475,16 +457,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _publishAssigneeSnapshot();
     if (mounted) setState(() {});
     try {
-      final data = await SupabaseService.fetchStaffAssigneePickerData();
+      final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
-      if (data != null) {
-        _pickerTeams = data.teams;
-        _pickerStaff = data.staff;
-      } else {
-        _pickerTeams = [];
-        _pickerStaff = [];
-      }
+      _pickerTeams = data.teams;
+      _pickerStaff = data.staff;
+      _assigneePickerError = null;
       _publishAssigneeSnapshot();
       setState(() {});
     } catch (e) {
@@ -570,6 +548,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _pickAssignees(BuildContext anchorContext) async {
     if (!_canOpenAnchoredPicker) return;
+    if (_assigneePickerLoading || !_assigneeSnapshot.value.hasData) {
+      await _loadAssigneePicker();
+    }
+    if (!mounted) return;
+    if (!_assigneeSnapshot.value.hasData) {
+      final err = _assigneePickerError?.trim();
+      await _showInfo(
+        'Could not load teammates',
+        err != null && err.isNotEmpty
+            ? err
+            : 'Please try again in a moment.',
+      );
+      return;
+    }
     await showAsanaAssigneePicker(
       anchorLink: _assigneeAnchorLink,
       anchorContext: anchorContext,
@@ -652,12 +644,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final lk = context.read<AppState>().userStaffAppId?.trim();
     if (lk != null && lk.isNotEmpty) {
       _myStaffLookupKey = lk;
-      _myStaffUuid = await SupabaseService.staffRowIdForAssigneeKey(lk);
+      _myStaffUuid = await DatabaseService.staffRowIdForAssigneeKey(lk);
     }
     final loads = <Future<void>>[_loadProjectsIfCreator()];
     if (widget.createMode) {
       loads.add(_loadCalendarHolidaysForCreate());
-      _loadAssigneePicker();
+      loads.add(_loadAssigneePicker());
     } else {
       loads.addAll([
         _loadSubtasks(),
@@ -665,7 +657,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         _loadAttachments(),
         _loadTaskDescriptionInlineImages(),
       ]);
-      _loadAssigneePicker();
+      loads.add(_loadAssigneePicker());
     }
     await Future.wait(loads);
     if (mounted) setState(() => _loadingExtras = false);
@@ -693,9 +685,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _loadSubtasks() async {
     final id = widget.taskId;
-    if (id == null || !SupabaseConfig.isConfigured) return;
+    if (id == null || !PostgrestConfig.isConfigured) return;
     try {
-      final list = await SupabaseService.fetchSubtasksForTask(id);
+      final list = await DatabaseService.fetchSubtasksForTask(id);
       if (mounted)
         setState(() => _subtasks = list.where((s) => !s.isDeleted).toList());
     } catch (_) {}
@@ -704,10 +696,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<List<SingularSubtask>?> _loadFreshActiveSubtasksForCompletion(
     String taskId,
   ) async {
-    if (!SupabaseConfig.isConfigured) return _subtasks;
+    if (!PostgrestConfig.isConfigured) return _subtasks;
     try {
-      SupabaseService.invalidateSubtasksCacheForTask(taskId);
-      final list = await SupabaseService.fetchSubtasksForTask(taskId);
+      DatabaseService.invalidateSubtasksCacheForTask(taskId);
+      final list = await DatabaseService.fetchSubtasksForTask(taskId);
       final active = list.where((s) => !s.isDeleted).toList();
       if (mounted) setState(() => _subtasks = active);
       return active;
@@ -718,9 +710,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _loadComments() async {
     final id = widget.taskId;
-    if (id == null || !SupabaseConfig.isConfigured) return;
+    if (id == null || !PostgrestConfig.isConfigured) return;
     try {
-      final list = await SupabaseService.fetchSingularCommentsForTask(id);
+      final list = await DatabaseService.fetchSingularCommentsForTask(id);
       if (mounted) {
         setState(() {
           _comments = list;
@@ -733,8 +725,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _loadTaskDescriptionInlineImages() async {
     final id = widget.taskId;
-    if (id == null || !SupabaseConfig.isConfigured) return;
-    final list = await SupabaseService.fetchInlineAttachments(
+    if (id == null || !PostgrestConfig.isConfigured) return;
+    final list = await DatabaseService.fetchInlineAttachments(
       entityType: 'task_description',
       entityId: id,
     );
@@ -744,10 +736,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _loadCommentInlineImages(
     List<SingularCommentRowDisplay> comments,
   ) async {
-    if (!SupabaseConfig.isConfigured || comments.isEmpty) return;
+    if (!PostgrestConfig.isConfigured || comments.isEmpty) return;
     final next = <String, List<InlineAttachmentRow>>{};
     for (final c in comments) {
-      final list = await SupabaseService.fetchInlineAttachments(
+      final list = await DatabaseService.fetchInlineAttachments(
         entityType: 'task_comment',
         entityId: c.id,
       );
@@ -810,7 +802,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
     final state = context.read<AppState>();
     _savingPostedCommentId = c.id;
-    final err = await SupabaseService.updateSingularCommentRow(
+    final err = await DatabaseService.updateSingularCommentRow(
       commentId: c.id,
       description: newBody,
       updaterStaffLookupKey: state.userStaffAppId,
@@ -859,7 +851,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
 
       _savingPostedCommentId = c.id;
-      final err = await SupabaseService.updateSingularCommentRow(
+      final err = await DatabaseService.updateSingularCommentRow(
         commentId: c.id,
         description: newBody,
         updaterStaffLookupKey: state.userStaffAppId,
@@ -891,7 +883,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.softDeleteSingularCommentRow(
+      final err = await DatabaseService.softDeleteSingularCommentRow(
         commentId: c.id,
         updaterStaffLookupKey: state.userStaffAppId,
       );
@@ -910,13 +902,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _loadAttachments() async {
     final id = widget.taskId;
-    if (id == null || !SupabaseConfig.isConfigured) return;
+    if (id == null || !PostgrestConfig.isConfigured) return;
     try {
-      final files = await SupabaseService.fetchFileAttachments(
+      final files = await DatabaseService.fetchFileAttachments(
         entityType: 'task',
         entityId: id,
       );
-      final urls = await SupabaseService.fetchUrlAttachments(
+      final urls = await DatabaseService.fetchUrlAttachments(
         entityType: 'task',
         entityId: id,
       );
@@ -962,10 +954,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     final me = _myStaffUuid;
     if (canEditProject && (me == null || me.isEmpty)) return;
-    if (!SupabaseConfig.isConfigured) return;
+    if (!PostgrestConfig.isConfigured) return;
     try {
       final all = canEditProject
-          ? await SupabaseService.fetchAllProjectsFromSupabase()
+          ? await DatabaseService.fetchAllProjects()
           : <ProjectRecord>[];
       bool eligible(ProjectRecord p) {
         final s = p.status.trim();
@@ -977,7 +969,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           : <ProjectRecord>[];
       final pid = currentProjectId;
       if (pid != null && pid.isNotEmpty && !linkable.any((p) => p.id == pid)) {
-        final extra = await SupabaseService.fetchProjectById(pid);
+        final extra = await DatabaseService.fetchProjectById(pid);
         if (extra != null) linkable.add(extra);
       }
       linkable.sort(
@@ -1091,7 +1083,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   void _showEmailWarning(String label, String error) {
-    if (error.trim().toLowerCase() == 'mailgun not configured') return;
     debugPrint('$label: $error');
   }
 
@@ -1100,7 +1091,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     Future<String?> Function(String idToken) send,
   ) async {
     try {
-      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      final token = await activeUserIdToken();
       if (token == null) {
         _showEmailWarning(label, 'sign-in token missing');
         return;
@@ -1402,7 +1393,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       final state = context.read<AppState>();
       final picKey = _picAssigneeId ?? task.pic ?? '';
       final r = await _withBlockingLoading(
-        () => FirebaseAttachmentUploadService.pickUploadFilesForTask(
+        () => AttachmentUploadService.pickUploadFilesForTask(
           task.id,
           aclStaffKeys: _createAttachmentAclKeys(state, picKey),
         ),
@@ -1427,7 +1418,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       });
     } else {
       final picked = await _withBlockingLoading(
-        FirebaseAttachmentUploadService.pickFilesForUpload,
+        AttachmentUploadService.pickFilesForUpload,
       );
       if (!mounted) return;
       if (picked?.error != null) {
@@ -1547,7 +1538,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _canRemoveInlineAttachment(InlineAttachmentRow row) {
-    return FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+    return AttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
       row.url,
     );
   }
@@ -1605,7 +1596,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
         continue;
       }
-      final upload = await FirebaseAttachmentUploadService.uploadBytesForTask(
+      final upload = await AttachmentUploadService.uploadBytesForTask(
         taskId,
         bytes: draft.bytes,
         originalFilename: draft.label,
@@ -1616,7 +1607,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (url == null || url.isEmpty) {
         return 'Inline image upload did not return a download link.';
       }
-      final ins = await SupabaseService.insertInlineAttachment(
+      final ins = await DatabaseService.insertInlineAttachment(
         entityType: draft.entityType,
         entityId: resolvedEntityId,
         url: url,
@@ -1631,14 +1622,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       _pendingInlineImageDeletes,
     )) {
       final deleteErr =
-          await FirebaseAttachmentUploadService.deleteUploadedObjectByUrl(
+          await AttachmentUploadService.deleteUploadedObjectByUrl(
             row.url,
           );
       if (deleteErr != null) return deleteErr;
-      final markErr = await SupabaseService.markInlineAttachmentDeleted(row.id);
+      final markErr = await DatabaseService.markInlineAttachmentDeleted(row.id);
       if (markErr != null) return markErr;
       if (row.entityType == 'task_comment') {
-        final touchErr = await SupabaseService.touchSingularCommentRow(
+        final touchErr = await DatabaseService.touchSingularCommentRow(
           commentId: row.entityId,
           updaterStaffLookupKey: state.userStaffAppId,
         );
@@ -1756,7 +1747,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   ) async {
     for (final draft in _attachments) {
       if (!draft.isPendingFile) continue;
-      final r = await FirebaseAttachmentUploadService.uploadBytesForTask(
+      final r = await AttachmentUploadService.uploadBytesForTask(
         taskId,
         bytes: draft.pendingBytes!,
         originalFilename: draft.pendingFilename ?? 'attachment',
@@ -1781,10 +1772,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _createTask(AppState state) async {
-    if (!SupabaseConfig.isConfigured) {
+    if (!PostgrestConfig.isConfigured) {
       await _showInfo(
-        'Supabase not configured',
-        'Please configure Supabase before continuing.',
+        'Database not configured',
+        'Please configure the database API before continuing.',
       );
       return;
     }
@@ -1823,8 +1814,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (mounted) setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
-      final slots = await SupabaseService.assigneeSlotsForTask(directorIds);
-      final ins = await SupabaseService.insertTaskTableRow(
+      final slots = await DatabaseService.assigneeSlotsForTask(directorIds);
+      final ins = await DatabaseService.insertTaskTableRow(
         taskName: name,
         assignees: slots,
         description: stripInlineImageMarkers(_descController.text).isEmpty
@@ -1861,7 +1852,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       String? draftCommentId;
       if (comment.isNotEmpty ||
           _hasPendingInlineImages('task_comment', 'draft')) {
-        final c = await SupabaseService.insertSingularCommentRow(
+        final c = await DatabaseService.insertSingularCommentRow(
           taskId: newId,
           description: comment.isNotEmpty
               ? comment
@@ -1877,7 +1868,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           if (mounted) {
             await _showInfo(
               'Could not add comment',
-              'The comment was not saved because Supabase did not return a comment id.',
+              'The comment was not saved because the database did not return a comment id.',
             );
           }
           return;
@@ -1904,44 +1895,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           return;
         }
       }
-      final model = await SupabaseService.fetchSingularTaskModelById(newId);
+      final model = await DatabaseService.fetchSingularTaskModelById(newId);
       if (model != null) {
         state.upsertTask(model);
       }
-      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
-      if (token == null) {
-        debugPrint('notifyTaskAssigned: skipped - Firebase ID token is null');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Task saved. Assignment email was not sent (sign-in token missing).',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      } else {
-        final notifyErr = await BackendApi().notifyTaskAssigned(
-          idToken: token,
-          taskId: newId,
-        );
-        if (notifyErr != null) {
-          debugPrint('notifyTaskAssigned: $notifyErr');
-          if (mounted) {
-            final short = notifyErr.length > 160
-                ? '${notifyErr.substring(0, 160)}...'
-                : notifyErr;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Assignment email: $short'),
-                backgroundColor: Colors.orange,
-                duration: const Duration(seconds: 4),
-              ),
-            );
-          }
-        }
-      }
+      await _notifyEmail(
+        'Task assignment email',
+        (token) => BackendApi().notifyTaskAssigned(idToken: token, taskId: newId),
+      );
       if (mounted) widget.onCreated?.call(newId);
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -1950,10 +1911,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _save(AppState state, Task task) async {
-    if (!SupabaseConfig.isConfigured) {
+    if (!PostgrestConfig.isConfigured) {
       await _showInfo(
-        'Supabase not configured',
-        'Please configure Supabase before continuing.',
+        'Database not configured',
+        'Please configure the database API before continuing.',
       );
       return;
     }
@@ -1994,7 +1955,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       final directorIds = _isCreator(state, task)
           ? _selectedAssigneeIds.toList()
           : List<String>.from(task.assigneeIds);
-      final slots = await SupabaseService.assigneeSlotsForTask(directorIds);
+      final slots = await DatabaseService.assigneeSlotsForTask(directorIds);
       final picKey = _isCreator(state, task)
           ? _resolvePicKeyForSave()
           : task.pic;
@@ -2006,7 +1967,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           curProj.isNotEmpty;
 
       final changesForEmail = _taskChangesForEmail(state, task, directorIds);
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         taskName: _nameController.text.trim(),
         description: stripInlineImageMarkers(_descController.text),
@@ -2043,7 +2004,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       String? commentId;
       if (comment.isNotEmpty ||
           _hasPendingInlineImages('task_comment', 'draft')) {
-        final c = await SupabaseService.insertSingularCommentRow(
+        final c = await DatabaseService.insertSingularCommentRow(
           taskId: task.id,
           description: comment.isNotEmpty
               ? comment
@@ -2059,7 +2020,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           if (mounted) {
             await _showInfo(
               'Could not add comment',
-              'The comment was not saved because Supabase did not return a comment id.',
+              'The comment was not saved because the database did not return a comment id.',
             );
           }
           return;
@@ -2081,7 +2042,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (!mounted) return;
       final updated = _buildUpdatedTask(task, clearProject: clearProject);
       state.replaceTask(updated);
-      SupabaseService.invalidateSubtasksCacheForTask(task.id);
+      DatabaseService.invalidateSubtasksCacheForTask(task.id);
       await _loadSubtasks();
       await _notifyEmail(
         'Task update email',
@@ -2134,7 +2095,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       return true;
     }
 
-    final c = await SupabaseService.insertSingularCommentRow(
+    final c = await DatabaseService.insertSingularCommentRow(
       taskId: task.id,
       description: text.isNotEmpty ? text : inlineImageOnlyCommentPlaceholder,
       creatorStaffLookupKey: state.userStaffAppId,
@@ -2147,7 +2108,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (commentId == null || commentId.isEmpty) {
       await _showInfo(
         'Could not add comment',
-        'The comment was not saved because Supabase did not return a comment id.',
+        'The comment was not saved because the database did not return a comment id.',
       );
       return false;
     }
@@ -2223,10 +2184,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       return;
     }
     _setSaving(true);
-    AsanaBlockingLoadingOverlay.show(context);
     try {
       final completedAt = task.submitDate ?? DateTime.now().toUtc();
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Completed',
         submission: 'Accepted',
@@ -2255,7 +2215,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         );
       }
     } finally {
-      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -2271,7 +2230,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         submission: 'Submitted',
         updateByStaffLookupKey: state.userStaffAppId,
@@ -2308,7 +2267,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         submission: 'Returned',
         updateByStaffLookupKey: state.userStaffAppId,
@@ -2341,7 +2300,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Incomplete',
         submission: 'Pending',
@@ -2372,7 +2331,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Incomplete',
         updateByStaffLookupKey: state.userStaffAppId,
@@ -2406,7 +2365,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Deleted',
         updateByStaffLookupKey: state.userStaffAppId,
@@ -2416,7 +2375,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return;
       }
       if (!await _commitExistingTaskInlineChanges(state, task)) return;
-      await SupabaseService.markSubtasksDeletedForParentTask(
+      await DatabaseService.markSubtasksDeletedForParentTask(
         taskId: task.id,
         updateByStaffLookupKey: state.userStaffAppId,
       );
@@ -2436,7 +2395,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updatePauseStatus: true,
         pauseStatus: 'Paused',
@@ -2459,7 +2418,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updatePauseStatus: true,
         pauseStatus: 'Not Paused',
@@ -2544,13 +2503,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<String?> _replaceTaskAttachments(String taskId) async {
-    final fileErr = await SupabaseService.replaceFileAttachments(
+    final fileErr = await DatabaseService.replaceFileAttachments(
       entityType: 'task',
       entityId: taskId,
       rows: _fileAttachmentPayload(),
     );
     if (fileErr != null) return fileErr;
-    return SupabaseService.replaceUrlAttachments(
+    return DatabaseService.replaceUrlAttachments(
       entityType: 'task',
       entityId: taskId,
       rows: _urlAttachmentPayload(),
@@ -2722,7 +2681,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final canRemove =
         allowRemove &&
         (isLink ||
-            FirebaseAttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
+            AttachmentUploadService.storageDownloadUrlBelongsToCurrentUser(
               url,
             ));
     return AsanaAttachmentDraftTile(

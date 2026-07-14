@@ -1,19 +1,32 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
-import '../config/supabase_config.dart';
+import '../config/dev_auth_context.dart';
+import '../config/postgrest_config.dart';
+import '../models/assignee.dart';
+import '../services/sso_auth_service.dart';
 import '../services/staff_team_lookup_service.dart';
-import '../services/supabase_service.dart';
+import '../services/database_service.dart';
 import '../services/task_fetch_visibility.dart';
+import '../widgets/project_tracker_logo.dart';
 import 'asana_landing_screen.dart';
 
 /// All platforms use the Asana shell; legacy Home / Overview routes are removed in phase 2.
 Widget _bootstrapShellChild() => const AsanaLandingScreen();
 
-/// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from Supabase.
+/// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from the database.
 class AppBootstrap extends StatefulWidget {
-  const AppBootstrap({super.key});
+  const AppBootstrap({
+    super.key,
+    this.suppressLoadingUi = false,
+    this.onReady,
+  });
+
+  /// When true, data still loads but [StartupLoadingView] is not shown (parent owns startup UI).
+  final bool suppressLoadingUi;
+  final VoidCallback? onReady;
 
   @override
   State<AppBootstrap> createState() => _AppBootstrapState();
@@ -27,30 +40,74 @@ class _AppBootstrapState extends State<AppBootstrap> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    // Never block the UI longer than 5s even if data fetches hang.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && !_ready) {
+        debugPrint('AppBootstrap: forcing ready after 5s');
+        _markReady();
+      }
+    });
+  }
+
+  void _markReady() {
+    if (!mounted || _ready) return;
+    setState(() => _ready = true);
+    widget.onReady?.call();
   }
 
   Future<void> _load() async {
+    debugPrint('AppBootstrap: load start');
+    try {
+      await _loadData().timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      debugPrint('AppBootstrap: load timed out after 5s');
+    } catch (e, st) {
+      debugPrint('AppBootstrap: load failed: $e\n$st');
+    }
+    _markReady();
+  }
+
+  Future<void> _loadData() async {
     final state = context.read<AppState>();
 
     // -------------------------------------------------------------------------
     // REVAMP STEP 1 — Supabase: staff (by email) + team name via staff.team_id
     // -------------------------------------------------------------------------
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      final email = user?.email;
+      var email = activeUserEmail();
+      if (email == null || email.isEmpty) {
+        await SsoAuthService.refreshSession();
+        email = activeUserEmail();
+      }
+      debugPrint('AppBootstrap: activeUserEmail=$email');
       if (email != null && email.isNotEmpty) {
         final lookup = await StaffTeamLookupService.lookupByEmail(email);
+        final resolvedAppId = lookup.resolvedAppId;
+        debugPrint(
+          'AppBootstrap: staff lookup success=${lookup.isSuccess} '
+          'appId=$resolvedAppId staffId=${lookup.staffId} '
+          'error=${lookup.errorMessage}',
+        );
         if (mounted) {
           state.setRevampStaffLookup(lookup);
         }
-        if (mounted) {
+        if (mounted && lookup.isSuccess) {
           state.setUserStaffContext(
-            staffAppId: lookup.appId,
+            staffAppId: resolvedAppId,
             staffUuid: lookup.staffId,
           );
+          final display = lookup.resolvedDisplayName;
+          if (resolvedAppId != null &&
+              resolvedAppId.isNotEmpty &&
+              display != null &&
+              display.isNotEmpty) {
+            state.mergeAssignees([
+              Assignee(id: resolvedAppId, name: display),
+            ]);
+          }
           final subIds =
-              await SupabaseService.fetchSubordinateAppIdsForSupervisor(
-                lookup.appId ?? '',
+              await DatabaseService.fetchSubordinateAppIdsForSupervisor(
+                resolvedAppId ?? '',
               );
           if (mounted) state.setSubordinateAppIds(subIds);
         }
@@ -61,7 +118,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     TaskFetchVisibility? taskVisibility;
     if (mounted) {
-      taskVisibility = await SupabaseService.enrichTaskFetchVisibility(
+      taskVisibility = await DatabaseService.enrichTaskFetchVisibility(
         state.buildTaskFetchVisibility(),
       );
       if (taskVisibility != null) {
@@ -69,32 +126,30 @@ class _AppBootstrapState extends State<AppBootstrap> {
         final resolvedUuid = taskVisibility.supervisorStaffUuid?.trim();
         if (resolvedUuid != null && resolvedUuid.isNotEmpty) {
           state.setUserStaffContext(
-            staffAppId: state.userStaffAppId,
+            staffAppId: state.effectiveStaffAppId,
             staffUuid: resolvedUuid,
           );
         }
       }
     }
 
-    // Load Asana tasks/projects from Supabase.
-    if (!SupabaseConfig.isConfigured) {
-      if (mounted) {
-        setState(() => _ready = true);
-      }
+    // Load Asana tasks/projects from the database.
+    if (!PostgrestConfig.isConfigured) {
       return;
     }
     try {
-      final taskData = await SupabaseService.fetchTasksFromSupabase(
+      final taskData = await DatabaseService.fetchTasks(
         visibility: taskVisibility ?? state.buildTaskFetchVisibility(),
       );
       if (!mounted) return;
       final loaded = taskData ?? TasksLoadResult.empty;
       debugPrint(
-        'AppBootstrap: fetchTasksFromSupabase returned ${loaded.tasks.length} tasks',
+        'AppBootstrap: fetchTasks returned ${loaded.tasks.length} tasks',
       );
-      state.applyTasksFromSupabase(
+      state.applyTasks(
         loaded,
-        visibilityScoped: taskVisibility != null && taskVisibility.isConfigured,
+        visibilityScoped:
+            taskVisibility != null && taskVisibility.isConfigured,
       );
       debugPrint(
         'AppBootstrap: ${state.tasks.length} tasks in AppState '
@@ -103,41 +158,41 @@ class _AppBootstrapState extends State<AppBootstrap> {
         'lookupKeys=${state.taskVisibilityLookupKeys.length})',
       );
       final filterTeams =
-          await SupabaseService.fetchTeamsForFilterFromSupabase();
+          await DatabaseService.fetchTeamsForFilter();
       final staffLabels =
-          await SupabaseService.fetchStaffAssigneesFromSupabase();
-      final appIdToTeamId = await SupabaseService.fetchStaffAppIdToTeamIdMap();
+          await DatabaseService.fetchStaffAssignees();
+      final appIdToTeamId = await DatabaseService.fetchStaffAppIdToTeamIdMap();
       if (!mounted) return;
       if (filterTeams.isNotEmpty) {
         state.setTeamsForFilter(filterTeams);
       }
       if (staffLabels.isNotEmpty) {
-        state.mergeAssigneesFromSupabase(staffLabels);
+        state.mergeAssignees(staffLabels);
       }
       if (appIdToTeamId.isNotEmpty) {
         state.setStaffAppIdToTeamIdMap(appIdToTeamId);
       }
-      final projects = await SupabaseService.fetchAllProjectsFromSupabase();
+      final projects = await DatabaseService.fetchAllProjects();
       if (!mounted) return;
       state.applyProjects(projects);
     } catch (e) {
-      debugPrint('AppBootstrap: load tasks/projects from Supabase: $e');
-    }
-    if (mounted) {
-      setState(() => _ready = true);
+      debugPrint('AppBootstrap: load tasks/projects from the database: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_ready) {
+      if (widget.suppressLoadingUi) {
+        return const SizedBox.shrink();
+      }
       return Scaffold(
         body: StartupLoadingView(
-          label: SupabaseConfig.isConfigured ? 'Loading' : 'Starting',
+          label: PostgrestConfig.isConfigured ? 'Loading' : 'Starting',
         ),
       );
     }
-    if (_error != null && SupabaseConfig.isConfigured) {
+    if (_error != null && PostgrestConfig.isConfigured) {
       return Scaffold(
         body: Center(
           child: Padding(
@@ -161,7 +216,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
                 ),
                 TextButton(
                   onPressed: () => setState(() => _error = null),
-                  child: const Text('Continue without Supabase data'),
+                  child: const Text('Continue without database data'),
                 ),
               ],
             ),
@@ -181,9 +236,6 @@ class StartupLoadingView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const palette = AsanaLandingPalette.asana;
-    const logoHeight = 48.0;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final cacheH = (logoHeight * dpr).round().clamp(1, 4096);
     return ColoredBox(
       color: palette.banner,
       child: Center(
@@ -194,14 +246,7 @@ class StartupLoadingView extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Image.asset(
-                  'assets/images/logo.png',
-                  height: logoHeight,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.high,
-                  cacheHeight: cacheH,
-                  semanticLabel: 'Project Tracker logo',
-                ),
+                const ProjectTrackerLogo(height: 48),
                 const SizedBox(width: 12),
                 Text(
                   'Project\nTracker',

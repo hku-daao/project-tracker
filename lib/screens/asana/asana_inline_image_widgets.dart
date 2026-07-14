@@ -1,12 +1,11 @@
 import 'dart:typed_data';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import '../../services/backend_api.dart';
+import '../../services/database_service.dart';
 import '../../utils/attachment_open_bytes.dart';
-import '../../services/supabase_service.dart';
+import '../../utils/attachment_url_launch.dart';
 import 'asana_blocking_loading_overlay.dart';
 
 final RegExp _inlineImageMarkerPattern = RegExp(
@@ -402,29 +401,7 @@ class _InlineImageBytes {
   final String? error;
 }
 
-String? _firebaseStorageObjectPathFromUrl(String raw) {
-  final uri = Uri.tryParse(raw.trim());
-  if (uri == null) return null;
-  final host = uri.host.toLowerCase();
-  if (host != 'firebasestorage.googleapis.com' &&
-      host != 'storage.googleapis.com') {
-    return null;
-  }
-  if (host == 'storage.googleapis.com') {
-    final segments = uri.pathSegments;
-    if (segments.length < 2) return null;
-    return segments.skip(1).join('/');
-  }
-  final i = uri.path.indexOf('/o/');
-  if (i < 0) return null;
-  final encoded = uri.path.substring(i + 3);
-  if (encoded.isEmpty) return null;
-  try {
-    return Uri.decodeComponent(encoded);
-  } catch (_) {
-    return null;
-  }
-}
+String? _localFilePathFromUrl(String raw) => localAttachmentRelativePath(raw);
 
 Future<_InlineImageBytes> _loadInlineImageBytes(
   InlineImagePreviewItem image,
@@ -441,63 +418,36 @@ Future<_InlineImageBytes> _loadInlineImageBytes(
     return _InlineImageBytes(bytes: Uint8List(0), error: 'Missing image URL.');
   }
 
-  final objectPath = _firebaseStorageObjectPathFromUrl(url);
-  debugPrint(
-    'attachment thumbnail load start: id=${image.id} urlHost=${Uri.tryParse(url)?.host ?? '(invalid)'} objectPath=${objectPath ?? '(none)'} mimeType=${image.mimeType ?? '(none)'}',
-  );
-  if (objectPath != null && objectPath.isNotEmpty) {
-    final user = FirebaseAuth.instance.currentUser;
-    final idToken = await user?.getIdToken();
-    if (user == null) {
-      debugPrint('attachment thumbnail proxy skipped: Firebase user is null');
-    } else if (idToken == null || idToken.isEmpty) {
-      debugPrint(
-        'attachment thumbnail proxy skipped: Firebase ID token is empty',
-      );
-    }
-    if (idToken != null && idToken.isNotEmpty) {
-      try {
-        final proxy = await BackendApi().createAttachmentProxyStreamUrl(
-          idToken: idToken,
-          objectPath: objectPath,
-        );
-        final proxyUri = proxy == null ? null : Uri.tryParse(proxy);
-        debugPrint(
-          'attachment thumbnail proxy session: objectPath=$objectPath proxy=${proxyUri == null ? '(null/invalid)' : proxyUri.toString()}',
-        );
-        if (proxyUri != null && proxyUri.hasScheme) {
-          final resp = await http
-              .get(proxyUri, headers: {'Authorization': 'Bearer $idToken'})
-              .timeout(const Duration(minutes: 2));
-          if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
-            debugPrint(
-              'attachment thumbnail proxy success: bytes=${resp.bodyBytes.length} contentType=${resp.headers['content-type'] ?? '(none)'}',
-            );
-            return _InlineImageBytes(
-              bytes: resp.bodyBytes,
-              contentType:
-                  resp.headers['content-type']?.split(';').first.trim() ??
-                  image.mimeType ??
-                  'image/*',
-            );
-          }
-          debugPrint(
-            'attachment thumbnail proxy HTTP ${resp.statusCode}: ${resp.body.length > 200 ? '${resp.body.substring(0, 200)}...' : resp.body}',
-          );
-        }
-      } catch (e, st) {
-        debugPrint('attachment thumbnail proxy exception: $e\n$st');
-      }
-    }
-  } else {
+  if (isLegacyFirebaseStorageUrl(url)) {
     debugPrint(
-      'attachment thumbnail proxy skipped: no Firebase object path parsed',
+      'attachment thumbnail skipped: legacy Firebase Storage URL id=${image.id}',
+    );
+    return _InlineImageBytes(
+      bytes: Uint8List(0),
+      error:
+          'Legacy Firebase Storage image — re-upload after migration to local files.',
     );
   }
 
-  final uri = Uri.tryParse(url);
+  if (attachmentTextIsJsonNotAUrl(url)) {
+    debugPrint(
+      'attachment thumbnail skipped: URL column holds JSON metadata id=${image.id}',
+    );
+    return _InlineImageBytes(
+      bytes: Uint8List(0),
+      error: 'Invalid attachment metadata — remove and re-upload the image.',
+    );
+  }
+
+  final fetchUrl = resolveAttachmentFetchUrl(url);
+
+  debugPrint(
+    'attachment thumbnail load start: id=${image.id} urlHost=${Uri.tryParse(fetchUrl)?.host ?? '(invalid)'} localPath=${_localFilePathFromUrl(url) ?? '(none)'} mimeType=${image.mimeType ?? '(none)'}',
+  );
+
+  final uri = Uri.tryParse(fetchUrl);
   if (uri == null || !uri.hasScheme) {
-    debugPrint('attachment thumbnail direct skipped: invalid URL $url');
+    debugPrint('attachment thumbnail direct skipped: invalid URL $fetchUrl');
     return _InlineImageBytes(bytes: Uint8List(0), error: 'Invalid image URL.');
   }
   try {

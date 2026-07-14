@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../asana_landing_screen.dart';
+import 'asana_filter_widgets.dart';
 
 /// Full-screen dimmed overlay with centered loading bar (task save, file upload, etc.).
 class AsanaBlockingLoadingOverlay {
@@ -8,8 +11,14 @@ class AsanaBlockingLoadingOverlay {
 
   static OverlayEntry? _entry;
   static int _depth = 0;
+  static DateTime? _shownAt;
+  static Timer? _pendingHide;
+  static const Duration _minDisplayDuration = Duration(milliseconds: 250);
 
   static void show(BuildContext context) {
+    dismissAsanaCheckboxFilterPanels();
+    _pendingHide?.cancel();
+    _pendingHide = null;
     if (_entry != null) {
       _depth++;
       return;
@@ -17,6 +26,7 @@ class AsanaBlockingLoadingOverlay {
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return;
     _depth++;
+    _shownAt = DateTime.now();
 
     _entry = OverlayEntry(
       builder: (ctx) {
@@ -94,16 +104,44 @@ class AsanaBlockingLoadingOverlay {
     if (_depth <= 0) return;
     _depth--;
     if (_depth > 0) return;
-    _entry?.remove();
-    _entry?.dispose();
-    _entry = null;
-    _depth = 0;
+    _scheduleRemoveIfReady();
   }
 
   static void hideAll() {
+    _pendingHide?.cancel();
+    _pendingHide = null;
+    _shownAt = null;
     _depth = 0;
     _entry?.remove();
     _entry?.dispose();
     _entry = null;
+  }
+
+  static void _scheduleRemoveIfReady() {
+    final shownAt = _shownAt;
+    if (shownAt == null || _entry == null) {
+      _removeNow();
+      return;
+    }
+    final remaining = _minDisplayDuration - DateTime.now().difference(shownAt);
+    if (remaining <= Duration.zero) {
+      _removeNow();
+      return;
+    }
+    _pendingHide?.cancel();
+    _pendingHide = Timer(remaining, () {
+      _pendingHide = null;
+      if (_depth <= 0) _removeNow();
+    });
+  }
+
+  static void _removeNow() {
+    _pendingHide?.cancel();
+    _pendingHide = null;
+    _shownAt = null;
+    _entry?.remove();
+    _entry?.dispose();
+    _entry = null;
+    _depth = 0;
   }
 }

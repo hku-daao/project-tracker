@@ -1,10 +1,10 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/task.dart';
 import '../../services/asana_filter_cookie_storage.dart';
@@ -47,7 +47,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   final Set<String> _expandedProjectIds = {};
 
   String get _cookieStorageKey {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = activeUserStorageKey();
     return uid == null || uid.isEmpty
         ? 'asana_filters_projects'
         : 'asana_filters_projects_$uid';

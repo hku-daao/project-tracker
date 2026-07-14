@@ -114,11 +114,17 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   }
 
   static String _greetingDisplayName(AppState state) {
-    final id = state.userStaffAppId?.trim();
+    final id = state.effectiveStaffAppId?.trim();
     if (id != null && id.isNotEmpty) {
       final name = state.assigneeById(id)?.name.trim();
       if (name != null && name.isNotEmpty) return name;
     }
+    final lookup = state.revampStaffLookup;
+    final fromLookup =
+        lookup?.staffDisplayName?.trim().isNotEmpty == true
+            ? lookup!.staffDisplayName!.trim()
+            : lookup?.staffName?.trim();
+    if (fromLookup != null && fromLookup.isNotEmpty) return fromLookup;
     return 'there';
   }
 
@@ -413,8 +419,8 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     DateTime today,
   ) {
     final rows = <_PersonTaskSummary>[];
-    final mine = state.userStaffAppId?.trim();
-    final myUuid = state.userStaffId?.trim();
+    final mine = state.effectiveStaffAppId?.trim();
+    final myUuid = state.effectiveStaffUuid?.trim();
     if (mine != null && mine.isNotEmpty) {
       final me = state.assigneeById(mine);
       rows.add(

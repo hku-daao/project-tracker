@@ -4,7 +4,7 @@ import 'models/staff_team_lookup.dart';
 import 'models/project_record.dart';
 import 'models/task.dart';
 import 'models/team.dart';
-import 'services/supabase_service.dart';
+import 'services/database_service.dart';
 import 'services/task_fetch_visibility.dart';
 
 /// Global app state for Asana-style projects, tasks, staff, and teams.
@@ -23,7 +23,7 @@ class AppState extends ChangeNotifier {
   final List<ProjectRecord> _projects = [];
   final List<Task> _tasks = [];
 
-  /// Current user's `staff.app_id` (from Supabase lookup or backend).
+  /// Current user's `staff.app_id` (from the database lookup or backend).
   String? _userStaffAppId;
 
   /// Current user's `staff.id` (uuid), when revamp email lookup returned it.
@@ -47,6 +47,30 @@ class AppState extends ChangeNotifier {
 
   String? get userStaffAppId => _userStaffAppId;
   String? get userStaffId => _userStaffId;
+
+  /// Resolved staff keys for UI (falls back to revamp email lookup).
+  String? get effectiveStaffAppId {
+    final direct = _userStaffAppId?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    return _revampStaffLookup?.appId?.trim();
+  }
+
+  String? get effectiveStaffUuid {
+    final direct = _userStaffId?.trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    return _revampStaffLookup?.staffId?.trim();
+  }
+
+  /// Display name for sidebar avatar (assignee list, then staff lookup, then SSO name).
+  String? get currentStaffDisplayName {
+    final id = effectiveStaffAppId?.trim();
+    if (id != null && id.isNotEmpty) {
+      final fromAssignee = assigneeById(id)?.name.trim();
+      if (fromAssignee != null && fromAssignee.isNotEmpty) return fromAssignee;
+    }
+    return _revampStaffLookup?.resolvedDisplayName;
+  }
+
   List<String> get subordinateAppIds => List.unmodifiable(_subordinateAppIds);
 
   List<String> get subordinateStaffUuids =>
@@ -54,12 +78,12 @@ class AppState extends ChangeNotifier {
 
   /// Logged-in user plus subordinates from `subordinate` (same `staff.app_id` keys).
   Set<String> get assigneeVisibilityAppIds {
-    final mine = _userStaffAppId?.trim();
+    final mine = effectiveStaffAppId?.trim();
     if (mine == null || mine.isEmpty) return {};
     return {mine, ..._subordinateAppIds};
   }
 
-  /// All staff keys for matching loaded tasks (app_id + uuid), aligned with Supabase fetch scope.
+  /// All staff keys for matching loaded tasks (app_id + uuid), aligned with Postgres fetch scope.
   Set<String> get taskVisibilityLookupKeys {
     final out = <String>{};
     void add(String? v) {
@@ -67,8 +91,8 @@ class AppState extends ChangeNotifier {
       if (s != null && s.isNotEmpty) out.add(s);
     }
 
-    add(_userStaffAppId);
-    add(_userStaffId);
+    add(effectiveStaffAppId);
+    add(effectiveStaffUuid);
     for (final a in _subordinateAppIds) {
       add(a);
     }
@@ -78,13 +102,13 @@ class AppState extends ChangeNotifier {
     return out;
   }
 
-  /// Scope for Supabase task fetch (me + subordinates as creator or assignee).
+  /// Scope for Postgres task fetch (me + subordinates as creator or assignee).
   TaskFetchVisibility? buildTaskFetchVisibility() {
-    final mine = _userStaffAppId?.trim();
+    final mine = effectiveStaffAppId?.trim();
     if (mine == null || mine.isEmpty) return null;
     return TaskFetchVisibility(
       supervisorStaffAppId: mine,
-      supervisorStaffUuid: _userStaffId,
+      supervisorStaffUuid: effectiveStaffUuid,
       subordinateStaffAppIds: _subordinateAppIds,
       subordinateStaffUuids: _subordinateStaffUuids,
     );
@@ -133,8 +157,8 @@ class AppState extends ChangeNotifier {
 
   /// Matches singular `task.create_by` resolved to [Task.createByAssigneeKey] (`staff.app_id` or uuid).
   bool taskIsCreatedByCurrentUser(Task t) {
-    final mine = _userStaffAppId?.trim();
-    final sid = _userStaffId?.trim();
+    final mine = effectiveStaffAppId?.trim();
+    final sid = effectiveStaffUuid?.trim();
     final cb = t.createByAssigneeKey?.trim();
     if (cb == null || cb.isEmpty) return false;
     if (mine != null && mine.isNotEmpty && cb == mine) return true;
@@ -146,14 +170,14 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  /// Replace teams used for filters (ids must match [Task.teamId] from Supabase singular `task`).
+  /// Replace teams used for filters (ids must match [Task.teamId] from the database singular `task`).
   void setTeamsForFilter(List<Team> teams) {
     _teams = List<Team>.from(teams);
     notifyListeners();
   }
 
-  /// Merge/replace assignees from Supabase `staff` (for filter labels when backend staff is not loaded).
-  void mergeAssigneesFromSupabase(List<Assignee> incoming) {
+  /// Merge/replace assignees from the database `staff` (for filter labels when backend staff is not loaded).
+  void mergeAssignees(List<Assignee> incoming) {
     final map = <String, Assignee>{for (final a in _assignees) a.id: a};
     for (final a in incoming) {
       map[a.id] = a;
@@ -184,7 +208,7 @@ class AppState extends ChangeNotifier {
 
   List<ProjectRecord> get projects => List.unmodifiable(_projects);
 
-  /// Replace projects from Supabase after fetch or create.
+  /// Replace projects from the database after fetch or create.
   void applyProjects(List<ProjectRecord> list) {
     _projects
       ..clear()
@@ -192,13 +216,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// True when login fetch used [TaskFetchVisibility] (rows already scoped in Supabase).
+  /// True when login fetch used [TaskFetchVisibility] (rows already scoped in Postgres).
   bool _tasksLoadedWithVisibilityScope = false;
 
   bool get tasksLoadedWithVisibilityScope => _tasksLoadedWithVisibilityScope;
 
-  /// Replace tasks from Supabase after fetch.
-  void applyTasksFromSupabase(
+  /// Replace tasks from the database after fetch.
+  void applyTasks(
     TasksLoadResult result, {
     bool visibilityScoped = false,
   }) {
@@ -230,7 +254,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Low-level tasks for a team: `task.team_id` matches **or** any assignee's `staff.team_id` matches
-  /// (same id as filter dropdown: Supabase `team.team_id`).
+  /// (same id as filter dropdown: Postgres `team.team_id`).
   /// Tasks visible to the current user: any assignee slot is the user’s `staff.app_id` or a
   /// `subordinate.subordinate_id` whose `supervisor_id` is the user ([assigneeVisibilityAppIds]),
   /// **or** the task was created by this user ([taskIsCreatedByCurrentUser]) (assignees may be outside that set).
@@ -266,7 +290,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Insert or replace a task row (e.g. after Supabase create).
+  /// Insert or replace a task row (e.g. after Postgres create).
   void upsertTask(Task t) {
     final i = _tasks.indexWhere((x) => x.id == t.id);
     if (i >= 0) {
@@ -277,7 +301,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Insert or replace a project row (e.g. after Supabase create).
+  /// Insert or replace a project row (e.g. after Postgres create).
   void upsertProject(ProjectRecord p) {
     final i = _projects.indexWhere((x) => x.id == p.id);
     if (i >= 0) {

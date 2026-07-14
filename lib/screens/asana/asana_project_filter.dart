@@ -184,15 +184,25 @@ class AsanaProjectFilter {
   }
 
   static bool projectCreatedByCurrentUser(AppState state, ProjectRecord p) {
-    final myUuid = state.userStaffId?.trim();
-    if (myUuid == null || myUuid.isEmpty) return false;
-    return p.createByStaffUuid?.trim() == myUuid;
+    final myUuid = state.effectiveStaffUuid?.trim();
+    final myApp = state.effectiveStaffAppId?.trim();
+    final cb = p.createByStaffUuid?.trim();
+    if (cb == null || cb.isEmpty) return false;
+    if (myUuid != null && myUuid.isNotEmpty && cb == myUuid) return true;
+    if (myApp != null && myApp.isNotEmpty && cb == myApp) return true;
+    return false;
   }
 
   static bool projectAssignedToCurrentUser(AppState state, ProjectRecord p) {
-    final myUuid = state.userStaffId?.trim();
-    if (myUuid == null || myUuid.isEmpty) return false;
-    return p.assigneeStaffUuids.any((u) => u.trim() == myUuid);
+    final myUuid = state.effectiveStaffUuid?.trim();
+    final myApp = state.effectiveStaffAppId?.trim();
+    for (final u in p.assigneeStaffUuids) {
+      final uid = u.trim();
+      if (uid.isEmpty) continue;
+      if (myUuid != null && myUuid.isNotEmpty && uid == myUuid) return true;
+      if (myApp != null && myApp.isNotEmpty && uid == myApp) return true;
+    }
+    return false;
   }
 
   static bool _keyMatches(String? value, Iterable<String> selected) {

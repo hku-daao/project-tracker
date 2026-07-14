@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../config/supabase_config.dart';
+import '../config/postgrest_config.dart';
 import '../models/calendar_holiday.dart';
-import '../services/supabase_service.dart';
+import '../services/database_service.dart';
 import 'hk_time.dart';
 
 /// Inclusive lower bound for [showHolidayAwareDatePicker] when callers do not need a tighter minimum.
@@ -41,14 +41,14 @@ DateTime? _tryParseYmd(String raw) {
   return DateTime(y, mo, day);
 }
 
-/// Loads holidays from Supabase when configured; otherwise falls back to [showDatePicker].
+/// Loads holidays from the database when configured; otherwise falls back to [showDatePicker].
 Future<DateTime?> showHolidayAwareDatePicker({
   required BuildContext context,
   required DateTime initialDate,
   required DateTime firstDate,
   required DateTime lastDate,
 }) async {
-  if (!SupabaseConfig.isConfigured) {
+  if (!PostgrestConfig.isConfigured) {
     return showDatePicker(
       context: context,
       initialDate: _clampDay(initialDate, firstDate, lastDate),
@@ -56,7 +56,7 @@ Future<DateTime?> showHolidayAwareDatePicker({
       lastDate: _dateOnly(lastDate),
     );
   }
-  final holidays = await SupabaseService.fetchCalendarHolidaysBetween(
+  final holidays = await DatabaseService.fetchCalendarHolidaysBetween(
     firstDate,
     lastDate,
   );

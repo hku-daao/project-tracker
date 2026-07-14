@@ -1,13 +1,16 @@
 import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
+import '../config/dev_auth_context.dart';
 import '../services/asana_filter_cookie_storage.dart';
+import '../services/sso_auth_service.dart';
 import '../web_deep_link.dart';
+import '../widgets/project_tracker_logo.dart';
 import 'asana/asana_blocking_loading_overlay.dart';
+import 'asana/asana_filter_widgets.dart';
 import 'asana/asana_archived_panel.dart';
 import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
@@ -404,10 +407,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   }
 
   void _handleSubtaskChanged() {
+    dismissAsanaCheckboxFilterPanels();
     setState(() => _detailRefreshToken++);
   }
 
   void _handleTaskChanged() {
+    dismissAsanaCheckboxFilterPanels();
     setState(() => _detailRefreshToken++);
   }
 
@@ -624,94 +629,96 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                   ),
                   child: Row(
                     children: [
-                      IconButton(
-                        icon: Icon(
-                          sidebarVisible ? Icons.menu_open : Icons.menu,
-                          color: palette.onBanner,
-                        ),
-                        tooltip: sidebarVisible ? 'Hide panel' : 'Show panel',
-                        onPressed: () =>
-                            setState(() => _sidebarOpenOverride = !sidebarOpen),
-                      ),
-                      Expanded(
-                        child: Center(
-                          child: SizedBox(
-                            width: searchWidth,
-                            height: searchBarHeight,
-                            child: TextField(
-                              controller: _searchController,
-                              style: searchTextStyle,
-                              decoration: InputDecoration(
-                                hintText: 'Search',
-                                hintStyle: asanaTextStyle(
-                                  asanaTheme.textTheme.bodyMedium,
-                                  fontSize: 14,
-                                  color: palette.darkChrome
-                                      ? palette.onSidebarMuted
-                                      : kAsanaTextSecondary,
-                                ),
-                                filled: true,
-                                fillColor: palette.searchField,
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical:
-                                      (searchBarHeight - titleFontSize * 1.2) /
-                                      2,
-                                ),
-                                prefixIcon: Icon(
-                                  Icons.search,
-                                  size: titleFontSize * 1.35,
-                                  color: palette.darkChrome
-                                      ? palette.onSidebarMuted
-                                      : Colors.black54,
-                                ),
-                                prefixIconConstraints: BoxConstraints(
-                                  minWidth: searchBarHeight,
-                                  minHeight: searchBarHeight,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide.none,
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide.none,
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: palette.accent,
-                                    width: 1.5,
+                          IconButton(
+                            icon: Icon(
+                              sidebarVisible ? Icons.menu_open : Icons.menu,
+                              color: palette.onBanner,
+                            ),
+                            tooltip: sidebarVisible ? 'Hide panel' : 'Show panel',
+                            onPressed: () => setState(
+                              () => _sidebarOpenOverride = !sidebarOpen,
+                            ),
+                          ),
+                          Expanded(
+                            child: Center(
+                              child: SizedBox(
+                                width: searchWidth,
+                                height: searchBarHeight,
+                                child: TextField(
+                                  controller: _searchController,
+                                  style: searchTextStyle,
+                                  decoration: InputDecoration(
+                                    hintText: 'Search',
+                                    hintStyle: asanaTextStyle(
+                                      asanaTheme.textTheme.bodyMedium,
+                                      fontSize: 14,
+                                      color: palette.darkChrome
+                                          ? palette.onSidebarMuted
+                                          : kAsanaTextSecondary,
+                                    ),
+                                    filled: true,
+                                    fillColor: palette.searchField,
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical:
+                                          (searchBarHeight -
+                                              titleFontSize * 1.2) /
+                                          2,
+                                    ),
+                                    prefixIcon: Icon(
+                                      Icons.search,
+                                      size: titleFontSize * 1.35,
+                                      color: palette.darkChrome
+                                          ? palette.onSidebarMuted
+                                          : Colors.black54,
+                                    ),
+                                    prefixIconConstraints: BoxConstraints(
+                                      minWidth: searchBarHeight,
+                                      minHeight: searchBarHeight,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: BorderSide(
+                                        color: palette.accent,
+                                        width: 1.5,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8, right: 12),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _AsanaBannerLogo(height: titleFontSize * 1.6),
-                            SizedBox(width: compactBanner ? 6 : 8),
-                            Text(
-                              compactBanner
-                                  ? 'Project\nTracker'
-                                  : 'Project Tracker',
-                              style: titleStyle?.copyWith(
-                                fontSize: compactBanner ? 12 : titleFontSize,
-                                height: compactBanner ? 1.05 : 1.2,
-                              ),
-                              maxLines: compactBanner ? 2 : 1,
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8, right: 12),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _AsanaBannerLogo(height: titleFontSize * 1.6),
+                                SizedBox(width: compactBanner ? 6 : 8),
+                                Text(
+                                  compactBanner
+                                      ? 'Project\nTracker'
+                                      : 'Project Tracker',
+                                  style: titleStyle?.copyWith(
+                                    fontSize: compactBanner ? 12 : titleFontSize,
+                                    height: compactBanner ? 1.05 : 1.2,
+                                  ),
+                                  maxLines: compactBanner ? 2 : 1,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
                 ),
               ),
             ),
@@ -1093,7 +1100,7 @@ class _SidebarUserAvatar extends StatelessWidget {
     if (ok == true) {
       AsanaBlockingLoadingOverlay.hideAll();
       try {
-        await FirebaseAuth.instance.signOut();
+        await signOutActiveUser();
       } finally {
         AsanaBlockingLoadingOverlay.hideAll();
       }
@@ -1109,10 +1116,9 @@ class _SidebarUserAvatar extends StatelessWidget {
         }
 
         final state = context.watch<AppState>();
-        final id = state.userStaffAppId?.trim();
-        var displayName = '';
-        if (id != null && id.isNotEmpty) {
-          displayName = state.assigneeById(id)?.name.trim() ?? '';
+        var displayName = state.currentStaffDisplayName?.trim() ?? '';
+        if (displayName.isEmpty) {
+          displayName = SsoAuthService.currentName?.trim() ?? '';
         }
         final initials = asanaStaffInitials(
           displayName.isNotEmpty ? displayName : '?',
@@ -1165,16 +1171,8 @@ class _AsanaBannerLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final cacheH = (height * dpr).round().clamp(1, 4096);
-
-    return Image.asset(
-      'assets/images/logo.png',
+    return ProjectTrackerLogo(
       height: height,
-      fit: BoxFit.contain,
-      filterQuality: FilterQuality.high,
-      isAntiAlias: true,
-      cacheHeight: cacheH,
       semanticLabel: 'Project Tracker logo',
     );
   }

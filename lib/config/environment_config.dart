@@ -1,24 +1,16 @@
 /// Compile-time deploy target for the Flutter app.
 ///
-/// | `DEPLOY_ENV`   | Supabase    | Railway backend |
-/// |----------------|-------------|-----------------|
-/// | `testing` (default) | DAAO Tests | Calvin's Test Space |
-/// | `production`   | DAAO Apps   | DAAO Apps |
+/// | `DEPLOY_ENV`   | PostgREST API | Backend API |
+/// |----------------|---------------|-------------|
+/// | `testing` (default) | local / env override | local / Railway |
+/// | `production`   | env override  | Railway |
 ///
 /// Firebase uses the **same** project (`daao-a20c6`) for both; only hosting URL differs.
 ///
-/// ### Build examples (web)
-/// ```bash
-/// # Testing stack (default)
-/// flutter build web --release --no-wasm-dry-run --no-tree-shake-icons
-///
-/// # Production stack
-/// flutter build web --release --no-wasm-dry-run --no-tree-shake-icons --dart-define=DEPLOY_ENV=production
-/// ```
-///
-/// ### Optional overrides (either environment)
-/// - `--dart-define=SUPABASE_ANON_KEY=...` — overrides the anon key from [SupabaseConfig].
-/// - `--dart-define=API_BASE_URL=https://...` — overrides [ApiConfig.baseUrl].
+/// ### Optional overrides
+/// - `--dart-define=POSTGREST_URL=...` — PostgREST base URL
+/// - `--dart-define=POSTGREST_ANON_KEY=...` — anon JWT for PostgREST
+/// - `--dart-define=API_BASE_URL=...` — overrides [ApiConfig.baseUrl].
 class AppEnvironment {
   AppEnvironment._();
 

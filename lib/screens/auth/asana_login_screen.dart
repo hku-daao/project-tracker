@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../utils/copyable_snackbar.dart';
+import '../../widgets/project_tracker_logo.dart';
 import '../asana/asana_theme.dart';
 import '../asana_landing_screen.dart';
 
@@ -323,19 +324,10 @@ class _AsanaLoginBrand extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const logoHeight = 56.0;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final cacheH = (logoHeight * dpr).round().clamp(1, 4096);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Image.asset(
-          'assets/images/logo.png',
-          height: logoHeight,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          cacheHeight: cacheH,
-          semanticLabel: 'Project Tracker logo',
-        ),
+        const ProjectTrackerLogo(height: logoHeight),
         const SizedBox(width: 12),
         Text(
           'Project\nTracker',

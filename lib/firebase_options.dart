@@ -19,7 +19,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '767884507730',
     projectId: 'daao-a20c6',
     authDomain: 'daao-a20c6.firebaseapp.com',
-    storageBucket: 'daao-a20c6.firebasestorage.app',
     measurementId: 'G-HWZBX7573J',
   );
 }

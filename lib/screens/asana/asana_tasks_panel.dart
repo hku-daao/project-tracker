@@ -1,16 +1,16 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../config/dev_auth_context.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
 import '../../services/asana_filter_cookie_storage.dart';
-import '../../services/supabase_service.dart';
+import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_blocking_loading_overlay.dart';
@@ -59,7 +59,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   String _tasksDataSig = '';
 
   String get _cookieStorageKey {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = activeUserStorageKey();
     final tab = widget.flatTasksAndSubtasks ? 'all_tasks_subtasks' : 'tasks';
     return uid == null || uid.isEmpty
         ? 'asana_filters_$tab'
@@ -69,7 +69,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   @override
   void initState() {
     super.initState();
-    SupabaseService.addSubtaskCacheInvalidateListener(
+    DatabaseService.addSubtaskCacheInvalidateListener(
       _onSubtasksCacheInvalidated,
     );
     _loadSavedFilters();
@@ -77,7 +77,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
 
   @override
   void dispose() {
-    SupabaseService.removeSubtaskCacheInvalidateListener(
+    DatabaseService.removeSubtaskCacheInvalidateListener(
       _onSubtasksCacheInvalidated,
     );
     super.dispose();
@@ -105,7 +105,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     if (oldWidget.searchQuery != widget.searchQuery) {
       _rebuildTaskList(showBlockingOverlay: false);
     } else if (oldWidget.refreshToken != widget.refreshToken) {
-      _rebuildTaskList();
+      _rebuildTaskList(showBlockingOverlay: false);
     }
   }
 
@@ -125,6 +125,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     if (!mounted || !_filtersReady) return;
     final gen = ++_listGeneration;
     if (showBlockingOverlay) {
+      dismissAsanaCheckboxFilterPanels();
       AsanaBlockingLoadingOverlay.show(context);
     }
     setState(() => _loadingTasks = true);
@@ -146,7 +147,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       if (prefetchIds.isNotEmpty) {
         try {
           grouped =
-              await SupabaseService.fetchSubtasksGroupedForLandingPrefetch(
+              await DatabaseService.fetchSubtasksGroupedForLandingPrefetch(
                 prefetchIds,
               );
         } catch (_) {
@@ -231,7 +232,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     final existing = _groupedSubtasks[taskId];
     if (existing != null && existing.isNotEmpty) return;
     try {
-      final list = await SupabaseService.fetchSubtasksForTask(taskId);
+      final list = await DatabaseService.fetchSubtasksForTask(taskId);
       if (!mounted) return;
       setState(() {
         _groupedSubtasks[taskId] = list;
@@ -260,7 +261,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     if (!_taskCompleted(task) || task.isArchivedCompleted) return;
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final err = await SupabaseService.updateSingularTaskRow(
+      final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updateByStaffLookupKey: context.read<AppState>().userStaffAppId,
         archiveNow: true,
@@ -449,9 +450,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                               appState: state,
                               task: row.task,
                               subtask: sub,
-                              onArchiveTask: !isSub && _taskCompleted(row.task)
-                                  ? () => _archiveCompletedTask(row.task)
-                                  : null,
                               onTap: isSub
                                   ? () => widget.onOpenSubtask?.call(sub.id)
                                   : () => widget.onOpenTask?.call(row.task.id),
@@ -487,9 +485,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                               tableColors: tableColors,
                               appState: state,
                               task: t,
-                              onArchiveTask: _taskCompleted(t)
-                                  ? () => _archiveCompletedTask(t)
-                                  : null,
                               onTap: () => widget.onOpenTask?.call(t.id),
                               expandControl: visibleSubCount > 0
                                   ? _ExpandChevron(
@@ -619,10 +614,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                     submission: isSub
                                         ? sub.submission
                                         : row.task.submission,
-                                    onArchiveTask:
-                                        !isSub && _taskCompleted(row.task)
-                                        ? () => _archiveCompletedTask(row.task)
-                                        : null,
                                   ),
                                 ],
                               );
@@ -661,9 +652,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                   expanded: _expandedTaskIds.contains(t.id),
                                   onToggleExpand: () =>
                                       _toggleTaskExpanded(t.id),
-                                  onArchiveTask: _taskCompleted(t)
-                                      ? () => _archiveCompletedTask(t)
-                                      : null,
                                 ),
                               ],
                             );

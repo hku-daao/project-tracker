@@ -39,9 +39,22 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
+# Local environment (never commit)
+.env
+
 # Local API keys (never commit)
 secrets/*
 !secrets/*.example
+scripts/local_llm.env
+
+# Local DB dump and uploaded files (never commit)
+public_tables.dump
+data/
+
+# TLS for HKU test server (copy from IT POC on 147.8.203.132)
+docker/nginx/ssl/*.crt
+docker/nginx/ssl/*.key
+docker/nginx/ssl/*.pem
 
 # Firebase
 .firebase/

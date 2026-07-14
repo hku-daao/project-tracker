@@ -1,1 +1,3 @@
 void configureWebStartup() {}
+
+void dismissHtmlStartupLoader() {}

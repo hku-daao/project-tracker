@@ -60,7 +60,7 @@ class SingularSubtask {
   final DateTime? createDate;
   final DateTime? updateDate;
 
-  /// Denormalized activity instant (`subtask.last_updated` in Supabase).
+  /// Denormalized activity instant (`subtask.last_updated` in Postgres).
   final DateTime? lastUpdated;
 
   /// Resolved from `subtask.update_by` → `staff.name`.

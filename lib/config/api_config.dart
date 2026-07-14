@@ -1,4 +1,8 @@
+import 'package:flutter/foundation.dart';
+
 import 'environment_config.dart';
+import 'web_host_env_stub.dart'
+    if (dart.library.html) 'web_host_env_web.dart';
 
 /// Backend API (Railway) — switches with [AppEnvironment].
 ///
@@ -11,6 +15,8 @@ import 'environment_config.dart';
 class ApiConfig {
   ApiConfig._();
 
+  static const String _localBaseUrl = 'http://127.0.0.1:3000';
+
   static const String _testingBaseUrl =
       'https://project-tracker-test-production.up.railway.app';
   static const String _productionBaseUrl =
@@ -19,7 +25,10 @@ class ApiConfig {
   /// Railway backend base URL (no trailing slash).
   static String get baseUrl {
     const fromEnv = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (fromEnv.isNotEmpty) return fromEnv;
+    if (fromEnv.isNotEmpty) return fromEnv.replaceAll(RegExp(r'/+$'), '');
+    if (kIsWeb && isDeployedWebHost) {
+      return webOrigin.replaceAll(RegExp(r'/+$'), '');
+    }
     return AppEnvironment.isProduction ? _productionBaseUrl : _testingBaseUrl;
   }
 

@@ -6,18 +6,18 @@ trusted server process — NOT in the Flutter app. Never ship the service
 account JSON in client code; anyone can extract it from a built app.
 
 Typical uses on the server:
-  - Generate signed download URLs for private Storage objects
-  - Cleanup / migration jobs touching Storage or Auth
   - Verify ID tokens if you add your own API layer
+  - Auth-related cleanup or migration jobs
 
-Flutter uploads should use the Firebase *client* SDK (`firebase_storage`) with
-Storage Security Rules and Firebase Auth — not Admin credentials.
+File uploads are handled by the local backend (`/api/files/*`), not Firebase.
 
 Setup:
   1. Save your real JSON outside the git repo (e.g. ~/.secrets/project-firebase.json).
   2. export GOOGLE_APPLICATION_CREDENTIALS=/path/to/file.json
   3. pip install firebase-admin
   4. Run your script that calls init_firebase_admin() once at startup.
+
+See also: backend/server.js (Node) uses FIREBASE_SERVICE_ACCOUNT_JSON for Auth.
 """
 
 from __future__ import annotations
@@ -28,19 +28,14 @@ import firebase_admin
 from firebase_admin import credentials
 
 
-def init_firebase_admin() -> None:
-    if firebase_admin._apps:
-        return
-    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not path or not os.path.isfile(path):
-        raise RuntimeError(
-            "Set GOOGLE_APPLICATION_CREDENTIALS to the absolute path of your "
-            "service account JSON (file must exist; do not commit that file)."
-        )
-    cred = credentials.Certificate(path)
-    firebase_admin.initialize_app(cred)
+def init_firebase_admin() -> firebase_admin.App:
+    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if not cred_path:
+        raise RuntimeError("Set GOOGLE_APPLICATION_CREDENTIALS to your service account JSON path.")
+    cred = credentials.Certificate(cred_path)
+    return firebase_admin.initialize_app(cred)
 
 
 if __name__ == "__main__":
-    init_firebase_admin()
-    print("Firebase Admin initialized (no Storage call in this example).")
+    app = init_firebase_admin()
+    print(f"Firebase Admin initialized: {app.project_id}")

@@ -2,7 +2,10 @@ require('dotenv').config();
 const crypto = require('crypto');
 const http = require('http');
 const cron = require('node-cron');
-const { createClient } = require('@supabase/supabase-js');
+const { createDb } = require('./db');
+const localFiles = require('./local_files');
+const oidcAuth = require('./oidc_auth');
+const smtpMail = require('./smtp_mail');
 
 const MAILGUN_API_KEY = (process.env.MAILGUN_API_KEY || '').trim();
 const MAILGUN_DOMAIN = (process.env.MAILGUN_DOMAIN || '').trim();
@@ -12,11 +15,11 @@ const MAILGUN_FROM = (process.env.MAILGUN_FROM || '').trim();
 const MAILGUN_NOTIFICATION_FROM =
   (process.env.MAILGUN_NOTIFICATION_FROM || '').trim() ||
   'no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org';
-/** Public web app origin for task links in emails (no trailing slash). */
-const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
+/** Public web app origin for task links in emails (no trailing slash). Set PUBLIC_WEB_APP_URL in .env */
+const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
 /** Marketing / landing URL for “Project Tracker” link in comment emails (no trailing slash). */
 const PROJECT_TRACKER_LANDING_URL = (
-  process.env.PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk'
+  process.env.PROJECT_TRACKER_LANDING_URL || PUBLIC_WEB_APP_URL
 ).trim().replace(/\/$/, '');
 /** Same base as [PROJECT_TRACKER_LANDING_URL] with trailing slash (overdue email templates). */
 const OVERDUE_REMINDER_LANDING_HREF = `${PROJECT_TRACKER_LANDING_URL}/`;
@@ -27,26 +30,26 @@ const OVERDUE_REMINDER_LANDING_HREF = `${PROJECT_TRACKER_LANDING_URL}/`;
  */
 function subtaskWebAppUrl(subtaskId) {
   const id = String(subtaskId || '').trim();
-  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
+  const base = String(PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
   return `${base}/#/?subtask=${encodeURIComponent(id)}`;
 }
 
 /** Flutter web deep link for task detail (hash survives many email clients). */
 function taskWebAppUrl(taskId) {
   const id = String(taskId || '').trim();
-  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
+  const base = String(PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
   return `${base}/#/?task=${encodeURIComponent(id)}`;
 }
 
 /** Flutter web deep link for project detail (`/#/?project=` matches [web_deep_link_web.dart]). */
 function projectWebAppUrl(projectId) {
   const id = String(projectId || '').trim();
-  const base = String(PUBLIC_WEB_APP_URL || 'https://projecttracker.hku.hk').trim().replace(/\/$/, '');
+  const base = String(PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
   return `${base}/#/?project=${encodeURIComponent(id)}`;
 }
 
-/** “Project Tracker” footer link in task-updated assignee emails (fixed product URL). */
-const TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF = 'https://projecttracker.hku.hk/';
+/** “Project Tracker” footer link in task-updated assignee emails. */
+const TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF = `${PROJECT_TRACKER_LANDING_URL}/`;
 
 /** Allowed keys from Flutter for task-updated email lines (display label is server-side). */
 const TASK_UPDATE_NOTIFY_FIELD_LABELS = {
@@ -198,11 +201,29 @@ const TASK_COMMENT_EMAIL_ENABLED = (() => {
 /** POST /api/cron/* — optional shared secret (Railway / external scheduler). */
 const CRON_SECRET = (process.env.CRON_SECRET || '').trim();
 
-const PORT = process.env.PORT || 3000;
+/** Master switch for outbound notification/cron email (Mailgun). Default off during HKU migration review. */
+const EMAIL_SENDING_ENABLED = (() => {
+  const v = (process.env.EMAIL_SENDING_ENABLED || 'false').trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes';
+})();
 
-// Trim — copy/paste in Railway sometimes adds trailing newlines, which breaks Supabase URL.
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
-const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+/** `/api/notify/*` — email off by default during on-prem migration (HKU SMTP later). */
+function notifyEmailSkippedResponse(req, res) {
+  sendJson(req, res, 200, { ok: true, skipped: true, reason: 'email_disabled' });
+}
+
+function cronEmailBlockedReason() {
+  if (!EMAIL_SENDING_ENABLED) return null;
+  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+    return 'Outbound email transport not configured';
+  }
+  return null;
+}
+
+const PORT = process.env.PORT || 3000;
+const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
+
+// Trim — copy/paste in Railway sometimes adds trailing newlines.
 const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'test-admin@test.com').toLowerCase();
 
@@ -215,9 +236,6 @@ const DEFAULT_CORS_ORIGINS = [
   'https://project-tracker-production.firebaseapp.com',
   'https://daao-a20c6.web.app',
   'https://testprojectmanagementtracking.firebaseapp.com',
-  'https://projecttrackertest.hku-ia.ai',
-  'https://projecttracker.hku.hk',
-  'https://projecttracker.hku-ia.ai',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
@@ -227,7 +245,8 @@ function allowedOriginsSet() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  return new Set([...DEFAULT_CORS_ORIGINS, ...fromEnv]);
+  const site = PUBLIC_WEB_APP_URL ? [PUBLIC_WEB_APP_URL] : [];
+  return new Set([...DEFAULT_CORS_ORIGINS, ...fromEnv, ...site]);
 }
 
 /** Per-request CORS: echo preflight headers + allowlist Origin (required for browser + Authorization). */
@@ -240,6 +259,7 @@ function buildCorsHeaders(req) {
   };
   if (origin && allow.has(origin)) {
     h['Access-Control-Allow-Origin'] = origin;
+    h['Access-Control-Allow-Credentials'] = 'true';
     h.Vary = 'Origin';
   } else {
     h['Access-Control-Allow-Origin'] = '*';
@@ -270,18 +290,39 @@ if (FIREBASE_SERVICE_ACCOUNT_JSON) {
   }
 }
 
-const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-  : null;
+let pgPool = null;
+if (DATABASE_URL) {
+  try {
+    const { Pool } = require('pg');
+    pgPool = new Pool({ connectionString: DATABASE_URL });
+  } catch (e) {
+    console.warn('Postgres pool init failed:', e.message);
+  }
+}
+
+const db = pgPool ? createDb(pgPool) : null;
+localFiles.ensureUploadDir();
+
+async function checkDatabaseHealth() {
+  if (!pgPool) {
+    return { configured: DATABASE_URL.length > 0, ok: false };
+  }
+  try {
+    const result = await pgPool.query('SELECT 1 AS ok');
+    return { configured: true, ok: result.rows[0]?.ok === 1 };
+  } catch (e) {
+    return { configured: true, ok: false, error: e.message };
+  }
+}
 
 async function resolveStaffKeyForFirebaseSession(uid, email) {
-  if (!supabase) return null;
+  if (!db) return null;
   const firebaseUid = String(uid || '').trim();
   const emailNorm = String(email || '').trim().toLowerCase();
   if (!firebaseUid && !emailNorm) return null;
   const resolveByStaffEmail = async () => {
     if (!emailNorm) return null;
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('staff')
       .select('app_id')
       .ilike('email', emailNorm)
@@ -292,7 +333,7 @@ async function resolveStaffKeyForFirebaseSession(uid, email) {
     return typeof appId === 'string' && appId.trim() ? appId.trim() : null;
   };
   try {
-    let query = supabase
+    let query = db
       .from('app_users')
       .select('staff ( app_id )')
       .limit(1);
@@ -303,7 +344,7 @@ async function resolveStaffKeyForFirebaseSession(uid, email) {
     }
     let { data, error } = await query.maybeSingle();
     if ((!data || error) && emailNorm && firebaseUid) {
-      const fallback = await supabase
+      const fallback = await db
         .from('app_users')
         .select('staff ( app_id )')
         .eq('email', emailNorm)
@@ -323,7 +364,30 @@ async function resolveStaffKeyForFirebaseSession(uid, email) {
   }
 }
 
-async function verifyFirebaseToken(authHeader) {
+async function verifyFirebaseToken(reqOrAuthHeader) {
+  const req =
+    reqOrAuthHeader && typeof reqOrAuthHeader === 'object' && reqOrAuthHeader.headers
+      ? reqOrAuthHeader
+      : null;
+  const authHeader = req ? req.headers.authorization : reqOrAuthHeader;
+
+  if (oidcAuth.isConfigured()) {
+    const oidcSession = oidcAuth.sessionFromRequest(
+      req || { headers: { authorization: authHeader || '', cookie: '' } },
+    );
+    if (oidcSession) {
+      const auth = oidcAuth.toAuthSession(oidcSession);
+      const resolvedStaffKey = await resolveStaffKeyForFirebaseSession(auth.uid, auth.email);
+      const staffKeys = resolvedStaffKey ? [resolvedStaffKey] : [];
+      return {
+        uid: auth.uid,
+        email: auth.email,
+        staffKey: staffKeys[0] || null,
+        staffKeys,
+      };
+    }
+  }
+
   if (!firebaseAdmin || !authHeader || !authHeader.startsWith('Bearer ')) return null;
   const idToken = authHeader.slice(7);
   try {
@@ -348,385 +412,9 @@ async function verifyFirebaseToken(authHeader) {
   }
 }
 
-/** Short-lived attachment stream tickets (PDF viewers issue multiple GET/Range requests). */
-const ATTACHMENT_STREAM_TTL_MS = 300000;
-
-function getAttachmentStreamSigningSecret() {
-  const s = (
-    process.env.ATTACHMENT_STREAM_SIGNING_SECRET ||
-    process.env.CRON_SECRET ||
-    ''
-  ).trim();
-  return s;
-}
-
-/**
- * Signed ticket: base64url(JSON).base64url(HMAC-SHA256(secret, payloadB64)).
- * Stateless across Railway instances; reusable until [exp] for Range/subrequests.
- */
-function createAttachmentStreamTicket(objectPath, contentType, expMs) {
-  const secret = getAttachmentStreamSigningSecret();
-  if (!secret) return null;
-  const payload = Buffer.from(
-    JSON.stringify({
-      objectPath,
-      contentType: contentType || 'application/octet-stream',
-      exp: expMs,
-    }),
-    'utf8',
-  );
-  const payloadB64 = payload.toString('base64url');
-  const sig = crypto
-    .createHmac('sha256', secret)
-    .update(payloadB64)
-    .digest('base64url');
-  return `${payloadB64}.${sig}`;
-}
-
-function parseAndVerifyAttachmentStreamTicket(ticket) {
-  const secret = getAttachmentStreamSigningSecret();
-  if (!secret || !ticket || typeof ticket !== 'string') return null;
-  const dot = ticket.lastIndexOf('.');
-  if (dot <= 0) return null;
-  const payloadB64 = ticket.slice(0, dot);
-  const sig = ticket.slice(dot + 1);
-  const expectedSig = crypto
-    .createHmac('sha256', secret)
-    .update(payloadB64)
-    .digest('base64url');
-  let a;
-  let b;
-  try {
-    a = Buffer.from(sig, 'base64url');
-    b = Buffer.from(expectedSig, 'base64url');
-  } catch (_) {
-    return null;
-  }
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  let data;
-  try {
-    data = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-  } catch (_) {
-    return null;
-  }
-  if (!data || typeof data.objectPath !== 'string' || typeof data.exp !== 'number') {
-    return null;
-  }
-  if (Date.now() > data.exp) return null;
-  if (!isAllowedProjectAttachmentObjectPath(data.objectPath)) return null;
-  return {
-    objectPath: data.objectPath.trim().replace(/^\/+/, ''),
-    contentType:
-      typeof data.contentType === 'string' && data.contentType.trim()
-        ? data.contentType.trim()
-        : 'application/octet-stream',
-  };
-}
-
-function getFirebaseStorageBucketName() {
-  const fromEnv = (process.env.FIREBASE_STORAGE_BUCKET || '').trim();
-  if (fromEnv) return fromEnv;
-  if (FIREBASE_SERVICE_ACCOUNT_JSON) {
-    try {
-      const sa = JSON.parse(FIREBASE_SERVICE_ACCOUNT_JSON);
-      if (sa.project_id) return `${sa.project_id}.firebasestorage.app`;
-    } catch (_) {}
-  }
-  return '';
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function storageErrorDebugPayload(bucketName, objectPath, e) {
-  return {
-    bucketName,
-    objectPath,
-    code: e && e.code,
-    message: e && e.message,
-  };
-}
-
-function isStorageObjectNotFoundError(e) {
-  const code = e && e.code;
-  return code === 404 || code === '404';
-}
-
-function isTransientStorageAuthOrNetworkError(e) {
-  const code = String((e && e.code) || '');
-  const message = String((e && e.message) || '').toLowerCase();
-  return (
-    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
-    code === 'ECONNRESET' ||
-    code === 'ETIMEDOUT' ||
-    code === 'EAI_AGAIN' ||
-    code === 'ENOTFOUND' ||
-    message.includes('premature close') ||
-    message.includes('socket hang up') ||
-    message.includes('fetch failed') ||
-    message.includes('trying to fetch https://www.googleapis.com/oauth2')
-  );
-}
-
-async function getStorageMetadataWithRetry(bucketName, objectPath) {
-  const bucket = firebaseAdmin.storage().bucket(bucketName);
-  const file = bucket.file(objectPath);
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const [meta] = await file.getMetadata();
-      return meta;
-    } catch (e) {
-      lastError = e;
-      if (isStorageObjectNotFoundError(e) || !isTransientStorageAuthOrNetworkError(e)) {
-        throw e;
-      }
-      await delay(250 * (attempt + 1));
-    }
-  }
-  throw lastError;
-}
-
-function isAllowedProjectAttachmentObjectPath(p) {
-  const s = String(p || '').trim().replace(/^\/+/, '');
-  if (!s || s.includes('..')) return false;
-  return /^project_tracker\/users\/[^/]+\/(project_attachments|task_attachments|subtask_attachments)\/[^/]+\/.+$/i.test(
-    s,
-  );
-}
-
-function extractUploaderUidFromAttachmentPath(objectPath) {
-  const m = String(objectPath || '')
-    .trim()
-    .match(/^project_tracker\/users\/([^/]+)\//i);
-  return m ? m[1] : null;
-}
-
-function metadataMatchesStaffKey(gcsMetadata, staffKey) {
-  if (!staffKey) return false;
-  const nested = gcsMetadata && gcsMetadata.metadata;
-  const custom =
-    nested && typeof nested === 'object' ? nested : {};
-  for (let i = 0; i < 10; i++) {
-    const k = `m${i}`;
-    const v = custom[k];
-    if (typeof v === 'string' && v === staffKey) return true;
-  }
-  return false;
-}
-
-function metadataMatchesAnyStaffKey(gcsMetadata, staffKeys) {
-  const keys = Array.isArray(staffKeys) ? staffKeys : [staffKeys];
-  return keys.some((key) => metadataMatchesStaffKey(gcsMetadata, key));
-}
-
-function canReadAttachmentObject(sessionUid, staffKeys, objectPath, gcsMetadata) {
-  const uploaderUid = extractUploaderUidFromAttachmentPath(objectPath);
-  if (!uploaderUid) return false;
-  if (sessionUid === uploaderUid) return true;
-  return metadataMatchesAnyStaffKey(gcsMetadata, staffKeys);
-}
-
-function attachmentAuthDebugPayload(session, objectPath, gcsMetadata) {
-  const custom = gcsMetadata?.metadata || {};
-  const metadataAcl = {};
-  for (let i = 0; i < 10; i++) {
-    const key = `m${i}`;
-    if (typeof custom[key] === 'string') metadataAcl[key] = custom[key];
-  }
-  return {
-    uid: session?.uid || null,
-    email: session?.email || null,
-    staffKey: session?.staffKey || null,
-    staffKeys: session?.staffKeys || [],
-    uploaderUid: extractUploaderUidFromAttachmentPath(objectPath),
-    objectPath,
-    metadataAcl,
-  };
-}
-
-async function handleAttachmentOpenSession(req, res) {
-  if (req.method !== 'POST') {
-    sendJson(req, res, 405, { error: 'Method not allowed' });
-    return;
-  }
-  if (!firebaseAdmin) {
-    sendJson(req, res, 503, { error: 'Firebase Admin not configured' });
-    return;
-  }
-  const bucketName = getFirebaseStorageBucketName();
-  if (!bucketName) {
-    sendJson(req, res, 503, { error: 'FIREBASE_STORAGE_BUCKET or project_id missing' });
-    return;
-  }
-  const session = await verifyFirebaseToken(req.headers.authorization);
-  if (!session) {
-    sendJson(req, res, 401, { error: 'Unauthorized' });
-    return;
-  }
-  let body;
-  try {
-    body = await readBody(req);
-  } catch (_) {
-    sendJson(req, res, 400, { error: 'Invalid JSON' });
-    return;
-  }
-  const objectPath = String(body.objectPath || '')
-    .trim()
-    .replace(/^\/+/, '');
-  if (!isAllowedProjectAttachmentObjectPath(objectPath)) {
-    sendJson(req, res, 400, { error: 'Invalid object path' });
-    return;
-  }
-  let meta;
-  try {
-    meta = await getStorageMetadataWithRetry(bucketName, objectPath);
-  } catch (e) {
-    const debugPayload = storageErrorDebugPayload(bucketName, objectPath, e);
-    const isNotFound = isStorageObjectNotFoundError(e);
-    console.warn(
-      isNotFound
-        ? 'attachment open-session metadata not found'
-        : 'attachment open-session metadata unavailable',
-      JSON.stringify(debugPayload),
-    );
-    sendJson(
-      req,
-      res,
-      isNotFound ? 404 : 502,
-      process.env.ATTACHMENT_DEBUG_RESPONSE === 'true'
-        ? {
-            error: isNotFound ? 'Not found' : 'Storage metadata unavailable',
-            debug: debugPayload,
-          }
-        : { error: isNotFound ? 'Not found' : 'Storage metadata unavailable' },
-    );
-    return;
-  }
-  if (!canReadAttachmentObject(session.uid, session.staffKeys, objectPath, meta)) {
-    console.warn(
-      'attachment open-session forbidden',
-      JSON.stringify(attachmentAuthDebugPayload(session, objectPath, meta)),
-    );
-    sendJson(req, res, 403, { error: 'Forbidden' });
-    return;
-  }
-  const contentType =
-    (meta.contentType && String(meta.contentType).trim()) ||
-    'application/octet-stream';
-  const exp = Date.now() + ATTACHMENT_STREAM_TTL_MS;
-  const ticket = createAttachmentStreamTicket(objectPath, contentType, exp);
-  if (!ticket) {
-    sendJson(req, res, 503, {
-      error:
-        'Set ATTACHMENT_STREAM_SIGNING_SECRET (or CRON_SECRET) on the server for attachment streaming.',
-    });
-    return;
-  }
-  const qs = new URLSearchParams({ ticket }).toString();
-  sendJson(req, res, 200, {
-    path: `/api/attachment/stream?${qs}`,
-    expiresInSec: Math.floor(ATTACHMENT_STREAM_TTL_MS / 1000),
-  });
-}
-
-async function handleAttachmentStream(req, res) {
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  if (url.pathname !== '/api/attachment/stream' || req.method !== 'GET') {
-    sendJson(req, res, 404, { error: 'Not found' });
-    return;
-  }
-  const authSession = await verifyFirebaseToken(req.headers.authorization);
-  if (!authSession) {
-    sendJson(req, res, 401, {
-      error: 'Authorization required',
-      message: 'Send Authorization: Bearer <Firebase ID token> when opening attachments.',
-    });
-    return;
-  }
-  const ticket = url.searchParams.get('ticket');
-  const sess = ticket ? parseAndVerifyAttachmentStreamTicket(ticket) : null;
-  if (!sess) {
-    sendJson(req, res, 410, {
-      error: 'Link invalid or expired. Open the file again from the app.',
-    });
-    return;
-  }
-  if (!firebaseAdmin) {
-    sendJson(req, res, 503, { error: 'Firebase Admin not configured' });
-    return;
-  }
-  const bucketName = getFirebaseStorageBucketName();
-  if (!bucketName) {
-    sendJson(req, res, 503, { error: 'Storage bucket not configured' });
-    return;
-  }
-  let liveMeta;
-  try {
-    liveMeta = await getStorageMetadataWithRetry(bucketName, sess.objectPath);
-  } catch (e) {
-    const debugPayload = storageErrorDebugPayload(bucketName, sess.objectPath, e);
-    const isNotFound = isStorageObjectNotFoundError(e);
-    console.warn(
-      isNotFound
-        ? 'attachment stream metadata not found'
-        : 'attachment stream metadata unavailable',
-      JSON.stringify(debugPayload),
-    );
-    sendJson(
-      req,
-      res,
-      isNotFound ? 404 : 502,
-      process.env.ATTACHMENT_DEBUG_RESPONSE === 'true'
-        ? {
-            error: isNotFound ? 'Not found' : 'Storage metadata unavailable',
-            debug: debugPayload,
-          }
-        : { error: isNotFound ? 'Not found' : 'Storage metadata unavailable' },
-    );
-    return;
-  }
-  const bucket = firebaseAdmin.storage().bucket(bucketName);
-  if (
-    !canReadAttachmentObject(
-      authSession.uid,
-      authSession.staffKeys,
-      sess.objectPath,
-      liveMeta,
-    )
-  ) {
-    console.warn(
-      'attachment stream forbidden',
-      JSON.stringify(attachmentAuthDebugPayload(authSession, sess.objectPath, liveMeta)),
-    );
-    sendJson(req, res, 403, { error: 'Forbidden' });
-    return;
-  }
-  const file = bucket.file(sess.objectPath);
-  const readStream = file.createReadStream();
-  const contentType =
-    (liveMeta.contentType && String(liveMeta.contentType).trim()) ||
-    sess.contentType ||
-    'application/octet-stream';
-  const headers = {
-    'Content-Type': contentType,
-    'Cache-Control': 'private, no-store',
-    'X-Content-Type-Options': 'nosniff',
-  };
-  res.writeHead(200, { ...buildCorsHeaders(req), ...headers });
-  readStream.on('error', (err) => {
-    console.error('attachment stream:', err);
-    if (!res.writableEnded) {
-      res.destroy();
-    }
-  });
-  readStream.pipe(res);
-}
-
 async function fetchProfileByEmail(email) {
-  if (!supabase || !email) return null;
-  const { data: rows, error } = await supabase
+  if (!db || !email) return null;
+  const { data: rows, error } = await db
     .from('app_users')
     .select(`
       id,
@@ -761,17 +449,17 @@ async function fetchProfileByEmail(email) {
 /**
  * `task.create_by` may be `staff.id` (uuid) or `staff.app_id` (matches Flutter insert resolution).
  */
-async function fetchStaffRowForCreateBy(supabaseClient, createByRaw) {
+async function fetchStaffRowForCreateBy(dbClient, createByRaw) {
   const key = String(createByRaw || '').trim();
   if (!key) return { data: null, error: null };
-  const byId = await supabaseClient
+  const byId = await dbClient
     .from('staff')
     .select('id, email, name, display_name')
     .eq('id', key)
     .maybeSingle();
   if (byId.error) return { data: null, error: byId.error };
   if (byId.data) return { data: byId.data, error: null };
-  const byApp = await supabaseClient
+  const byApp = await dbClient
     .from('staff')
     .select('id, email, name, display_name')
     .eq('app_id', key)
@@ -783,12 +471,12 @@ async function fetchStaffRowForCreateBy(supabaseClient, createByRaw) {
 /**
  * Prefer `staff.email`; if empty, use any `app_users.email` linked to `staff.id` (Firebase users often only have the latter).
  */
-async function resolveStaffEmailForNotifications(supabaseClient, staffRow) {
+async function resolveStaffEmailForNotifications(dbClient, staffRow) {
   const direct = String(staffRow?.email || '').trim();
   if (direct) return direct;
   const sid = String(staffRow?.id || '').trim();
   if (!sid) return '';
-  const { data: rows, error } = await supabaseClient
+  const { data: rows, error } = await dbClient
     .from('app_users')
     .select('email')
     .eq('staff_id', sid)
@@ -805,14 +493,14 @@ async function resolveStaffEmailForNotifications(supabaseClient, staffRow) {
  * True when [sessionEmailNorm] matches `staff.email` or any `app_users.email` for `staff.id`
  * (Firebase sign-in email often lives on `app_users`, not `staff.email`).
  */
-async function sessionEmailBelongsToStaffRow(supabaseClient, staffRow, sessionEmailNorm) {
+async function sessionEmailBelongsToStaffRow(dbClient, staffRow, sessionEmailNorm) {
   const want = (sessionEmailNorm || '').trim().toLowerCase();
   if (!want) return false;
   const direct = String(staffRow?.email || '').trim().toLowerCase();
   if (direct && direct === want) return true;
   const sid = String(staffRow?.id || '').trim();
   if (!sid) return false;
-  const { data: rows, error } = await supabaseClient
+  const { data: rows, error } = await dbClient
     .from('app_users')
     .select('email')
     .eq('staff_id', sid)
@@ -826,18 +514,21 @@ async function sessionEmailBelongsToStaffRow(supabaseClient, staffRow, sessionEm
 }
 
 async function handleApiMe(req, res) {
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
-    sendJson(req, res, 401, { error: 'Unauthorized', message: 'Invalid or missing Firebase token' });
+    sendJson(req, res, 401, {
+      error: 'Unauthorized',
+      message: 'Invalid or missing auth session',
+    });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
     return;
   }
   try {
     const { uid, email } = session;
-    const profileRes = await supabase.rpc('get_user_profile', { p_firebase_uid: uid });
+    const profileRes = await db.rpc('get_user_profile', { p_firebase_uid: uid });
     let profileRow = profileRes.data && profileRes.data[0];
     let uidForAssignable = uid;
 
@@ -854,12 +545,12 @@ async function handleApiMe(req, res) {
       }
     }
 
-    const assignableRes = await supabase.rpc('get_assignable_staff', {
+    const assignableRes = await db.rpc('get_assignable_staff', {
       p_firebase_uid: uidForAssignable,
     });
     let assignableStaff = assignableRes.data || [];
     if ((!assignableStaff || assignableStaff.length === 0) && uidForAssignable !== uid) {
-      const retry = await supabase.rpc('get_assignable_staff', { p_firebase_uid: uid });
+      const retry = await db.rpc('get_assignable_staff', { p_firebase_uid: uid });
       assignableStaff = retry.data || [];
     }
 
@@ -888,19 +579,19 @@ async function handleApiMe(req, res) {
 }
 
 async function handleApiAssignableStaff(req, res) {
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
     return;
   }
   try {
     const byEmail = await fetchProfileByEmail(session.email);
     const uidForAssignable = byEmail?.firebase_uid_for_rpc || session.uid;
-    const { data, error } = await supabase.rpc('get_assignable_staff', {
+    const { data, error } = await db.rpc('get_assignable_staff', {
       p_firebase_uid: uidForAssignable,
     });
     if (error) throw error;
@@ -927,7 +618,7 @@ function readBody(req) {
 }
 
 async function requireAdmin(req, res) {
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return null;
@@ -936,8 +627,8 @@ async function requireAdmin(req, res) {
     sendJson(req, res, 403, { error: 'Forbidden', message: 'Admin only' });
     return null;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
     return null;
   }
   return session;
@@ -948,13 +639,13 @@ async function handleAdminSnapshot(req, res) {
   if (!session) return;
   try {
     const [teams, roles, staff, appUsers, urm, tm, sub] = await Promise.all([
-      supabase.from('teams').select('*').order('name'),
-      supabase.from('roles').select('*').order('app_id'),
-      supabase.from('staff').select('*').order('name'),
-      supabase.from('app_users').select('*').order('email'),
-      supabase.from('user_role_mapping').select('app_user_id, role_id'),
-      supabase.from('team_members').select('team_id, staff_id, role'),
-      supabase.from('subordinate_mapping').select('supervisor_staff_id, subordinate_staff_id'),
+      db.from('teams').select('*').order('name'),
+      db.from('roles').select('*').order('app_id'),
+      db.from('staff').select('*').order('name'),
+      db.from('app_users').select('*').order('email'),
+      db.from('user_role_mapping').select('app_user_id, role_id'),
+      db.from('team_members').select('team_id, staff_id, role'),
+      db.from('subordinate_mapping').select('supervisor_staff_id, subordinate_staff_id'),
     ]);
     sendJson(req, res, 200, {
       teams: teams.data || [],
@@ -982,15 +673,15 @@ async function handleAdminUpsertUser(req, res) {
     }
     let staffId = null;
     if (staff_app_id) {
-      const { data: s } = await supabase.from('staff').select('id').eq('app_id', staff_app_id).maybeSingle();
+      const { data: s } = await db.from('staff').select('id').eq('app_id', staff_app_id).maybeSingle();
       staffId = s?.id || null;
     }
-    const { data: roleRow } = await supabase.from('roles').select('id').eq('app_id', role_app_id).maybeSingle();
+    const { data: roleRow } = await db.from('roles').select('id').eq('app_id', role_app_id).maybeSingle();
     if (!roleRow) {
       sendJson(req, res, 400, { error: 'Invalid role_app_id' });
       return;
     }
-    const { data: userRow, error: uErr } = await supabase
+    const { data: userRow, error: uErr } = await db
       .from('app_users')
       .upsert(
         { firebase_uid, email, display_name: display_name || email, staff_id: staffId },
@@ -999,8 +690,8 @@ async function handleAdminUpsertUser(req, res) {
       .select('id')
       .single();
     if (uErr) throw uErr;
-    await supabase.from('user_role_mapping').delete().eq('app_user_id', userRow.id);
-    await supabase.from('user_role_mapping').insert({ app_user_id: userRow.id, role_id: roleRow.id });
+    await db.from('user_role_mapping').delete().eq('app_user_id', userRow.id);
+    await db.from('user_role_mapping').insert({ app_user_id: userRow.id, role_id: roleRow.id });
     sendJson(req, res, 200, { ok: true, appUserId: userRow.id });
   } catch (e) {
     sendJson(req, res, 500, { error: e.message });
@@ -1017,8 +708,8 @@ async function handleAdminDeleteUser(req, res) {
     return;
   }
   try {
-    await supabase.from('user_role_mapping').delete().eq('app_user_id', id);
-    await supabase.from('app_users').delete().eq('id', id);
+    await db.from('user_role_mapping').delete().eq('app_user_id', id);
+    await db.from('app_users').delete().eq('id', id);
     sendJson(req, res, 200, { ok: true });
   } catch (e) {
     sendJson(req, res, 500, { error: e.message });
@@ -1035,7 +726,7 @@ async function handleAdminUpsertTeam(req, res) {
       sendJson(req, res, 400, { error: 'name, app_id required' });
       return;
     }
-    const { error } = await supabase.from('teams').upsert(
+    const { error } = await db.from('teams').upsert(
       { name, app_id },
       { onConflict: 'app_id' },
     );
@@ -1056,13 +747,13 @@ async function handleAdminTeamMember(req, res) {
       sendJson(req, res, 400, { error: 'team_app_id, staff_app_id, role required' });
       return;
     }
-    const { data: t } = await supabase.from('teams').select('id').eq('app_id', team_app_id).maybeSingle();
-    const { data: s } = await supabase.from('staff').select('id').eq('app_id', staff_app_id).maybeSingle();
+    const { data: t } = await db.from('teams').select('id').eq('app_id', team_app_id).maybeSingle();
+    const { data: s } = await db.from('staff').select('id').eq('app_id', staff_app_id).maybeSingle();
     if (!t || !s) {
       sendJson(req, res, 400, { error: 'Team or staff not found' });
       return;
     }
-    const { error } = await supabase.from('team_members').upsert(
+    const { error } = await db.from('team_members').upsert(
       { team_id: t.id, staff_id: s.id, role },
       { onConflict: 'team_id,staff_id' },
     );
@@ -1083,13 +774,13 @@ async function handleAdminSubordinate(req, res) {
       sendJson(req, res, 400, { error: 'supervisor_staff_app_id, subordinate_staff_app_id required' });
       return;
     }
-    const { data: sup } = await supabase.from('staff').select('id').eq('app_id', supervisor_staff_app_id).maybeSingle();
-    const { data: sub } = await supabase.from('staff').select('id').eq('app_id', subordinate_staff_app_id).maybeSingle();
+    const { data: sup } = await db.from('staff').select('id').eq('app_id', supervisor_staff_app_id).maybeSingle();
+    const { data: sub } = await db.from('staff').select('id').eq('app_id', subordinate_staff_app_id).maybeSingle();
     if (!sup || !sub) {
       sendJson(req, res, 400, { error: 'Staff not found' });
       return;
     }
-    const { error } = await supabase.from('subordinate_mapping').upsert(
+    const { error } = await db.from('subordinate_mapping').upsert(
       { supervisor_staff_id: sup.id, subordinate_staff_id: sub.id },
       { onConflict: 'supervisor_staff_id,subordinate_staff_id' },
     );
@@ -1101,17 +792,17 @@ async function handleAdminSubordinate(req, res) {
 }
 
 async function handleApiTeams(req, res) {
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
     return;
   }
   try {
-    const { data: teamsData, error: teamsError } = await supabase
+    const { data: teamsData, error: teamsError } = await db
       .from('teams')
       .select('id, app_id, name')
       .order('name');
@@ -1121,7 +812,7 @@ async function handleApiTeams(req, res) {
     }
     console.log(`handleApiTeams: Found ${(teamsData || []).length} teams`);
 
-    const { data: teamMembersData, error: tmError } = await supabase
+    const { data: teamMembersData, error: tmError } = await db
       .from('team_members')
       .select('team_id, staff_id, role, staff ( app_id, name )')
       .order('role');
@@ -1169,17 +860,17 @@ async function handleApiTeams(req, res) {
 }
 
 async function handleApiStaff(req, res) {
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
     return;
   }
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('staff')
       .select('app_id, name')
       .order('name');
@@ -1200,19 +891,27 @@ async function handleApiStaff(req, res) {
 }
 
 async function handleHealth(req, res) {
+  const database = await checkDatabaseHealth();
   sendJson(req, res, 200, {
     ok: true,
     message: 'Project Tracker backend',
     timestamp: new Date().toISOString(),
-    // Safe diagnostics (no secrets). If supabaseConfigured is false, check Railway Variables on THIS service.
+    database,
+    // Safe diagnostics (no secrets). If databaseConfigured is false, check Railway Variables on THIS service.
     firebaseConfigured: !!firebaseAdmin,
-    supabaseConfigured: !!supabase,
-    mailgunConfigured: !!(MAILGUN_API_KEY && MAILGUN_DOMAIN),
+    databaseConfigured: !!db,
+    emailSendingEnabled: EMAIL_SENDING_ENABLED,
+    outboundEmailReady:
+      EMAIL_SENDING_ENABLED && !!(MAILGUN_API_KEY && MAILGUN_DOMAIN),
+    smtpConfigured: smtpMail.isSmtpConfigured(),
+    ssoConfigured: oidcAuth.isConfigured(),
+    ssoIssuer: (process.env.SSO_ISSUER_URL || '').trim() || null,
+    smtp: smtpMail.smtpConfigSummary(),
     urgentReminderCronEnabled: process.env.DISABLE_INTERNAL_URGENT_CRON !== 'true',
     cronSecretConfigured: CRON_SECRET.length > 0,
     env: {
-      supabaseUrlSet: SUPABASE_URL.length > 0,
-      supabaseServiceRoleKeySet: SUPABASE_SERVICE_ROLE_KEY.length > 0,
+      databaseUrlSet: DATABASE_URL.length > 0,
+      databasePoolReady: !!pgPool,
     },
   });
 }
@@ -1244,8 +943,14 @@ function formatMailgunFailure(r) {
  * @returns {{ ok: true, id: string } | { ok: false, error: string, detail?: string }}
  */
 async function sendMailgun({ to, subject, text, html, from: fromOverride, replyTo, cc }) {
+  if (!EMAIL_SENDING_ENABLED) {
+    console.log(
+      `[mailgun] skipped (EMAIL_SENDING_ENABLED=false): to=${normalizeRecipientEmail(to)} subject=${String(subject || '').slice(0, 80)}`,
+    );
+    return { ok: true, id: null, skipped: true, resolvedTo: normalizeRecipientEmail(to) };
+  }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    return { ok: false, error: 'Mailgun not configured (MAILGUN_API_KEY / MAILGUN_DOMAIN)' };
+    return { ok: false, error: 'Outbound email transport not configured' };
   }
   const toAddr = normalizeRecipientEmail(to);
   if (!toAddr || !toAddr.includes('@')) {
@@ -1328,6 +1033,83 @@ async function handleAdminTestMailgun(req, res) {
     });
     if (result.ok) {
       sendJson(req, res, 200, { ok: true, mailgunId: result.id || null });
+    } else {
+      sendJson(req, res, 502, { ok: false, error: result.error, detail: result.detail });
+    }
+  } catch (e) {
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/** OFFLINE_DEV only: POST `{ "to": "you@hku.hk" }` — test HKU SMTP relay (mail7). */
+async function handleTestSmtp(req, res) {
+  if (!OFFLINE_DEV) {
+    sendJson(req, res, 403, { error: 'Only available when OFFLINE_DEV=true on backend' });
+    return;
+  }
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (!smtpMail.isSmtpConfigured()) {
+    sendJson(req, res, 503, {
+      error: 'SMTP not configured',
+      hint: 'Set SMTP_HOST=mail7.hku.hk SMTP_PORT=25 SMTP_FROM=daaoit.ops@hku.hk in .env',
+    });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const to = (body.to || DEV_USER_EMAIL || '').trim();
+    if (!to) {
+      sendJson(req, res, 400, { error: 'JSON body must include "to" (recipient email)' });
+      return;
+    }
+    const result = await smtpMail.sendSmtpMail({
+      to,
+      subject: 'Project Tracker — SMTP test (mail7.hku.hk)',
+      text: `Test message sent at ${new Date().toISOString()}\n\nServer: ${smtpMail.smtpConfigSummary().host}:${smtpMail.smtpConfigSummary().port}`,
+    });
+    if (result.ok) {
+      sendJson(req, res, 200, {
+        ok: true,
+        messageId: result.messageId || null,
+        to: result.resolvedTo,
+      });
+    } else {
+      sendJson(req, res, 502, { ok: false, error: result.error, detail: result.detail });
+    }
+  } catch (e) {
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/** Admin-only SMTP test (same as Mailgun test). */
+async function handleAdminTestSmtp(req, res) {
+  const session = await requireAdmin(req, res);
+  if (!session) return;
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (!smtpMail.isSmtpConfigured()) {
+    sendJson(req, res, 503, { error: 'SMTP not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const to = (body.to || '').trim();
+    if (!to) {
+      sendJson(req, res, 400, { error: 'JSON body must include "to"' });
+      return;
+    }
+    const result = await smtpMail.sendSmtpMail({
+      to,
+      subject: 'Project Tracker — admin SMTP test',
+      text: `Admin test at ${new Date().toISOString()}`,
+    });
+    if (result.ok) {
+      sendJson(req, res, 200, { ok: true, messageId: result.messageId || null });
     } else {
       sendJson(req, res, 502, { ok: false, error: result.error, detail: result.detail });
     }
@@ -1505,7 +1287,7 @@ ${PROJECT_TRACKER_LANDING_URL}`;
 /**
  * “Project Tracker” link in sub-task comment → creator emails (strict product URL, no trailing path).
  */
-const SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF = 'https://projecttracker.hku.hk';
+const SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF = PROJECT_TRACKER_LANDING_URL;
 
 /** En dash (U+2013) after “Comment is added”, per product template. */
 const SUBTASK_COMMENT_ADDED_LINE_EN_DASH = '\u2013';
@@ -1745,8 +1527,8 @@ function isPausedStatus(pauseStatusRaw) {
   return String(pauseStatusRaw || '').trim().toLowerCase() === 'paused';
 }
 
-async function fetchPausedProjectIdSet(supabaseClient) {
-  const { data, error } = await supabaseClient
+async function fetchPausedProjectIdSet(dbClient) {
+  const { data, error } = await dbClient
     .from('project')
     .select('id,pause_status')
     .eq('pause_status', 'Paused');
@@ -1766,9 +1548,9 @@ function taskReminderPaused(taskRow, pausedProjectIds) {
 }
 
 /** Task ids whose parent row blocks sub-task reminder emails until it is restored/resumed. */
-async function fetchSubtaskReminderBlockedParentTaskIdSet(supabaseClient) {
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabaseClient);
-  const { data, error } = await supabaseClient.from('task').select('id,status,pause_status,project_id');
+async function fetchSubtaskReminderBlockedParentTaskIdSet(dbClient) {
+  const pausedProjectIds = await fetchPausedProjectIdSet(dbClient);
+  const { data, error } = await dbClient.from('task').select('id,status,pause_status,project_id');
   if (error || !data) return new Set();
   const set = new Set();
   for (const row of data) {
@@ -1847,8 +1629,8 @@ function isCalendarPastDue(todayYmd, dueRaw) {
 /**
  * After the due calendar date (HK), reset reminder flags so rows are clean.
  */
-async function resetUrgentReminderForPastDueTasks(supabaseClient, todayYmd, summary) {
-  const { data: rows, error } = await supabaseClient
+async function resetUrgentReminderForPastDueTasks(dbClient, todayYmd, summary) {
+  const { data: rows, error } = await dbClient
     .from('task')
     .select(
       'id, due_date, urgent_reminder_sent, urgent_reminder_last_sent_on, due_today_reminder_sent_on, creator_due_today_reminder_sent_on, creator_urgent_reminder_last_sent_on',
@@ -1871,7 +1653,7 @@ async function resetUrgentReminderForPastDueTasks(supabaseClient, todayYmd, summ
     if (!sent && !hasLast && !hasDueToday && !hasCreatorDue && !hasCreatorUrgent) continue;
     const id = String(row.id || '').trim();
     if (!id) continue;
-    const { error: uErr } = await supabaseClient
+    const { error: uErr } = await dbClient
       .from('task')
       .update({
         urgent_reminder_sent: false,
@@ -1894,7 +1676,7 @@ function buildUrgentTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) {
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have an <b>upcoming</b> task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -1917,7 +1699,7 @@ function buildDueTodayTaskReminderEmail(displayName, taskName, taskUrl, dueYmd) 
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have a task <b>due today</b><br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -1952,7 +1734,7 @@ function buildCreatorDueTodayTaskReminderEmail(
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeRecipient},<br><br>
 ${safePic} has task due today.<br><br>
@@ -2027,7 +1809,7 @@ function buildCreatorOverdueTaskReminderEmail(
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeRecipient},<br><br>
 ${safePic} has a task overdue.<br><br>
@@ -2089,7 +1871,7 @@ function buildCreatorOverdueSubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeRecipient},<br><br>
 ${safePic} has a sub-task overdue.<br><br>
@@ -2156,7 +1938,7 @@ function buildCreatorUrgentTaskReminderEmail(
   const safeTitle = escapeHtml(taskName);
   const safeUrl = escapeHtml(taskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeRecipient},<br><br>
 ${safePic} has an <b>upcoming</b> task due.<br><br>
@@ -2194,7 +1976,7 @@ function buildCreatorUrgentSubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeRecipient}.<br><br>
 ${safePic} has an <b>upcoming</b> sub-task due.<br><br>
@@ -2228,7 +2010,7 @@ function buildAssigneeUrgentSubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have an <b>upcoming</b> sub-task due.<br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -2259,7 +2041,7 @@ function buildAssigneeDueTodaySubtaskReminderEmail(
   const safeTitle = escapeHtml(subtaskName);
   const safeUrl = escapeHtml(subtaskUrl);
   const safeDue = escapeHtml(dueYmd);
-  const landing = `${String(PROJECT_TRACKER_LANDING_URL || 'https://projecttracker.hku.hk').replace(/\/$/, '')}/`;
+  const landing = `${String(PROJECT_TRACKER_LANDING_URL || '').replace(/\/$/, '')}/`;
   const safeLanding = escapeHtml(landing);
   const html = `Hi ${safeName}. You have a sub-task <b>due today</b><br><br>
 <b><u><a href="${safeUrl}" style="color:#1565C0;">${safeTitle}</a></u></b><br><br>
@@ -2287,8 +2069,8 @@ function subtaskStatusBlocksUrgentReminder(statusRaw) {
 /**
  * After the due calendar date (HK), reset sub-task reminder columns.
  */
-async function resetUrgentReminderForPastDueSubtasks(supabaseClient, todayYmd, summary) {
-  const { data: rows, error } = await supabaseClient
+async function resetUrgentReminderForPastDueSubtasks(dbClient, todayYmd, summary) {
+  const { data: rows, error } = await dbClient
     .from('subtask')
     .select(
       'id, due_date, urgent_reminder_sent, assignee_urgent_reminder_last_sent_on, creator_urgent_reminder_last_sent_on, subtask_creator_due_today_reminder_sent_on, subtask_assignee_due_today_reminder_sent_on',
@@ -2318,7 +2100,7 @@ async function resetUrgentReminderForPastDueSubtasks(supabaseClient, todayYmd, s
     }
     const id = String(row.id || '').trim();
     if (!id) continue;
-    const { error: uErr } = await supabaseClient
+    const { error: uErr } = await dbClient
       .from('subtask')
       .update({
         urgent_reminder_sent: false,
@@ -2355,18 +2137,22 @@ async function runAssigneeUrgentSubtaskReminderJob() {
     subtasksResetPastDue: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  await resetUrgentReminderForPastDueSubtasks(supabase, todayYmd, summary);
+  await resetUrgentReminderForPastDueSubtasks(db, todayYmd, summary);
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('start_date', 'is', null)
@@ -2379,7 +2165,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -2414,7 +2200,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
     summary.eligible += 1;
     const sendResults = [];
     for (const staffId of assigneeIds) {
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffId)
@@ -2423,7 +2209,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
         sendResults.push({ staffId, ok: false, skipped: 'staff not found' });
         continue;
       }
-      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      const to = await resolveStaffEmailForNotifications(db, staffRow);
       if (!to) {
         sendResults.push({ staffId, ok: false, skipped: 'no email' });
         continue;
@@ -2452,7 +2238,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
 
     const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
     if (!failedMailgun) {
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('subtask')
         .update({
           urgent_reminder_sent: true,
@@ -2490,16 +2276,20 @@ async function runCreatorUrgentSubtaskReminderJob() {
     subtasksResetPastDue: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('start_date', 'is', null)
@@ -2512,7 +2302,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -2541,7 +2331,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
       continue;
     }
 
-    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(supabase, creatorId);
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(db, creatorId);
     if (staffErr) {
       summary.errors.push(`subtask creator urgent staff lookup ${subtaskId}: ${staffErr.message}`);
       continue;
@@ -2565,7 +2355,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `subtask creator has no email (subtask ${subtaskId}, staff.id=${resolvedCreatorStaffId})`,
@@ -2580,7 +2370,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
     const picId = (row.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -2618,7 +2408,7 @@ async function runCreatorUrgentSubtaskReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('subtask')
       .update({
         creator_urgent_reminder_last_sent_on: todayYmd,
@@ -2653,18 +2443,22 @@ async function runUrgentTaskReminderJob() {
     tasksResetPastDue: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  await resetUrgentReminderForPastDueTasks(supabase, todayYmd, summary);
+  await resetUrgentReminderForPastDueTasks(db, todayYmd, summary);
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('start_date', 'is', null)
@@ -2677,7 +2471,7 @@ async function runUrgentTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -2705,7 +2499,7 @@ async function runUrgentTaskReminderJob() {
 
     const sendResults = [];
     for (const staffId of assigneeIds) {
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('email, name, display_name')
         .eq('id', staffId)
@@ -2739,7 +2533,7 @@ async function runUrgentTaskReminderJob() {
 
     const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
     if (!failedMailgun) {
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('task')
         .update({
           urgent_reminder_sent: true,
@@ -2775,16 +2569,20 @@ async function runCreatorUrgentTaskReminderJob() {
     tasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('start_date', 'is', null)
@@ -2797,7 +2595,7 @@ async function runCreatorUrgentTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -2825,7 +2623,7 @@ async function runCreatorUrgentTaskReminderJob() {
     }
 
     const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
-      supabase,
+      db,
       creatorId,
     );
     if (staffErr) {
@@ -2851,7 +2649,7 @@ async function runCreatorUrgentTaskReminderJob() {
     const taskName = String(taskRow.task_name || '').trim() || '(no title)';
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId}; set staff.email or link app_users.email)`,
@@ -2866,7 +2664,7 @@ async function runCreatorUrgentTaskReminderJob() {
     const picId = (taskRow.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -2902,7 +2700,7 @@ async function runCreatorUrgentTaskReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('task')
       .update({ creator_urgent_reminder_last_sent_on: todayYmd })
       .eq('id', taskId);
@@ -2931,16 +2729,20 @@ async function runDueTodayTaskReminderJob() {
     tasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('due_date', 'is', null);
@@ -2952,7 +2754,7 @@ async function runDueTodayTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -2977,7 +2779,7 @@ async function runDueTodayTaskReminderJob() {
 
     const sendResults = [];
     for (const staffId of assigneeIds) {
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('email, name, display_name')
         .eq('id', staffId)
@@ -3011,7 +2813,7 @@ async function runDueTodayTaskReminderJob() {
 
     const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
     if (!failedMailgun) {
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('task')
         .update({ due_today_reminder_sent_on: todayYmd })
         .eq('id', taskId);
@@ -3041,16 +2843,20 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
     subtasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('due_date', 'is', null);
@@ -3062,7 +2868,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -3093,7 +2899,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
     summary.eligible += 1;
     const sendResults = [];
     for (const staffId of assigneeIds) {
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffId)
@@ -3102,7 +2908,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
         sendResults.push({ staffId, ok: false, skipped: 'staff not found' });
         continue;
       }
-      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      const to = await resolveStaffEmailForNotifications(db, staffRow);
       if (!to) {
         sendResults.push({ staffId, ok: false, skipped: 'no email' });
         continue;
@@ -3131,7 +2937,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
 
     const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
     if (!failedMailgun) {
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('subtask')
         .update({ subtask_assignee_due_today_reminder_sent_on: todayYmd })
         .eq('id', subtaskId);
@@ -3163,16 +2969,20 @@ async function runCreatorDueTodayReminderJob() {
     tasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('due_date', 'is', null);
@@ -3184,7 +2994,7 @@ async function runCreatorDueTodayReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -3207,7 +3017,7 @@ async function runCreatorDueTodayReminderJob() {
     }
 
     const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
-      supabase,
+      db,
       creatorId,
     );
     if (staffErr) {
@@ -3233,7 +3043,7 @@ async function runCreatorDueTodayReminderJob() {
     const taskName = String(taskRow.task_name || '').trim() || '(no title)';
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId}; set staff.email or link app_users.email)`,
@@ -3248,7 +3058,7 @@ async function runCreatorDueTodayReminderJob() {
     const picId = (taskRow.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -3284,7 +3094,7 @@ async function runCreatorDueTodayReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('task')
       .update({ creator_due_today_reminder_sent_on: todayYmd })
       .eq('id', taskId);
@@ -3314,16 +3124,20 @@ async function runCreatorDueTodaySubtaskReminderJob() {
     subtasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('due_date', 'is', null);
@@ -3335,7 +3149,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -3359,7 +3173,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
       continue;
     }
 
-    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(supabase, creatorId);
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(db, creatorId);
     if (staffErr) {
       summary.errors.push(`subtask creator due-today staff lookup ${subtaskId}: ${staffErr.message}`);
       continue;
@@ -3383,7 +3197,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `subtask creator has no email (subtask ${subtaskId}, staff.id=${resolvedCreatorStaffId})`,
@@ -3398,7 +3212,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
     const picId = (row.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -3436,7 +3250,7 @@ async function runCreatorDueTodaySubtaskReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('subtask')
       .update({ subtask_creator_due_today_reminder_sent_on: todayYmd })
       .eq('id', subtaskId);
@@ -3464,16 +3278,20 @@ async function runCreatorOverdueTaskReminderJob() {
     tasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('due_date', 'is', null);
@@ -3485,7 +3303,7 @@ async function runCreatorOverdueTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -3508,7 +3326,7 @@ async function runCreatorOverdueTaskReminderJob() {
     }
 
     const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(
-      supabase,
+      db,
       creatorId,
     );
     if (staffErr) {
@@ -3534,7 +3352,7 @@ async function runCreatorOverdueTaskReminderJob() {
     const taskName = String(taskRow.task_name || '').trim() || '(no title)';
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `creator has no email (task ${taskId}, staff.id=${resolvedCreatorStaffId}; set staff.email or link app_users.email)`,
@@ -3549,7 +3367,7 @@ async function runCreatorOverdueTaskReminderJob() {
     const picId = (taskRow.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -3585,7 +3403,7 @@ async function runCreatorOverdueTaskReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('task')
       .update({ creator_overdue_reminder_last_sent_on: todayYmd })
       .eq('id', taskId);
@@ -3614,16 +3432,20 @@ async function runAssigneeOverdueTaskReminderJob() {
     tasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: tasks, error: qErr } = await supabase
+  const { data: tasks, error: qErr } = await db
     .from('task')
     .select('*')
     .not('due_date', 'is', null);
@@ -3635,7 +3457,7 @@ async function runAssigneeOverdueTaskReminderJob() {
 
   const list = tasks || [];
   summary.scanned = list.length;
-  const pausedProjectIds = await fetchPausedProjectIdSet(supabase);
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
 
   for (const taskRow of list) {
     if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
@@ -3667,7 +3489,7 @@ async function runAssigneeOverdueTaskReminderJob() {
         anySlotThisTask = true;
       }
 
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffId)
@@ -3676,7 +3498,7 @@ async function runAssigneeOverdueTaskReminderJob() {
         summary.errors.push(`assignee overdue staff not found (task ${taskId}, ${assigneeKey})`);
         continue;
       }
-      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      const to = await resolveStaffEmailForNotifications(db, staffRow);
       if (!to) {
         summary.errors.push(
           `assignee has no email (task ${taskId}, ${assigneeKey}, staff.id=${staffId})`,
@@ -3710,7 +3532,7 @@ async function runAssigneeOverdueTaskReminderJob() {
         continue;
       }
 
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('task')
         .update({ [sentCol]: todayYmd })
         .eq('id', taskId);
@@ -3739,16 +3561,20 @@ async function runCreatorOverdueSubtaskReminderJob() {
     subtasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('due_date', 'is', null);
@@ -3760,7 +3586,7 @@ async function runCreatorOverdueSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -3784,7 +3610,7 @@ async function runCreatorOverdueSubtaskReminderJob() {
       continue;
     }
 
-    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(supabase, creatorId);
+    const { data: staffRow, error: staffErr } = await fetchStaffRowForCreateBy(db, creatorId);
     if (staffErr) {
       summary.errors.push(`subtask creator overdue staff lookup ${subtaskId}: ${staffErr.message}`);
       continue;
@@ -3808,7 +3634,7 @@ async function runCreatorOverdueSubtaskReminderJob() {
     const subtaskName = String(row.subtask_name || '').trim() || '(no title)';
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
-    const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
     if (!to) {
       summary.errors.push(
         `subtask creator has no email (subtask ${subtaskId}, staff.id=${resolvedCreatorStaffId})`,
@@ -3823,7 +3649,7 @@ async function runCreatorOverdueSubtaskReminderJob() {
     const picId = (row.pic || '').toString().trim();
     let picDisplayName = 'PIC';
     if (picId) {
-      const { data: picStaff } = await supabase
+      const { data: picStaff } = await db
         .from('staff')
         .select('display_name, name')
         .eq('id', picId)
@@ -3861,7 +3687,7 @@ async function runCreatorOverdueSubtaskReminderJob() {
       continue;
     }
 
-    const { error: uErr } = await supabase
+    const { error: uErr } = await db
       .from('subtask')
       .update({ subtask_creator_overdue_reminder_last_sent_on: todayYmd })
       .eq('id', subtaskId);
@@ -3890,16 +3716,20 @@ async function runAssigneeOverdueSubtaskReminderJob() {
     subtasksUpdatedAfterSend: 0,
     errors: [],
   };
-  if (!supabase) {
-    summary.errors.push('Supabase not configured');
+  if (!db) {
+    summary.errors.push('Database not configured');
     return summary;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    summary.errors.push('Mailgun not configured');
+  if (!EMAIL_SENDING_ENABLED) {
+    return summary;
+  }
+  const cronEmailBlock = cronEmailBlockedReason();
+  if (cronEmailBlock) {
+    summary.errors.push(cronEmailBlock);
     return summary;
   }
 
-  const { data: subtasks, error: qErr } = await supabase
+  const { data: subtasks, error: qErr } = await db
     .from('subtask')
     .select('*')
     .not('due_date', 'is', null);
@@ -3911,7 +3741,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
 
   const list = subtasks || [];
   summary.scanned = list.length;
-  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(supabase);
+  const blockedParentIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
 
   for (const row of list) {
     if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
@@ -3945,7 +3775,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
         anySlotThisRow = true;
       }
 
-      const { data: staffRow } = await supabase
+      const { data: staffRow } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffId)
@@ -3954,7 +3784,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
         summary.errors.push(`subtask assignee overdue staff not found (subtask ${subtaskId}, ${assigneeKey})`);
         continue;
       }
-      const to = await resolveStaffEmailForNotifications(supabase, staffRow);
+      const to = await resolveStaffEmailForNotifications(db, staffRow);
       if (!to) {
         summary.errors.push(
           `subtask assignee has no email (subtask ${subtaskId}, ${assigneeKey}, staff.id=${staffId})`,
@@ -3988,7 +3818,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
         continue;
       }
 
-      const { error: uErr } = await supabase
+      const { error: uErr } = await db
         .from('subtask')
         .update({ [sentCol]: todayYmd })
         .eq('id', subtaskId);
@@ -4095,17 +3925,21 @@ async function handleNotifyTaskAssigned(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4115,7 +3949,7 @@ async function handleNotifyTaskAssigned(req, res) {
       sendJson(req, res, 400, { error: 'taskId required' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -4129,7 +3963,7 @@ async function handleNotifyTaskAssigned(req, res) {
       sendJson(req, res, 400, { error: 'Task has no create_by' });
       return;
     }
-    const { data: creatorStaff, error: cErr } = await supabase
+    const { data: creatorStaff, error: cErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', creatorId)
@@ -4160,7 +3994,7 @@ async function handleNotifyTaskAssigned(req, res) {
     const results = [];
 
     for (const staffUuid of assigneeIds) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('email, name')
         .eq('id', staffUuid)
@@ -4241,17 +4075,21 @@ async function handleNotifyProjectAssigned(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4261,7 +4099,7 @@ async function handleNotifyProjectAssigned(req, res) {
       sendJson(req, res, 400, { error: 'projectId required' });
       return;
     }
-    const { data: projectRow, error: pErr } = await supabase
+    const { data: projectRow, error: pErr } = await db
       .from('project')
       .select('*')
       .eq('id', projectId)
@@ -4275,7 +4113,7 @@ async function handleNotifyProjectAssigned(req, res) {
       sendJson(req, res, 400, { error: 'Project has no create_by' });
       return;
     }
-    const { data: creatorStaff, error: cErr } = await supabase
+    const { data: creatorStaff, error: cErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', creatorId)
@@ -4286,7 +4124,7 @@ async function handleNotifyProjectAssigned(req, res) {
     }
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const creatorMatchesSession = await sessionEmailBelongsToStaffRow(
-      supabase,
+      db,
       creatorStaff,
       sessionEmail,
     );
@@ -4298,7 +4136,7 @@ async function handleNotifyProjectAssigned(req, res) {
       return;
     }
     const creatorReplyTo = (
-      (await resolveStaffEmailForNotifications(supabase, creatorStaff)) ||
+      (await resolveStaffEmailForNotifications(db, creatorStaff)) ||
       (creatorStaff.email || '').trim()
     ).trim();
     const staffDisplayName =
@@ -4325,7 +4163,7 @@ async function handleNotifyProjectAssigned(req, res) {
     }
 
     for (const staffUuid of assigneeUuids) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffUuid)
@@ -4335,7 +4173,7 @@ async function handleNotifyProjectAssigned(req, res) {
         continue;
       }
       const to = (
-        (await resolveStaffEmailForNotifications(supabase, s)) ||
+        (await resolveStaffEmailForNotifications(db, s)) ||
         (s.email || '').trim()
       ).trim();
       if (!to) {
@@ -4400,17 +4238,21 @@ async function handleNotifyProjectUpdated(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4420,7 +4262,7 @@ async function handleNotifyProjectUpdated(req, res) {
       sendJson(req, res, 400, { error: 'projectId required' });
       return;
     }
-    const { data: projectRow, error: pErr } = await supabase
+    const { data: projectRow, error: pErr } = await db
       .from('project')
       .select('*')
       .eq('id', projectId)
@@ -4434,7 +4276,7 @@ async function handleNotifyProjectUpdated(req, res) {
       sendJson(req, res, 400, { error: 'Project has no update_by' });
       return;
     }
-    const { data: updaterStaff, error: uErr } = await supabase
+    const { data: updaterStaff, error: uErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', updaterId)
@@ -4445,7 +4287,7 @@ async function handleNotifyProjectUpdated(req, res) {
     }
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const updaterMatchesSession = await sessionEmailBelongsToStaffRow(
-      supabase,
+      db,
       updaterStaff,
       sessionEmail,
     );
@@ -4457,7 +4299,7 @@ async function handleNotifyProjectUpdated(req, res) {
       return;
     }
     const updaterReplyTo = (
-      (await resolveStaffEmailForNotifications(supabase, updaterStaff)) ||
+      (await resolveStaffEmailForNotifications(db, updaterStaff)) ||
       (updaterStaff.email || '').trim()
     ).trim();
     const updaterNameForBody =
@@ -4526,7 +4368,7 @@ async function handleNotifyProjectUpdated(req, res) {
         });
         continue;
       }
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffUuid)
@@ -4536,7 +4378,7 @@ async function handleNotifyProjectUpdated(req, res) {
         continue;
       }
       const to = (
-        (await resolveStaffEmailForNotifications(supabase, s)) ||
+        (await resolveStaffEmailForNotifications(db, s)) ||
         (s.email || '').trim()
       ).trim();
       if (!to) {
@@ -4617,17 +4459,21 @@ async function handleNotifySubtaskAssigned(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4637,7 +4483,7 @@ async function handleNotifySubtaskAssigned(req, res) {
       sendJson(req, res, 400, { error: 'subtaskId required' });
       return;
     }
-    const { data: row, error: tErr } = await supabase
+    const { data: row, error: tErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -4651,7 +4497,7 @@ async function handleNotifySubtaskAssigned(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task has no create_by' });
       return;
     }
-    const { data: creatorStaff, error: cErr } = await supabase
+    const { data: creatorStaff, error: cErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', creatorId)
@@ -4684,7 +4530,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     const seenEmails = new Set();
 
     for (const staffUuid of assigneeUuids) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('email, name')
         .eq('id', staffUuid)
@@ -4741,7 +4587,7 @@ async function handleNotifyTaskComment(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
@@ -4754,12 +4600,16 @@ async function handleNotifyTaskComment(req, res) {
     });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4769,7 +4619,7 @@ async function handleNotifyTaskComment(req, res) {
       sendJson(req, res, 400, { error: 'commentId required' });
       return;
     }
-    const { data: commentRow, error: cErr } = await supabase
+    const { data: commentRow, error: cErr } = await db
       .from('comment')
       .select('id, task_id, description, create_by')
       .eq('id', commentId)
@@ -4783,7 +4633,7 @@ async function handleNotifyTaskComment(req, res) {
       sendJson(req, res, 400, { error: 'Comment has no create_by' });
       return;
     }
-    const { data: authorStaff, error: aErr } = await supabase
+    const { data: authorStaff, error: aErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', authorStaffId)
@@ -4805,7 +4655,7 @@ async function handleNotifyTaskComment(req, res) {
       sendJson(req, res, 400, { error: 'Comment has no task_id' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -4845,7 +4695,7 @@ async function handleNotifyTaskComment(req, res) {
       return;
     }
 
-    const { data: creatorStaff, error: crStaffErr } = await supabase
+    const { data: creatorStaff, error: crStaffErr } = await db
       .from('staff')
       .select('email, name, display_name')
       .eq('id', creatorId)
@@ -4927,7 +4777,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
@@ -4940,12 +4790,16 @@ async function handleNotifyTaskEditedComment(req, res) {
     });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -4955,7 +4809,7 @@ async function handleNotifyTaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'commentId required' });
       return;
     }
-    const { data: commentRow, error: cErr } = await supabase
+    const { data: commentRow, error: cErr } = await db
       .from('comment')
       .select('id, task_id, description, update_by, update_date, create_date')
       .eq('id', commentId)
@@ -4969,7 +4823,7 @@ async function handleNotifyTaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'Comment has no update_by' });
       return;
     }
-    const { data: editorStaff, error: edErr } = await supabase
+    const { data: editorStaff, error: edErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', editorStaffId)
@@ -4992,7 +4846,7 @@ async function handleNotifyTaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'Comment has no task_id' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -5041,7 +4895,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     }
 
     for (const staffUuid of recipientByNorm.values()) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('email, name, display_name')
         .eq('id', staffUuid)
@@ -5112,7 +4966,7 @@ async function handleNotifySubtaskComment(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
@@ -5125,12 +4979,16 @@ async function handleNotifySubtaskComment(req, res) {
     });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -5140,7 +4998,7 @@ async function handleNotifySubtaskComment(req, res) {
       sendJson(req, res, 400, { error: 'commentId required' });
       return;
     }
-    const { data: commentRow, error: cErr } = await supabase
+    const { data: commentRow, error: cErr } = await db
       .from('subtask_comment')
       .select('id, subtask_id, description, create_by')
       .eq('id', commentId)
@@ -5154,7 +5012,7 @@ async function handleNotifySubtaskComment(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task comment has no create_by' });
       return;
     }
-    const { data: authorStaff, error: aErr } = await supabase
+    const { data: authorStaff, error: aErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', authorStaffId)
@@ -5165,7 +5023,7 @@ async function handleNotifySubtaskComment(req, res) {
     }
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const authorMatchesSession = await sessionEmailBelongsToStaffRow(
-      supabase,
+      db,
       authorStaff,
       sessionEmail,
     );
@@ -5177,7 +5035,7 @@ async function handleNotifySubtaskComment(req, res) {
       return;
     }
     const authorReplyTo = (
-      (await resolveStaffEmailForNotifications(supabase, authorStaff)) ||
+      (await resolveStaffEmailForNotifications(db, authorStaff)) ||
       (authorStaff.email || '').trim()
     ).trim();
     const subtaskId = (commentRow.subtask_id || '').toString().trim();
@@ -5185,7 +5043,7 @@ async function handleNotifySubtaskComment(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task comment has no subtask_id' });
       return;
     }
-    const { data: subtaskRow, error: tErr } = await supabase
+    const { data: subtaskRow, error: tErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -5230,7 +5088,7 @@ async function handleNotifySubtaskComment(req, res) {
       return;
     }
 
-    const { data: creatorStaff, error: crStaffErr } = await supabase
+    const { data: creatorStaff, error: crStaffErr } = await db
       .from('staff')
       .select('id, email, name, display_name')
       .eq('id', creatorId)
@@ -5240,7 +5098,7 @@ async function handleNotifySubtaskComment(req, res) {
       return;
     }
     const to = (
-      (await resolveStaffEmailForNotifications(supabase, creatorStaff)) ||
+      (await resolveStaffEmailForNotifications(db, creatorStaff)) ||
       (creatorStaff.email || '').trim()
     ).trim();
     const results = [];
@@ -5316,7 +5174,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
@@ -5329,12 +5187,16 @@ async function handleNotifySubtaskEditedComment(req, res) {
     });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -5344,7 +5206,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'commentId required' });
       return;
     }
-    const { data: commentRow, error: cErr } = await supabase
+    const { data: commentRow, error: cErr } = await db
       .from('subtask_comment')
       .select('id, subtask_id, description, update_by, update_date, create_date')
       .eq('id', commentId)
@@ -5358,7 +5220,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task comment has no update_by' });
       return;
     }
-    const { data: editorStaff, error: edErr } = await supabase
+    const { data: editorStaff, error: edErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', editorStaffId)
@@ -5369,7 +5231,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     }
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const editorMatchesSession = await sessionEmailBelongsToStaffRow(
-      supabase,
+      db,
       editorStaff,
       sessionEmail,
     );
@@ -5381,7 +5243,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
       return;
     }
     const editorReplyTo = (
-      (await resolveStaffEmailForNotifications(supabase, editorStaff)) ||
+      (await resolveStaffEmailForNotifications(db, editorStaff)) ||
       (editorStaff.email || '').trim()
     ).trim();
     const subtaskId = (commentRow.subtask_id || '').toString().trim();
@@ -5389,7 +5251,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task comment has no subtask_id' });
       return;
     }
-    const { data: subtaskRow, error: sErr } = await supabase
+    const { data: subtaskRow, error: sErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -5446,13 +5308,13 @@ async function handleNotifySubtaskEditedComment(req, res) {
     const replyTo = editorReplyTo || sessionEmail || undefined;
 
     for (const staffUuid of recipientByNorm.values()) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (
-        (await resolveStaffEmailForNotifications(supabase, s)) ||
+        (await resolveStaffEmailForNotifications(db, s)) ||
         (s?.email || '').trim()
       ).trim();
       if (!to) {
@@ -5523,17 +5385,21 @@ async function handleNotifyTaskUpdated(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -5543,7 +5409,7 @@ async function handleNotifyTaskUpdated(req, res) {
       sendJson(req, res, 400, { error: 'taskId required' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -5555,7 +5421,7 @@ async function handleNotifyTaskUpdated(req, res) {
     const taskCommentId = (body.taskCommentId || '').trim();
     let taskCommentRow = null;
     if (taskCommentId) {
-      const { data: cRow, error: cErr } = await supabase
+      const { data: cRow, error: cErr } = await db
         .from('comment')
         .select('*')
         .eq('id', taskCommentId)
@@ -5574,7 +5440,7 @@ async function handleNotifyTaskUpdated(req, res) {
       sendJson(req, res, 400, { error: 'Task has no update_by' });
       return;
     }
-    const { data: updaterStaff, error: uErr } = await supabase
+    const { data: updaterStaff, error: uErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', updaterId)
@@ -5713,7 +5579,7 @@ async function handleNotifyTaskUpdated(req, res) {
         });
         continue;
       }
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('email, name, display_name')
         .eq('id', staffUuid)
@@ -5789,17 +5655,21 @@ async function handleNotifySubtaskUpdated(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -5809,7 +5679,7 @@ async function handleNotifySubtaskUpdated(req, res) {
       sendJson(req, res, 400, { error: 'subtaskId required' });
       return;
     }
-    const { data: row, error: sErr } = await supabase
+    const { data: row, error: sErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -5821,7 +5691,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     const subtaskCommentId = (body.subtaskCommentId || '').trim();
     let subtaskCommentRow = null;
     if (subtaskCommentId) {
-      const { data: scRow, error: scErr } = await supabase
+      const { data: scRow, error: scErr } = await db
         .from('subtask_comment')
         .select('*')
         .eq('id', subtaskCommentId)
@@ -5840,7 +5710,7 @@ async function handleNotifySubtaskUpdated(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task has no update_by' });
       return;
     }
-    const { data: updaterStaff, error: uErr } = await supabase
+    const { data: updaterStaff, error: uErr } = await db
       .from('staff')
       .select('id, name, email, display_name')
       .eq('id', updaterId)
@@ -5851,7 +5721,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     }
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const updaterMatchesSession = await sessionEmailBelongsToStaffRow(
-      supabase,
+      db,
       updaterStaff,
       sessionEmail,
     );
@@ -5863,7 +5733,7 @@ async function handleNotifySubtaskUpdated(req, res) {
       return;
     }
     const updaterReplyTo = (
-      (await resolveStaffEmailForNotifications(supabase, updaterStaff)) ||
+      (await resolveStaffEmailForNotifications(db, updaterStaff)) ||
       (updaterStaff.email || '').trim()
     ).trim();
     const updaterNameForBody =
@@ -5958,13 +5828,13 @@ async function handleNotifySubtaskUpdated(req, res) {
       updaterReplyTo || sessionEmail || undefined;
 
     for (const staffUuid of recipientByNorm.values()) {
-      const { data: s } = await supabase
+      const { data: s } = await db
         .from('staff')
         .select('id, email, name, display_name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (
-        (await resolveStaffEmailForNotifications(supabase, s)) ||
+        (await resolveStaffEmailForNotifications(db, s)) ||
         (s?.email || '').trim()
       ).trim();
       if (!to) {
@@ -6079,17 +5949,21 @@ async function handleNotifyTaskSubmission(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6099,7 +5973,7 @@ async function handleNotifyTaskSubmission(req, res) {
       sendJson(req, res, 400, { error: 'taskId required' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -6114,7 +5988,7 @@ async function handleNotifyTaskSubmission(req, res) {
       return;
     }
     const { data: picStaff, error: pErr } = await fetchStaffRowForCreateBy(
-      supabase,
+      db,
       picId,
     );
     if (pErr || !picStaff) {
@@ -6123,7 +5997,7 @@ async function handleNotifyTaskSubmission(req, res) {
     }
     const picEmail = (picStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const picNotifyEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const picNotifyEmail = await resolveStaffEmailForNotifications(db, picStaff);
     const picAddr = (picNotifyEmail || picEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== picAddr) {
       sendJson(req, res, 403, {
@@ -6132,12 +6006,12 @@ async function handleNotifyTaskSubmission(req, res) {
       return;
     }
     const creatorRaw = (taskRow.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'Creator has no email' });
       return;
@@ -6185,17 +6059,21 @@ async function handleNotifyTaskAccepted(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6205,7 +6083,7 @@ async function handleNotifyTaskAccepted(req, res) {
       sendJson(req, res, 400, { error: 'taskId required' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -6215,14 +6093,14 @@ async function handleNotifyTaskAccepted(req, res) {
       return;
     }
     const creatorRaw = (taskRow.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== creatorAddr) {
       sendJson(req, res, 403, {
@@ -6236,7 +6114,7 @@ async function handleNotifyTaskAccepted(req, res) {
       sendJson(req, res, 400, { error: 'Task has no PIC' });
       return;
     }
-    const { data: picStaff } = await supabase
+    const { data: picStaff } = await db
       .from('staff')
       .select('id, email, name, display_name')
       .eq('id', picId)
@@ -6245,7 +6123,7 @@ async function handleNotifyTaskAccepted(req, res) {
       sendJson(req, res, 400, { error: 'PIC staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'PIC has no email' });
       return;
@@ -6287,17 +6165,21 @@ async function handleNotifyTaskReturned(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6307,7 +6189,7 @@ async function handleNotifyTaskReturned(req, res) {
       sendJson(req, res, 400, { error: 'taskId required' });
       return;
     }
-    const { data: taskRow, error: tErr } = await supabase
+    const { data: taskRow, error: tErr } = await db
       .from('task')
       .select('*')
       .eq('id', taskId)
@@ -6317,14 +6199,14 @@ async function handleNotifyTaskReturned(req, res) {
       return;
     }
     const creatorRaw = (taskRow.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== creatorAddr) {
       sendJson(req, res, 403, {
@@ -6338,7 +6220,7 @@ async function handleNotifyTaskReturned(req, res) {
       sendJson(req, res, 400, { error: 'Task has no PIC' });
       return;
     }
-    const { data: picStaff } = await supabase
+    const { data: picStaff } = await db
       .from('staff')
       .select('id, email, name, display_name')
       .eq('id', picId)
@@ -6347,7 +6229,7 @@ async function handleNotifyTaskReturned(req, res) {
       sendJson(req, res, 400, { error: 'PIC staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'PIC has no email' });
       return;
@@ -6389,17 +6271,21 @@ async function handleNotifySubtaskSubmission(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6409,7 +6295,7 @@ async function handleNotifySubtaskSubmission(req, res) {
       sendJson(req, res, 400, { error: 'subtaskId required' });
       return;
     }
-    const { data: row, error: sErr } = await supabase
+    const { data: row, error: sErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -6424,7 +6310,7 @@ async function handleNotifySubtaskSubmission(req, res) {
       return;
     }
     const { data: picStaff, error: pErr } = await fetchStaffRowForCreateBy(
-      supabase,
+      db,
       picId,
     );
     if (pErr || !picStaff) {
@@ -6433,7 +6319,7 @@ async function handleNotifySubtaskSubmission(req, res) {
     }
     const picEmail = (picStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const picNotifyEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const picNotifyEmail = await resolveStaffEmailForNotifications(db, picStaff);
     const picAddr = (picNotifyEmail || picEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== picAddr) {
       sendJson(req, res, 403, {
@@ -6443,12 +6329,12 @@ async function handleNotifySubtaskSubmission(req, res) {
       return;
     }
     const creatorRaw = (row.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'Creator has no email' });
       return;
@@ -6501,17 +6387,21 @@ async function handleNotifySubtaskAccepted(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6521,7 +6411,7 @@ async function handleNotifySubtaskAccepted(req, res) {
       sendJson(req, res, 400, { error: 'subtaskId required' });
       return;
     }
-    const { data: row, error: sErr } = await supabase
+    const { data: row, error: sErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -6531,14 +6421,14 @@ async function handleNotifySubtaskAccepted(req, res) {
       return;
     }
     const creatorRaw = (row.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== creatorAddr) {
       sendJson(req, res, 403, {
@@ -6552,12 +6442,12 @@ async function handleNotifySubtaskAccepted(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
       return;
     }
-    const { data: picStaff } = await fetchStaffRowForCreateBy(supabase, picId);
+    const { data: picStaff } = await fetchStaffRowForCreateBy(db, picId);
     if (!picStaff) {
       sendJson(req, res, 400, { error: 'PIC staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'PIC has no email' });
       return;
@@ -6604,17 +6494,21 @@ async function handleNotifySubtaskReturned(req, res) {
     sendJson(req, res, 405, { error: 'Method not allowed' });
     return;
   }
-  const session = await verifyFirebaseToken(req.headers.authorization);
+  const session = await verifyFirebaseToken(req);
   if (!session) {
     sendJson(req, res, 401, { error: 'Unauthorized' });
     return;
   }
-  if (!supabase) {
-    sendJson(req, res, 503, { error: 'Supabase not configured' });
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
     return;
   }
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    sendJson(req, res, 503, { error: 'Mailgun not configured' });
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
   try {
@@ -6624,7 +6518,7 @@ async function handleNotifySubtaskReturned(req, res) {
       sendJson(req, res, 400, { error: 'subtaskId required' });
       return;
     }
-    const { data: row, error: sErr } = await supabase
+    const { data: row, error: sErr } = await db
       .from('subtask')
       .select('*')
       .eq('id', subtaskId)
@@ -6634,14 +6528,14 @@ async function handleNotifySubtaskReturned(req, res) {
       return;
     }
     const creatorRaw = (row.create_by || '').toString().trim();
-    const { data: creatorStaff } = await fetchStaffRowForCreateBy(supabase, creatorRaw);
+    const { data: creatorStaff } = await fetchStaffRowForCreateBy(db, creatorRaw);
     if (!creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    const creatorNotifyEmail = await resolveStaffEmailForNotifications(supabase, creatorStaff);
+    const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
     if (!sessionEmail || sessionEmail !== creatorAddr) {
       sendJson(req, res, 403, {
@@ -6655,12 +6549,12 @@ async function handleNotifySubtaskReturned(req, res) {
       sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
       return;
     }
-    const { data: picStaff } = await fetchStaffRowForCreateBy(supabase, picId);
+    const { data: picStaff } = await fetchStaffRowForCreateBy(db, picId);
     if (!picStaff) {
       sendJson(req, res, 400, { error: 'PIC staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(supabase, picStaff);
+    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
     if (!toEmail) {
       sendJson(req, res, 400, { error: 'PIC has no email' });
       return;
@@ -6753,6 +6647,14 @@ const server = http.createServer(async (req, res) => {
     await handleAdminTestMailgun(req, res);
     return;
   }
+  if (path === '/api/admin/test-smtp' && req.method === 'POST') {
+    await handleAdminTestSmtp(req, res);
+    return;
+  }
+  if (path === '/api/test-smtp' && req.method === 'POST') {
+    await handleTestSmtp(req, res);
+    return;
+  }
   if (path === '/api/notify/task-assigned' && req.method === 'POST') {
     await handleNotifyTaskAssigned(req, res);
     return;
@@ -6825,12 +6727,28 @@ const server = http.createServer(async (req, res) => {
     await handleCronDueTodayOnly(req, res);
     return;
   }
-  if (path === '/api/attachment/open-session' && req.method === 'POST') {
-    await handleAttachmentOpenSession(req, res);
+  if (path === '/api/files/upload' && req.method === 'POST') {
+    await localFiles.handleLocalFileUpload(req, res, sendJson, applyCors);
     return;
   }
-  if (path === '/api/attachment/stream' && req.method === 'GET') {
-    await handleAttachmentStream(req, res);
+  if (path.startsWith('/api/files/')) {
+    await localFiles.handleLocalFileDownload(req, res, applyCors);
+    return;
+  }
+  if (path === '/auth/login' && req.method === 'GET') {
+    await oidcAuth.handleAuthLogin(req, res);
+    return;
+  }
+  if (path === '/auth/callback' && req.method === 'POST') {
+    await oidcAuth.handleAuthCallback(req, res, sendJson, readBody);
+    return;
+  }
+  if (path === '/auth/session' && req.method === 'GET') {
+    await oidcAuth.handleAuthSession(req, res, sendJson);
+    return;
+  }
+  if (path === '/auth/logout' && req.method === 'GET') {
+    await oidcAuth.handleAuthLogout(req, res);
     return;
   }
   if (path === '/health' || path === '/') {
@@ -6847,13 +6765,19 @@ server.listen(PORT, () => {
     `Firebase Admin: ${firebaseAdmin ? 'ok' : 'missing FIREBASE_SERVICE_ACCOUNT_JSON'}`,
   );
   console.log(
-    `Supabase: ${supabase ? 'ok' : 'missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY'}`,
+    `Postgres: ${db ? 'ok' : 'missing DATABASE_URL or Postgres pool'}`,
   );
   console.log(
-    `Attachment stream signing: ${getAttachmentStreamSigningSecret() ? 'ok (ATTACHMENT_STREAM_SIGNING_SECRET or CRON_SECRET)' : 'MISSING — set ATTACHMENT_STREAM_SIGNING_SECRET or CRON_SECRET for /api/attachment/*'}`,
+    `Postgres: ${pgPool ? 'pool ok' : DATABASE_URL ? 'pool failed' : 'DATABASE_URL not set'}`,
   );
   console.log(
-    `Mailgun: ${MAILGUN_API_KEY && MAILGUN_DOMAIN ? 'ok' : 'optional (MAILGUN_API_KEY, MAILGUN_DOMAIN)'}`,
+    `HKU SSO: ${oidcAuth.isConfigured() ? `enabled (issuer ${process.env.SSO_ISSUER_URL || ''})` : 'not configured (set SSO_* in .env)'}`,
+  );
+  console.log(
+    `Email sending: ${EMAIL_SENDING_ENABLED ? 'enabled' : 'disabled (EMAIL_SENDING_ENABLED=false)'}`,
+  );
+  console.log(
+    `SMTP: ${smtpMail.isSmtpConfigured() ? JSON.stringify(smtpMail.smtpConfigSummary()) : 'not configured'}`,
   );
   if (process.env.DISABLE_INTERNAL_URGENT_CRON !== 'true') {
     cron.schedule(

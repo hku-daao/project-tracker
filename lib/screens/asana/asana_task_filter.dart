@@ -239,8 +239,8 @@ class AsanaTaskFilter {
   }
 
   static bool _taskAssignedToCurrentUser(AppState state, Task t) {
-    final mine = state.userStaffAppId?.trim();
-    final myUuid = state.userStaffId?.trim();
+    final mine = state.effectiveStaffAppId?.trim();
+    final myUuid = state.effectiveStaffUuid?.trim();
     if (mine != null && mine.isNotEmpty && t.assigneeIds.contains(mine)) {
       return true;
     }
