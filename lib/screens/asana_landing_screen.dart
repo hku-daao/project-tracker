@@ -541,6 +541,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                         _sidebarOpenOverride = false;
                       }
                     });
+                    // Drop ?task= / session deep-link so refresh does not reopen the slide.
+                    _syncWebLocationToDetailStack();
                   },
                 ),
               _SidebarNavTile(

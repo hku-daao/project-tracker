@@ -256,10 +256,18 @@ void syncWebLocationForDefaultHome() {
 }
 
 /// Asana-style landing shell ([AsanaLandingScreen]).
+/// Clears task/subtask/project so closing a slide (or leaving for Home) does not
+/// reopen it after a browser refresh.
 void syncWebLocationForAsanaDesign() {
+  html.window.sessionStorage.remove(_kTaskKey);
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  html.window.sessionStorage.remove(_kProjectKey);
   html.window.sessionStorage[_kViewKey] = 'asana';
   _replaceQueryParams((q) {
     q['view'] = 'asana';
+    q.remove('task');
+    q.remove('subtask');
+    q.remove('project');
   });
 }
 
