@@ -76,3 +76,7 @@ supabase/node_modules/
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local Docker deployment config (differs per test/prod host)
+docker-compose.yml
+docker/
