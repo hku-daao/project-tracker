@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "==> Building Flutter web..."
-./scripts/build_web_for_hku_test.sh
+./scripts/build_web_for_hku.sh
 
 echo "==> Restarting containers..."
 docker compose --profile production up -d --build --force-recreate frontend backend

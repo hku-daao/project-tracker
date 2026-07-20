@@ -18,10 +18,10 @@ class StaffTeamLookupResult {
   final String? staffId;
   final String? appId;
 
-  /// `staff.display_name` when the login email matches a staff row.
+  /// Display label for compatibility; now sourced from `staff.name`.
   final String? staffDisplayName;
 
-  /// `staff.name` (fallback if display_name is empty).
+  /// `staff.name` from the matched staff row.
   final String? staffName;
 
   /// Value from `staff.team_id` (may match `team.id` or `team.app_id`).
@@ -43,10 +43,10 @@ class StaffTeamLookupResult {
   }
 
   String? get resolvedDisplayName {
-    final dn = staffDisplayName?.trim();
-    if (dn != null && dn.isNotEmpty) return dn;
     final sn = staffName?.trim();
     if (sn != null && sn.isNotEmpty) return sn;
+    final dn = staffDisplayName?.trim();
+    if (dn != null && dn.isNotEmpty) return dn;
     return null;
   }
 
@@ -64,7 +64,6 @@ class StaffTeamLookupResult {
   String get copyableSummary {
     final buf = StringBuffer()
       ..writeln('Login email: $loginEmail')
-      ..writeln('staff.display_name: ${staffDisplayName ?? "(null)"}')
       ..writeln('staff.name: ${staffName ?? "(null)"}')
       ..writeln('staff.email (DB): ${staffEmailFromDb ?? "(null)"}')
       ..writeln('staff.id: ${staffId ?? "(null)"}')

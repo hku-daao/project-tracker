@@ -120,10 +120,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       if (name != null && name.isNotEmpty) return name;
     }
     final lookup = state.revampStaffLookup;
-    final fromLookup =
-        lookup?.staffDisplayName?.trim().isNotEmpty == true
-            ? lookup!.staffDisplayName!.trim()
-            : lookup?.staffName?.trim();
+    final fromLookup = lookup?.staffName?.trim();
     if (fromLookup != null && fromLookup.isNotEmpty) return fromLookup;
     return 'there';
   }
@@ -568,14 +565,6 @@ Widget _homeFixedCell({
 String _homeLabeledMetaLine({required String label, required String value}) {
   final v = value.trim().isEmpty ? '—' : value.trim();
   return '$label: $v';
-}
-
-String _firstNameOnly(String value) {
-  final trimmed = value.trim();
-  if (trimmed.isEmpty || trimmed == '—') return trimmed.isEmpty ? '—' : trimmed;
-  final first = trimmed.split(',').first.trim();
-  if (first.isEmpty) return trimmed;
-  return first.split(RegExp(r'\s+')).first;
 }
 
 Widget _homeListViewport({required double height, required Widget child}) {
@@ -1498,9 +1487,7 @@ class _HomeProjectRow extends StatelessWidget {
                 _homeFixedCell(
                   width: AsanaHomePanel._homePicColWidth,
                   child: Text(
-                    _firstNameOnly(
-                      AsanaProjectFilter.picLine(project, appState),
-                    ),
+                    AsanaProjectFilter.picLine(project, appState),
                     style: valueStyle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1556,7 +1543,7 @@ class _HomeProjectCompactRow extends StatelessWidget {
     final metaLine = [
       _homeLabeledMetaLine(
         label: 'PIC',
-        value: _firstNameOnly(AsanaProjectFilter.picLine(project, appState)),
+        value: AsanaProjectFilter.picLine(project, appState),
       ),
       _homeLabeledMetaLine(
         label: 'Due',

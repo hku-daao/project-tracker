@@ -47,7 +47,7 @@ class StaffTeamLookupService {
     for (final candidate in _emailLookupCandidates(normalized)) {
       final row = await db
           .from('staff')
-          .select('id, app_id, team_id, email, name, display_name')
+          .select('id, app_id, team_id, email, name')
           .ilike('email', candidate)
           .limit(1)
           .maybeSingle();
@@ -58,7 +58,7 @@ class StaffTeamLookupService {
     if (local != null) {
       final prefixRows = await db
           .from('staff')
-          .select('id, app_id, team_id, email, name, display_name')
+          .select('id, app_id, team_id, email, name')
           .ilike('email', '$local@%')
           .limit(5);
       if (prefixRows is List && prefixRows.isNotEmpty) {
@@ -77,7 +77,7 @@ class StaffTeamLookupService {
     if (appGuess != null && appGuess.isNotEmpty) {
       return db
           .from('staff')
-          .select('id, app_id, team_id, email, name, display_name')
+          .select('id, app_id, team_id, email, name')
           .eq('app_id', appGuess)
           .limit(1)
           .maybeSingle();
@@ -120,11 +120,6 @@ class StaffTeamLookupService {
       final staffName = staffNameRaw?.trim().isNotEmpty == true
           ? staffNameRaw!.trim()
           : null;
-      final displayRaw = staffRes['display_name'] as String?;
-      final staffDisplayName = displayRaw?.trim().isNotEmpty == true
-          ? displayRaw!.trim()
-          : null;
-
       String? teamName;
       if (teamIdRaw != null && teamIdRaw.toString().isNotEmpty) {
         final tid = teamIdRaw.toString().trim();
@@ -142,7 +137,7 @@ class StaffTeamLookupService {
         loginEmail: normalized,
         staffId: staffId?.isNotEmpty == true ? staffId : null,
         appId: appId,
-        staffDisplayName: staffDisplayName,
+        staffDisplayName: staffName,
         staffName: staffName,
         staffTeamIdRaw: teamIdRaw?.toString(),
         teamName: teamName,

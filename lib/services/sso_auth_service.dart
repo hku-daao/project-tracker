@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import 'sso_auth_service_web.dart'
@@ -35,9 +34,7 @@ class SsoAuthService {
     final params = readOAuthCallbackParams();
     final code = params.code?.trim();
     final has = code != null && code.isNotEmpty;
-    debugPrint(
-      'hasPendingOAuthCallback=$has url=${readBrowserUrlForDebug()}',
-    );
+    debugPrint('hasPendingOAuthCallback=$has url=${readBrowserUrlForDebug()}');
     return has;
   }
 
@@ -84,16 +81,11 @@ class SsoAuthService {
     );
 
     try {
-      final res = await http
-          .post(
-            Uri.parse(url),
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'code': code,
-              'state': params.state ?? '',
-            }),
-          )
-          .timeout(_httpTimeout);
+      final res = await postJsonWithBrowserCredentials(
+        Uri.parse(url),
+        body: {'code': code, 'state': params.state ?? ''},
+        timeout: _httpTimeout,
+      );
       debugPrint(
         'completeCallback: HTTP ${res.statusCode} body=${_truncate(res.body)}',
       );
@@ -132,7 +124,10 @@ class SsoAuthService {
     final url = '${ApiConfig.baseUrl}/auth/session';
     debugPrint('refreshSession: GET $url');
     try {
-      final res = await http.get(Uri.parse(url)).timeout(_httpTimeout);
+      final res = await getWithBrowserCredentials(
+        Uri.parse(url),
+        timeout: _httpTimeout,
+      );
       debugPrint(
         'refreshSession: HTTP ${res.statusCode} body=${_truncate(res.body)}',
       );

@@ -452,14 +452,14 @@ async function fetchStaffRowForCreateBy(dbClient, createByRaw) {
   if (!key) return { data: null, error: null };
   const byId = await dbClient
     .from('staff')
-    .select('id, email, name, display_name')
+    .select('id, email, name')
     .eq('id', key)
     .maybeSingle();
   if (byId.error) return { data: null, error: byId.error };
   if (byId.data) return { data: byId.data, error: null };
   const byApp = await dbClient
     .from('staff')
-    .select('id, email, name, display_name')
+    .select('id, email, name')
     .eq('app_id', key)
     .maybeSingle();
   if (byApp.error) return { data: null, error: byApp.error };
@@ -1318,7 +1318,7 @@ function subtaskCommentDescriptionPlainText(raw) {
 /**
  * Sub-task comment email to sub-task creator only (`handleNotifySubtaskComment`).
  * Subject: `{comment author} comments on sub-task "{subtask.subtask_name}"`.
- * Body: Hi {creator staff.display_name}; Comment is added – {description}; bold+underlined
+ * Body: Hi {creator staff.name}; Comment is added – {description}; bold+underlined
  * {subtask.subtask_name} → `subtaskWebAppUrl(subtask.id)`; “Project Tracker” → product URL; Aptos 16px.
  *
  * @param {{ recipientDisplayName: string, commentDescription: string, subtaskName: string, subtaskUrl: string }} p
@@ -1717,8 +1717,8 @@ ${landing}`;
 
 /**
  * Due-today reminder for task creator only ([creator_due_today_reminder_sent_on]).
- * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
- * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.name)
  */
 function buildCreatorDueTodayTaskReminderEmail(
   recipientDisplayName,
@@ -1755,8 +1755,8 @@ ${landing}`;
 
 /**
  * Due-today (HK) — sub-task creator only ([subtask_creator_due_today_reminder_sent_on]).
- * @param {string} recipientDisplayName — creator greeting (`create_by` → staff.display_name, else name)
- * @param {string} picDisplayName — PIC line (`subtask.pic` → staff.display_name, else name)
+ * @param {string} recipientDisplayName — creator greeting (`create_by` → staff.name, else name)
+ * @param {string} picDisplayName — PIC line (`subtask.pic` → staff.name, else name)
  */
 function buildCreatorDueTodaySubtaskReminderEmail(
   recipientDisplayName,
@@ -1792,8 +1792,8 @@ ${SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF}`;
 
 /**
  * Overdue (HK) — task creator ([CreatorOverdueReminder]).
- * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
- * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.name)
  */
 function buildCreatorOverdueTaskReminderEmail(
   recipientDisplayName,
@@ -1854,8 +1854,8 @@ ${landing}`;
 
 /**
  * Overdue (HK) — sub-task creator ([Subtask_CreatorOverdueReminder]).
- * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
- * @param {string} picDisplayName — PIC (`subtask.pic` → staff.display_name)
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.name)
+ * @param {string} picDisplayName — PIC (`subtask.pic` → staff.name)
  */
 function buildCreatorOverdueSubtaskReminderEmail(
   recipientDisplayName,
@@ -1921,8 +1921,8 @@ ${landing}`;
 
 /**
  * 80% window — creator only. Subject/body format fixed for product spec.
- * @param {string} recipientDisplayName — task creator (`create_by` → staff.display_name)
- * @param {string} picDisplayName — PIC (`task.pic` → staff.display_name)
+ * @param {string} recipientDisplayName — task creator (`create_by` → staff.name)
+ * @param {string} picDisplayName — PIC (`task.pic` → staff.name)
  */
 function buildCreatorUrgentTaskReminderEmail(
   recipientDisplayName,
@@ -1959,8 +1959,8 @@ ${landing}`;
 
 /**
  * 80% window — sub-task creator only ([runCreatorUrgentSubtaskReminderJob]).
- * @param {string} recipientDisplayName — creator (`create_by` → staff.display_name)
- * @param {string} picDisplayName — PIC (`subtask.pic` → staff.display_name)
+ * @param {string} recipientDisplayName — creator (`create_by` → staff.name)
+ * @param {string} picDisplayName — PIC (`subtask.pic` → staff.name)
  */
 function buildCreatorUrgentSubtaskReminderEmail(
   recipientDisplayName,
@@ -2200,7 +2200,7 @@ async function runAssigneeUrgentSubtaskReminderJob() {
     for (const staffId of assigneeIds) {
       const { data: staffRow } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffId)
         .maybeSingle();
       if (!staffRow) {
@@ -2213,7 +2213,6 @@ async function runAssigneeUrgentSubtaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
       const { html, text } = buildAssigneeUrgentSubtaskReminderEmail(
@@ -2361,7 +2360,6 @@ async function runCreatorUrgentSubtaskReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -2370,12 +2368,11 @@ async function runCreatorUrgentSubtaskReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -2499,7 +2496,7 @@ async function runUrgentTaskReminderJob() {
     for (const staffId of assigneeIds) {
       const { data: staffRow } = await db
         .from('staff')
-        .select('email, name, display_name')
+        .select('email, name')
         .eq('id', staffId)
         .maybeSingle();
       const to = (staffRow?.email || '').trim();
@@ -2508,7 +2505,6 @@ async function runUrgentTaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
       const { html, text } = buildUrgentTaskReminderEmail(
@@ -2655,7 +2651,6 @@ async function runCreatorUrgentTaskReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -2664,12 +2659,11 @@ async function runCreatorUrgentTaskReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -2779,7 +2773,7 @@ async function runDueTodayTaskReminderJob() {
     for (const staffId of assigneeIds) {
       const { data: staffRow } = await db
         .from('staff')
-        .select('email, name, display_name')
+        .select('email, name')
         .eq('id', staffId)
         .maybeSingle();
       const to = (staffRow?.email || '').trim();
@@ -2788,7 +2782,6 @@ async function runDueTodayTaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
       const { html, text } = buildDueTodayTaskReminderEmail(
@@ -2899,7 +2892,7 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
     for (const staffId of assigneeIds) {
       const { data: staffRow } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffId)
         .maybeSingle();
       if (!staffRow) {
@@ -2912,7 +2905,6 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
       const { html, text } = buildAssigneeDueTodaySubtaskReminderEmail(
@@ -3049,7 +3041,6 @@ async function runCreatorDueTodayReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -3058,12 +3049,11 @@ async function runCreatorDueTodayReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -3203,7 +3193,6 @@ async function runCreatorDueTodaySubtaskReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -3212,12 +3201,11 @@ async function runCreatorDueTodaySubtaskReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -3358,7 +3346,6 @@ async function runCreatorOverdueTaskReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -3367,12 +3354,11 @@ async function runCreatorOverdueTaskReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -3489,7 +3475,7 @@ async function runAssigneeOverdueTaskReminderJob() {
 
       const { data: staffRow } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffId)
         .maybeSingle();
       if (!staffRow) {
@@ -3504,7 +3490,6 @@ async function runAssigneeOverdueTaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
 
@@ -3640,7 +3625,6 @@ async function runCreatorOverdueSubtaskReminderJob() {
       continue;
     }
     const recipientDisplayName =
-      (staffRow.display_name || '').trim() ||
       (staffRow.name || '').trim() ||
       to;
 
@@ -3649,12 +3633,11 @@ async function runCreatorOverdueSubtaskReminderJob() {
     if (picId) {
       const { data: picStaff } = await db
         .from('staff')
-        .select('display_name, name')
+        .select('name')
         .eq('id', picId)
         .maybeSingle();
       if (picStaff) {
         picDisplayName =
-          (picStaff.display_name || '').trim() ||
           (picStaff.name || '').trim() ||
           picDisplayName;
       }
@@ -3775,7 +3758,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
 
       const { data: staffRow } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffId)
         .maybeSingle();
       if (!staffRow) {
@@ -3790,7 +3773,6 @@ async function runAssigneeOverdueSubtaskReminderJob() {
         continue;
       }
       const displayName =
-        (staffRow.display_name || '').trim() ||
         (staffRow.name || '').trim() ||
         to;
 
@@ -3963,7 +3945,7 @@ async function handleNotifyTaskAssigned(req, res) {
     }
     const { data: creatorStaff, error: cErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', creatorId)
       .maybeSingle();
     if (cErr || !creatorStaff) {
@@ -3979,7 +3961,6 @@ async function handleNotifyTaskAssigned(req, res) {
       return;
     }
     const staffDisplayName =
-      (creatorStaff.display_name || '').trim() ||
       (creatorStaff.name || '').trim() ||
       creatorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
@@ -4113,7 +4094,7 @@ async function handleNotifyProjectAssigned(req, res) {
     }
     const { data: creatorStaff, error: cErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', creatorId)
       .maybeSingle();
     if (cErr || !creatorStaff) {
@@ -4138,7 +4119,6 @@ async function handleNotifyProjectAssigned(req, res) {
       (creatorStaff.email || '').trim()
     ).trim();
     const staffDisplayName =
-      (creatorStaff.display_name || '').trim() ||
       (creatorStaff.name || '').trim() ||
       creatorReplyTo ||
       sessionEmail ||
@@ -4163,7 +4143,7 @@ async function handleNotifyProjectAssigned(req, res) {
     for (const staffUuid of assigneeUuids) {
       const { data: s } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       if (!s) {
@@ -4276,7 +4256,7 @@ async function handleNotifyProjectUpdated(req, res) {
     }
     const { data: updaterStaff, error: uErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', updaterId)
       .maybeSingle();
     if (uErr || !updaterStaff) {
@@ -4302,7 +4282,6 @@ async function handleNotifyProjectUpdated(req, res) {
     ).trim();
     const updaterNameForBody =
       (updaterStaff.name || '').trim() ||
-      (updaterStaff.display_name || '').trim() ||
       updaterReplyTo ||
       sessionEmail ||
       'Colleague';
@@ -4368,7 +4347,7 @@ async function handleNotifyProjectUpdated(req, res) {
       }
       const { data: s } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       if (!s) {
@@ -4394,7 +4373,6 @@ async function handleNotifyProjectUpdated(req, res) {
       }
       seenEmails.add(toNorm);
       const displayNameForHi =
-        (s.display_name || '').trim() ||
         (s.name || '').trim() ||
         to;
       const html = buildSubtaskUpdatedAssigneeEmailHtml({
@@ -4497,7 +4475,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     }
     const { data: creatorStaff, error: cErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', creatorId)
       .maybeSingle();
     if (cErr || !creatorStaff) {
@@ -4514,7 +4492,6 @@ async function handleNotifySubtaskAssigned(req, res) {
       return;
     }
     const staffDisplayName =
-      (creatorStaff.display_name || '').trim() ||
       (creatorStaff.name || '').trim() ||
       creatorEmail;
     const subtaskName =
@@ -4633,7 +4610,7 @@ async function handleNotifyTaskComment(req, res) {
     }
     const { data: authorStaff, error: aErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', authorStaffId)
       .maybeSingle();
     if (aErr || !authorStaff) {
@@ -4663,7 +4640,6 @@ async function handleNotifyTaskComment(req, res) {
       return;
     }
     const authorNameForSubject =
-      (authorStaff.display_name || '').trim() ||
       (authorStaff.name || '').trim() ||
       authorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
@@ -4695,7 +4671,7 @@ async function handleNotifyTaskComment(req, res) {
 
     const { data: creatorStaff, error: crStaffErr } = await db
       .from('staff')
-      .select('email, name, display_name')
+      .select('email, name')
       .eq('id', creatorId)
       .maybeSingle();
     if (crStaffErr || !creatorStaff) {
@@ -4721,7 +4697,6 @@ async function handleNotifyTaskComment(req, res) {
     }
 
     const recipientDisplayName =
-      (creatorStaff.display_name || '').trim() ||
       (creatorStaff.name || '').trim() ||
       to;
     const html = buildTaskCommentCreatorEmailHtml({
@@ -4823,7 +4798,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     }
     const { data: editorStaff, error: edErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', editorStaffId)
       .maybeSingle();
     if (edErr || !editorStaff) {
@@ -4856,14 +4831,12 @@ async function handleNotifyTaskEditedComment(req, res) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const editorNameForSubject =
-      (editorStaff.display_name || '').trim() ||
       (editorStaff.name || '').trim() ||
       editorEmail;
     const subject = `${mailSubjectSingleLine(editorNameForSubject)} edited comments on task "${taskTitleForSubject}"`;
     const taskUrl = taskWebAppUrl(taskId);
     const updaterNameForBody =
       (editorStaff.name || '').trim() ||
-      (editorStaff.display_name || '').trim() ||
       editorEmail;
     const updatedRaw =
       commentRow.update_date != null && String(commentRow.update_date).trim() !== ''
@@ -4895,7 +4868,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await db
         .from('staff')
-        .select('email, name, display_name')
+        .select('email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (s?.email || '').trim();
@@ -4904,7 +4877,6 @@ async function handleNotifyTaskEditedComment(req, res) {
         continue;
       }
       const recipientDisplayName =
-        (s?.display_name || '').trim() ||
         (s?.name || '').trim() ||
         to;
       const html = buildTaskCommentEditedEmailHtml({
@@ -5012,7 +4984,7 @@ async function handleNotifySubtaskComment(req, res) {
     }
     const { data: authorStaff, error: aErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', authorStaffId)
       .maybeSingle();
     if (aErr || !authorStaff) {
@@ -5052,7 +5024,6 @@ async function handleNotifySubtaskComment(req, res) {
     }
     /** Resolved from `subtask_comment.create_by` → staff (subject line). */
     const authorNameForSubject =
-      (authorStaff.display_name || '').trim() ||
       (authorStaff.name || '').trim() ||
       sessionEmail ||
       authorReplyTo ||
@@ -5088,7 +5059,7 @@ async function handleNotifySubtaskComment(req, res) {
 
     const { data: creatorStaff, error: crStaffErr } = await db
       .from('staff')
-      .select('id, email, name, display_name')
+      .select('id, email, name')
       .eq('id', creatorId)
       .maybeSingle();
     if (crStaffErr || !creatorStaff) {
@@ -5117,7 +5088,6 @@ async function handleNotifySubtaskComment(req, res) {
     }
 
     const recipientDisplayName =
-      (creatorStaff.display_name || '').trim() ||
       (creatorStaff.name || '').trim() ||
       to;
     const html = buildSubtaskCommentCreatorEmailHtml({
@@ -5220,7 +5190,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     }
     const { data: editorStaff, error: edErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', editorStaffId)
       .maybeSingle();
     if (edErr || !editorStaff) {
@@ -5262,7 +5232,6 @@ async function handleNotifySubtaskEditedComment(req, res) {
       (subtaskRow.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const editorNameForSubject =
-      (editorStaff.display_name || '').trim() ||
       (editorStaff.name || '').trim() ||
       sessionEmail ||
       editorReplyTo ||
@@ -5272,7 +5241,6 @@ async function handleNotifySubtaskEditedComment(req, res) {
     const subtaskUrl = subtaskWebAppUrl(subtaskRowId);
     const updaterNameForBody =
       (editorStaff.name || '').trim() ||
-      (editorStaff.display_name || '').trim() ||
       editorReplyTo ||
       sessionEmail ||
       'Colleague';
@@ -5308,7 +5276,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (
@@ -5320,7 +5288,6 @@ async function handleNotifySubtaskEditedComment(req, res) {
         continue;
       }
       const recipientDisplayName =
-        (s?.display_name || '').trim() ||
         (s?.name || '').trim() ||
         to;
       const html = buildSubtaskCommentEditedEmailHtml({
@@ -5440,7 +5407,7 @@ async function handleNotifyTaskUpdated(req, res) {
     }
     const { data: updaterStaff, error: uErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', updaterId)
       .maybeSingle();
     if (uErr || !updaterStaff) {
@@ -5579,7 +5546,7 @@ async function handleNotifyTaskUpdated(req, res) {
       }
       const { data: s } = await db
         .from('staff')
-        .select('email, name, display_name')
+        .select('email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (s?.email || '').trim();
@@ -5588,7 +5555,6 @@ async function handleNotifyTaskUpdated(req, res) {
         continue;
       }
       const displayNameForHi =
-        (s.display_name || '').trim() ||
         (s.name || '').trim() ||
         to;
       const html = buildTaskUpdatedAssigneeEmailHtml({
@@ -5710,7 +5676,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     }
     const { data: updaterStaff, error: uErr } = await db
       .from('staff')
-      .select('id, name, email, display_name')
+      .select('id, name, email')
       .eq('id', updaterId)
       .maybeSingle();
     if (uErr || !updaterStaff) {
@@ -5828,7 +5794,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await db
         .from('staff')
-        .select('id, email, name, display_name')
+        .select('id, email, name')
         .eq('id', staffUuid)
         .maybeSingle();
       const to = (
@@ -5840,7 +5806,6 @@ async function handleNotifySubtaskUpdated(req, res) {
         continue;
       }
       const displayNameForHi =
-        (s.display_name || '').trim() ||
         (s.name || '').trim() ||
         to;
       const html = buildSubtaskUpdatedAssigneeEmailHtml({
@@ -5894,10 +5859,8 @@ async function handleNotifySubtaskUpdated(req, res) {
   }
 }
 
-/** Display name: display_name, else name, else email. */
+/** Display name: staff.name, else email. */
 function staffDisplayName(staffRow, fallbackEmail) {
-  const dn = (staffRow?.display_name || '').trim();
-  if (dn) return dn;
   const n = (staffRow?.name || '').trim();
   if (n) return n;
   return (fallbackEmail || '').trim() || 'Colleague';
@@ -6114,7 +6077,7 @@ async function handleNotifyTaskAccepted(req, res) {
     }
     const { data: picStaff } = await db
       .from('staff')
-      .select('id, email, name, display_name')
+      .select('id, email, name')
       .eq('id', picId)
       .maybeSingle();
     if (!picStaff) {
@@ -6220,7 +6183,7 @@ async function handleNotifyTaskReturned(req, res) {
     }
     const { data: picStaff } = await db
       .from('staff')
-      .select('id, email, name, display_name')
+      .select('id, email, name')
       .eq('id', picId)
       .maybeSingle();
     if (!picStaff) {

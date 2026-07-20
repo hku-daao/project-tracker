@@ -29,7 +29,7 @@ if [[ ! -f docker/nginx/ssl/nginx.crt || ! -f docker/nginx/ssl/nginx.key ]]; the
 fi
 
 if [[ ! -d build/web ]] || [[ ! -f build/web/index.html ]]; then
-  echo "Missing Flutter build — run ./scripts/build_web_for_hku_test.sh first." >&2
+  echo "Missing Flutter build — run ./scripts/build_web_for_hku.sh first." >&2
   exit 1
 fi
 

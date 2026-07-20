@@ -6,7 +6,7 @@
 /// - `--dart-define=POSTGREST_ANON_KEY=...`
 /// - `--dart-define=DEPLOY_ENV=testing|production`
 ///
-/// Use `./scripts/build_web_for_hku_test.sh` (deploy) or
+/// Use `./scripts/build_web_for_hku.sh` (deploy) or
 /// `./scripts/run_flutter_web_local.sh` (local).
 class AppEnvironment {
   AppEnvironment._();

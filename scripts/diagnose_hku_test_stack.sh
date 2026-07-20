@@ -64,7 +64,7 @@ echo ""
 
 echo "=== Likely fixes ==="
 echo "1. On HKU VPN / campus WiFi (site is campus-restricted)."
-echo "2. If MISS files above: run setup_hku_test_ssl.sh and build_web_for_hku_test.sh"
+echo "2. If MISS files above: run setup_hku_test_ssl.sh and build_web_for_hku.sh"
 echo "3. Start stack: ./scripts/start_hku_test_stack.sh"
 echo "4. If IT POC was stopped and this stack never started, temporarily restore POC:"
 echo "   cd /var/www/my-fullstack-app && docker compose up -d"
