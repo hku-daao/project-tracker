@@ -225,6 +225,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   bool _assigneePickerLoading = false;
   String? _assigneePickerError;
+  List<OfficeOptionRow> _pickerOffices = [];
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   final ValueNotifier<AsanaAssigneePickerSnapshot> _assigneeSnapshot =
@@ -881,6 +882,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   void _publishAssigneeSnapshot() {
     _assigneeSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForRole(),
       staff: List<StaffForAssignment>.from(_pickerStaff),
       projectStaff: _projectAssigneeStaff(),
@@ -889,6 +891,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
     _picSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForRole(),
       staff: _pickerStaff
           .where((s) => _assigneeIds.contains(s.assigneeId))
@@ -963,6 +966,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
       _assigneePickerError = 'Database not configured';
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -977,6 +981,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
+      _pickerOffices = data.offices;
       _pickerTeams = data.teams;
       final parentAssignees = Set<String>.from(
         _parentTask?.assigneeIds ?? const <String>[],
@@ -993,6 +998,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       if (!mounted) return;
       _assigneePickerLoading = false;
       _assigneePickerError = e.toString();
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -2275,13 +2281,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
         continue;
       }
-      final upload =
-          await AttachmentUploadService.uploadBytesForSubtask(
-            subtask.id,
-            bytes: draft.bytes,
-            originalFilename: draft.label,
-            aclStaffKeys: _subtaskAttachmentAclKeys(state),
-          );
+      final upload = await AttachmentUploadService.uploadBytesForSubtask(
+        subtask.id,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: _subtaskAttachmentAclKeys(state),
+      );
       if (upload.error != null) return upload.error;
       final url = upload.url?.trim();
       if (url == null || url.isEmpty) {
@@ -2301,10 +2306,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     for (final row in List<InlineAttachmentRow>.from(
       _pendingInlineImageDeletes,
     )) {
-      final deleteErr =
-          await AttachmentUploadService.deleteUploadedObjectByUrl(
-            row.url,
-          );
+      final deleteErr = await AttachmentUploadService.deleteUploadedObjectByUrl(
+        row.url,
+      );
       if (deleteErr != null) return deleteErr;
       final markErr = await DatabaseService.markInlineAttachmentDeleted(row.id);
       if (markErr != null) return markErr;

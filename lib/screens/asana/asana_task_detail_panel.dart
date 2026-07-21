@@ -146,6 +146,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   DateTime _anchorCreateDate = HkTime.todayDateOnlyHk();
   final Set<String> _selectedAssigneeIds = {};
   String? _picAssigneeId;
+  List<OfficeOptionRow> _pickerOffices = [];
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   bool _assigneePickerLoading = false;
@@ -410,6 +411,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   void _publishAssigneeSnapshot() {
     _assigneeSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForRole(),
       staff: List<StaffForAssignment>.from(_pickerStaff),
       projectStaff: _projectAssigneeStaff(),
@@ -446,6 +448,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
       _assigneePickerError = 'Database not configured';
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -460,6 +463,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
+      _pickerOffices = data.offices;
       _pickerTeams = data.teams;
       _pickerStaff = data.staff;
       _assigneePickerError = null;
@@ -469,6 +473,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (!mounted) return;
       _assigneePickerLoading = false;
       _assigneePickerError = e.toString();
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -556,9 +561,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       final err = _assigneePickerError?.trim();
       await _showInfo(
         'Could not load teammates',
-        err != null && err.isNotEmpty
-            ? err
-            : 'Please try again in a moment.',
+        err != null && err.isNotEmpty ? err : 'Please try again in a moment.',
       );
       return;
     }
@@ -1621,10 +1624,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     for (final row in List<InlineAttachmentRow>.from(
       _pendingInlineImageDeletes,
     )) {
-      final deleteErr =
-          await AttachmentUploadService.deleteUploadedObjectByUrl(
-            row.url,
-          );
+      final deleteErr = await AttachmentUploadService.deleteUploadedObjectByUrl(
+        row.url,
+      );
       if (deleteErr != null) return deleteErr;
       final markErr = await DatabaseService.markInlineAttachmentDeleted(row.id);
       if (markErr != null) return markErr;
@@ -1901,7 +1903,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       await _notifyEmail(
         'Task assignment email',
-        (token) => BackendApi().notifyTaskAssigned(idToken: token, taskId: newId),
+        (token) =>
+            BackendApi().notifyTaskAssigned(idToken: token, taskId: newId),
       );
       if (mounted) widget.onCreated?.call(newId);
     } finally {

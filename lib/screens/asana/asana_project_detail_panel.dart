@@ -134,6 +134,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
   AsanaTaskAiController? _projectAi;
 
+  List<OfficeOptionRow> _pickerOffices = [];
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   bool _assigneePickerLoading = false;
@@ -510,6 +511,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   void _publishAssigneeSnapshot() {
     _assigneeSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForStaff(_pickerStaff),
       staff: List<StaffForAssignment>.from(_pickerStaff),
       error: _assigneePickerError,
@@ -522,6 +524,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         .toList();
     _picSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForStaff(picStaff),
       staff: picStaff,
       error: _assigneePickerError,
@@ -542,6 +545,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
       _assigneePickerError = 'Database not configured';
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -558,6 +562,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
+      _pickerOffices = data.offices;
       _pickerTeams = data.teams;
       _pickerStaff = data.staff;
       _assigneePickerError = null;
@@ -568,6 +573,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       if (!mounted) return;
       _assigneePickerLoading = false;
       _assigneePickerError = e.toString();
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshot();
@@ -1060,10 +1066,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final rawUrl = draft.urlController.text.trim();
     final uri = Uri.tryParse(rawUrl);
     if (_attachmentMimeTypeFromName(uri?.path) != null) return true;
-    final objectPath =
-        AttachmentUploadService.objectPathFromStorageDownloadUrl(
-          rawUrl,
-        );
+    final objectPath = AttachmentUploadService.objectPathFromStorageDownloadUrl(
+      rawUrl,
+    );
     return _attachmentMimeTypeFromName(objectPath) != null;
   }
 
@@ -1251,13 +1256,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
         continue;
       }
-      final upload =
-          await AttachmentUploadService.uploadBytesForProject(
-            project.id,
-            bytes: draft.bytes,
-            originalFilename: draft.label,
-            aclStaffKeys: _projectAttachmentAclKeys(state, project),
-          );
+      final upload = await AttachmentUploadService.uploadBytesForProject(
+        project.id,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: _projectAttachmentAclKeys(state, project),
+      );
       if (upload.error != null) return upload.error;
       final url = upload.url?.trim();
       if (url == null || url.isEmpty) {
@@ -1277,10 +1281,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     for (final row in List<InlineAttachmentRow>.from(
       _pendingInlineImageDeletes,
     )) {
-      final deleteErr =
-          await AttachmentUploadService.deleteUploadedObjectByUrl(
-            row.url,
-          );
+      final deleteErr = await AttachmentUploadService.deleteUploadedObjectByUrl(
+        row.url,
+      );
       if (deleteErr != null) return deleteErr;
       final markErr = await DatabaseService.markInlineAttachmentDeleted(row.id);
       if (markErr != null) return markErr;

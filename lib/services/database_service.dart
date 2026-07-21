@@ -464,11 +464,7 @@ class DatabaseService {
     final cb = createBy?.trim();
     if (cb == null || cb.isEmpty) return '—';
 
-    final fromMaps = _staffNameFromMaps(
-      cb,
-      staffUuidToName,
-      staffUuidToAppId,
-    );
+    final fromMaps = _staffNameFromMaps(cb, staffUuidToName, staffUuidToAppId);
     if (fromMaps != null) return fromMaps;
 
     final resolved = resolvedNames[cb]?.trim();
@@ -990,10 +986,7 @@ class DatabaseService {
         };
         if (rowId.isNotEmpty) {
           keptIds.add(rowId);
-          await db
-              .from('file_attachment')
-              .update(payload)
-              .eq('id', rowId);
+          await db.from('file_attachment').update(payload).eq('id', rowId);
         } else {
           await db.from('file_attachment').insert(payload);
         }
@@ -2001,8 +1994,7 @@ class DatabaseService {
           .select('id, app_id, name, team_id')
           .order('name');
       staffRaw = [
-        for (final raw in (res as List))
-          Map<String, dynamic>.from(raw as Map),
+        for (final raw in (res as List)) Map<String, dynamic>.from(raw as Map),
       ];
     } catch (e) {
       staffHasTeamIdColumn = false;
@@ -2014,14 +2006,38 @@ class DatabaseService {
           .select('id, app_id, name')
           .order('name');
       staffRaw = [
-        for (final raw in (res as List))
-          Map<String, dynamic>.from(raw as Map),
+        for (final raw in (res as List)) Map<String, dynamic>.from(raw as Map),
       ];
     }
 
+    final offices = <OfficeOptionRow>[];
+    final officeIds = <String>{};
+    final teamOfficeByTeamId = <String, String>{};
     final teams = <TeamOptionRow>[];
     final teamUuidToBusinessId = <String, String>{};
     final legacyTeamUuidToBusinessId = <String, String>{};
+
+    try {
+      final res = await db
+          .from('office')
+          .select('office_id, office_name')
+          .order('office_name');
+      for (final raw in (res as List)) {
+        final m = Map<String, dynamic>.from(raw as Map);
+        final officeId = m['office_id']?.toString().trim() ?? '';
+        if (officeId.isEmpty || officeIds.contains(officeId)) continue;
+        final name = m['office_name']?.toString().trim();
+        offices.add(
+          OfficeOptionRow(
+            officeId: officeId,
+            officeName: name != null && name.isNotEmpty ? name : officeId,
+          ),
+        );
+        officeIds.add(officeId);
+      }
+    } catch (e) {
+      debugPrint('fetchStaffAssigneePickerData: office table: $e');
+    }
 
     try {
       final res = await db
@@ -2049,23 +2065,59 @@ class DatabaseService {
     try {
       final res = await db
           .from('team')
-          .select('team_id, team_name')
+          .select('team_id, team_name, office_id')
           .order('team_name');
       for (final raw in (res as List)) {
         final m = Map<String, dynamic>.from(raw as Map);
         final tid = m['team_id']?.toString().trim() ?? '';
         if (tid.isEmpty) continue;
+        final officeId = m['office_id']?.toString().trim();
+        if (officeId != null && officeId.isNotEmpty) {
+          teamOfficeByTeamId[tid] = officeId;
+          if (!officeIds.contains(officeId)) {
+            offices.add(
+              OfficeOptionRow(officeId: officeId, officeName: officeId),
+            );
+            officeIds.add(officeId);
+          }
+        }
         if (teams.any((t) => t.teamId == tid)) continue;
         final name = m['team_name']?.toString().trim();
         teams.add(
           TeamOptionRow(
             teamId: tid,
             teamName: name != null && name.isNotEmpty ? name : tid,
+            officeId: officeId != null && officeId.isNotEmpty ? officeId : null,
           ),
         );
       }
     } catch (e) {
-      debugPrint('fetchStaffAssigneePickerData: legacy team table: $e');
+      debugPrint(
+        'fetchStaffAssigneePickerData: team.office_id unavailable, retrying: $e',
+      );
+      try {
+        final res = await db
+            .from('team')
+            .select('team_id, team_name')
+            .order('team_name');
+        for (final raw in (res as List)) {
+          final m = Map<String, dynamic>.from(raw as Map);
+          final tid = m['team_id']?.toString().trim() ?? '';
+          if (tid.isEmpty) continue;
+          if (teams.any((t) => t.teamId == tid)) continue;
+          final name = m['team_name']?.toString().trim();
+          teams.add(
+            TeamOptionRow(
+              teamId: tid,
+              teamName: name != null && name.isNotEmpty ? name : tid,
+            ),
+          );
+        }
+      } catch (retryError) {
+        debugPrint(
+          'fetchStaffAssigneePickerData: legacy team table: $retryError',
+        );
+      }
     }
 
     try {
@@ -2120,6 +2172,7 @@ class DatabaseService {
         }
       }
       teamId ??= staffUuidToTeamBusinessId[id];
+      final officeId = teamId == null ? null : teamOfficeByTeamId[teamId];
 
       staff.add(
         StaffForAssignment(
@@ -2127,6 +2180,7 @@ class DatabaseService {
           name: name,
           staffUuid: id.isNotEmpty ? id : null,
           teamId: teamId,
+          officeId: officeId,
         ),
       );
     }
@@ -2136,19 +2190,36 @@ class DatabaseService {
     }
 
     if (teams.isEmpty) {
-      final inferred = staff
-          .map((s) => s.teamId)
-          .whereType<String>()
-          .where((t) => t.trim().isNotEmpty)
-          .toSet()
-        ..removeWhere((t) => _looksLikeUuid(t));
+      final inferred =
+          staff
+              .map((s) => s.teamId)
+              .whereType<String>()
+              .where((t) => t.trim().isNotEmpty)
+              .toSet()
+            ..removeWhere((t) => _looksLikeUuid(t));
       for (final tid in inferred) {
         teams.add(TeamOptionRow(teamId: tid, teamName: tid));
       }
     }
 
+    if (offices.isEmpty) {
+      final inferred = teams
+          .map((t) => t.officeId)
+          .whereType<String>()
+          .where((o) => o.trim().isNotEmpty)
+          .toSet();
+      for (final oid in inferred) {
+        offices.add(OfficeOptionRow(officeId: oid, officeName: oid));
+      }
+    }
+
+    offices.sort((a, b) => a.officeName.compareTo(b.officeName));
     teams.sort((a, b) => a.teamName.compareTo(b.teamName));
-    return StaffAssigneePickerData(teams: teams, staff: staff);
+    return StaffAssigneePickerData(
+      offices: offices,
+      teams: teams,
+      staff: staff,
+    );
   }
 
   /// Teams for the Tasks tab "Filter by team". [Team.id] is business team key (`teams.app_id`).
@@ -2320,10 +2391,7 @@ class DatabaseService {
       futures.add(
         runQuery(
           'create_by',
-          () => db
-              .from('task')
-              .select()
-              .inFilter('create_by', createByKeys),
+          () => db.from('task').select().inFilter('create_by', createByKeys),
         ),
       );
     }
@@ -2461,9 +2529,7 @@ class DatabaseService {
             }
           } catch (e, st) {
             parseFailures++;
-            debugPrint(
-              'fetchTasks: singular row parse error: $e\n$st',
-            );
+            debugPrint('fetchTasks: singular row parse error: $e\n$st');
           }
         }
         debugPrint(
@@ -2477,9 +2543,7 @@ class DatabaseService {
       final merged = singularTasks.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-      debugPrint(
-        'fetchTasks: returning ${merged.length} tasks to AppState',
-      );
+      debugPrint('fetchTasks: returning ${merged.length} tasks to AppState');
       return TasksLoadResult(tasks: merged);
     } catch (e, st) {
       debugPrint('fetchTasks failed: $e\n$st');

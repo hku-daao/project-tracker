@@ -100,6 +100,7 @@ class _AsanaCreateProjectDetailPanelState
   bool _saving = false;
   bool _assigneePickerLoading = false;
   String? _assigneePickerError;
+  List<OfficeOptionRow> _pickerOffices = [];
   List<TeamOptionRow> _pickerTeams = [];
   List<StaffForAssignment> _pickerStaff = [];
   final Set<String> _assigneeIds = {};
@@ -155,6 +156,7 @@ class _AsanaCreateProjectDetailPanelState
     if (!PostgrestConfig.isConfigured) {
       _assigneePickerLoading = false;
       _assigneePickerError = 'Database not configured';
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshots();
@@ -169,6 +171,7 @@ class _AsanaCreateProjectDetailPanelState
       final data = await DatabaseService.fetchStaffAssigneePickerData();
       if (!mounted) return;
       _assigneePickerLoading = false;
+      _pickerOffices = data.offices;
       _pickerTeams = data.teams;
       _pickerStaff = data.staff;
       _assigneePickerError = null;
@@ -178,6 +181,7 @@ class _AsanaCreateProjectDetailPanelState
       if (!mounted) return;
       _assigneePickerLoading = false;
       _assigneePickerError = e.toString();
+      _pickerOffices = [];
       _pickerTeams = [];
       _pickerStaff = [];
       _publishAssigneeSnapshots();
@@ -188,6 +192,7 @@ class _AsanaCreateProjectDetailPanelState
   void _publishAssigneeSnapshots() {
     _assigneeSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForStaff(_pickerStaff),
       staff: List<StaffForAssignment>.from(_pickerStaff),
       error: _assigneePickerError,
@@ -197,6 +202,7 @@ class _AsanaCreateProjectDetailPanelState
         .toList();
     _picSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
+      offices: _pickerOffices,
       teams: _pickerTeamsForStaff(picStaff),
       staff: picStaff,
       error: _assigneePickerError,
@@ -642,13 +648,12 @@ class _AsanaCreateProjectDetailPanelState
   ) async {
     for (final draft in _attachments) {
       if (!draft.isPendingFile) continue;
-      final upload =
-          await AttachmentUploadService.uploadBytesForProject(
-            projectId,
-            bytes: draft.pendingBytes!,
-            originalFilename: draft.pendingFilename ?? 'attachment',
-            aclStaffKeys: _projectAttachmentAclKeys(state),
-          );
+      final upload = await AttachmentUploadService.uploadBytesForProject(
+        projectId,
+        bytes: draft.pendingBytes!,
+        originalFilename: draft.pendingFilename ?? 'attachment',
+        aclStaffKeys: _projectAttachmentAclKeys(state),
+      );
       if (upload.error != null) return upload.error;
       final url = upload.url?.trim();
       if (url == null || url.isEmpty) {
@@ -681,13 +686,12 @@ class _AsanaCreateProjectDetailPanelState
       if (resolvedEntityId.trim().isEmpty || resolvedEntityId == 'draft') {
         continue;
       }
-      final upload =
-          await AttachmentUploadService.uploadBytesForProject(
-            projectId,
-            bytes: draft.bytes,
-            originalFilename: draft.label,
-            aclStaffKeys: _projectAttachmentAclKeys(state),
-          );
+      final upload = await AttachmentUploadService.uploadBytesForProject(
+        projectId,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: _projectAttachmentAclKeys(state),
+      );
       if (upload.error != null) return upload.error;
       final url = upload.url?.trim();
       if (url == null || url.isEmpty) {

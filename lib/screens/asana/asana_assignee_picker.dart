@@ -10,6 +10,7 @@ import 'asana_theme.dart';
 class AsanaAssigneePickerSnapshot {
   const AsanaAssigneePickerSnapshot({
     this.loading = false,
+    this.offices = const [],
     this.teams = const [],
     this.staff = const [],
     this.projectStaff = const [],
@@ -18,6 +19,7 @@ class AsanaAssigneePickerSnapshot {
   });
 
   final bool loading;
+  final List<OfficeOptionRow> offices;
   final List<TeamOptionRow> teams;
   final List<StaffForAssignment> staff;
   final List<StaffForAssignment> projectStaff;
@@ -186,7 +188,9 @@ class _AsanaAssigneePickerBody extends StatefulWidget {
 
 class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
   final _searchController = TextEditingController();
+  String? _officeId;
   String? _teamId;
+  bool _officeListOpen = false;
   bool _teamListOpen = false;
   bool _projectTeamOpen = false;
 
@@ -194,6 +198,14 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  String? _officeName(String? id) {
+    if (id == null) return null;
+    for (final o in _officeOptions) {
+      if (o.officeId == id) return o.officeName;
+    }
+    return null;
   }
 
   String? _teamName(String? id) {
@@ -208,9 +220,43 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
 
   bool get _searching => _searchQuery.isNotEmpty;
 
+  List<OfficeOptionRow> get _officeOptions {
+    final visibleOfficeIds = widget.snapshot.teams
+        .map((t) => t.officeId?.trim())
+        .whereType<String>()
+        .where((o) => o.isNotEmpty)
+        .toSet();
+    final out = <String, OfficeOptionRow>{
+      for (final o in widget.snapshot.offices)
+        if (visibleOfficeIds.isEmpty || visibleOfficeIds.contains(o.officeId))
+          o.officeId: o,
+    };
+    for (final t in widget.snapshot.teams) {
+      final oid = t.officeId?.trim();
+      if (oid != null && oid.isNotEmpty && !out.containsKey(oid)) {
+        out[oid] = OfficeOptionRow(officeId: oid, officeName: oid);
+      }
+    }
+    return out.values.toList()
+      ..sort((a, b) => a.officeName.compareTo(b.officeName));
+  }
+
+  List<TeamOptionRow> get _teamOptions {
+    final oid = _officeId?.trim();
+    final teams = oid == null || oid.isEmpty
+        ? widget.snapshot.teams
+        : widget.snapshot.teams.where((t) => t.officeId == oid);
+    return List<TeamOptionRow>.from(teams)
+      ..sort((a, b) => a.teamName.compareTo(b.teamName));
+  }
+
   List<StaffForAssignment> get _visibleMembers {
     final q = _searchQuery;
     Iterable<StaffForAssignment> list = widget.snapshot.staff;
+    final oid = _officeId?.trim();
+    if (oid != null && oid.isNotEmpty) {
+      list = list.where((s) => s.officeId == oid);
+    }
     if (q.isNotEmpty) {
       list = list.where((s) => s.name.toLowerCase().contains(q));
       if (_teamId != null && _teamId!.isNotEmpty) {
@@ -227,6 +273,7 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
   @override
   Widget build(BuildContext context) {
     final snap = widget.snapshot;
+    final officeChosen = _officeId != null && _officeId!.isNotEmpty;
     final teamChosen = _teamId != null && _teamId!.isNotEmpty;
     final selectedTeamName = teamChosen
         ? (_teamName(_teamId) ?? 'Selected Team')
@@ -291,16 +338,50 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
                   ),
                   const SizedBox(height: 8),
                   _AsanaPickerTeamRow(
+                    label: officeChosen
+                        ? (_officeName(_officeId) ?? 'Office')
+                        : 'Select Office',
+                    open: _officeListOpen,
+                    onTap: () => setState(() {
+                      final nextOpen = !_officeListOpen;
+                      _officeListOpen = nextOpen;
+                      if (nextOpen) _teamListOpen = false;
+                    }),
+                  ),
+                  if (_officeListOpen) ...[
+                    const SizedBox(height: 4),
+                    _AsanaPickerOfficeList(
+                      offices: _officeOptions,
+                      selectedOfficeId: _officeId,
+                      onPick: (id) => setState(() {
+                        _officeId = id;
+                        _officeListOpen = false;
+                        final selectedTeam = _teamId;
+                        if (selectedTeam != null &&
+                            !_teamOptions.any(
+                              (t) => t.teamId == selectedTeam,
+                            )) {
+                          _teamId = null;
+                        }
+                      }),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  _AsanaPickerTeamRow(
                     label: teamChosen
                         ? (_teamName(_teamId) ?? 'Team')
                         : 'Select Team',
                     open: _teamListOpen,
-                    onTap: () => setState(() => _teamListOpen = !_teamListOpen),
+                    onTap: () => setState(() {
+                      final nextOpen = !_teamListOpen;
+                      _teamListOpen = nextOpen;
+                      if (nextOpen) _officeListOpen = false;
+                    }),
                   ),
                   if (_teamListOpen) ...[
                     const SizedBox(height: 4),
                     _AsanaPickerTeamList(
-                      teams: snap.teams,
+                      teams: _teamOptions,
                       selectedTeamId: _teamId,
                       onPick: (id) => setState(() {
                         _teamId = id;
@@ -311,7 +392,7 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
                   if (!showMemberGrid) ...[
                     const SizedBox(height: 10),
                     Text(
-                      'Search by name or pick a team',
+                      'Search by name or pick an office and team',
                       style: asanaDetailLabelStyle(context),
                     ),
                   ] else ...[
@@ -474,6 +555,56 @@ class _AsanaPickerTeamRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AsanaPickerOfficeList extends StatelessWidget {
+  const _AsanaPickerOfficeList({
+    required this.offices,
+    required this.selectedOfficeId,
+    required this.onPick,
+  });
+
+  final List<OfficeOptionRow> offices;
+  final String? selectedOfficeId;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        borderRadius: BorderRadius.circular(4),
+        color: const Color(0xFFF9FAFB),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < offices.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            InkWell(
+              onTap: () => onPick(offices[i].officeId),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
+                child: Text(
+                  offices[i].officeName,
+                  style: asanaDetailValueStyle(
+                    context,
+                    weight: offices[i].officeId == selectedOfficeId
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
