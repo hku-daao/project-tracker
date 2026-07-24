@@ -9,6 +9,7 @@ class StaffTeamLookupResult {
     this.staffTeamIdRaw,
     this.teamName,
     this.staffEmailFromDb,
+    this.staffActive,
     this.errorMessage,
   });
 
@@ -30,9 +31,11 @@ class StaffTeamLookupResult {
 
   /// `staff.email` from the matched row (for verification vs login email).
   final String? staffEmailFromDb;
+  final bool? staffActive;
   final String? errorMessage;
 
   bool get isSuccess => errorMessage == null && staffId != null;
+  bool get isActive => staffActive != false;
 
   /// `staff.app_id` when set; otherwise derived from login email local-part.
   String? get resolvedAppId {
@@ -66,6 +69,7 @@ class StaffTeamLookupResult {
       ..writeln('Login email: $loginEmail')
       ..writeln('staff.name: ${staffName ?? "(null)"}')
       ..writeln('staff.email (DB): ${staffEmailFromDb ?? "(null)"}')
+      ..writeln('staff.active: ${staffActive ?? "(null)"}')
       ..writeln('staff.id: ${staffId ?? "(null)"}')
       ..writeln('staff.app_id: ${appId ?? "(null)"}')
       ..writeln('staff.team_id: ${staffTeamIdRaw ?? "(null)"}')

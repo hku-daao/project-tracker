@@ -1,4 +1,3 @@
-
 import 'postgrest_client.dart';
 
 import '../config/postgrest_config.dart';
@@ -47,7 +46,7 @@ class StaffTeamLookupService {
     for (final candidate in _emailLookupCandidates(normalized)) {
       final row = await db
           .from('staff')
-          .select('id, app_id, team_id, email, name')
+          .select('id, app_id, team_id, email, name, active')
           .ilike('email', candidate)
           .limit(1)
           .maybeSingle();
@@ -58,7 +57,7 @@ class StaffTeamLookupService {
     if (local != null) {
       final prefixRows = await db
           .from('staff')
-          .select('id, app_id, team_id, email, name')
+          .select('id, app_id, team_id, email, name, active')
           .ilike('email', '$local@%')
           .limit(5);
       if (prefixRows is List && prefixRows.isNotEmpty) {
@@ -77,7 +76,7 @@ class StaffTeamLookupService {
     if (appGuess != null && appGuess.isNotEmpty) {
       return db
           .from('staff')
-          .select('id, app_id, team_id, email, name')
+          .select('id, app_id, team_id, email, name, active')
           .eq('app_id', appGuess)
           .limit(1)
           .maybeSingle();
@@ -116,6 +115,9 @@ class StaffTeamLookupService {
       final appId = staffRes['app_id'] as String?;
       final teamIdRaw = staffRes['team_id'];
       final staffEmailFromDb = staffRes['email'] as String?;
+      final staffActive = staffRes['active'] is bool
+          ? staffRes['active'] as bool
+          : true;
       final staffNameRaw = staffRes['name'] as String?;
       final staffName = staffNameRaw?.trim().isNotEmpty == true
           ? staffNameRaw!.trim()
@@ -142,6 +144,7 @@ class StaffTeamLookupService {
         staffTeamIdRaw: teamIdRaw?.toString(),
         teamName: teamName,
         staffEmailFromDb: staffEmailFromDb,
+        staffActive: staffActive,
       );
     } catch (e) {
       return StaffTeamLookupResult(

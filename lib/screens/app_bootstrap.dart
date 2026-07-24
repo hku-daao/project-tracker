@@ -32,6 +32,7 @@ class AppBootstrap extends StatefulWidget {
 class _AppBootstrapState extends State<AppBootstrap> {
   bool _ready = false;
   String? _error;
+  String? _accessBlockedEmail;
 
   @override
   void initState() {
@@ -83,10 +84,23 @@ class _AppBootstrapState extends State<AppBootstrap> {
         debugPrint(
           'AppBootstrap: staff lookup success=${lookup.isSuccess} '
           'appId=$resolvedAppId staffId=${lookup.staffId} '
+          'active=${lookup.staffActive} '
           'error=${lookup.errorMessage}',
         );
         if (mounted) {
           state.setRevampStaffLookup(lookup);
+        }
+        final notRegistered =
+            lookup.errorMessage?.startsWith('No staff row') == true;
+        final inactive = lookup.isSuccess && !lookup.isActive;
+        if (mounted && (notRegistered || inactive)) {
+          setState(() {
+            _accessBlockedEmail =
+                lookup.staffEmailFromDb?.trim().isNotEmpty == true
+                ? lookup.staffEmailFromDb!.trim()
+                : email;
+          });
+          return;
         }
         if (mounted && lookup.isSuccess) {
           state.setUserStaffContext(
@@ -199,6 +213,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
         ),
       );
     }
+    if (_accessBlockedEmail != null) {
+      return AccessBlockedView(email: _accessBlockedEmail!);
+    }
     if (_error != null && PostgrestConfig.isConfigured) {
       return Scaffold(
         body: Center(
@@ -289,6 +306,74 @@ class StartupLoadingView extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class AccessBlockedView extends StatelessWidget {
+  const AccessBlockedView({super.key, required this.email});
+
+  final String email;
+
+  @override
+  Widget build(BuildContext context) {
+    const palette = AsanaLandingPalette.asana;
+    return Scaffold(
+      body: ColoredBox(
+        color: palette.banner,
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Card(
+                margin: const EdgeInsets.all(24),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const ProjectTrackerLogo(height: 56),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Access not available',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'You cannot use Project Tracker because your email is not registered as an active user in this app.',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        email,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'For enquiry, please contact Ken Lee from AI & Data Lab, Institutional Advancement at kenkylee@hku.hk.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      TextButton.icon(
+                        onPressed: signOutActiveUser,
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Log out'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
