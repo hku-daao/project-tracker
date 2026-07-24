@@ -429,6 +429,31 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final rows = <_PersonTaskSummary>[];
     final mine = state.effectiveStaffAppId?.trim();
     final myUuid = state.effectiveStaffUuid?.trim();
+    if (state.adminViewMode) {
+      final staff = List.of(state.assignees)
+        ..sort((a, b) => a.name.trim().compareTo(b.name.trim()));
+      final seen = <String>{};
+      for (final assignee in staff) {
+        final appId = assignee.id.trim();
+        if (appId.isEmpty || !seen.add(appId)) continue;
+        rows.add(
+          _PersonTaskSummary(
+            name: assignee.name.trim().isNotEmpty
+                ? assignee.name.trim()
+                : appId,
+            counts: _countsForStaff(
+              state,
+              tasks,
+              today,
+              appId,
+              appId == mine ? myUuid : null,
+            ),
+            isSelf: appId == mine,
+          ),
+        );
+      }
+      return rows;
+    }
     if (mine != null && mine.isNotEmpty) {
       final me = state.assigneeById(mine);
       rows.add(
