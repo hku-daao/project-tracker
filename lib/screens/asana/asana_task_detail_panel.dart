@@ -244,7 +244,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
   }
 
+  Future<bool> _blockAdminReadOnlyWrite() async {
+    if (!context.read<AppState>().adminViewMode) return false;
+    await _showInfo('Admin View', 'Admin View is read-only.');
+    return true;
+  }
+
   Future<void> _removeAttachmentDraft(_AttachmentDraft e) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final persistedId = e.id?.trim();
     if (persistedId != null &&
         persistedId.isNotEmpty &&
@@ -319,6 +326,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     BuildContext anchorContext,
     _AttachmentDraft e,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker || _saving) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -787,6 +795,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _savePostedCommentOnBlur(SingularCommentRowDisplay c) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (_savingPostedCommentId == c.id) return;
     final ctrl = _postedCommentControllers[c.id];
     if (ctrl == null) return;
@@ -836,6 +845,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<bool> _saveDirtyPostedComments(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return false;
     for (final c in _comments) {
       if (!_isOwnComment(c)) continue;
       final ctrl = _postedCommentControllers[c.id];
@@ -872,6 +882,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _deletePostedComment(SingularCommentRowDisplay c) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isOwnComment(c) || _saving) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
@@ -1392,6 +1403,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _addFileAttachment({Task? task}) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (task != null) {
       final state = context.read<AppState>();
       final picKey = _picAssigneeId ?? task.pic ?? '';
@@ -1447,6 +1459,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -1496,6 +1509,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     required String entityType,
     required String entityId,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final picked = await _withBlockingLoading(pickOneFileWithBytes);
     if (!mounted || picked == null) return;
     if (picked.bytes.isEmpty) {
@@ -1774,6 +1788,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _createTask(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!PostgrestConfig.isConfigured) {
       await _showInfo(
         'Database not configured',
@@ -1914,6 +1929,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _save(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!PostgrestConfig.isConfigured) {
       await _showInfo(
         'Database not configured',
@@ -2064,6 +2080,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _saveAttachmentsOnly(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2093,6 +2110,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     Task task, {
     required String? picKey,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return false;
     final text = stripInlineImageMarkers(_commentController.text);
     if (text.isEmpty && !_hasPendingInlineImages('task_comment', 'draft')) {
       return true;
@@ -2137,6 +2155,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _postCommentOnly(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final text = stripInlineImageMarkers(_commentController.text);
     final dirtyPosted = _hasDirtyPostedComments();
     if (text.isEmpty &&
@@ -2171,6 +2190,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _markCompleted(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final activeSubtasks = await _loadFreshActiveSubtasksForCompletion(task.id);
     if (activeSubtasks == null) {
       await _showInfo(
@@ -2223,6 +2243,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _submitTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (_subtasks.any(subtaskPreventsParentTaskSubmission)) {
       await _showInfo(
         'Sub-tasks incomplete',
@@ -2263,10 +2284,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _acceptTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     await _markCompleted(state, task);
   }
 
   Future<void> _returnTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2300,6 +2323,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _undoAcceptOrReturn(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2331,6 +2355,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _undoDeleted(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2356,6 +2381,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _deleteTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final go = await showAsanaConfirmDialog(
       context: context,
       title: 'Delete task?',
@@ -2392,6 +2418,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _pauseTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state, task) || _taskDeleted(task) || _taskPaused(task)) {
       return;
     }
@@ -2417,6 +2444,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   Future<void> _resumeTask(AppState state, Task task) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state, task) || !_taskPaused(task)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);

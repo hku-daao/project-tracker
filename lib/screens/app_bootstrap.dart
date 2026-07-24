@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
 import '../config/postgrest_config.dart';
@@ -18,11 +19,7 @@ Widget _bootstrapShellChild() => const AsanaLandingScreen();
 
 /// On startup: revamp step 1 loads staff/team by email; tasks + deleted-task audit load from the database.
 class AppBootstrap extends StatefulWidget {
-  const AppBootstrap({
-    super.key,
-    this.suppressLoadingUi = false,
-    this.onReady,
-  });
+  const AppBootstrap({super.key, this.suppressLoadingUi = false, this.onReady});
 
   /// When true, data still loads but [StartupLoadingView] is not shown (parent owns startup UI).
   final bool suppressLoadingUi;
@@ -101,9 +98,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               resolvedAppId.isNotEmpty &&
               display != null &&
               display.isNotEmpty) {
-            state.mergeAssignees([
-              Assignee(id: resolvedAppId, name: display),
-            ]);
+            state.mergeAssignees([Assignee(id: resolvedAppId, name: display)]);
           }
           final subIds =
               await DatabaseService.fetchSubordinateAppIdsForSupervisor(
@@ -116,8 +111,17 @@ class _AppBootstrapState extends State<AppBootstrap> {
       debugPrint('AppBootstrap revamp staff/team lookup: $e');
     }
 
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      state.setAdminViewMode(
+        prefs.getBool(AppState.adminViewStorageKey) ?? false,
+      );
+    } catch (e) {
+      debugPrint('AppBootstrap admin view restore: $e');
+    }
+
     TaskFetchVisibility? taskVisibility;
-    if (mounted) {
+    if (mounted && !state.adminViewMode) {
       taskVisibility = await DatabaseService.enrichTaskFetchVisibility(
         state.buildTaskFetchVisibility(),
       );
@@ -138,8 +142,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
       return;
     }
     try {
+      final adminViewMode = state.adminViewMode;
       final taskData = await DatabaseService.fetchTasks(
-        visibility: taskVisibility ?? state.buildTaskFetchVisibility(),
+        visibility: adminViewMode
+            ? null
+            : taskVisibility ?? state.buildTaskFetchVisibility(),
       );
       if (!mounted) return;
       final loaded = taskData ?? TasksLoadResult.empty;
@@ -149,7 +156,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
       state.applyTasks(
         loaded,
         visibilityScoped:
-            taskVisibility != null && taskVisibility.isConfigured,
+            !adminViewMode &&
+            taskVisibility != null &&
+            taskVisibility.isConfigured,
       );
       debugPrint(
         'AppBootstrap: ${state.tasks.length} tasks in AppState '
@@ -157,10 +166,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
         'staffAppId=${state.userStaffAppId}, '
         'lookupKeys=${state.taskVisibilityLookupKeys.length})',
       );
-      final filterTeams =
-          await DatabaseService.fetchTeamsForFilter();
-      final staffLabels =
-          await DatabaseService.fetchStaffAssignees();
+      final filterTeams = await DatabaseService.fetchTeamsForFilter();
+      final staffLabels = await DatabaseService.fetchStaffAssignees();
       final appIdToTeamId = await DatabaseService.fetchStaffAppIdToTeamIdMap();
       if (!mounted) return;
       if (filterTeams.isNotEmpty) {

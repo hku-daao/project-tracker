@@ -60,6 +60,11 @@ class SsoAuthService {
     await navigateToUrl(logoutUrl());
   }
 
+  static Future<void> navigateHome() async {
+    final reloadToken = DateTime.now().millisecondsSinceEpoch;
+    await navigateToUrl('/?admin_view_reload=$reloadToken');
+  }
+
   static void _clearCache() {
     _cachedEmail = null;
     _cachedName = null;

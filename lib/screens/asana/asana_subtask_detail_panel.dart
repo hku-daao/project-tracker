@@ -649,6 +649,18 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     unawaited(_notifyEmail(label, send));
   }
 
+  Future<bool> _blockAdminReadOnlyWrite() async {
+    if (!context.read<AppState>().adminViewMode) return false;
+    AsanaBlockingLoadingOverlay.hideAll();
+    await showAsanaInfoDialog(
+      context: context,
+      title: 'Admin View',
+      content: 'Admin View is read-only.',
+      palette: widget.palette,
+    );
+    return true;
+  }
+
   void _addChange(
     List<Map<String, String>> changes,
     String field,
@@ -733,6 +745,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     AppState state,
     SubtaskCommentRowDisplay comment,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (_savingPostedCommentId == comment.id) return;
     final ctrl = _postedCommentControllers[comment.id];
     if (ctrl == null) return;
@@ -774,6 +787,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   Future<bool> _saveDirtyPostedComments(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return false;
     for (final comment in _comments) {
       if (!_isOwnComment(state, comment)) continue;
       final ctrl = _postedCommentControllers[comment.id];
@@ -823,6 +837,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     AppState state,
     SubtaskCommentRowDisplay comment,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isOwnComment(state, comment) || _saving) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
@@ -1239,6 +1254,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     SingularSubtask s, {
     required bool paused,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state) || s.isDeleted || s.isPaused == paused) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -1457,6 +1473,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _save() async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final s = _subtask;
     if (!_effectiveCreateMode && s == null) return;
     final state = context.read<AppState>();
@@ -1766,6 +1783,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _deleteSubtask() async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final s = _subtask;
     if (s == null || !_isCreator(context.read<AppState>())) return;
     final ok = await showAsanaConfirmDialog(
@@ -1816,6 +1834,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _markCompleted(AppState state, SingularSubtask s) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     await _setWorkflowState(
       state: state,
       subtask: s,
@@ -1834,6 +1853,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _submitSubtask(AppState state, SingularSubtask s) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final commentText = stripInlineImageMarkers(_commentController.text);
     if (_attachments.isEmpty &&
         commentText.isEmpty &&
@@ -1969,6 +1989,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _returnSubtask(AppState state, SingularSubtask s) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     await _setWorkflowState(
       state: state,
       subtask: s,
@@ -1983,6 +2004,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _undoAcceptOrReturn(AppState state, SingularSubtask s) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     await _setWorkflowState(
       state: state,
       subtask: s,
@@ -1994,6 +2016,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _undoDeleted(AppState state, SingularSubtask s) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     await _setWorkflowState(
       state: state,
       subtask: s,
@@ -2011,6 +2034,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     bool clearCompletionDate = false,
     required String errorTitle,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2053,6 +2077,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _addFileAttachment() async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (widget.createMode) {
       final picked = await _withBlockingLoading(
         AttachmentUploadService.pickFilesForUpload,
@@ -2119,6 +2144,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker || _saving) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -2176,6 +2202,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     required String entityType,
     required String entityId,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final picked = await _withBlockingLoading(pickOneFileWithBytes);
     if (!mounted || picked == null) return;
     if (picked.bytes.isEmpty) {
@@ -2368,6 +2395,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     BuildContext anchorContext,
     _SubtaskAttachmentDraft draft,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker || _saving) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -2387,6 +2415,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
   }
 
   Future<void> _removeAttachment(_SubtaskAttachmentDraft draft) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final persistedId = draft.id?.trim();
     if (persistedId != null &&
         persistedId.isNotEmpty &&

@@ -168,35 +168,43 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final greeting = '${_greetingPhrase()}, ${_greetingDisplayName(state)}';
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
     final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
+    final adminViewMode = state.adminViewMode;
 
     final all = _activeSingularTasks(state);
-    final created = all.where(state.taskIsCreatedByCurrentUser).toList()
-      ..sort(_sortByDue);
-    final assigned =
-        all
-            .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
-            .toList()
+    final created =
+        (adminViewMode
+              ? List<Task>.from(all)
+              : all.where(state.taskIsCreatedByCurrentUser).toList())
           ..sort(_sortByDue);
+    final assigned = adminViewMode
+        ? <Task>[]
+        : (all
+              .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
+              .toList()
+            ..sort(_sortByDue));
     final visibleCreated = _filterTasksBySearch(state, created, searchTokens);
     final visibleAssigned = _filterTasksBySearch(state, assigned, searchTokens);
 
     final people = _peopleRows(state, all, today);
 
     final projects = state.projects;
-    final projectsCreated =
-        projects
-            .where(
-              (p) => AsanaProjectFilter.projectCreatedByCurrentUser(state, p),
-            )
-            .toList()
-          ..sort(_sortProjectsByDue);
-    final projectsAssigned =
-        projects
-            .where(
-              (p) => AsanaProjectFilter.projectAssignedToCurrentUser(state, p),
-            )
-            .toList()
-          ..sort(_sortProjectsByDue);
+    final projectsCreated = adminViewMode
+        ? (projects.toList()..sort(_sortProjectsByDue))
+        : (projects
+              .where(
+                (p) => AsanaProjectFilter.projectCreatedByCurrentUser(state, p),
+              )
+              .toList()
+            ..sort(_sortProjectsByDue));
+    final projectsAssigned = adminViewMode
+        ? <ProjectRecord>[]
+        : (projects
+              .where(
+                (p) =>
+                    AsanaProjectFilter.projectAssignedToCurrentUser(state, p),
+              )
+              .toList()
+            ..sort(_sortProjectsByDue));
     final visibleProjectsCreated = _filterProjectsBySearch(
       state,
       projectsCreated,
@@ -252,7 +260,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                   final createdCard = _HomeTaskCard(
                     key: ValueKey('home-created-$layoutKey'),
                     palette: palette,
-                    title: "Tasks I've created",
+                    title: adminViewMode
+                        ? 'All active tasks'
+                        : "Tasks I've created",
                     tasks: visibleCreated,
                     middleHeader: 'PIC',
                     middleValue: (t) => _picLine(state, t.pic),
@@ -301,6 +311,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     palette: palette,
                     created: visibleProjectsCreated,
                     assigned: visibleProjectsAssigned,
+                    adminViewMode: adminViewMode,
                     onOpenProject: widget.onOpenProject,
                     expanded: allowCollapse
                         ? (_expanded['projects'] ?? true)
@@ -1256,6 +1267,7 @@ class _HomeProjectsCard extends StatelessWidget {
     required this.palette,
     required this.created,
     required this.assigned,
+    this.adminViewMode = false,
     this.onOpenProject,
     this.expanded = true,
     this.onToggleExpanded,
@@ -1265,6 +1277,7 @@ class _HomeProjectsCard extends StatelessWidget {
   final AsanaLandingPalette palette;
   final List<ProjectRecord> created;
   final List<ProjectRecord> assigned;
+  final bool adminViewMode;
   final void Function(String projectId)? onOpenProject;
   final bool expanded;
   final VoidCallback? onToggleExpanded;
@@ -1335,7 +1348,9 @@ class _HomeProjectsCard extends StatelessWidget {
               context: context,
               state: state,
               compact: compact,
-              bannerTitle: "Projects I've created",
+              bannerTitle: adminViewMode
+                  ? 'All active projects'
+                  : "Projects I've created",
               projects: created,
             ),
             if (created.isNotEmpty && assigned.isNotEmpty)

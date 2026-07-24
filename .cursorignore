@@ -1,0 +1,36 @@
+# Generated Flutter/Dart artifacts
+.dart_tool/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Dependency and cache folders
+node_modules/
+.pub-cache/
+.pub/
+.cache/
+tmp/
+temp/
+logs/
+
+# Local runtime data, dumps, backups, and large archives
+data/
+backup/
+backups/
+*.dump
+*.sql.gz
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Local secrets and environment files
+.env
+secrets/*
+!secrets/*.example
+scripts/local_llm.env
+
+# Local deployment files that intentionally differ by environment
+docker-compose.yml
+docker/

@@ -726,6 +726,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     ProjectRecord p, {
     required bool paused,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(p) || _effectiveStatus(p) == 'Deleted') return;
     if (p.isPaused == paused) return;
     _setSaving(true);
@@ -760,6 +761,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _confirmDeleteProject(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
       title: 'Delete project',
@@ -805,6 +807,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _restoreDeletedProject(AppState state, ProjectRecord p) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canRestoreProject(p)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -836,6 +839,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _markCompleted(AppState state, ProjectRecord p) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canMarkProjectComplete(p)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -975,6 +979,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     );
   }
 
+  Future<bool> _blockAdminReadOnlyWrite() async {
+    if (!context.read<AppState>().adminViewMode) return false;
+    await _showInfo('Admin View', 'Admin View is read-only.');
+    return true;
+  }
+
   static bool _uuidEquals(String? a, String? b) {
     final x = a?.trim().toLowerCase() ?? '';
     final y = b?.trim().toLowerCase() ?? '';
@@ -1009,6 +1019,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _removeAttachmentDraft(_ProjectAttachmentDraft draft) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final persistedId = draft.id?.trim();
     if (persistedId != null &&
         persistedId.isNotEmpty &&
@@ -1082,6 +1093,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     BuildContext anchorContext,
     _ProjectAttachmentDraft draft,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker || _saving) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -1102,6 +1114,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _addFileAttachment(ProjectRecord p) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final state = context.read<AppState>();
     final r = await _withBlockingLoading(
       () => AttachmentUploadService.pickUploadFilesForProject(
@@ -1130,6 +1143,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _addUrlAttachment(BuildContext anchorContext) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_canOpenAnchoredPicker) return;
     final widthAlignContext =
         _detailPopupWidthAlignKey.currentContext ?? anchorContext;
@@ -1157,6 +1171,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required String entityType,
     required String entityId,
   }) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     final picked = await _withBlockingLoading(pickOneFileWithBytes);
     if (!mounted || picked == null) return;
     if (picked.bytes.isEmpty) {
@@ -1190,6 +1205,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    if (context.read<AppState>().adminViewMode) return;
     setState(() {
       final saved = image.inlineAttachment;
       if (saved != null) {
@@ -1371,6 +1387,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   Future<void> _savePostedCommentOnBlur(
     ProjectCommentRowDisplay comment,
   ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (_savingPostedCommentId == comment.id) return;
     final ctrl = _postedCommentControllers[comment.id];
     if (ctrl == null) return;
@@ -1403,6 +1420,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<bool> _saveDirtyPostedComments(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return false;
     for (final comment in _comments) {
       if (!_isOwnComment(comment)) continue;
       final ctrl = _postedCommentControllers[comment.id];
@@ -1436,6 +1454,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<String?> _postDraftCommentWithoutOverlay(AppState state) async {
+    if (await _blockAdminReadOnlyWrite()) return null;
     final text = stripInlineImageMarkers(_commentController.text);
     final hasInlineDraft = _pendingInlineImageAdds.any(
       (draft) =>
@@ -1464,6 +1483,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _deletePostedComment(ProjectCommentRowDisplay comment) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isOwnComment(comment) || _saving) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
@@ -1891,6 +1911,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   Future<void> _save(AppState state, ProjectRecord p) async {
+    if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(p)) return;
     final name = _nameController.text.trim();
     if (name.isEmpty) {

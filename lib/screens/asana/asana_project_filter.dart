@@ -107,6 +107,8 @@ class AsanaProjectFilter {
     AppState state,
     Set<String> scopes,
   ) {
+    if (state.adminViewMode) return true;
+
     final mine = state.userStaffAppId?.trim();
     final myUuid = state.userStaffId?.trim();
 

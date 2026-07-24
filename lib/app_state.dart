@@ -9,6 +9,9 @@ import 'services/task_fetch_visibility.dart';
 
 /// Global app state for Asana-style projects, tasks, staff, and teams.
 class AppState extends ChangeNotifier {
+  static const String adminViewAllowedEmail = 'kenkylee@hku.hk';
+  static const String adminViewStorageKey = 'project_tracker_admin_view_mode';
+
   /// Staff members loaded from database (via /api/staff).
   final List<Assignee> _assignees = [];
 
@@ -37,11 +40,34 @@ class AppState extends ChangeNotifier {
 
   /// Revamp step 1: staff + team lookup by login email (Supabase).
   StaffTeamLookupResult? _revampStaffLookup;
+  bool _adminViewMode = false;
 
   StaffTeamLookupResult? get revampStaffLookup => _revampStaffLookup;
 
+  bool get canUseAdminViewMode {
+    final email =
+        (_revampStaffLookup?.staffEmailFromDb?.trim().isNotEmpty == true
+                ? _revampStaffLookup?.staffEmailFromDb
+                : _revampStaffLookup?.loginEmail)
+            ?.trim()
+            .toLowerCase();
+    return email == adminViewAllowedEmail;
+  }
+
+  bool get adminViewMode => _adminViewMode && canUseAdminViewMode;
+
+  void setAdminViewMode(bool value) {
+    final next = value && canUseAdminViewMode;
+    if (_adminViewMode == next) return;
+    _adminViewMode = next;
+    notifyListeners();
+  }
+
   void setRevampStaffLookup(StaffTeamLookupResult? v) {
     _revampStaffLookup = v;
+    if (!canUseAdminViewMode) {
+      _adminViewMode = false;
+    }
     notifyListeners();
   }
 
@@ -222,10 +248,7 @@ class AppState extends ChangeNotifier {
   bool get tasksLoadedWithVisibilityScope => _tasksLoadedWithVisibilityScope;
 
   /// Replace tasks from the database after fetch.
-  void applyTasks(
-    TasksLoadResult result, {
-    bool visibilityScoped = false,
-  }) {
+  void applyTasks(TasksLoadResult result, {bool visibilityScoped = false}) {
     _tasksLoadedWithVisibilityScope = visibilityScoped;
     _tasks.clear();
     _tasks.addAll(result.tasks);
@@ -260,7 +283,7 @@ class AppState extends ChangeNotifier {
   /// **or** the task was created by this user ([taskIsCreatedByCurrentUser]) (assignees may be outside that set).
   List<Task> tasksForTeam(String? teamId) {
     var all = tasks;
-    if (!_tasksLoadedWithVisibilityScope) {
+    if (!_tasksLoadedWithVisibilityScope && !adminViewMode) {
       if (taskVisibilityLookupKeys.isEmpty) {
         all = [];
       } else {

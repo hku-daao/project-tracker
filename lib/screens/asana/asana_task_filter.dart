@@ -278,6 +278,7 @@ class AsanaTaskFilter {
   }
 
   static bool _landingVisible(AppState state, Task t, Set<String> scopes) {
+    if (state.adminViewMode) return true;
     if (scopes.isNotEmpty && !scopes.contains('all')) {
       bool pass = false;
       if (scopes.contains('assigned') && _taskAssignedToCurrentUser(state, t))
@@ -583,7 +584,9 @@ class AsanaTaskFilter {
       bool Function(Task) statusMatch,
     ) {
       Iterable<Task> it = source;
-      if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+      if (!state.adminViewMode &&
+          filters.scopes.isNotEmpty &&
+          !filters.scopes.contains('all')) {
         it = it.where((t) {
           bool pass = false;
           if (filters.scopes.contains('assigned') &&
@@ -644,7 +647,9 @@ class AsanaTaskFilter {
             statuses.contains(AsanaTaskFilterState.statusDeleted)
         ? scope
         : scope.where((t) => !_singularDeleted(t));
-    if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+    if (!state.adminViewMode &&
+        filters.scopes.isNotEmpty &&
+        !filters.scopes.contains('all')) {
       it = it.where((t) {
         bool pass = false;
         if (filters.scopes.contains('assigned') &&
@@ -722,7 +727,9 @@ class AsanaTaskFilter {
                 !_singularDeleted(t) &&
                 !taskIsArchivedCompleted(t),
           );
-      if (filters.scopes.isNotEmpty && !filters.scopes.contains('all')) {
+      if (!state.adminViewMode &&
+          filters.scopes.isNotEmpty &&
+          !filters.scopes.contains('all')) {
         scopeIt = scopeIt.where((t) {
           bool pass = false;
           if (filters.scopes.contains('assigned') &&

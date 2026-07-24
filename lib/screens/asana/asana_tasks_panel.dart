@@ -258,6 +258,12 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 
   Future<void> _archiveCompletedTask(Task task) async {
+    if (context.read<AppState>().adminViewMode) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Admin View is read-only.')));
+      return;
+    }
     if (!_taskCompleted(task) || task.isArchivedCompleted) return;
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -356,7 +362,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
           AsanaPanelFilterToolbar(
             palette: widget.palette,
             createLabel: 'Create Task',
-            onCreate: widget.onCreateTask ?? () {},
+            onCreate: widget.onCreateTask,
             onClearAll: () {
               setState(_filters.resetForClearAll);
               _onFiltersChanged();

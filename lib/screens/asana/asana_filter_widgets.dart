@@ -140,7 +140,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
 
   final AsanaLandingPalette palette;
   final String createLabel;
-  final VoidCallback onCreate;
+  final VoidCallback? onCreate;
   final List<Widget> filterChildren;
   final VoidCallback onClearAll;
 
@@ -183,11 +183,13 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 760;
-          final createButton = AsanaToolbarCreateButton(
-            label: widget.createLabel,
-            palette: widget.palette,
-            onPressed: widget.onCreate,
-          );
+          final createButton = widget.onCreate == null
+              ? const SizedBox.shrink()
+              : AsanaToolbarCreateButton(
+                  label: widget.createLabel,
+                  palette: widget.palette,
+                  onPressed: widget.onCreate!,
+                );
           final clearButton = TextButton(
             onPressed: widget.onClearAll,
             child: const Text('Clear all'),

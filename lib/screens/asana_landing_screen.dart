@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
@@ -290,6 +291,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     required AsanaLandingPalette palette,
     required String searchQuery,
   }) {
+    final adminViewMode = context.watch<AppState>().adminViewMode;
     if (_selectedNav == 'Tasks' || _selectedNav == 'All Tasks & Sub-tasks') {
       return AsanaTasksPanel(
         key: ValueKey(_selectedNav),
@@ -300,8 +302,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
         onOpenSubtask: (id) =>
             _openRootDetail(AsanaDetailSelection.subtask(id)),
-        onCreateTask: () =>
-            _openRootDetail(const AsanaDetailSelection.createTask()),
+        onCreateTask: adminViewMode
+            ? null
+            : () => _openRootDetail(const AsanaDetailSelection.createTask()),
       );
     }
     if (_selectedNav == 'Projects') {
@@ -312,8 +315,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onOpenProject: (id) =>
             _openRootDetail(AsanaDetailSelection.project(id)),
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
-        onCreateProject: () =>
-            _openRootDetail(const AsanaDetailSelection.createProject()),
+        onCreateProject: adminViewMode
+            ? null
+            : () => _openRootDetail(const AsanaDetailSelection.createProject()),
       );
     }
     if (_selectedNav == 'Archived') {
@@ -576,6 +580,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = _palette;
+    final adminViewMode = context.watch<AppState>().adminViewMode;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final sidebarOverlay = screenWidth < _kSidebarAutoHideWidth;
     final sidebarOpen = _sidebarOpenOverride ?? !sidebarOverlay;
@@ -631,96 +636,94 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                   ),
                   child: Row(
                     children: [
-                          IconButton(
-                            icon: Icon(
-                              sidebarVisible ? Icons.menu_open : Icons.menu,
-                              color: palette.onBanner,
-                            ),
-                            tooltip: sidebarVisible ? 'Hide panel' : 'Show panel',
-                            onPressed: () => setState(
-                              () => _sidebarOpenOverride = !sidebarOpen,
-                            ),
-                          ),
-                          Expanded(
-                            child: Center(
-                              child: SizedBox(
-                                width: searchWidth,
-                                height: searchBarHeight,
-                                child: TextField(
-                                  controller: _searchController,
-                                  style: searchTextStyle,
-                                  decoration: InputDecoration(
-                                    hintText: 'Search',
-                                    hintStyle: asanaTextStyle(
-                                      asanaTheme.textTheme.bodyMedium,
-                                      fontSize: 14,
-                                      color: palette.darkChrome
-                                          ? palette.onSidebarMuted
-                                          : kAsanaTextSecondary,
-                                    ),
-                                    filled: true,
-                                    fillColor: palette.searchField,
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical:
-                                          (searchBarHeight -
-                                              titleFontSize * 1.2) /
-                                          2,
-                                    ),
-                                    prefixIcon: Icon(
-                                      Icons.search,
-                                      size: titleFontSize * 1.35,
-                                      color: palette.darkChrome
-                                          ? palette.onSidebarMuted
-                                          : Colors.black54,
-                                    ),
-                                    prefixIconConstraints: BoxConstraints(
-                                      minWidth: searchBarHeight,
-                                      minHeight: searchBarHeight,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide(
-                                        color: palette.accent,
-                                        width: 1.5,
-                                      ),
-                                    ),
+                      IconButton(
+                        icon: Icon(
+                          sidebarVisible ? Icons.menu_open : Icons.menu,
+                          color: palette.onBanner,
+                        ),
+                        tooltip: sidebarVisible ? 'Hide panel' : 'Show panel',
+                        onPressed: () =>
+                            setState(() => _sidebarOpenOverride = !sidebarOpen),
+                      ),
+                      Expanded(
+                        child: Center(
+                          child: SizedBox(
+                            width: searchWidth,
+                            height: searchBarHeight,
+                            child: TextField(
+                              controller: _searchController,
+                              style: searchTextStyle,
+                              decoration: InputDecoration(
+                                hintText: 'Search',
+                                hintStyle: asanaTextStyle(
+                                  asanaTheme.textTheme.bodyMedium,
+                                  fontSize: 14,
+                                  color: palette.darkChrome
+                                      ? palette.onSidebarMuted
+                                      : kAsanaTextSecondary,
+                                ),
+                                filled: true,
+                                fillColor: palette.searchField,
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical:
+                                      (searchBarHeight - titleFontSize * 1.2) /
+                                      2,
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  size: titleFontSize * 1.35,
+                                  color: palette.darkChrome
+                                      ? palette.onSidebarMuted
+                                      : Colors.black54,
+                                ),
+                                prefixIconConstraints: BoxConstraints(
+                                  minWidth: searchBarHeight,
+                                  minHeight: searchBarHeight,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide.none,
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide.none,
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: palette.accent,
+                                    width: 1.5,
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8, right: 12),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _AsanaBannerLogo(height: titleFontSize * 1.6),
-                                SizedBox(width: compactBanner ? 6 : 8),
-                                Text(
-                                  compactBanner
-                                      ? 'Project\nTracker'
-                                      : 'Project Tracker',
-                                  style: titleStyle?.copyWith(
-                                    fontSize: compactBanner ? 12 : titleFontSize,
-                                    height: compactBanner ? 1.05 : 1.2,
-                                  ),
-                                  maxLines: compactBanner ? 2 : 1,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8, right: 12),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _AsanaBannerLogo(height: titleFontSize * 1.6),
+                            SizedBox(width: compactBanner ? 6 : 8),
+                            Text(
+                              compactBanner
+                                  ? 'Project\nTracker'
+                                  : 'Project Tracker',
+                              style: titleStyle?.copyWith(
+                                fontSize: compactBanner ? 12 : titleFontSize,
+                                height: compactBanner ? 1.05 : 1.2,
+                              ),
+                              maxLines: compactBanner ? 2 : 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -822,12 +825,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                 _detailRefreshToken,
                                             onDismissAll: _dismissAllDetails,
                                             onPop: _popDetail,
-                                            onPushCreateSubtask: (taskId) =>
-                                                _pushDetail(
-                                                  AsanaDetailSelection.createSubtask(
-                                                    taskId,
+                                            onPushCreateSubtask: adminViewMode
+                                                ? null
+                                                : (taskId) => _pushDetail(
+                                                    AsanaDetailSelection.createSubtask(
+                                                      taskId,
+                                                    ),
                                                   ),
-                                                ),
                                             onPushSubtask: (id) {
                                               AsanaBlockingLoadingOverlay.show(
                                                 context,
@@ -850,11 +854,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                   });
                                             },
                                             onPushCreateTaskForProject:
-                                                (projectId) => _pushDetail(
-                                                  AsanaDetailSelection.createTask(
-                                                    initialProjectId: projectId,
+                                                adminViewMode
+                                                ? null
+                                                : (projectId) => _pushDetail(
+                                                    AsanaDetailSelection.createTask(
+                                                      initialProjectId:
+                                                          projectId,
+                                                    ),
                                                   ),
-                                                ),
                                             onPushTaskFromProject: (taskId) =>
                                                 _pushDetail(
                                                   AsanaDetailSelection.task(
@@ -1084,10 +1091,20 @@ class _SidebarNavTile extends StatelessWidget {
 }
 
 /// Bottom-left sidebar avatar with staff initials (e.g. Ken Lee → KL) and log out button.
-class _SidebarUserAvatar extends StatelessWidget {
+class _SidebarUserAvatar extends StatefulWidget {
   const _SidebarUserAvatar({required this.palette});
 
   final AsanaLandingPalette palette;
+
+  @override
+  State<_SidebarUserAvatar> createState() => _SidebarUserAvatarState();
+}
+
+class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
+  static const int _adminTapCount = 5;
+  static const Duration _adminTapWindow = Duration(seconds: 2);
+
+  final List<DateTime> _adminTapTimes = [];
 
   Future<void> _confirmLogOut(BuildContext context) async {
     AsanaBlockingLoadingOverlay.hideAll();
@@ -1097,7 +1114,7 @@ class _SidebarUserAvatar extends StatelessWidget {
       content: 'Are you sure you want to log out?',
       confirmText: 'Log out',
       isDestructive: true,
-      palette: palette,
+      palette: widget.palette,
     );
     if (ok == true) {
       AsanaBlockingLoadingOverlay.hideAll();
@@ -1107,6 +1124,28 @@ class _SidebarUserAvatar extends StatelessWidget {
         AsanaBlockingLoadingOverlay.hideAll();
       }
     }
+  }
+
+  Future<void> _handleAvatarTap(BuildContext context) async {
+    final state = context.read<AppState>();
+    if (!state.canUseAdminViewMode) return;
+
+    final now = DateTime.now();
+    _adminTapTimes.removeWhere((t) => now.difference(t) > _adminTapWindow);
+    _adminTapTimes.add(now);
+    if (_adminTapTimes.length < _adminTapCount) return;
+    _adminTapTimes.clear();
+
+    final next = !state.adminViewMode;
+    state.setAdminViewMode(next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(AppState.adminViewStorageKey, next);
+    } catch (e) {
+      debugPrint('Admin view mode persist failed: $e');
+    }
+    if (!context.mounted) return;
+    await SsoAuthService.navigateHome();
   }
 
   @override
@@ -1130,30 +1169,50 @@ class _SidebarUserAvatar extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: palette.accent,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  initials,
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.labelLarge,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                    height: 1,
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _handleAvatarTap(context),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: widget.palette.accent,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    initials,
+                    style: asanaTextStyle(
+                      Theme.of(context).textTheme.labelLarge,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      height: 1,
+                    ),
                   ),
                 ),
               ),
+              if (state.adminViewMode) ...[
+                const SizedBox(width: 8),
+                Text(
+                  'Admin View',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.labelSmall,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: widget.palette.darkChrome
+                        ? widget.palette.onSidebarMuted
+                        : kAsanaTextSecondary,
+                  ),
+                ),
+              ],
               const Spacer(),
               IconButton(
                 onPressed: () => _confirmLogOut(context),
                 icon: const Icon(Icons.logout),
-                color: palette.darkChrome ? Colors.white : kAsanaTextSecondary,
+                color: widget.palette.darkChrome
+                    ? Colors.white
+                    : kAsanaTextSecondary,
                 tooltip: 'Log out',
                 splashRadius: 20,
               ),

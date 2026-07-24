@@ -192,7 +192,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
           AsanaPanelFilterToolbar(
             palette: widget.palette,
             createLabel: 'Create Project',
-            onCreate: widget.onCreateProject ?? () {},
+            onCreate: widget.onCreateProject,
             onClearAll: () {
               setState(_filters.resetToDefaults);
               _onFiltersChanged();

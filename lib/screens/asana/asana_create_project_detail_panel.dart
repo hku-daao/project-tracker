@@ -926,6 +926,15 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   Future<void> _create(AppState state) async {
+    if (state.adminViewMode) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Admin View',
+        content: 'Admin View is read-only.',
+        palette: widget.palette,
+      );
+      return;
+    }
     if (!PostgrestConfig.isConfigured) {
       await showAsanaInfoDialog(
         context: context,

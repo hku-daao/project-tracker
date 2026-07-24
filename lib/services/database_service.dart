@@ -3452,8 +3452,9 @@ class DatabaseService {
   }) async {
     if (!_enabled) return (error: 'Database not configured', subtaskId: null);
     final name = subtaskName.trim();
-    if (name.isEmpty)
+    if (name.isEmpty) {
       return (error: 'subtask_name is required', subtaskId: null);
+    }
     try {
       final assigneeStaffIds = await _staffRowIdSlotsForAssigneeKeys(
         assigneeStaffUuids,
