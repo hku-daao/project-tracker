@@ -219,6 +219,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? teamIdForStaffKey(String? staffKey) {
+    final key = staffKey?.trim();
+    if (key == null || key.isEmpty) return null;
+    final direct = _staffTeamIdByAssigneeAppId[key];
+    if (direct != null && direct.trim().isNotEmpty) return direct;
+    final appId = assigneeById(key)?.id.trim();
+    if (appId != null && appId.isNotEmpty) {
+      final byAppId = _staffTeamIdByAssigneeAppId[appId];
+      if (byAppId != null && byAppId.trim().isNotEmpty) return byAppId;
+    }
+    return null;
+  }
+
+  String teamNameById(String teamId) {
+    final id = teamId.trim();
+    if (id.isEmpty) return '';
+    for (final team in _teams) {
+      if (team.id == id) return team.name;
+    }
+    return id;
+  }
+
   bool _taskMatchesTeamFilter(Task t, String teamId) {
     final rowTeam = t.teamId?.trim();
     if (rowTeam != null && rowTeam.isNotEmpty && rowTeam == teamId) {

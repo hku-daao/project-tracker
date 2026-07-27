@@ -12,6 +12,8 @@ class AsanaProjectFilterState {
   Set<String> statuses = {};
   List<String> creatorStaffIds = [];
   List<String> picStaffIds = [];
+  List<String> creatorTeamIds = [];
+  List<String> picTeamIds = [];
 
   DateTime? createDateStart;
   DateTime? createDateEnd;
@@ -26,6 +28,8 @@ class AsanaProjectFilterState {
     'statuses': statuses.toList(),
     'creatorStaffIds': creatorStaffIds,
     'picStaffIds': picStaffIds,
+    'creatorTeamIds': creatorTeamIds,
+    'picTeamIds': picTeamIds,
     'createDateStart': createDateStart?.millisecondsSinceEpoch,
     'createDateEnd': createDateEnd?.millisecondsSinceEpoch,
     'sortKey': sortKey,
@@ -37,6 +41,8 @@ class AsanaProjectFilterState {
     statuses = _stringSet(data['statuses']);
     creatorStaffIds = _stringList(data['creatorStaffIds']);
     picStaffIds = _stringList(data['picStaffIds']);
+    creatorTeamIds = _stringList(data['creatorTeamIds']);
+    picTeamIds = _stringList(data['picTeamIds']);
     createDateStart = _dateFromMs(data['createDateStart']);
     createDateEnd = _dateFromMs(data['createDateEnd']);
     final rawSortKey = data['sortKey'] as String?;
@@ -70,6 +76,8 @@ class AsanaProjectFilterState {
     statuses = {};
     creatorStaffIds = [];
     picStaffIds = [];
+    creatorTeamIds = [];
+    picTeamIds = [];
     sortKey = 'created';
     sortAscending = false;
     createDateStart = null;
@@ -218,14 +226,28 @@ class AsanaProjectFilter {
 
   static bool _projectPassesRoleFilters(
     ProjectRecord p,
+    AppState state,
     AsanaProjectFilterState filters,
   ) {
+    bool teamMatches(String? staffKey, List<String> selectedTeamIds) {
+      if (selectedTeamIds.isEmpty) return true;
+      final teamId = state.teamIdForStaffKey(staffKey);
+      return teamId != null && selectedTeamIds.contains(teamId);
+    }
+
     if (filters.creatorStaffIds.isNotEmpty &&
         !_keyMatches(p.createByStaffUuid, filters.creatorStaffIds)) {
       return false;
     }
+    if (!teamMatches(p.createByStaffUuid, filters.creatorTeamIds)) {
+      return false;
+    }
     if (filters.picStaffIds.isNotEmpty &&
         !p.picStaffUuids.any((u) => _keyMatches(u, filters.picStaffIds))) {
+      return false;
+    }
+    if (filters.picTeamIds.isNotEmpty &&
+        !p.picStaffUuids.any((u) => teamMatches(u, filters.picTeamIds))) {
       return false;
     }
     return true;
@@ -301,7 +323,9 @@ class AsanaProjectFilter {
     }
 
     list = list.where((p) => _projectPassesDueDate(p, filters)).toList();
-    list = list.where((p) => _projectPassesRoleFilters(p, filters)).toList();
+    list = list
+        .where((p) => _projectPassesRoleFilters(p, state, filters))
+        .toList();
 
     final tokens = searchTokens(searchQuery);
     if (tokens.isNotEmpty) {

@@ -37,6 +37,8 @@ class AsanaTaskFilterState {
   List<String> assigneeStaffIds = [];
   List<String> picStaffIds = [];
   List<String> creatorStaffIds = [];
+  List<String> creatorTeamIds = [];
+  List<String> picTeamIds = [];
   static const statusIncomplete = 'incomplete';
   static const statusPaused = 'paused';
   static const statusCompleted = 'completed';
@@ -59,6 +61,8 @@ class AsanaTaskFilterState {
     'overdueOptions': overdueOptions.toList(),
     'creatorStaffIds': creatorStaffIds,
     'picStaffIds': picStaffIds,
+    'creatorTeamIds': creatorTeamIds,
+    'picTeamIds': picTeamIds,
   };
 
   void applyCookieJson(Map<String, dynamic> data) {
@@ -70,6 +74,8 @@ class AsanaTaskFilterState {
     createDateEnd = _dateFromMs(data['createDateEnd']);
     creatorStaffIds = _stringList(data['creatorStaffIds']);
     picStaffIds = _stringList(data['picStaffIds']);
+    creatorTeamIds = _stringList(data['creatorTeamIds']);
+    picTeamIds = _stringList(data['picTeamIds']);
     final rawSortKey = data['sortKey'] as String?;
     if (rawSortKey == 'due' ||
         rawSortKey == 'created' ||
@@ -106,6 +112,8 @@ class AsanaTaskFilterState {
     assigneeStaffIds = [];
     picStaffIds = [];
     creatorStaffIds = [];
+    creatorTeamIds = [];
+    picTeamIds = [];
     createDateStart = null;
     createDateEnd = null;
   }
@@ -152,6 +160,8 @@ class AsanaTaskFilterState {
     assigneeStaffIds = List<String>.from(data.filterAssigneeStaffIds);
     picStaffIds = List<String>.from(data.filterPicStaffIds);
     creatorStaffIds = List<String>.from(data.filterCreatorStaffIds);
+    creatorTeamIds = [];
+    picTeamIds = [];
     switch (data.sortColumn) {
       case 'dueDate':
         sortKey = 'due';
@@ -180,6 +190,8 @@ class AsanaTaskFilterState {
     assigneeStaffIds = [];
     picStaffIds = [];
     creatorStaffIds = [];
+    creatorTeamIds = [];
+    picTeamIds = [];
     createDateStart = null;
     createDateEnd = null;
   }
@@ -262,18 +274,27 @@ class AsanaTaskFilter {
   }
 
   static bool _rowPassesRoleFilters(
+    AppState state,
     Task task,
     SingularSubtask? sub,
     AsanaTaskFilterState filters,
   ) {
+    bool teamMatches(String? staffKey, List<String> selectedTeamIds) {
+      if (selectedTeamIds.isEmpty) return true;
+      final teamId = state.teamIdForStaffKey(staffKey);
+      return teamId != null && selectedTeamIds.contains(teamId);
+    }
+
+    final creatorKey = sub?.createByStaffId ?? task.createByAssigneeKey;
+    final picKey = sub?.pic ?? task.pic;
     if (filters.creatorStaffIds.isNotEmpty) {
-      final creatorKey = sub?.createByStaffId ?? task.createByAssigneeKey;
       if (!_keyMatches(creatorKey, filters.creatorStaffIds)) return false;
     }
+    if (!teamMatches(creatorKey, filters.creatorTeamIds)) return false;
     if (filters.picStaffIds.isNotEmpty) {
-      final picKey = sub?.pic ?? task.pic;
       if (!_keyMatches(picKey, filters.picStaffIds)) return false;
     }
+    if (!teamMatches(picKey, filters.picTeamIds)) return false;
     return true;
   }
 
@@ -771,10 +792,10 @@ class AsanaTaskFilter {
     final out = <Task>[];
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
-      final taskPassesRole = _rowPassesRoleFilters(t, null, filters);
+      final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsRoleFiltered = subs
-          .where((s) => _rowPassesRoleFilters(t, s, filters))
+          .where((s) => _rowPassesRoleFilters(state, t, s, filters))
           .toList();
       final subsNonDeleted = subsRoleFiltered
           .where((s) => !s.isDeleted)
@@ -939,13 +960,13 @@ class AsanaTaskFilter {
 
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
-      final taskPassesRole = _rowPassesRoleFilters(t, null, filters);
+      final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsFiltered = subs
           .where((s) => _subtaskPassesStatusChips(state, t, s, filters))
           .toList();
       final subsRoleFiltered = subsFiltered
-          .where((s) => _rowPassesRoleFilters(t, s, filters))
+          .where((s) => _rowPassesRoleFilters(state, t, s, filters))
           .toList();
       final subsNonDeleted = subsRoleFiltered
           .where((s) => !s.isDeleted)
@@ -964,7 +985,7 @@ class AsanaTaskFilter {
 
       void addSubsInRange(List<SingularSubtask> list) {
         for (final s in list) {
-          if (!_rowPassesRoleFilters(t, s, filters)) continue;
+          if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!searchActive) {
             if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
@@ -1025,14 +1046,14 @@ class AsanaTaskFilter {
         addTaskIfAllowed();
       }
       for (final s in subsNonDeleted) {
-        if (!_rowPassesRoleFilters(t, s, filters)) continue;
+        if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
       }
       for (final s in subsDeleted) {
-        if (!_rowPassesRoleFilters(t, s, filters)) continue;
+        if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
@@ -1222,7 +1243,7 @@ class AsanaTaskFilter {
 
     final subsFiltered = subs
         .where((s) => _subtaskPassesStatusChips(state, task, s, filters))
-        .where((s) => _rowPassesRoleFilters(task, s, filters))
+        .where((s) => _rowPassesRoleFilters(state, task, s, filters))
         .toList();
     final subsNonDeleted = subsFiltered.where((s) => !s.isDeleted).toList();
     final subsDeleted =
@@ -1232,7 +1253,7 @@ class AsanaTaskFilter {
         : <SingularSubtask>[];
 
     bool includeSub(SingularSubtask s) {
-      if (!_rowPassesRoleFilters(task, s, filters)) return false;
+      if (!_rowPassesRoleFilters(state, task, s, filters)) return false;
       if (_shouldOmitSubtaskRow(task, s, filters)) return false;
       if (filters.overdueOptions.contains('overdue') && s.overdue != 'Yes')
         return false;

@@ -385,9 +385,19 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                 onPressed: _showSubmissionMenu,
               ),
               AsanaFilterDropdown(
-                title: 'Creator',
+                title: 'Creator Team',
+                value: _teamFilterLabel(state, _filters.creatorTeamIds),
+                onPressed: _showCreatorTeamMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Creator Name',
                 value: _creatorLabel(state),
                 onPressed: _showCreatorMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'PIC Team',
+                value: _teamFilterLabel(state, _filters.picTeamIds),
+                onPressed: _showPicTeamMenu,
               ),
               AsanaFilterDropdown(
                 title: 'PIC',
@@ -750,6 +760,16 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     return '${ids.length} selected';
   }
 
+  String _teamFilterLabel(AppState state, List<String> ids) {
+    if (ids.isEmpty) {
+      return 'All';
+    }
+    if (ids.length == 1) {
+      return state.teamNameById(ids.first);
+    }
+    return '${ids.length} selected';
+  }
+
   String _creatorLabel(AppState state) =>
       _staffFilterLabel(state, _filters.creatorStaffIds);
 
@@ -795,6 +815,29 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     ];
   }
 
+  List<AsanaFilterCheckboxOption> _teamOptions(
+    AppState state,
+    Iterable<String?> teamIds,
+  ) {
+    final map = <String, String>{};
+    for (final raw in teamIds) {
+      final id = raw?.trim();
+      if (id == null || id.isEmpty) continue;
+      map[id] = state.teamNameById(id);
+    }
+    final list = map.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    return [
+      const AsanaFilterCheckboxOption(
+        key: '__all__',
+        label: 'All',
+        isAll: true,
+      ),
+      for (final team in list)
+        AsanaFilterCheckboxOption(key: team.key, label: team.value),
+    ];
+  }
+
   Iterable<String?> _visibleCreatorIds() sync* {
     if (widget.flatTasksAndSubtasks) {
       for (final row in _displayFlatRows) {
@@ -816,6 +859,18 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     }
     for (final task in _displayTasks) {
       yield task.pic;
+    }
+  }
+
+  Iterable<String?> _visibleCreatorTeamIds(AppState state) sync* {
+    for (final id in _visibleCreatorIds()) {
+      yield state.teamIdForStaffKey(id);
+    }
+  }
+
+  Iterable<String?> _visiblePicTeamIds(AppState state) sync* {
+    for (final id in _visiblePicIds()) {
+      yield state.teamIdForStaffKey(id);
     }
   }
 
@@ -866,6 +921,19 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     }
   }
 
+  Future<void> _showCreatorTeamMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _teamOptions(state, _visibleCreatorTeamIds(state)),
+      initialSelection: _filters.creatorTeamIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.creatorTeamIds = selection.toList());
+      _onFiltersChanged();
+    }
+  }
+
   Future<void> _showPicMenu(BuildContext buttonContext) async {
     final state = context.read<AppState>();
     final selection = await showAsanaCheckboxFilterPanel(
@@ -875,6 +943,19 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     );
     if (selection != null) {
       setState(() => _filters.picStaffIds = selection.toList());
+      _onFiltersChanged();
+    }
+  }
+
+  Future<void> _showPicTeamMenu(BuildContext buttonContext) async {
+    final state = context.read<AppState>();
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: _teamOptions(state, _visiblePicTeamIds(state)),
+      initialSelection: _filters.picTeamIds.toSet(),
+    );
+    if (selection != null) {
+      setState(() => _filters.picTeamIds = selection.toList());
       _onFiltersChanged();
     }
   }
