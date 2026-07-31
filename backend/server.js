@@ -1042,7 +1042,7 @@ function emailChangeMap(rawChanges) {
 
 function changedValueHtml(change, currentValue) {
   if (!change) return escapeHtml(emailPlainValue(currentValue));
-  return `<span style="color:#B00020;">${escapeHtml(emailPlainValue(change.oldValue))}</span> -&gt; <span style="color:#188038;">${escapeHtml(emailPlainValue(change.newValue))}</span>`;
+  return `<strong><span style="color:#B00020;">${escapeHtml(emailPlainValue(change.oldValue))}</span></strong> -&gt; <strong><span style="color:#188038;">${escapeHtml(emailPlainValue(change.newValue))}</span></strong>`;
 }
 
 function changedValueText(change, currentValue) {
@@ -1050,12 +1050,38 @@ function changedValueText(change, currentValue) {
   return `${emailPlainValue(change.oldValue)} -> ${emailPlainValue(change.newValue)}`;
 }
 
+function eventEmailDateValue(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '-';
+  const m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(d);
+  }
+  return raw;
+}
+
+function changedDateHtml(change, currentValue) {
+  if (!change) return escapeHtml(eventEmailDateValue(currentValue));
+  return `<strong><span style="color:#B00020;">${escapeHtml(eventEmailDateValue(change.oldValue))}</span></strong> -&gt; <strong><span style="color:#188038;">${escapeHtml(eventEmailDateValue(change.newValue))}</span></strong>`;
+}
+
+function changedDateText(change, currentValue) {
+  if (!change) return eventEmailDateValue(currentValue);
+  return `${eventEmailDateValue(change.oldValue)} -> ${eventEmailDateValue(change.newValue)}`;
+}
+
 function detailLineHtml(label, valueHtml) {
-  return `${escapeHtml(label)}: ${valueHtml}`;
+  return `&bull; <strong>${escapeHtml(label)}:</strong> ${valueHtml}`;
 }
 
 function detailLineText(label, valueText) {
-  return `${label}: ${valueText}`;
+  return `- ${label}: ${valueText}`;
 }
 
 function projectTrackerEmailFooterHtml() {
@@ -1182,8 +1208,8 @@ async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = 
     ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],
     ['Priority', changedValueHtml(changeMap.get('priority'), taskRow.priority), changedValueText(changeMap.get('priority'), taskRow.priority)],
     ['Status', changedValueHtml(changeMap.get('status'), taskRow.status), changedValueText(changeMap.get('status'), taskRow.status)],
-    ['Start date', changedValueHtml(changeMap.get('startDate'), taskRow.start_date), changedValueText(changeMap.get('startDate'), taskRow.start_date)],
-    ['Due date', changedValueHtml(changeMap.get('dueDate'), taskRow.due_date), changedValueText(changeMap.get('dueDate'), taskRow.due_date)],
+    ['Start date', changedDateHtml(changeMap.get('startDate'), taskRow.start_date), changedDateText(changeMap.get('startDate'), taskRow.start_date)],
+    ['Due date', changedDateHtml(changeMap.get('dueDate'), taskRow.due_date), changedDateText(changeMap.get('dueDate'), taskRow.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), taskRow.submission), changedValueText(changeMap.get('submission'), taskRow.submission)],
   ];
   if (extra.commentText) {
@@ -1228,8 +1254,8 @@ async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {
     ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],
     ['Priority', changedValueHtml(changeMap.get('priority'), row.priority), changedValueText(changeMap.get('priority'), row.priority)],
     ['Status', changedValueHtml(changeMap.get('status'), row.status), changedValueText(changeMap.get('status'), row.status)],
-    ['Start date', changedValueHtml(changeMap.get('startDate'), row.start_date), changedValueText(changeMap.get('startDate'), row.start_date)],
-    ['Due date', changedValueHtml(changeMap.get('dueDate'), row.due_date), changedValueText(changeMap.get('dueDate'), row.due_date)],
+    ['Start date', changedDateHtml(changeMap.get('startDate'), row.start_date), changedDateText(changeMap.get('startDate'), row.start_date)],
+    ['Due date', changedDateHtml(changeMap.get('dueDate'), row.due_date), changedDateText(changeMap.get('dueDate'), row.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), row.submission), changedValueText(changeMap.get('submission'), row.submission)],
   ];
   if (extra.commentText) {
