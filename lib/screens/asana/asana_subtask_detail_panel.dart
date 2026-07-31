@@ -668,7 +668,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     String newValue,
   ) {
     if (oldValue.trim() == newValue.trim()) return;
-    changes.add({'field': field, 'value': newValue});
+    changes.add({'field': field, 'oldValue': oldValue, 'newValue': newValue});
   }
 
   String _namesFor(AppState state, Iterable<String> ids) {
@@ -700,6 +700,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       'assignees',
       _namesFor(state, s.assigneeIds),
       _namesFor(state, _assigneeIds),
+    );
+    _addChange(
+      changes,
+      'pic',
+      _nameFor(state, s.pic),
+      _nameFor(state, _picAssigneeId),
     );
     _addChange(
       changes,

@@ -31,7 +31,7 @@ function createTransporter() {
 /**
  * @returns {{ ok: true, messageId: string, resolvedTo: string } | { ok: false, error: string, detail?: string }}
  */
-async function sendSmtpMail({ to, subject, text, html, from: fromOverride }) {
+async function sendSmtpMail({ to, subject, text, html, from: fromOverride, cc, replyTo }) {
   const toAddr = String(to || '')
     .trim()
     .split(/[,;]/)[0]
@@ -42,9 +42,13 @@ async function sendSmtpMail({ to, subject, text, html, from: fromOverride }) {
   }
   try {
     const transporter = createTransporter();
+    const ccAddr = String(cc || '').trim();
+    const replyToAddr = String(replyTo || '').trim();
     const info = await transporter.sendMail({
       from: fromOverride || SMTP_FROM,
       to: toAddr,
+      cc: ccAddr || undefined,
+      replyTo: replyToAddr || undefined,
       subject: String(subject || '(no subject)'),
       text: text || '',
       html: html || undefined,

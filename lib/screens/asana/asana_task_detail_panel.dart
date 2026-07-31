@@ -1131,7 +1131,19 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     String newValue,
   ) {
     if (oldValue.trim() == newValue.trim()) return;
-    changes.add({'field': field, 'value': newValue});
+    changes.add({'field': field, 'oldValue': oldValue, 'newValue': newValue});
+  }
+
+  String _projectNameForEmail(AppState state, String? projectId) {
+    final id = projectId?.trim();
+    if (id == null || id.isEmpty) return '';
+    for (final project in state.projects) {
+      if (project.id == id) return project.name;
+    }
+    for (final project in _myProjects) {
+      if (project.id == id) return project.name;
+    }
+    return id;
   }
 
   List<Map<String, String>> _taskChangesForEmail(
@@ -1149,9 +1161,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
     _addChange(
       changes,
+      'project',
+      _projectNameForEmail(state, task.projectId),
+      _projectNameForEmail(state, _selectedProjectId),
+    );
+    _addChange(
+      changes,
       'assignees',
       _namesFor(state, task.assigneeIds),
       _namesFor(state, assigneeIds),
+    );
+    _addChange(
+      changes,
+      'pic',
+      _nameFor(state, task.pic),
+      _nameFor(state, _picAssigneeId),
     );
     _addChange(
       changes,

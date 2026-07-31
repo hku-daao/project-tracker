@@ -7,14 +7,7 @@ const localFiles = require('./local_files');
 const oidcAuth = require('./oidc_auth');
 const smtpMail = require('./smtp_mail');
 
-const MAILGUN_API_KEY = (process.env.MAILGUN_API_KEY || '').trim();
-const MAILGUN_DOMAIN = (process.env.MAILGUN_DOMAIN || '').trim();
-const MAILGUN_BASE_URL = (process.env.MAILGUN_BASE_URL || 'https://api.mailgun.net').trim().replace(/\/$/, '');
-const MAILGUN_FROM = (process.env.MAILGUN_FROM || '').trim();
-/** Verified From for task-assignment emails. Override with MAILGUN_NOTIFICATION_FROM for production domains. */
-const MAILGUN_NOTIFICATION_FROM =
-  (process.env.MAILGUN_NOTIFICATION_FROM || '').trim() ||
-  'no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org';
+const NOTIFICATION_EMAIL_FROM = (process.env.SMTP_FROM || '').trim();
 /** Public web app origin for task links in emails (no trailing slash). Set PUBLIC_WEB_APP_URL in .env */
 const PUBLIC_WEB_APP_URL = (process.env.PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
 /** Marketing / landing URL for “Project Tracker” link in comment emails (no trailing slash). */
@@ -55,10 +48,14 @@ const TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF = `${PROJECT_TRACKER_LANDING_URL}/
 const TASK_UPDATE_NOTIFY_FIELD_LABELS = {
   taskName: 'Task name',
   description: 'Description',
+  project: 'Project',
   assignees: 'Assignees',
+  pic: 'PIC',
   priority: 'Priority',
+  status: 'Status',
   startDate: 'Start date',
   dueDate: 'Due date',
+  submission: 'Submission',
 };
 
 const TASK_UPDATE_NOTIFY_MAX_CHANGES = 8;
@@ -69,10 +66,14 @@ const TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN = 8000;
 const SUBTASK_UPDATE_NOTIFY_FIELD_LABELS = {
   subtaskName: 'Sub-task name',
   description: 'Description',
+  project: 'Project',
   assignees: 'Assignees',
+  pic: 'PIC',
   priority: 'Priority',
+  status: 'Status',
   startDate: 'Start date',
   dueDate: 'Due date',
+  submission: 'Submission',
 };
 
 /** Allowed keys from Flutter for project-updated email lines (display label is server-side). */
@@ -90,106 +91,72 @@ const PROJECT_UPDATE_NOTIFY_FIELD_LABELS = {
  * Task-updated assignee email: Aptos 16px; first block = field lines and/or comment line
  * per product template (double break between field block and comment when both present).
  *
- * @param {{ recipientDisplayName: string, changeLinesHtml: string, changeLinesText: string, commentLineHtml: string, commentLineText: string, taskName: string, taskUrl: string, updaterName: string, updatedAtLine: string }} p
+ * @param {{ recipientDisplayName: string, introHtml?: string, introText?: string, detailLinesHtml?: string, detailLinesText?: string, changeLinesHtml: string, changeLinesText: string, commentLineHtml: string, commentLineText: string, taskName: string, taskUrl: string, updaterName: string, updatedAtLine: string }} p
  */
 function buildTaskUpdatedAssigneeEmailHtml(p) {
-  const safeHi = escapeHtml(p.recipientDisplayName);
-  const safeTaskUrlAttr = escapeHtml(p.taskUrl);
-  const safeTitle = escapeHtml(p.taskName);
-  const safeUpdater = escapeHtml(p.updaterName);
-  const safeUpdatedAt = escapeHtml(p.updatedAtLine);
-  const safeLandingHref = escapeHtml(TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF);
-  const chHtml = (p.changeLinesHtml || '').trim();
-  const cmtHtml = (p.commentLineHtml || '').trim();
-  const topParts = [];
-  if (chHtml) topParts.push(chHtml);
-  if (cmtHtml) topParts.push(cmtHtml);
-  const topBlock = topParts.join('<br><br>');
-  const defaultLine =
-    '<span style="color:#000000;font-family:Aptos,\'Segoe UI\',Calibri,sans-serif;font-size:16px;">The task has been updated.</span>';
-  const firstBlock = topBlock ? topBlock : defaultLine;
+  const safeHi = escapeHtml(p.recipientDisplayName || 'Assignees');
+  const intro = (p.introHtml || '').trim() ||
+    'This email is to inform you that task information has been updated.';
+  const details = (p.detailLinesHtml || '').trim() ||
+    `<a href="${escapeHtml(p.taskUrl)}" style="font-weight:bold;color:#1565C0;">${escapeHtml(p.taskName)}</a>`;
   const bodyFont =
     "font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;";
-  return `<div style="margin:0;${bodyFont}">Hi ${safeHi},<br><br>
-${firstBlock}<br><br>
-<a href="${safeTaskUrlAttr}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br><br>
-Updated by: ${safeUpdater}<br><br>
-Updated at: ${safeUpdatedAt}<br><br>
-<a href="${safeLandingHref}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;color:#1565C0;">Project Tracker</a></div>`;
+  return `<div style="margin:0;${bodyFont}">Dear ${safeHi},<br><br>
+${intro}<br><br>
+${details}<br><br>
+Please review the updated task information in Project Tracker.<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
 }
 
 function buildTaskUpdatedAssigneeEmailText(p) {
-  const ch = (p.changeLinesText || '').trim();
-  const cmt = (p.commentLineText || '').trim();
-  const topParts = [];
-  if (ch) topParts.push(ch);
-  if (cmt) topParts.push(cmt);
-  const top = topParts.join('\n\n');
-  const first = top ? top : 'The task has been updated.';
-  return `Hi ${p.recipientDisplayName},
+  const intro = (p.introText || '').trim() ||
+    'This email is to inform you that task information has been updated.';
+  const details = (p.detailLinesText || '').trim() || `${p.taskName}\n${p.taskUrl}`;
+  return `Dear ${p.recipientDisplayName || 'Assignees'},
 
-${first}
+${intro}
 
-${p.taskName}
-${p.taskUrl}
+${details}
 
-Updated by: ${p.updaterName}
+Please review the updated task information in Project Tracker.
 
-Updated at: ${p.updatedAtLine}
-
-Project Tracker
-${TASK_UPDATE_NOTIFY_PROJECT_TRACKER_HREF}`;
+${projectTrackerEmailFooterText()}`;
 }
 
 /**
  * Sub-task-updated notify email (creator save only): Aptos 16px; `changeLines*` = `{A} is updated – {value}`;
  * optional `commentLine*` = `Sub-task comment is added – …`; title link; Updated by / at; Project Tracker.
  *
- * @param {{ recipientDisplayName: string, changeLinesHtml: string, changeLinesText: string, commentLineHtml: string, commentLineText: string, subtaskName: string, subtaskUrl: string, updaterName: string, updatedAtLine: string }} p
+ * @param {{ recipientDisplayName: string, introHtml?: string, introText?: string, detailLinesHtml?: string, detailLinesText?: string, changeLinesHtml: string, changeLinesText: string, commentLineHtml: string, commentLineText: string, subtaskName: string, subtaskUrl: string, updaterName: string, updatedAtLine: string }} p
  */
 function buildSubtaskUpdatedAssigneeEmailHtml(p) {
-  const safeHi = escapeHtml(p.recipientDisplayName);
-  const safeUrlAttr = escapeHtml(p.subtaskUrl);
-  const safeTitle = escapeHtml(p.subtaskName);
-  const safeUpdater = escapeHtml(p.updaterName);
-  const safeUpdatedAt = escapeHtml(p.updatedAtLine);
-  const safeLandingHref = escapeHtml(SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF);
-  const chHtml = (p.changeLinesHtml || '').trim();
-  const cmtHtml = (p.commentLineHtml || '').trim();
-  const topParts = [];
-  if (chHtml) topParts.push(chHtml);
-  if (cmtHtml) topParts.push(cmtHtml);
-  const topBlock = topParts.join('<br><br>');
+  const safeHi = escapeHtml(p.recipientDisplayName || 'Assignees');
+  const intro = (p.introHtml || '').trim() ||
+    'This email is to inform you that subtask information has been updated.';
+  const details = (p.detailLinesHtml || '').trim() ||
+    `<a href="${escapeHtml(p.subtaskUrl)}" style="font-weight:bold;color:#1565C0;">${escapeHtml(p.subtaskName)}</a>`;
   const bodyFont =
     "font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;";
-  return `<div style="margin:0;${bodyFont}">Hi ${safeHi},<br><br>
-${topBlock}<br><br>
-<a href="${safeUrlAttr}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;font-weight:bold;text-decoration:underline;color:#1565C0;">${safeTitle}</a><br><br>
-Updated by: ${safeUpdater}<br><br>
-Updated at: ${safeUpdatedAt}<br><br>
-<a href="${safeLandingHref}" style="font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;color:#1565C0;">Project Tracker</a></div>`;
+  return `<div style="margin:0;${bodyFont}">Dear ${safeHi},<br><br>
+${intro}<br><br>
+${details}<br><br>
+Please review the updated subtask information in Project Tracker.<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
 }
 
 function buildSubtaskUpdatedAssigneeEmailText(p) {
-  const ch = (p.changeLinesText || '').trim();
-  const cmt = (p.commentLineText || '').trim();
-  const topParts = [];
-  if (ch) topParts.push(ch);
-  if (cmt) topParts.push(cmt);
-  const topBlock = topParts.join('\n\n');
-  return `Hi ${p.recipientDisplayName},
+  const intro = (p.introText || '').trim() ||
+    'This email is to inform you that subtask information has been updated.';
+  const details = (p.detailLinesText || '').trim() || `${p.subtaskName}\n${p.subtaskUrl}`;
+  return `Dear ${p.recipientDisplayName || 'Assignees'},
 
-${topBlock}
+${intro}
 
-${p.subtaskName}
-${p.subtaskUrl}
+${details}
 
-Updated by: ${p.updaterName}
+Please review the updated subtask information in Project Tracker.
 
-Updated at: ${p.updatedAtLine}
-
-Project Tracker
-${SUBTASK_COMMENT_NOTIFY_PROJECT_TRACKER_HREF}`;
+${projectTrackerEmailFooterText()}`;
 }
 
 /** Task-comment emails (`handleNotifyTaskComment`). Default on; set `TASK_COMMENT_EMAIL_ENABLED=false` to disable. */
@@ -201,7 +168,7 @@ const TASK_COMMENT_EMAIL_ENABLED = (() => {
 /** POST /api/cron/* — optional shared secret (Railway / external scheduler). */
 const CRON_SECRET = (process.env.CRON_SECRET || '').trim();
 
-/** Master switch for outbound notification/cron email (Mailgun). Default off during HKU migration review. */
+/** Master switch for outbound notification/cron email. Default off during HKU migration review. */
 const EMAIL_SENDING_ENABLED = (() => {
   const v = (process.env.EMAIL_SENDING_ENABLED || 'false').trim().toLowerCase();
   return v === 'true' || v === '1' || v === 'yes';
@@ -214,10 +181,14 @@ function notifyEmailSkippedResponse(req, res) {
 
 function cronEmailBlockedReason() {
   if (!EMAIL_SENDING_ENABLED) return null;
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     return 'Outbound email transport not configured';
   }
   return null;
+}
+
+function outboundEmailConfigured() {
+  return smtpMail.isSmtpConfigured();
 }
 
 // Container listen port (compose sets PORT=3000). Host publish uses HOST_BACKEND_PORT in .env.
@@ -452,14 +423,14 @@ async function fetchStaffRowForCreateBy(dbClient, createByRaw) {
   if (!key) return { data: null, error: null };
   const byId = await dbClient
     .from('staff')
-    .select('id, email, name')
+    .select('id, email, name, active')
     .eq('id', key)
     .maybeSingle();
   if (byId.error) return { data: null, error: byId.error };
   if (byId.data) return { data: byId.data, error: null };
   const byApp = await dbClient
     .from('staff')
-    .select('id, email, name')
+    .select('id, email, name, active')
     .eq('app_id', key)
     .maybeSingle();
   if (byApp.error) return { data: null, error: byApp.error };
@@ -900,12 +871,12 @@ async function handleHealth(req, res) {
     databaseConfigured: !!db,
     emailSendingEnabled: EMAIL_SENDING_ENABLED,
     outboundEmailReady:
-      EMAIL_SENDING_ENABLED && !!(MAILGUN_API_KEY && MAILGUN_DOMAIN),
+      EMAIL_SENDING_ENABLED && smtpMail.isSmtpConfigured(),
     smtpConfigured: smtpMail.isSmtpConfigured(),
     ssoConfigured: oidcAuth.isConfigured(),
     ssoIssuer: (process.env.SSO_ISSUER_URL || '').trim() || null,
     smtp: smtpMail.smtpConfigSummary(),
-    urgentReminderCronEnabled: process.env.DISABLE_INTERNAL_URGENT_CRON !== 'true',
+    dailyReminderCronEnabled: process.env.DAILY_REMINDER_CRON_ENABLED === 'true',
     cronSecretConfigured: CRON_SECRET.length > 0,
     env: {
       databaseUrlSet: DATABASE_URL.length > 0,
@@ -915,7 +886,7 @@ async function handleHealth(req, res) {
 }
 
 /**
- * Single recipient for Mailgun: trim, lowercase, first address if comma/semicolon-separated.
+ * Single recipient for Email: trim, lowercase, first address if comma/semicolon-separated.
  */
 function normalizeRecipientEmail(raw) {
   let s = String(raw ?? '').trim();
@@ -927,116 +898,39 @@ function normalizeRecipientEmail(raw) {
   return firstToken.toLowerCase();
 }
 
-function formatMailgunFailure(r) {
+function formatEmailFailure(r) {
   const base = r.error || 'failed';
   const d = r.detail ? ` — ${String(r.detail).slice(0, 450)}` : '';
   return `${base}${d}`;
 }
 
-/**
- * Send via Mailgun HTTP API (application/x-www-form-urlencoded).
- * @param [opts.html] HTML body (optional; plain [text] fallback for clients)
- * @param [opts.from] Full From header (must be allowed on the Mailgun domain)
- * @param [opts.replyTo] Sets h:Reply-To
- * @returns {{ ok: true, id: string } | { ok: false, error: string, detail?: string }}
- */
-async function sendMailgun({ to, subject, text, html, from: fromOverride, replyTo, cc }) {
+async function sendNotificationEmail({ to, subject, text, html, from: fromOverride, replyTo, cc }) {
   if (!EMAIL_SENDING_ENABLED) {
     console.log(
-      `[mailgun] skipped (EMAIL_SENDING_ENABLED=false): to=${normalizeRecipientEmail(to)} subject=${String(subject || '').slice(0, 80)}`,
+      `[email] skipped (EMAIL_SENDING_ENABLED=false): to=${normalizeRecipientEmail(to)} subject=${String(subject || '').slice(0, 80)}`,
     );
     return { ok: true, id: null, skipped: true, resolvedTo: normalizeRecipientEmail(to) };
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     return { ok: false, error: 'Outbound email transport not configured' };
   }
-  const toAddr = normalizeRecipientEmail(to);
-  if (!toAddr || !toAddr.includes('@')) {
-    return {
-      ok: false,
-      error: 'Missing or invalid recipient email (to)',
-      resolvedTo: toAddr || '',
-    };
-  }
-  const from =
-    fromOverride ||
-    MAILGUN_FROM ||
-    `postmaster@${MAILGUN_DOMAIN}`;
-  const url = `${MAILGUN_BASE_URL}/v3/${encodeURIComponent(MAILGUN_DOMAIN)}/messages`;
-  const auth = Buffer.from(`api:${MAILGUN_API_KEY}`).toString('base64');
-  const body = new URLSearchParams({ from, to: toAddr, subject });
-  const ccAddr = normalizeRecipientEmail(cc);
-  if (ccAddr && ccAddr.includes('@')) {
-    body.append('cc', ccAddr);
-  }
-  if (html) {
-    body.append('html', html);
-    body.append('text', text || '');
-  } else {
-    body.append('text', text || '');
-  }
-  const rt = (replyTo || '').trim();
-  if (rt) {
-    body.append('h:Reply-To', rt);
-  }
-  try {
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body,
-    });
-    const raw = await r.text();
-    if (!r.ok) {
-      console.error('[mailgun] send failed', r.status, url, raw.slice(0, 800));
-      return {
-        ok: false,
-        error: `Mailgun HTTP ${r.status}`,
-        detail: raw.slice(0, 500),
-        resolvedTo: toAddr,
-      };
-    }
-    let id = '';
-    try {
-      const j = JSON.parse(raw);
-      id = (j && j.id) || '';
-    } catch (_) {}
-    return { ok: true, id, resolvedTo: toAddr };
-  } catch (e) {
-    return { ok: false, error: e.message || String(e), resolvedTo: toAddr };
-  }
-}
-
-/** Admin-only: POST body `{ "to": "you@example.com" }` — sends one test email (sandbox: recipient must be authorized in Mailgun). */
-async function handleAdminTestMailgun(req, res) {
-  const session = await requireAdmin(req, res);
-  if (!session) return;
-  if (req.method !== 'POST') {
-    sendJson(req, res, 405, { error: 'Method not allowed' });
-    return;
-  }
-  try {
-    const body = await readBody(req);
-    const to = (body.to || '').trim();
-    if (!to) {
-      sendJson(req, res, 400, { error: 'JSON body must include "to" (recipient email)' });
-      return;
-    }
-    const result = await sendMailgun({
-      to,
-      subject: 'Project Tracker — Mailgun test (Railway production)',
-      text: `Test message sent at ${new Date().toISOString()}\n\nIf you use a Mailgun sandbox domain, the recipient must be listed as an authorized recipient in Mailgun.`,
-    });
-    if (result.ok) {
-      sendJson(req, res, 200, { ok: true, mailgunId: result.id || null });
-    } else {
-      sendJson(req, res, 502, { ok: false, error: result.error, detail: result.detail });
-    }
-  } catch (e) {
-    sendJson(req, res, 500, { error: e.message || String(e) });
-  }
+  const result = await smtpMail.sendSmtpMail({
+    to,
+    cc,
+    subject,
+    text,
+    html,
+    from: fromOverride || NOTIFICATION_EMAIL_FROM || undefined,
+    replyTo,
+  });
+  return {
+    ok: result.ok,
+    id: result.messageId || '',
+    error: result.error,
+    detail: result.detail,
+    resolvedTo: result.resolvedTo || normalizeRecipientEmail(to),
+    transport: 'smtp',
+  };
 }
 
 /** OFFLINE_DEV only: POST `{ "to": "you@hku.hk" }` — test HKU SMTP relay (mail7). */
@@ -1082,7 +976,7 @@ async function handleTestSmtp(req, res) {
   }
 }
 
-/** Admin-only SMTP test (same as Mailgun test). */
+/** Admin-only SMTP test (same as Email test). */
 async function handleAdminTestSmtp(req, res) {
   const session = await requireAdmin(req, res);
   if (!session) return;
@@ -1122,6 +1016,57 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function emailPlainValue(value) {
+  const v = String(value ?? '').trim();
+  return v || '-';
+}
+
+function emailChangeMap(rawChanges) {
+  const map = new Map();
+  for (const row of Array.isArray(rawChanges) ? rawChanges : []) {
+    if (!row || typeof row !== 'object') continue;
+    const field = String(row.field || '').trim();
+    if (!field) continue;
+    const oldValue = Object.prototype.hasOwnProperty.call(row, 'oldValue')
+      ? String(row.oldValue ?? '')
+      : '';
+    const newValue = Object.prototype.hasOwnProperty.call(row, 'newValue')
+      ? String(row.newValue ?? '')
+      : String(row.value ?? '');
+    map.set(field, { oldValue, newValue });
+  }
+  return map;
+}
+
+function changedValueHtml(change, currentValue) {
+  if (!change) return escapeHtml(emailPlainValue(currentValue));
+  return `<span style="color:#B00020;">${escapeHtml(emailPlainValue(change.oldValue))}</span> -&gt; <span style="color:#188038;">${escapeHtml(emailPlainValue(change.newValue))}</span>`;
+}
+
+function changedValueText(change, currentValue) {
+  if (!change) return emailPlainValue(currentValue);
+  return `${emailPlainValue(change.oldValue)} -> ${emailPlainValue(change.newValue)}`;
+}
+
+function detailLineHtml(label, valueHtml) {
+  return `${escapeHtml(label)}: ${valueHtml}`;
+}
+
+function detailLineText(label, valueText) {
+  return `${label}: ${valueText}`;
+}
+
+function projectTrackerEmailFooterHtml() {
+  return `Best regards,<br>AI &amp; Data Lab<br>Institutional Advancement<br>The University of Hong Kong`;
+}
+
+function projectTrackerEmailFooterText() {
+  return `Best regards,
+AI & Data Lab
+Institutional Advancement
+The University of Hong Kong`;
 }
 
 function mailSubjectSingleLine(s) {
@@ -1187,6 +1132,122 @@ function buildTaskUpdatedDefaultRecipientStaffIds(taskRow) {
 /** Same slot layout as [collectTaskAssigneeStaffIds] for `public.subtask`. */
 function collectSubtaskAssigneeStaffIds(subtaskRow) {
   return collectTaskAssigneeStaffIds(subtaskRow);
+}
+
+async function staffNameForEmail(dbClient, staffKey) {
+  const key = String(staffKey || '').trim();
+  if (!key) return '';
+  const { data } = await fetchStaffRowForCreateBy(dbClient, key);
+  return (data?.name || '').toString().trim() || key;
+}
+
+async function staffNamesForEmail(dbClient, staffKeys) {
+  const names = [];
+  const seen = new Set();
+  for (const keyRaw of staffKeys || []) {
+    const key = String(keyRaw || '').trim();
+    const norm = key.toLowerCase();
+    if (!key || seen.has(norm)) continue;
+    seen.add(norm);
+    const name = await staffNameForEmail(dbClient, key);
+    if (name) names.push(name);
+  }
+  return names.join(', ');
+}
+
+async function projectNameForEmail(dbClient, projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return '';
+  const { data } = await dbClient
+    .from('project')
+    .select('name')
+    .eq('id', id)
+    .maybeSingle();
+  return (data?.name || '').toString().trim() || id;
+}
+
+async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = {}) {
+  const taskId = String(taskRow.id || '').trim();
+  const taskUrl = taskWebAppUrl(taskId);
+  const projectName = await projectNameForEmail(dbClient, taskRow.project_id);
+  const creatorName = await staffNameForEmail(dbClient, taskRow.create_by);
+  const assigneeNames = await staffNamesForEmail(dbClient, collectTaskAssigneeStaffIds(taskRow));
+  const picName = await staffNameForEmail(dbClient, taskRow.pic);
+  const rows = [
+    ['Task name', changedValueHtml(changeMap.get('taskName'), taskRow.task_name), changedValueText(changeMap.get('taskName'), taskRow.task_name)],
+    ['Description', changedValueHtml(changeMap.get('description'), taskRow.description), changedValueText(changeMap.get('description'), taskRow.description)],
+    ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
+    ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
+    ['Assignees', changedValueHtml(changeMap.get('assignees'), assigneeNames), changedValueText(changeMap.get('assignees'), assigneeNames)],
+    ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],
+    ['Priority', changedValueHtml(changeMap.get('priority'), taskRow.priority), changedValueText(changeMap.get('priority'), taskRow.priority)],
+    ['Status', changedValueHtml(changeMap.get('status'), taskRow.status), changedValueText(changeMap.get('status'), taskRow.status)],
+    ['Start date', changedValueHtml(changeMap.get('startDate'), taskRow.start_date), changedValueText(changeMap.get('startDate'), taskRow.start_date)],
+    ['Due date', changedValueHtml(changeMap.get('dueDate'), taskRow.due_date), changedValueText(changeMap.get('dueDate'), taskRow.due_date)],
+    ['Submission', changedValueHtml(changeMap.get('submission'), taskRow.submission), changedValueText(changeMap.get('submission'), taskRow.submission)],
+  ];
+  if (extra.commentText) {
+    rows.push([
+      'Comment',
+      `<span style="color:#188038;">${escapeHtml(emailPlainValue(extra.commentText))}</span>`,
+      emailPlainValue(extra.commentText),
+    ]);
+  }
+  rows.push([
+    'URL',
+    `<a href="${escapeHtml(taskUrl)}" style="color:#1565C0;">${escapeHtml(taskUrl)}</a>`,
+    taskUrl,
+  ]);
+  return {
+    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br>'),
+    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n'),
+  };
+}
+
+async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {}) {
+  const subtaskId = String(row.id || '').trim();
+  const subtaskUrl = subtaskWebAppUrl(subtaskId);
+  const creatorName = await staffNameForEmail(dbClient, row.create_by);
+  const assigneeNames = await staffNamesForEmail(dbClient, collectSubtaskAssigneeStaffIds(row));
+  const picName = await staffNameForEmail(dbClient, row.pic);
+  let projectName = '';
+  if (row.task_id) {
+    const { data: taskRow } = await dbClient
+      .from('task')
+      .select('project_id')
+      .eq('id', row.task_id)
+      .maybeSingle();
+    projectName = await projectNameForEmail(dbClient, taskRow?.project_id);
+  }
+  const rows = [
+    ['Subtask name', changedValueHtml(changeMap.get('subtaskName'), row.subtask_name), changedValueText(changeMap.get('subtaskName'), row.subtask_name)],
+    ['Description', changedValueHtml(changeMap.get('description'), row.description), changedValueText(changeMap.get('description'), row.description)],
+    ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
+    ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
+    ['Assignees', changedValueHtml(changeMap.get('assignees'), assigneeNames), changedValueText(changeMap.get('assignees'), assigneeNames)],
+    ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],
+    ['Priority', changedValueHtml(changeMap.get('priority'), row.priority), changedValueText(changeMap.get('priority'), row.priority)],
+    ['Status', changedValueHtml(changeMap.get('status'), row.status), changedValueText(changeMap.get('status'), row.status)],
+    ['Start date', changedValueHtml(changeMap.get('startDate'), row.start_date), changedValueText(changeMap.get('startDate'), row.start_date)],
+    ['Due date', changedValueHtml(changeMap.get('dueDate'), row.due_date), changedValueText(changeMap.get('dueDate'), row.due_date)],
+    ['Submission', changedValueHtml(changeMap.get('submission'), row.submission), changedValueText(changeMap.get('submission'), row.submission)],
+  ];
+  if (extra.commentText) {
+    rows.push([
+      'Comment',
+      `<span style="color:#188038;">${escapeHtml(emailPlainValue(extra.commentText))}</span>`,
+      emailPlainValue(extra.commentText),
+    ]);
+  }
+  rows.push([
+    'URL',
+    `<a href="${escapeHtml(subtaskUrl)}" style="color:#1565C0;">${escapeHtml(subtaskUrl)}</a>`,
+    subtaskUrl,
+  ]);
+  return {
+    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br>'),
+    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n'),
+  };
 }
 
 /**
@@ -2117,7 +2178,7 @@ async function resetUrgentReminderForPastDueSubtasks(dbClient, todayYmd, summary
 }
 
 /**
- * 80% window — each assignee with assignee_01..10 set gets one Mailgun message per HK day.
+ * 80% window — each assignee with assignee_01..10 set gets one Email message per HK day.
  * Uses [urgent_reminder_sent] + [assignee_urgent_reminder_last_sent_on] like task assignee urgent.
  * Runs past-due reset first. **Not** sent when HK today equals [due_date] (assignee due-today uses
  * [runAssigneeDueTodaySubtaskReminderJob] that day instead).
@@ -2221,20 +2282,20 @@ async function runAssigneeUrgentSubtaskReminderJob() {
         subtaskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: mailSubjectSingleLine('You have upcoming sub-tasks due'),
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       sendResults.push({ to, ok: r.ok, error: r.ok ? null : r.error });
     }
 
-    const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
-    if (!failedMailgun) {
+    const failedEmail = sendResults.some((x) => !x.ok && !x.skipped);
+    if (!failedEmail) {
       const { error: uErr } = await db
         .from('subtask')
         .update({
@@ -2385,20 +2446,20 @@ async function runCreatorUrgentSubtaskReminderJob() {
       subtaskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(
         `${picDisplayName} has an upcoming sub-task due`,
       ),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun subtask creator urgent subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email subtask creator urgent subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -2513,20 +2574,20 @@ async function runUrgentTaskReminderJob() {
         taskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: 'You have upcoming tasks due',
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       sendResults.push({ to, ok: r.ok, error: r.ok ? null : r.error });
     }
 
-    const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
-    if (!failedMailgun) {
+    const failedEmail = sendResults.some((x) => !x.ok && !x.skipped);
+    if (!failedEmail) {
       const { error: uErr } = await db
         .from('task')
         .update({
@@ -2676,18 +2737,18 @@ async function runCreatorUrgentTaskReminderJob() {
       taskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(`${picDisplayName}'s upcoming task due`),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun creator urgent task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email creator urgent task=${taskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -2790,20 +2851,20 @@ async function runDueTodayTaskReminderJob() {
         taskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: 'You have tasks due today',
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       sendResults.push({ to, ok: r.ok, error: r.ok ? null : r.error });
     }
 
-    const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
-    if (!failedMailgun) {
+    const failedEmail = sendResults.some((x) => !x.ok && !x.skipped);
+    if (!failedEmail) {
       const { error: uErr } = await db
         .from('task')
         .update({ due_today_reminder_sent_on: todayYmd })
@@ -2913,20 +2974,20 @@ async function runAssigneeDueTodaySubtaskReminderJob() {
         subtaskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: mailSubjectSingleLine('You have sub-tasks due today'),
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       sendResults.push({ to, ok: r.ok, error: r.ok ? null : r.error });
     }
 
-    const failedMailgun = sendResults.some((x) => !x.ok && !x.skipped);
-    if (!failedMailgun) {
+    const failedEmail = sendResults.some((x) => !x.ok && !x.skipped);
+    if (!failedEmail) {
       const { error: uErr } = await db
         .from('subtask')
         .update({ subtask_assignee_due_today_reminder_sent_on: todayYmd })
@@ -3066,18 +3127,18 @@ async function runCreatorDueTodayReminderJob() {
       taskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(`${picDisplayName}'s task due today`),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun creator due-today task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email creator due-today task=${taskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -3218,20 +3279,20 @@ async function runCreatorDueTodaySubtaskReminderJob() {
       subtaskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(
         `${picDisplayName}'s sub-task due today`,
       ),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun subtask creator due-today subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email subtask creator due-today subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -3371,18 +3432,18 @@ async function runCreatorOverdueTaskReminderJob() {
       taskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(`${picDisplayName}'s task overdue`),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun creator overdue task=${taskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email creator overdue task=${taskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -3499,18 +3560,18 @@ async function runAssigneeOverdueTaskReminderJob() {
         taskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: mailSubjectSingleLine('You have tasks overdue'),
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       else {
         summary.errors.push(
-          `Mailgun assignee overdue task=${taskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+          `Email assignee overdue task=${taskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
         );
         continue;
       }
@@ -3650,20 +3711,20 @@ async function runCreatorOverdueSubtaskReminderJob() {
       subtaskUrl,
       dueYmd,
     );
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject: mailSubjectSingleLine(
         `${picDisplayName}'s sub-task overdue`,
       ),
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
     });
     summary.emailsAttempted += 1;
     if (r.ok) summary.emailsOk += 1;
     else {
       summary.errors.push(
-        `Mailgun subtask creator overdue subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+        `Email subtask creator overdue subtask=${subtaskId} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
       );
       continue;
     }
@@ -3782,18 +3843,18 @@ async function runAssigneeOverdueSubtaskReminderJob() {
         subtaskUrl,
         dueYmd,
       );
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject: mailSubjectSingleLine('You have sub-tasks overdue'),
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
       });
       summary.emailsAttempted += 1;
       if (r.ok) summary.emailsOk += 1;
       else {
         summary.errors.push(
-          `Mailgun subtask assignee overdue subtask=${subtaskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatMailgunFailure(r)}`,
+          `Email subtask assignee overdue subtask=${subtaskId} slot=${assigneeKey} to=${r.resolvedTo ?? to}: ${formatEmailFailure(r)}`,
         );
         continue;
       }
@@ -3807,6 +3868,973 @@ async function runAssigneeOverdueSubtaskReminderJob() {
       } else {
         summary.subtasksUpdatedAfterSend += 1;
       }
+    }
+  }
+
+  return summary;
+}
+
+function picReminderDirectTaskUrl(taskId) {
+  const id = String(taskId || '').trim();
+  const base = String(PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
+  return `${base}/?task=${encodeURIComponent(id)}`;
+}
+
+function picReminderDirectSubtaskUrl(subtaskId) {
+  const id = String(subtaskId || '').trim();
+  const base = String(PUBLIC_WEB_APP_URL || '').trim().replace(/\/$/, '');
+  return `${base}/?subtask=${encodeURIComponent(id)}`;
+}
+
+function reminderTextValue(raw) {
+  const s = String(raw || '').trim();
+  return s || '—';
+}
+
+function reminderDescription(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '—';
+  return s.length > 1800 ? `${s.slice(0, 1800)}...` : s;
+}
+
+function staffActiveForReminder(staffRow) {
+  return staffRow?.active !== false;
+}
+
+function submissionBlocksOverdueSummaryReminder(submissionRaw) {
+  return String(submissionRaw || '').trim().toLowerCase() === 'submitted';
+}
+
+function overdueDaysText(todayYmd, dueYmd) {
+  const todayMs = new Date(`${todayYmd}T00:00:00Z`).getTime();
+  const dueMs = new Date(`${dueYmd}T00:00:00Z`).getTime();
+  if (Number.isNaN(todayMs) || Number.isNaN(dueMs) || todayMs <= dueMs) {
+    return '';
+  }
+  const days = Math.round((todayMs - dueMs) / 86400000);
+  return ` (Overdue by ${days} ${days === 1 ? 'day' : 'days'})`;
+}
+
+function buildPicOverdueSummaryEmail(displayName, items) {
+  const greetingName = reminderTextValue(displayName);
+  const subject = 'Project Tracker overdue PIC reminder';
+  const taskCount = items.filter((item) => item.kind === 'Task').length;
+  const subtaskCount = items.filter((item) => item.kind === 'Subtask').length;
+  const introText = `You have ${taskCount} overdue ${taskCount === 1 ? 'Task' : 'Tasks'} and ${subtaskCount} overdue ${subtaskCount === 1 ? 'Subtask' : 'Subtasks'} where you are PIC. Please review the details below:`;
+  const textLines = [
+    `Dear ${greetingName},`,
+    '',
+    introText,
+    '',
+  ];
+
+  const htmlItems = [];
+  items.forEach((item) => {
+    const titleColor = item.kind === 'Task' ? '#2563eb' : '#16a34a';
+    const overdueText = item.overdueText || '';
+    textLines.push(item.title);
+    textLines.push(item.description);
+    textLines.push(`Creator: ${item.creatorName}`);
+    textLines.push(`Due date: ${item.dueYmd}${overdueText}`);
+    textLines.push(`URL: ${item.url}`);
+    textLines.push('');
+
+    htmlItems.push(`
+      <div style="margin:0 0 20px 0;">
+        <div style="font-size:16px;font-weight:700;color:${titleColor};">${escapeHtml(item.title)}</div>
+        <div style="white-space:pre-line;">${escapeHtml(item.description)}</div>
+        <div>Creator: ${escapeHtml(item.creatorName)}</div>
+        <div>Due date: ${escapeHtml(`${item.dueYmd}${overdueText}`)}</div>
+        <div>URL: <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></div>
+      </div>`);
+  });
+
+  textLines.push('Please review and update the above overdue item(s) in Project Tracker.');
+  textLines.push('');
+  textLines.push('Best regards,');
+  textLines.push('AI & Data Lab');
+  textLines.push('Institutional Advancement');
+  textLines.push('The University of Hong Kong');
+
+  const html = `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
+    <p>Dear ${escapeHtml(greetingName)},</p>
+    <p>You have <strong style="color:#2563eb;">${taskCount} overdue ${taskCount === 1 ? 'Task' : 'Tasks'}</strong> and <strong style="color:#16a34a;">${subtaskCount} overdue ${subtaskCount === 1 ? 'Subtask' : 'Subtasks'}</strong> where you are PIC. Please review the details below:</p>
+    ${htmlItems.join('\n')}
+    <p>Please review and update the above overdue item(s) in Project Tracker.</p>
+    <p>
+      Best regards,<br>
+      AI &amp; Data Lab<br>
+      Institutional Advancement<br>
+      The University of Hong Kong
+    </p>
+  </div>`;
+
+  return { subject, text: textLines.join('\n'), html };
+}
+
+function buildCreatorOverdueSummaryEmail(displayName, items) {
+  const greetingName = reminderTextValue(displayName);
+  const subject = 'Project Tracker overdue items created by you';
+  const taskCount = items.filter((item) => item.kind === 'Task').length;
+  const subtaskCount = items.filter((item) => item.kind === 'Subtask').length;
+  const introText = `You have created ${taskCount} overdue ${taskCount === 1 ? 'Task' : 'Tasks'} and ${subtaskCount} overdue ${subtaskCount === 1 ? 'Subtask' : 'Subtasks'} that are still pending delivery. Please review the details below and follow up with the PIC where appropriate.`;
+  const textLines = [`Dear ${greetingName},`, '', introText, ''];
+
+  const htmlItems = [];
+  items.forEach((item) => {
+    const titleColor = item.kind === 'Task' ? '#2563eb' : '#16a34a';
+    const overdueText = item.overdueText || '';
+    textLines.push(item.title);
+    textLines.push(item.description);
+    textLines.push(`PIC: ${item.picName}`);
+    textLines.push(`Due date: ${item.dueYmd}${overdueText}`);
+    textLines.push(`URL: ${item.url}`);
+    textLines.push('');
+
+    htmlItems.push(`
+      <div style="margin:0 0 20px 0;">
+        <div style="font-size:16px;font-weight:700;color:${titleColor};">${escapeHtml(item.title)}</div>
+        <div style="white-space:pre-line;">${escapeHtml(item.description)}</div>
+        <div>PIC: ${escapeHtml(item.picName)}</div>
+        <div>Due date: ${escapeHtml(`${item.dueYmd}${overdueText}`)}</div>
+        <div>URL: <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></div>
+      </div>`);
+  });
+
+  const actionText =
+    'Please follow up with the PIC to support delivery. If the original requirement or timeline is no longer suitable, please discuss with the PIC and update the task/subtask requirement or delivery date in Project Tracker.';
+  textLines.push(actionText);
+  textLines.push('');
+  textLines.push('Best regards,');
+  textLines.push('AI & Data Lab');
+  textLines.push('Institutional Advancement');
+  textLines.push('The University of Hong Kong');
+
+  const html = `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
+    <p>Dear ${escapeHtml(greetingName)},</p>
+    <p>You have created <strong style="color:#2563eb;">${taskCount} overdue ${taskCount === 1 ? 'Task' : 'Tasks'}</strong> and <strong style="color:#16a34a;">${subtaskCount} overdue ${subtaskCount === 1 ? 'Subtask' : 'Subtasks'}</strong> that are still pending delivery. Please review the details below and follow up with the PIC where appropriate.</p>
+    ${htmlItems.join('\n')}
+    <p>${escapeHtml(actionText)}</p>
+    <p>
+      Best regards,<br>
+      AI &amp; Data Lab<br>
+      Institutional Advancement<br>
+      The University of Hong Kong
+    </p>
+  </div>`;
+
+  return { subject, text: textLines.join('\n'), html };
+}
+
+async function sendPicOverdueSummaryEmail({ to, subject, text, html }) {
+  if (smtpMail.isSmtpConfigured()) {
+    const r = await smtpMail.sendSmtpMail({ to, subject, text, html });
+    return { ...r, transport: 'smtp' };
+  }
+  const r = await sendNotificationEmail({
+    to,
+    subject,
+    text,
+    html,
+    from: NOTIFICATION_EMAIL_FROM,
+  });
+  return { ...r, transport: 'email' };
+}
+
+async function runPicOverdueSummaryReminderJob(options = {}) {
+  const todayYmd = hkTodayYyyyMmDd();
+  const dryRun = options.dryRun === true;
+  const sendToOverride = normalizeRecipientEmail(options.sendToOverride);
+  const targetEmail = normalizeRecipientEmail(options.targetEmail);
+  console.log(
+    `[pic-overdue] start today=${todayYmd} dryRun=${dryRun} targetEmail=${targetEmail || 'all'}`,
+  );
+  const summary = {
+    todayHk: todayYmd,
+    scannedTasks: 0,
+    scannedSubtasks: 0,
+    eligibleItems: 0,
+    recipientGroups: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    dryRun,
+    transport: 'smtp',
+    errors: [],
+  };
+  if (dryRun) {
+    summary.previews = [];
+  }
+  if (!db) {
+    summary.errors.push('Database not configured');
+    return summary;
+  }
+  if (!EMAIL_SENDING_ENABLED && !dryRun) {
+    return summary;
+  }
+  if (!dryRun && !outboundEmailConfigured()) {
+    summary.errors.push(
+      'Outbound email transport not configured (set SMTP_HOST and SMTP_FROM)',
+    );
+    return summary;
+  }
+
+  const staffByKey = new Map();
+  const { data: staffRows, error: staffErr } = await db
+    .from('staff')
+    .select('id, app_id, email, name, active');
+  if (staffErr) {
+    summary.errors.push(staffErr.message || String(staffErr));
+    return summary;
+  }
+  for (const row of staffRows || []) {
+    const id = String(row.id || '').trim();
+    const appId = String(row.app_id || '').trim();
+    if (id) staffByKey.set(id, row);
+    if (appId) staffByKey.set(appId, row);
+  }
+  console.log(`[pic-overdue] loaded staff rows=${(staffRows || []).length}`);
+
+  function staffForKey(key) {
+    const normalized = String(key || '').trim();
+    if (!normalized) return null;
+    return staffByKey.get(normalized) || null;
+  }
+
+  const groups = new Map();
+  async function addItemForPic(picKey, item) {
+    const picStaff = staffForKey(picKey);
+    if (!picStaff) {
+      summary.errors.push(`${item.kind.toLowerCase()} ${item.id}: PIC staff not found (${picKey})`);
+      return;
+    }
+    if (!staffActiveForReminder(picStaff)) return;
+    const to = await resolveStaffEmailForNotifications(db, picStaff);
+    if (!to) {
+      summary.errors.push(`${item.kind.toLowerCase()} ${item.id}: PIC has no email (${picKey})`);
+      return;
+    }
+    const normalizedTo = normalizeRecipientEmail(to);
+    if (targetEmail && normalizedTo !== targetEmail) return;
+    const staffId = String(picStaff.id || picKey).trim();
+    if (!groups.has(staffId)) {
+      groups.set(staffId, {
+        staff: picStaff,
+        to: normalizedTo,
+        items: [],
+      });
+    }
+    groups.get(staffId).items.push(item);
+    summary.eligibleItems += 1;
+  }
+
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
+  const blockedParentTaskIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
+  console.log(
+    `[pic-overdue] loaded blocked sets pausedProjects=${pausedProjectIds.size} blockedParentTasks=${blockedParentTaskIds.size}`,
+  );
+
+  const { data: tasks, error: taskErr } = await db
+    .from('task')
+    .select('id, task_name, description, create_by, due_date, pic, submission, status, pause_status, project_id');
+  if (taskErr) {
+    summary.errors.push(taskErr.message || String(taskErr));
+    return summary;
+  }
+  console.log(`[pic-overdue] loaded task rows=${(tasks || []).length}`);
+
+  for (const taskRow of tasks || []) {
+    summary.scannedTasks += 1;
+    if (taskRow.due_date == null || taskRow.due_date === '') continue;
+    if (submissionBlocksOverdueSummaryReminder(taskRow.submission)) continue;
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
+    if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
+    const picKey = String(taskRow.pic || '').trim();
+    if (!picKey) continue;
+    const taskId = String(taskRow.id || '').trim();
+    const creatorStaff = staffForKey(taskRow.create_by);
+    await addItemForPic(picKey, {
+      id: taskId,
+      kind: 'Task',
+      typeRank: 0,
+      title: reminderTextValue(taskRow.task_name),
+      description: reminderDescription(taskRow.description),
+      creatorName: reminderTextValue(creatorStaff?.name || taskRow.create_by),
+      dueYmd: formatTaskDueDateYYYYMMDD(taskRow.due_date),
+      overdueText: overdueDaysText(todayYmd, formatTaskDueDateYYYYMMDD(taskRow.due_date)),
+      url: picReminderDirectTaskUrl(taskId),
+    });
+  }
+
+  const { data: subtasks, error: subtaskErr } = await db
+    .from('subtask')
+    .select('id, task_id, subtask_name, description, create_by, due_date, pic, submission, status, pause_status');
+  if (subtaskErr) {
+    summary.errors.push(subtaskErr.message || String(subtaskErr));
+    return summary;
+  }
+  console.log(`[pic-overdue] loaded subtask rows=${(subtasks || []).length}`);
+
+  for (const row of subtasks || []) {
+    summary.scannedSubtasks += 1;
+    if (row.due_date == null || row.due_date === '') continue;
+    if (submissionBlocksOverdueSummaryReminder(row.submission)) continue;
+    if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
+    const taskFk = String(row.task_id || '').trim();
+    if (taskFk && blockedParentTaskIds.has(taskFk)) continue;
+    if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
+    const picKey = String(row.pic || '').trim();
+    if (!picKey) continue;
+    const subtaskId = String(row.id || '').trim();
+    const creatorStaff = staffForKey(row.create_by);
+    await addItemForPic(picKey, {
+      id: subtaskId,
+      kind: 'Subtask',
+      typeRank: 1,
+      title: reminderTextValue(row.subtask_name),
+      description: reminderDescription(row.description),
+      creatorName: reminderTextValue(creatorStaff?.name || row.create_by),
+      dueYmd: formatTaskDueDateYYYYMMDD(row.due_date),
+      overdueText: overdueDaysText(todayYmd, formatTaskDueDateYYYYMMDD(row.due_date)),
+      url: picReminderDirectSubtaskUrl(subtaskId),
+    });
+  }
+
+  for (const group of groups.values()) {
+    group.items.sort((a, b) => {
+      if (a.dueYmd !== b.dueYmd) return a.dueYmd.localeCompare(b.dueYmd);
+      if (a.typeRank !== b.typeRank) return a.typeRank - b.typeRank;
+      return a.title.localeCompare(b.title);
+    });
+  }
+
+  summary.recipientGroups = groups.size;
+  console.log(
+    `[pic-overdue] grouped eligibleItems=${summary.eligibleItems} recipientGroups=${summary.recipientGroups}`,
+  );
+  for (const group of groups.values()) {
+    const displayName = reminderTextValue(group.staff.name || group.to);
+    const { subject, text, html } = buildPicOverdueSummaryEmail(displayName, group.items);
+    const sendTo = sendToOverride || group.to;
+    if (dryRun) {
+      summary.previews.push({
+        to: group.to,
+        sendTo,
+        displayName,
+        itemCount: group.items.length,
+        text,
+      });
+      continue;
+    }
+    const r = await sendPicOverdueSummaryEmail({
+      to: sendTo,
+      subject: mailSubjectSingleLine(subject),
+      text,
+      html,
+    });
+    summary.emailsAttempted += 1;
+    if (r.ok) {
+      summary.emailsOk += 1;
+    } else {
+      summary.errors.push(
+        `${r.transport || summary.transport} PIC overdue summary to=${r.resolvedTo ?? sendTo}: ${formatEmailFailure(r)}`,
+      );
+    }
+  }
+
+  return summary;
+}
+
+async function runCreatorOverdueSummaryReminderJob(options = {}) {
+  const todayYmd = hkTodayYyyyMmDd();
+  const dryRun = options.dryRun === true;
+  const sendToOverride = normalizeRecipientEmail(options.sendToOverride);
+  const targetEmail = normalizeRecipientEmail(options.targetEmail);
+  console.log(
+    `[creator-overdue] start today=${todayYmd} dryRun=${dryRun} targetEmail=${targetEmail || 'all'}`,
+  );
+  const summary = {
+    todayHk: todayYmd,
+    scannedTasks: 0,
+    scannedSubtasks: 0,
+    eligibleItems: 0,
+    recipientGroups: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    dryRun,
+    transport: 'smtp',
+    errors: [],
+  };
+  if (dryRun) {
+    summary.previews = [];
+  }
+  if (!db) {
+    summary.errors.push('Database not configured');
+    return summary;
+  }
+  if (!EMAIL_SENDING_ENABLED && !dryRun) {
+    return summary;
+  }
+  if (!dryRun && !outboundEmailConfigured()) {
+    summary.errors.push(
+      'Outbound email transport not configured (set SMTP_HOST and SMTP_FROM)',
+    );
+    return summary;
+  }
+
+  const staffByKey = new Map();
+  const { data: staffRows, error: staffErr } = await db
+    .from('staff')
+    .select('id, app_id, email, name, active');
+  if (staffErr) {
+    summary.errors.push(staffErr.message || String(staffErr));
+    return summary;
+  }
+  for (const row of staffRows || []) {
+    const id = String(row.id || '').trim();
+    const appId = String(row.app_id || '').trim();
+    if (id) staffByKey.set(id, row);
+    if (appId) staffByKey.set(appId, row);
+  }
+
+  function staffForKey(key) {
+    const normalized = String(key || '').trim();
+    if (!normalized) return null;
+    return staffByKey.get(normalized) || null;
+  }
+
+  const groups = new Map();
+  async function addItemForCreator(creatorKey, item) {
+    const creatorStaff = staffForKey(creatorKey);
+    if (!creatorStaff) {
+      summary.errors.push(
+        `${item.kind.toLowerCase()} ${item.id}: creator staff not found (${creatorKey})`,
+      );
+      return;
+    }
+    if (!staffActiveForReminder(creatorStaff)) return;
+    const to = await resolveStaffEmailForNotifications(db, creatorStaff);
+    if (!to) {
+      summary.errors.push(
+        `${item.kind.toLowerCase()} ${item.id}: creator has no email (${creatorKey})`,
+      );
+      return;
+    }
+    const normalizedTo = normalizeRecipientEmail(to);
+    if (targetEmail && normalizedTo !== targetEmail) return;
+    const staffId = String(creatorStaff.id || creatorKey).trim();
+    if (!groups.has(staffId)) {
+      groups.set(staffId, {
+        staff: creatorStaff,
+        to: normalizedTo,
+        items: [],
+      });
+    }
+    groups.get(staffId).items.push(item);
+    summary.eligibleItems += 1;
+  }
+
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
+  const blockedParentTaskIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
+
+  const { data: tasks, error: taskErr } = await db
+    .from('task')
+    .select('id, task_name, description, create_by, due_date, pic, submission, status, pause_status, project_id');
+  if (taskErr) {
+    summary.errors.push(taskErr.message || String(taskErr));
+    return summary;
+  }
+
+  for (const taskRow of tasks || []) {
+    summary.scannedTasks += 1;
+    if (taskRow.due_date == null || taskRow.due_date === '') continue;
+    if (submissionBlocksOverdueSummaryReminder(taskRow.submission)) continue;
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
+    if (!isCalendarPastDue(todayYmd, taskRow.due_date)) continue;
+    const creatorKey = String(taskRow.create_by || '').trim();
+    if (!creatorKey) continue;
+    const taskId = String(taskRow.id || '').trim();
+    const picStaff = staffForKey(taskRow.pic);
+    const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
+    await addItemForCreator(creatorKey, {
+      id: taskId,
+      kind: 'Task',
+      typeRank: 0,
+      title: reminderTextValue(taskRow.task_name),
+      description: reminderDescription(taskRow.description),
+      picName: reminderTextValue(picStaff?.name || taskRow.pic),
+      dueYmd,
+      overdueText: overdueDaysText(todayYmd, dueYmd),
+      url: picReminderDirectTaskUrl(taskId),
+    });
+  }
+
+  const { data: subtasks, error: subtaskErr } = await db
+    .from('subtask')
+    .select('id, task_id, subtask_name, description, create_by, due_date, pic, submission, status, pause_status');
+  if (subtaskErr) {
+    summary.errors.push(subtaskErr.message || String(subtaskErr));
+    return summary;
+  }
+
+  for (const row of subtasks || []) {
+    summary.scannedSubtasks += 1;
+    if (row.due_date == null || row.due_date === '') continue;
+    if (submissionBlocksOverdueSummaryReminder(row.submission)) continue;
+    if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
+    const taskFk = String(row.task_id || '').trim();
+    if (taskFk && blockedParentTaskIds.has(taskFk)) continue;
+    if (!isCalendarPastDue(todayYmd, row.due_date)) continue;
+    const creatorKey = String(row.create_by || '').trim();
+    if (!creatorKey) continue;
+    const subtaskId = String(row.id || '').trim();
+    const picStaff = staffForKey(row.pic);
+    const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
+    await addItemForCreator(creatorKey, {
+      id: subtaskId,
+      kind: 'Subtask',
+      typeRank: 1,
+      title: reminderTextValue(row.subtask_name),
+      description: reminderDescription(row.description),
+      picName: reminderTextValue(picStaff?.name || row.pic),
+      dueYmd,
+      overdueText: overdueDaysText(todayYmd, dueYmd),
+      url: picReminderDirectSubtaskUrl(subtaskId),
+    });
+  }
+
+  for (const group of groups.values()) {
+    group.items.sort((a, b) => {
+      if (a.dueYmd !== b.dueYmd) return a.dueYmd.localeCompare(b.dueYmd);
+      if (a.typeRank !== b.typeRank) return a.typeRank - b.typeRank;
+      return a.title.localeCompare(b.title);
+    });
+  }
+
+  summary.recipientGroups = groups.size;
+  console.log(
+    `[creator-overdue] grouped eligibleItems=${summary.eligibleItems} recipientGroups=${summary.recipientGroups}`,
+  );
+  for (const group of groups.values()) {
+    const displayName = reminderTextValue(group.staff.name || group.to);
+    const { subject, text, html } = buildCreatorOverdueSummaryEmail(displayName, group.items);
+    const sendTo = sendToOverride || group.to;
+    if (dryRun) {
+      summary.previews.push({
+        to: group.to,
+        sendTo,
+        displayName,
+        itemCount: group.items.length,
+        text,
+      });
+      continue;
+    }
+    const r = await sendPicOverdueSummaryEmail({
+      to: sendTo,
+      subject: mailSubjectSingleLine(subject),
+      text,
+      html,
+    });
+    summary.emailsAttempted += 1;
+    if (r.ok) {
+      summary.emailsOk += 1;
+    } else {
+      summary.errors.push(
+        `${r.transport || summary.transport} creator overdue summary to=${r.resolvedTo ?? sendTo}: ${formatEmailFailure(r)}`,
+      );
+    }
+  }
+
+  return summary;
+}
+
+function submissionIsSubmittedForDailyReminder(submissionRaw) {
+  return String(submissionRaw || '').trim().toLowerCase() === 'submitted';
+}
+
+function submissionAllowsOverdueDailyReminder(submissionRaw) {
+  const s = String(submissionRaw || '').trim().toLowerCase();
+  return s === '' || s === 'pending' || s === 'returned';
+}
+
+const DAILY_REMINDER_SECTIONS = [
+  {
+    key: 'submittedTasks',
+    title: 'Submitted Tasks Awaiting Your Review',
+    color: '#2563eb',
+    itemType: 'Task',
+  },
+  {
+    key: 'submittedSubtasks',
+    title: 'Submitted Subtasks Awaiting Your Review',
+    color: '#16a34a',
+    itemType: 'Subtask',
+  },
+  {
+    key: 'picOverdueTasks',
+    title: 'Overdue Tasks Where You Are PIC',
+    color: '#dc2626',
+    itemType: 'Task',
+  },
+  {
+    key: 'picOverdueSubtasks',
+    title: 'Overdue Subtasks Where You Are PIC',
+    color: '#ea580c',
+    itemType: 'Subtask',
+  },
+  {
+    key: 'creatorOverdueTasks',
+    title: 'Overdue Tasks Created By You',
+    color: '#7c3aed',
+    itemType: 'Task',
+  },
+  {
+    key: 'creatorOverdueSubtasks',
+    title: 'Overdue Subtasks Created By You',
+    color: '#0891b2',
+    itemType: 'Subtask',
+  },
+];
+
+function emptyDailyReminderSections() {
+  const out = {};
+  for (const section of DAILY_REMINDER_SECTIONS) {
+    out[section.key] = [];
+  }
+  return out;
+}
+
+function dailyReminderSummaryLabel(sectionTitle) {
+  const s = String(sectionTitle || '')
+    .replace('Awaiting Your Review', 'awaiting your review')
+    .replace('Where You Are PIC', 'where you are PIC')
+    .replace('Created By You', 'created by you');
+  return `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
+}
+
+function buildCombinedDailyReminderEmail(displayName, sections) {
+  const greetingName = reminderTextValue(displayName);
+  const subject = '[Project Tracker] Daily Reminder: Overdue and Submitted Items';
+  const activeSections = DAILY_REMINDER_SECTIONS
+    .map((section) => ({ ...section, items: sections[section.key] || [] }))
+    .filter((section) => section.items.length > 0);
+
+  const textLines = [
+    `Dear ${greetingName},`,
+    '',
+    'This is your daily Project Tracker reminder.',
+    '',
+    'You have:',
+  ];
+  for (const section of activeSections) {
+    textLines.push(`- ${section.items.length} ${dailyReminderSummaryLabel(section.title)}`);
+  }
+  textLines.push('');
+  textLines.push('Please review the details below.');
+  textLines.push('');
+
+  const htmlSummary = activeSections
+    .map(
+      (section) =>
+        `<li><strong style="color:${section.color};">${section.items.length} ${escapeHtml(dailyReminderSummaryLabel(section.title))}</strong></li>`,
+    )
+    .join('\n');
+
+  const htmlSections = [];
+  for (const section of activeSections) {
+    textLines.push(`${section.title}: ${section.items.length}`);
+    textLines.push('');
+    const itemHtml = [];
+    section.items.forEach((item, idx) => {
+      const prefix = `(${idx + 1}/${section.items.length})`;
+      textLines.push(`${prefix} ${item.title}`);
+      textLines.push(`Description: ${item.description}`);
+      if (item.creatorName) textLines.push(`Creator: ${item.creatorName}`);
+      if (item.picName) textLines.push(`PIC: ${item.picName}`);
+      textLines.push(`Due date: ${item.dueYmd}${item.overdueText || ''}`);
+      textLines.push(`Submission: ${item.submission}`);
+      textLines.push(`URL: ${item.url}`);
+      textLines.push('');
+
+      itemHtml.push(`
+        <div style="margin:0 0 18px 0;">
+          <div style="font-size:16px;font-weight:700;color:${section.color};">${escapeHtml(`${prefix} ${item.title}`)}</div>
+          <div style="white-space:pre-line;">Description: ${escapeHtml(item.description)}</div>
+          ${item.creatorName ? `<div>Creator: ${escapeHtml(item.creatorName)}</div>` : ''}
+          ${item.picName ? `<div>PIC: ${escapeHtml(item.picName)}</div>` : ''}
+          <div>Due date: ${escapeHtml(`${item.dueYmd}${item.overdueText || ''}`)}</div>
+          <div>Submission: ${escapeHtml(item.submission)}</div>
+          <div>URL: <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></div>
+        </div>`);
+    });
+
+    htmlSections.push(`
+      <div style="margin:24px 0 10px 0;font-size:18px;font-weight:700;color:${section.color};">
+        ${escapeHtml(`${section.title}: ${section.items.length}`)}
+      </div>
+      ${itemHtml.join('\n')}`);
+  }
+
+  textLines.push(
+    'For submitted items, please review the submitted work and make a judgement: Accept or Return.',
+  );
+  textLines.push('');
+  textLines.push('For overdue items where you are PIC, please review and update the delivery status.');
+  textLines.push('');
+  textLines.push(
+    'For overdue items created by you, please follow up with the PIC. If the original requirement or timeline is no longer suitable, please discuss with the PIC and update the task/subtask requirement or delivery date in Project Tracker.',
+  );
+  textLines.push('');
+  textLines.push('Best regards,');
+  textLines.push('AI & Data Lab');
+  textLines.push('Institutional Advancement');
+  textLines.push('The University of Hong Kong');
+
+  const html = `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
+    <p>Dear ${escapeHtml(greetingName)},</p>
+    <p>This is your daily Project Tracker reminder.</p>
+    <p>You have:</p>
+    <ul>${htmlSummary}</ul>
+    <p>Please review the details below.</p>
+    ${htmlSections.join('\n')}
+    <p>For submitted items, please review the submitted work and make a judgement: Accept or Return.</p>
+    <p>For overdue items where you are PIC, please review and update the delivery status.</p>
+    <p>For overdue items created by you, please follow up with the PIC. If the original requirement or timeline is no longer suitable, please discuss with the PIC and update the task/subtask requirement or delivery date in Project Tracker.</p>
+    <p>
+      Best regards,<br>
+      AI &amp; Data Lab<br>
+      Institutional Advancement<br>
+      The University of Hong Kong
+    </p>
+  </div>`;
+
+  return { subject, text: textLines.join('\n'), html };
+}
+
+async function runCombinedDailyReminderJob(options = {}) {
+  const todayYmd = hkTodayYyyyMmDd();
+  const dryRun = options.dryRun === true;
+  const sendToOverride = normalizeRecipientEmail(options.sendToOverride);
+  const targetEmail = normalizeRecipientEmail(options.targetEmail);
+  console.log(
+    `[daily-reminder] start today=${todayYmd} dryRun=${dryRun} targetEmail=${targetEmail || 'all'}`,
+  );
+  const summary = {
+    todayHk: todayYmd,
+    scannedTasks: 0,
+    scannedSubtasks: 0,
+    eligibleItems: 0,
+    recipientGroups: 0,
+    emailsAttempted: 0,
+    emailsOk: 0,
+    dryRun,
+    transport: 'smtp',
+    errors: [],
+  };
+  if (dryRun) summary.previews = [];
+  if (!db) {
+    summary.errors.push('Database not configured');
+    return summary;
+  }
+  if (!EMAIL_SENDING_ENABLED && !dryRun) return summary;
+  if (!dryRun && !outboundEmailConfigured()) {
+    summary.errors.push(
+      'Outbound email transport not configured (set SMTP_HOST and SMTP_FROM)',
+    );
+    return summary;
+  }
+
+  const staffByKey = new Map();
+  const { data: staffRows, error: staffErr } = await db
+    .from('staff')
+    .select('id, app_id, email, name, active');
+  if (staffErr) {
+    summary.errors.push(staffErr.message || String(staffErr));
+    return summary;
+  }
+  for (const row of staffRows || []) {
+    const id = String(row.id || '').trim();
+    const appId = String(row.app_id || '').trim();
+    if (id) staffByKey.set(id, row);
+    if (appId) staffByKey.set(appId, row);
+  }
+
+  function staffForKey(key) {
+    const normalized = String(key || '').trim();
+    if (!normalized) return null;
+    return staffByKey.get(normalized) || null;
+  }
+
+  const groups = new Map();
+  async function addSectionItem(staffKey, sectionKey, item) {
+    const staff = staffForKey(staffKey);
+    if (!staff || !staffActiveForReminder(staff)) return;
+    const to = await resolveStaffEmailForNotifications(db, staff);
+    if (!to) {
+      summary.errors.push(`${sectionKey} ${item.id}: recipient has no email (${staffKey})`);
+      return;
+    }
+    const normalizedTo = normalizeRecipientEmail(to);
+    if (targetEmail && normalizedTo !== targetEmail) return;
+    const staffId = String(staff.id || staffKey).trim();
+    if (!groups.has(staffId)) {
+      groups.set(staffId, {
+        staff,
+        to: normalizedTo,
+        sections: emptyDailyReminderSections(),
+      });
+    }
+    groups.get(staffId).sections[sectionKey].push(item);
+    summary.eligibleItems += 1;
+  }
+
+  const pausedProjectIds = await fetchPausedProjectIdSet(db);
+  const blockedParentTaskIds = await fetchSubtaskReminderBlockedParentTaskIdSet(db);
+
+  const { data: tasks, error: taskErr } = await db
+    .from('task')
+    .select('id, task_name, description, create_by, due_date, pic, submission, status, pause_status, project_id');
+  if (taskErr) {
+    summary.errors.push(taskErr.message || String(taskErr));
+    return summary;
+  }
+
+  for (const taskRow of tasks || []) {
+    summary.scannedTasks += 1;
+    if (taskStatusBlocksUrgentReminder(taskRow.status)) continue;
+    if (taskReminderPaused(taskRow, pausedProjectIds)) continue;
+    const taskId = String(taskRow.id || '').trim();
+    const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
+    const baseItem = {
+      id: taskId,
+      title: reminderTextValue(taskRow.task_name),
+      description: reminderDescription(taskRow.description),
+      dueYmd,
+      overdueText: overdueDaysText(todayYmd, dueYmd),
+      submission: reminderTextValue(taskRow.submission || 'Pending'),
+      url: picReminderDirectTaskUrl(taskId),
+    };
+    const creatorStaff = staffForKey(taskRow.create_by);
+    const picStaff = staffForKey(taskRow.pic);
+    if (submissionIsSubmittedForDailyReminder(taskRow.submission)) {
+      await addSectionItem(taskRow.create_by, 'submittedTasks', {
+        ...baseItem,
+        picName: reminderTextValue(picStaff?.name || taskRow.pic),
+      });
+      continue;
+    }
+    if (
+      taskRow.due_date != null &&
+      taskRow.due_date !== '' &&
+      isCalendarPastDue(todayYmd, taskRow.due_date) &&
+      submissionAllowsOverdueDailyReminder(taskRow.submission)
+    ) {
+      await addSectionItem(taskRow.pic, 'picOverdueTasks', {
+        ...baseItem,
+        creatorName: reminderTextValue(creatorStaff?.name || taskRow.create_by),
+      });
+      await addSectionItem(taskRow.create_by, 'creatorOverdueTasks', {
+        ...baseItem,
+        picName: reminderTextValue(picStaff?.name || taskRow.pic),
+      });
+    }
+  }
+
+  const { data: subtasks, error: subtaskErr } = await db
+    .from('subtask')
+    .select('id, task_id, subtask_name, description, create_by, due_date, pic, submission, status, pause_status');
+  if (subtaskErr) {
+    summary.errors.push(subtaskErr.message || String(subtaskErr));
+    return summary;
+  }
+
+  for (const row of subtasks || []) {
+    summary.scannedSubtasks += 1;
+    if (subtaskStatusBlocksUrgentReminder(row.status)) continue;
+    if (isPausedStatus(row.pause_status)) continue;
+    const taskFk = String(row.task_id || '').trim();
+    if (taskFk && blockedParentTaskIds.has(taskFk)) continue;
+    const subtaskId = String(row.id || '').trim();
+    const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
+    const baseItem = {
+      id: subtaskId,
+      title: reminderTextValue(row.subtask_name),
+      description: reminderDescription(row.description),
+      dueYmd,
+      overdueText: overdueDaysText(todayYmd, dueYmd),
+      submission: reminderTextValue(row.submission || 'Pending'),
+      url: picReminderDirectSubtaskUrl(subtaskId),
+    };
+    const creatorStaff = staffForKey(row.create_by);
+    const picStaff = staffForKey(row.pic);
+    if (submissionIsSubmittedForDailyReminder(row.submission)) {
+      await addSectionItem(row.create_by, 'submittedSubtasks', {
+        ...baseItem,
+        picName: reminderTextValue(picStaff?.name || row.pic),
+      });
+      continue;
+    }
+    if (
+      row.due_date != null &&
+      row.due_date !== '' &&
+      isCalendarPastDue(todayYmd, row.due_date) &&
+      submissionAllowsOverdueDailyReminder(row.submission)
+    ) {
+      await addSectionItem(row.pic, 'picOverdueSubtasks', {
+        ...baseItem,
+        creatorName: reminderTextValue(creatorStaff?.name || row.create_by),
+      });
+      await addSectionItem(row.create_by, 'creatorOverdueSubtasks', {
+        ...baseItem,
+        picName: reminderTextValue(picStaff?.name || row.pic),
+      });
+    }
+  }
+
+  for (const group of groups.values()) {
+    for (const section of DAILY_REMINDER_SECTIONS) {
+      group.sections[section.key].sort((a, b) => {
+        if (a.dueYmd !== b.dueYmd) return a.dueYmd.localeCompare(b.dueYmd);
+        return a.title.localeCompare(b.title);
+      });
+    }
+  }
+
+  summary.recipientGroups = groups.size;
+  for (const group of groups.values()) {
+    const displayName = reminderTextValue(group.staff.name || group.to);
+    const { subject, text, html } = buildCombinedDailyReminderEmail(
+      displayName,
+      group.sections,
+    );
+    const sendTo = sendToOverride || group.to;
+    if (dryRun) {
+      summary.previews.push({
+        to: group.to,
+        sendTo,
+        displayName,
+        text,
+      });
+      continue;
+    }
+    const r = await sendPicOverdueSummaryEmail({
+      to: sendTo,
+      subject: mailSubjectSingleLine(subject),
+      text,
+      html,
+    });
+    summary.emailsAttempted += 1;
+    if (r.ok) summary.emailsOk += 1;
+    else {
+      summary.errors.push(
+        `${r.transport || summary.transport} daily reminder to=${r.resolvedTo ?? sendTo}: ${formatEmailFailure(r)}`,
+      );
     }
   }
 
@@ -3897,8 +4925,77 @@ async function handleCronDueTodayOnly(req, res) {
   }
 }
 
+/** POST — grouped overdue task/subtask summary by PIC. */
+async function handleCronPicOverdueReminders(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (cronUnauthorized(req, res)) return;
+  try {
+    console.log('[pic-overdue] handler authorized; reading body');
+    const body = await readBody(req);
+    console.log('[pic-overdue] handler body read');
+    const summary = await runPicOverdueSummaryReminderJob({
+      dryRun: body.dryRun === true,
+      targetEmail: body.targetEmail,
+      sendToOverride: body.sendToOverride,
+    });
+    sendJson(req, res, 200, { ok: true, picOverdue: summary });
+  } catch (e) {
+    console.error('handleCronPicOverdueReminders:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/** POST — grouped overdue task/subtask summary by creator. */
+async function handleCronCreatorOverdueReminders(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (cronUnauthorized(req, res)) return;
+  try {
+    console.log('[creator-overdue] handler authorized; reading body');
+    const body = await readBody(req);
+    console.log('[creator-overdue] handler body read');
+    const summary = await runCreatorOverdueSummaryReminderJob({
+      dryRun: body.dryRun === true,
+      targetEmail: body.targetEmail,
+      sendToOverride: body.sendToOverride,
+    });
+    sendJson(req, res, 200, { ok: true, creatorOverdue: summary });
+  } catch (e) {
+    console.error('handleCronCreatorOverdueReminders:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+/** POST — one combined daily reminder email per user. */
+async function handleCronDailyReminder(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (cronUnauthorized(req, res)) return;
+  try {
+    console.log('[daily-reminder] handler authorized; reading body');
+    const body = await readBody(req);
+    console.log('[daily-reminder] handler body read');
+    const summary = await runCombinedDailyReminderJob({
+      dryRun: body.dryRun === true,
+      targetEmail: body.targetEmail,
+      sendToOverride: body.sendToOverride,
+    });
+    sendJson(req, res, 200, { ok: true, dailyReminder: summary });
+  } catch (e) {
+    console.error('handleCronDailyReminder:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
 /**
- * POST { taskId } — creator only; emails each assignee (assignee_01..10) with Mailgun.
+ * POST { taskId } — creator only; emails each assignee (assignee_01..10) with Email.
  */
 async function handleNotifyTaskAssigned(req, res) {
   if (req.method !== 'POST') {
@@ -3918,7 +5015,7 @@ async function handleNotifyTaskAssigned(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -3970,6 +5067,7 @@ async function handleNotifyTaskAssigned(req, res) {
     const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
 
     const subject = "You've been assigned a task";
+
     const results = [];
 
     for (const staffUuid of assigneeIds) {
@@ -3989,18 +5087,18 @@ async function handleNotifyTaskAssigned(req, res) {
       const safeLanding = escapeHtml(landing);
       const html = `<p>${safeCreator} assigned you a task.</p><p><a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p><p>Due Date: ${escapeHtml(dueLine)}</p><p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
       const text = `${staffDisplayName} assigned you a task.\n${taskName}\n${taskUrl}\nDue Date: ${dueLine}\nProject Tracker\n${landing}`;
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo: creatorEmail,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -4067,7 +5165,7 @@ async function handleNotifyProjectAssigned(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -4178,18 +5276,18 @@ async function handleNotifyProjectAssigned(req, res) {
         projectName,
         projectUrl,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo: creatorReplyTo || undefined,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -4229,7 +5327,7 @@ async function handleNotifyProjectUpdated(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -4397,18 +5495,18 @@ async function handleNotifyProjectUpdated(req, res) {
         updaterName: updaterNameForBody,
         updatedAtLine,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -4427,7 +5525,7 @@ async function handleNotifyProjectUpdated(req, res) {
 }
 
 /**
- * POST { subtaskId } — creator only; emails each subtask assignee (assignee_01..10) with Mailgun.
+ * POST { subtaskId } — creator only; emails each subtask assignee (assignee_01..10) with Email.
  * Creator receives mail only if they appear in assignee slots. Reply-To: creator email.
  */
 async function handleNotifySubtaskAssigned(req, res) {
@@ -4448,7 +5546,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -4524,18 +5622,18 @@ async function handleNotifySubtaskAssigned(req, res) {
       const safeLanding = escapeHtml(landing);
       const html = `<div style="font-family: Aptos, Arial, Helvetica, sans-serif; font-size: 12pt;">${safeCreator} assigned you a sub-task.<br><br><a href="${safeUrl}"><strong><u>${safeName}</u></strong></a><br><br>Due Date: ${safeDue}<br><br><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></div>`;
       const text = `${staffDisplayName} assigned you a sub-task.\n\n${subtaskName}\n${subtaskUrl}\n\nDue Date: ${dueLine}\n\nProject Tracker\n${landing}`;
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo: creatorEmail,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -4583,7 +5681,7 @@ async function handleNotifyTaskComment(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -4712,18 +5810,18 @@ async function handleNotifyTaskComment(req, res) {
       taskUrl,
     });
 
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: authorEmail,
     });
     results.push({
       to,
       ok: r.ok,
-      mailgunId: r.ok ? r.id : null,
+      messageId: r.ok ? r.id : null,
       error: r.ok ? null : r.error,
       detail: r.ok ? null : r.detail,
     });
@@ -4771,7 +5869,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -4895,18 +5993,18 @@ async function handleNotifyTaskEditedComment(req, res) {
         updaterDisplayName: updaterNameForBody,
         updatedAtLine,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo: editorEmail,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -4927,7 +6025,7 @@ async function handleNotifyTaskEditedComment(req, res) {
 
 /**
  * POST { commentId } — comment author only: Firebase email must match `staff.email` **or** any
- * `app_users.email` linked to `subtask_comment.create_by` → `staff.id`. Sends **one** Mailgun message
+ * `app_users.email` linked to `subtask_comment.create_by` → `staff.id`. Sends **one** Email message
  * to **subtask.create_by** (resolved `staff` + `app_users` email) when the author is not the
  * sub-task creator (no self-email). Creator-only comments use `handleNotifySubtaskUpdated`.
  */
@@ -4957,7 +6055,7 @@ async function handleNotifySubtaskComment(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -5103,18 +6201,18 @@ async function handleNotifySubtaskComment(req, res) {
       subtaskUrl,
     });
 
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: authorReplyTo || sessionEmail || undefined,
     });
     results.push({
       to,
       ok: r.ok,
-      mailgunId: r.ok ? r.id : null,
+      messageId: r.ok ? r.id : null,
       error: r.ok ? null : r.error,
       detail: r.ok ? null : r.detail,
     });
@@ -5163,7 +6261,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -5306,18 +6404,18 @@ async function handleNotifySubtaskEditedComment(req, res) {
         updaterDisplayName: updaterNameForBody,
         updatedAtLine,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -5338,7 +6436,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
 
 /**
  * POST { taskId } — last updater only (session email = staff.email for task.update_by).
- * Emails each assignee (assignee_01..10) plus create_by, deduped; one Mailgun message per recipient.
+ * Emails each assignee (assignee_01..10) plus create_by, deduped; one Email message per recipient.
  * If the updater is the task creator and the payload includes at least one allowed field change
  * (task detail columns), the creator is not emailed (no self-email for column edits).
  * Comment-only updates: assignee (not creator) commenting → notify create_by only; creator (not
@@ -5363,7 +6461,7 @@ async function handleNotifyTaskUpdated(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -5427,7 +6525,7 @@ async function handleNotifyTaskUpdated(req, res) {
       (updaterStaff.name || '').trim() || updaterEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
-    const subject = `Task updated - ${taskTitleForSubject}`;
+    const subject = `[Project Tracker] Task Update: ${taskTitleForSubject}`;
     const taskUrl = taskWebAppUrl(taskId);
     const taskRowHasUpdater = Boolean((taskRow.update_by || '').toString().trim());
     const updatedAtLine = taskCommentRow && !taskRowHasUpdater
@@ -5437,6 +6535,7 @@ async function handleNotifyTaskUpdated(req, res) {
     const changeLinesHtmlParts = [];
     const changeLinesTextParts = [];
     const rawChanges = Array.isArray(body.changes) ? body.changes : [];
+    const changeMap = emailChangeMap(rawChanges);
     let nCh = 0;
     for (const row of rawChanges) {
       if (nCh >= TASK_UPDATE_NOTIFY_MAX_CHANGES) break;
@@ -5444,7 +6543,9 @@ async function handleNotifyTaskUpdated(req, res) {
       const field = String(row.field || '').trim();
       const label = TASK_UPDATE_NOTIFY_FIELD_LABELS[field];
       if (!label) continue;
-      let value = row.value;
+      let value = Object.prototype.hasOwnProperty.call(row, 'newValue')
+        ? row.newValue
+        : row.value;
       if (value == null) value = '';
       value = String(value);
       if (value.length > TASK_UPDATE_NOTIFY_MAX_VALUE_LEN) {
@@ -5528,8 +6629,16 @@ async function handleNotifyTaskUpdated(req, res) {
       creatorId &&
       updaterNorm === creatorId.toLowerCase();
 
+    recipientByNorm.delete(updaterNorm);
+
     const results = [];
     const replyTo = updaterEmail;
+    const introText = commentTrim && !hasFieldChanges
+      ? 'This email is to inform you that a comment has been added to the task.'
+      : 'This email is to inform you that task information has been updated.';
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, changeMap, {
+      commentText: commentTrim,
+    });
 
     for (const staffUuid of recipientByNorm.values()) {
       if (
@@ -5563,6 +6672,10 @@ async function handleNotifyTaskUpdated(req, res) {
         changeLinesText,
         commentLineHtml,
         commentLineText,
+        introHtml: escapeHtml(introText),
+        introText,
+        detailLinesHtml: detailLines.html,
+        detailLinesText: detailLines.text,
         taskName,
         taskUrl,
         updaterName: updaterNameForBody,
@@ -5574,23 +6687,27 @@ async function handleNotifyTaskUpdated(req, res) {
         changeLinesText,
         commentLineHtml,
         commentLineText,
+        introHtml: escapeHtml(introText),
+        introText,
+        detailLinesHtml: detailLines.html,
+        detailLinesText: detailLines.text,
         taskName,
         taskUrl,
         updaterName: updaterNameForBody,
         updatedAtLine,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -5610,7 +6727,7 @@ async function handleNotifyTaskUpdated(req, res) {
 
 /**
  * POST { subtaskId, changes?, commentAddedText? } — only when `subtask.update_by` is the sub-task
- * creator (`create_by`) and session email matches that staff row. One Mailgun message per recipient:
+ * creator (`create_by`) and session email matches that staff row. One Email message per recipient:
  * assignee_01..10 (non-empty) plus `create_by`, deduped. Field lines: `{A} is updated – {new_value}`
  * for allowed keys; optional `commentAddedText`: `Sub-task comment is added – …` (creator comment).
  */
@@ -5632,7 +6749,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -5724,7 +6841,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     const subtaskTitle =
       (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskTitle).replace(/"/g, '');
-    const subject = `Sub-task updated - ${subtaskTitleForSubject}`;
+    const subject = `[Project Tracker] Subtask Update: ${subtaskTitleForSubject}`;
     const subtaskRowId = (row.id || subtaskId || '').toString().trim();
     const subtaskUrl = subtaskWebAppUrl(subtaskRowId);
     const rowHasUpdater = Boolean((row.update_by || '').toString().trim());
@@ -5736,6 +6853,7 @@ async function handleNotifySubtaskUpdated(req, res) {
     const changeLinesHtmlParts = [];
     const changeLinesTextParts = [];
     const rawChanges = Array.isArray(body.changes) ? body.changes : [];
+    const changeMap = emailChangeMap(rawChanges);
     let nCh = 0;
     for (const chRow of rawChanges) {
       if (nCh >= TASK_UPDATE_NOTIFY_MAX_CHANGES) break;
@@ -5743,7 +6861,9 @@ async function handleNotifySubtaskUpdated(req, res) {
       const field = String(chRow.field || '').trim();
       const label = SUBTASK_UPDATE_NOTIFY_FIELD_LABELS[field];
       if (!label) continue;
-      let value = chRow.value;
+      let value = Object.prototype.hasOwnProperty.call(chRow, 'newValue')
+        ? chRow.newValue
+        : chRow.value;
       if (value == null) value = '';
       value = String(value);
       if (value.length > TASK_UPDATE_NOTIFY_MAX_VALUE_LEN) {
@@ -5787,9 +6907,16 @@ async function handleNotifySubtaskUpdated(req, res) {
     }
 
     const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
+    recipientByNorm.delete(updaterNorm);
     const results = [];
     const replyTo =
       updaterReplyTo || sessionEmail || undefined;
+    const introText = commentPlain && !hasFieldChanges
+      ? 'This email is to inform you that a comment has been added to the subtask.'
+      : 'This email is to inform you that subtask information has been updated.';
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, changeMap, {
+      commentText: commentPlain,
+    });
 
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await db
@@ -5814,6 +6941,10 @@ async function handleNotifySubtaskUpdated(req, res) {
         changeLinesText,
         commentLineHtml,
         commentLineText,
+        introHtml: escapeHtml(introText),
+        introText,
+        detailLinesHtml: detailLines.html,
+        detailLinesText: detailLines.text,
         subtaskName: subtaskTitle,
         subtaskUrl,
         updaterName: updaterNameForBody,
@@ -5825,23 +6956,27 @@ async function handleNotifySubtaskUpdated(req, res) {
         changeLinesText,
         commentLineHtml,
         commentLineText,
+        introHtml: escapeHtml(introText),
+        introText,
+        detailLinesHtml: detailLines.html,
+        detailLinesText: detailLines.text,
         subtaskName: subtaskTitle,
         subtaskUrl,
         updaterName: updaterNameForBody,
         updatedAtLine,
       });
-      const r = await sendMailgun({
+      const r = await sendNotificationEmail({
         to,
         subject,
         text,
         html,
-        from: MAILGUN_NOTIFICATION_FROM,
+        from: NOTIFICATION_EMAIL_FROM,
         replyTo,
       });
       results.push({
         to,
         ok: r.ok,
-        mailgunId: r.ok ? r.id : null,
+        messageId: r.ok ? r.id : null,
         error: r.ok ? null : r.error,
         detail: r.ok ? null : r.detail,
       });
@@ -5923,7 +7058,7 @@ async function handleNotifyTaskSubmission(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -5992,20 +7127,20 @@ async function handleNotifyTaskSubmission(req, res) {
     ];
     const { html, text } = buildTaskWorkflowEmailShell(taskName, taskUrl, bodyLinesHtml, bodyLinesText);
     const ccAddr = picNotifyEmail || picEmail;
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: ccAddr,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: picNotifyEmail || picEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifyTaskSubmission:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6033,7 +7168,7 @@ async function handleNotifyTaskAccepted(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -6091,27 +7226,36 @@ async function handleNotifyTaskAccepted(req, res) {
     }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
-    const subject = `Submission for ${taskTitleForSubject}`;
+    const subject = `[Project Tracker] Task Submission Accepted: ${taskTitleForSubject}`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
-    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your task has been accepted.`;
-    const bodyLinesText = [`Hi ${picHi}.`, 'Your task has been accepted.'];
-    const { html, text } = buildTaskWorkflowEmailShell(taskName, taskUrl, bodyLinesHtml, bodyLinesText);
-    const r = await sendMailgun({
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
+This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.<br><br>
+${detailLines.html}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${picHi},
+
+This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.
+
+${detailLines.text}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: creatorNotifyEmail || creatorEmail,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: creatorNotifyEmail || creatorEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifyTaskAccepted:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6139,7 +7283,7 @@ async function handleNotifyTaskReturned(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -6197,27 +7341,36 @@ async function handleNotifyTaskReturned(req, res) {
     }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
-    const subject = `Submission for ${taskTitleForSubject}`;
+    const subject = `[Project Tracker] Task Submission Returned: ${taskTitleForSubject}`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
-    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your task has been returned.`;
-    const bodyLinesText = [`Hi ${picHi}.`, 'Your task has been returned.'];
-    const { html, text } = buildTaskWorkflowEmailShell(taskName, taskUrl, bodyLinesHtml, bodyLinesText);
-    const r = await sendMailgun({
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
+This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.<br><br>
+${detailLines.html}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${picHi},
+
+This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.
+
+${detailLines.text}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: creatorNotifyEmail || creatorEmail,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: creatorNotifyEmail || creatorEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifyTaskReturned:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6245,7 +7398,7 @@ async function handleNotifySubtaskSubmission(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -6320,20 +7473,20 @@ async function handleNotifySubtaskSubmission(req, res) {
       bodyLinesText,
     );
     const ccAddr = picNotifyEmail || picEmail;
-    const r = await sendMailgun({
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: ccAddr,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: picNotifyEmail || picEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifySubtaskSubmission:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6361,7 +7514,7 @@ async function handleNotifySubtaskAccepted(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -6415,32 +7568,36 @@ async function handleNotifySubtaskAccepted(req, res) {
     }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
-    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subject = `[Project Tracker] Subtask Submission Accepted: ${subtaskTitleForSubject}`;
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
-    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your sub-task has been accepted.`;
-    const bodyLinesText = [`Hi ${picHi}.`, 'Your sub-task has been accepted.'];
-    const { html, text } = buildSubtaskWorkflowEmailShell(
-      subtaskName,
-      subtaskUrl,
-      bodyLinesHtml,
-      bodyLinesText,
-    );
-    const r = await sendMailgun({
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
+This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.<br><br>
+${detailLines.html}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${picHi},
+
+This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.
+
+${detailLines.text}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: creatorNotifyEmail || creatorEmail,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: creatorNotifyEmail || creatorEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifySubtaskAccepted:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6468,7 +7625,7 @@ async function handleNotifySubtaskReturned(req, res) {
     notifyEmailSkippedResponse(req, res);
     return;
   }
-  if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+  if (!outboundEmailConfigured()) {
     sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
     return;
   }
@@ -6522,32 +7679,36 @@ async function handleNotifySubtaskReturned(req, res) {
     }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
-    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subject = `[Project Tracker] Subtask Submission Returned: ${subtaskTitleForSubject}`;
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
-    const bodyLinesHtml = `Hi ${safePicHi}.<br><br>Your sub-task has been returned.`;
-    const bodyLinesText = [`Hi ${picHi}.`, 'Your sub-task has been returned.'];
-    const { html, text } = buildSubtaskWorkflowEmailShell(
-      subtaskName,
-      subtaskUrl,
-      bodyLinesHtml,
-      bodyLinesText,
-    );
-    const r = await sendMailgun({
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
+This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.<br><br>
+${detailLines.html}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${picHi},
+
+This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.
+
+${detailLines.text}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
       to: toEmail,
       cc: creatorNotifyEmail || creatorEmail,
       subject,
       text,
       html,
-      from: MAILGUN_NOTIFICATION_FROM,
+      from: NOTIFICATION_EMAIL_FROM,
       replyTo: creatorNotifyEmail || creatorEmail,
     });
     if (!r.ok) {
-      sendJson(req, res, 502, { error: formatMailgunFailure(r) });
+      sendJson(req, res, 502, { error: formatEmailFailure(r) });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, mailgunId: r.id || null });
+    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifySubtaskReturned:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -6604,8 +7765,8 @@ const server = http.createServer(async (req, res) => {
     await handleAdminSubordinate(req, res);
     return;
   }
-  if (path === '/api/admin/test-mailgun' && req.method === 'POST') {
-    await handleAdminTestMailgun(req, res);
+  if (path === '/api/admin/test-email' && req.method === 'POST') {
+    await handleAdminTestEmail(req, res);
     return;
   }
   if (path === '/api/admin/test-smtp' && req.method === 'POST') {
@@ -6688,6 +7849,18 @@ const server = http.createServer(async (req, res) => {
     await handleCronDueTodayOnly(req, res);
     return;
   }
+  if (path === '/api/cron/pic-overdue-reminders' && req.method === 'POST') {
+    await handleCronPicOverdueReminders(req, res);
+    return;
+  }
+  if (path === '/api/cron/creator-overdue-reminders' && req.method === 'POST') {
+    await handleCronCreatorOverdueReminders(req, res);
+    return;
+  }
+  if (path === '/api/cron/daily-reminders' && req.method === 'POST') {
+    await handleCronDailyReminder(req, res);
+    return;
+  }
   if (path === '/api/files/upload' && req.method === 'POST') {
     await localFiles.handleLocalFileUpload(req, res, sendJson, applyCors);
     return;
@@ -6740,28 +7913,18 @@ server.listen(PORT, () => {
   console.log(
     `SMTP: ${smtpMail.isSmtpConfigured() ? JSON.stringify(smtpMail.smtpConfigSummary()) : 'not configured'}`,
   );
-  if (process.env.DISABLE_INTERNAL_URGENT_CRON !== 'true') {
+  if (process.env.DAILY_REMINDER_CRON_ENABLED === 'true') {
     cron.schedule(
       '0 9 * * *',
       () => {
-        runUrgentTaskReminderJob()
-          .then(() => runAssigneeUrgentSubtaskReminderJob())
-          .then(() => runCreatorUrgentTaskReminderJob())
-          .then(() => runCreatorUrgentSubtaskReminderJob())
-          .then(() => runDueTodayTaskReminderJob())
-          .then(() => runAssigneeDueTodaySubtaskReminderJob())
-          .then(() => runCreatorDueTodayReminderJob())
-          .then(() => runCreatorDueTodaySubtaskReminderJob())
-          .then(() => runCreatorOverdueTaskReminderJob())
-          .then(() => runAssigneeOverdueTaskReminderJob())
-          .then(() => runCreatorOverdueSubtaskReminderJob())
-          .then(() => runAssigneeOverdueSubtaskReminderJob())
-          .catch((e) => console.error('daily task-reminder cron:', e));
+        runCombinedDailyReminderJob().catch((e) =>
+          console.error('daily combined reminder cron:', e),
+        );
       },
       { timezone: 'Asia/Hong_Kong' },
     );
     console.log(
-      'Task reminders: urgent (80%) + due-today + overdue (task/sub-task creators + assignees) daily at 09:00 Asia/Hong_Kong (DISABLE_INTERNAL_URGENT_CRON=true to turn off)',
+      'Combined daily reminders at 09:00 Asia/Hong_Kong (DAILY_REMINDER_CRON_ENABLED=true)',
     );
   }
 });

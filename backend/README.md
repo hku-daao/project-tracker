@@ -19,11 +19,10 @@ Copy `.env.example` to `.env` and set these three variables:
 | **SUPABASE_SERVICE_ROLE_KEY** | Same page → **Project API keys** → **service_role** (secret). Use this, not the anon key. |
 | **FIREBASE_SERVICE_ACCOUNT_JSON** | [Firebase Console](https://console.firebase.google.com/) → your project (e.g. daao-a20c6) → **Project settings** (gear) → **Service accounts** → **Generate new private key** → download JSON. Paste the **entire JSON as one line** (no line breaks) as the value. |
 | **CORS_ORIGINS** (optional) | Comma-separated extra **https** origins for the Flutter web app (e.g. a custom domain). Built-in defaults already include `https://project-tracker-test.web.app`, production `*.web.app` URLs, and HKU domains. Set this if you host the web app on another hostname. |
-| **MAILGUN_API_KEY** (optional) | Mailgun **Private API key** (`key-…`). |
-| **MAILGUN_DOMAIN** (optional) | Sending domain in Mailgun (e.g. sandbox `sandbox….mailgun.org`). |
-| **MAILGUN_BASE_URL** (optional) | Default `https://api.mailgun.net` (US). Use `https://api.eu.mailgun.net` for EU domains. |
-| **MAILGUN_FROM** (optional) | Default **From** when Mailgun is called without an override (e.g. admin test email). If omitted, the server uses `postmaster@<MAILGUN_DOMAIN>`. |
-| **MAILGUN_NOTIFICATION_FROM** (optional) | Verified **From** for **task-assignment** emails (`POST /api/notify/task-assigned`). Defaults to `no-reply@sandbox1d79a2f6002c44b28ab0f0ec99a11179.mailgun.org` for the sandbox domain; set this when you use a production Mailgun domain. **Reply-To** is still the creator’s `staff.email`. |
+| **SMTP_HOST** | SMTP relay host, e.g. `mail7.hku.hk`. |
+| **SMTP_PORT** (optional) | SMTP relay port. Default: `25`. |
+| **SMTP_FROM** | Sender address for Project Tracker emails, e.g. `projecttracker-noreply@hku.hk`. |
+| **SMTP_SECURE** (optional) | Set to `true` only if the relay requires SMTPS. Default: `false`. |
 | **PUBLIC_WEB_APP_URL** (optional) | Public HTTPS origin for **task links in emails** (no trailing slash), e.g. `https://projecttracker.hku.hk` (production) or `https://project-tracker-test.web.app` (testing). Default: `https://projecttracker.hku.hk`. |
 | **CRON_SECRET** (optional) | Shared secret for cron HTTP routes (**`POST /api/cron/urgent-task-reminders`**, **`POST /api/cron/due-today-reminders`**) — header `X-Cron-Secret` or `Authorization: Bearer …`. Required for those routes to return 200. |
 | **DISABLE_INTERNAL_URGENT_CRON** (optional) | Set to `true` to disable the in-process **daily 09:00 Asia/Hong_Kong** run that sends **80% window** urgent task emails. |
@@ -32,16 +31,13 @@ Apply Supabase migrations **`028`**–**`030`**, **`032`**, **`033`**, **`036`**
 
 Assignment emails (`POST /api/notify/task-assigned`) require the signed-in user’s Firebase **email** to match **`staff.email`** for `task.create_by`, or the API returns 403.
 
-### Mailgun test (admin only)
+### SMTP test
 
-After the variables above are set, redeploy Railway. `GET /health` includes `mailgunConfigured: true` when the key and domain are non-empty.
+After SMTP variables are set, restart the backend. `GET /health` includes `smtpConfigured: true` when `SMTP_HOST` and `SMTP_FROM` are valid.
 
-**Send one test email** (must be signed in as the user whose email equals **`ADMIN_EMAIL`** on Railway):
+**Send one test email**:
 
-`POST /api/admin/test-mailgun` with header `Authorization: Bearer <Firebase ID token>` and JSON body `{ "to": "recipient@example.com" }`.
-
-- **Sandbox domain:** In [Mailgun](https://app.mailgun.com/) → *Sending* → *Domains* → your sandbox → **Authorized recipients** — add the inbox you use in `"to"`. Sandbox cannot send to arbitrary addresses.
-- **Cron emails:** If assignees receive notifications but **creators** do not, the creator’s **`staff.email`** is often a different address — add that address to **Authorized recipients** too (or use a production domain). Mailgun rejects with HTTP 403/402; the cron JSON **`creatorDueToday.errors`** / **`creatorUrgent.errors`** now include the full Mailgun response body for debugging.
+`POST /api/dev/test-smtp` with JSON body `{ "to": "recipient@example.com" }` when `OFFLINE_DEV=true`, or use the admin SMTP test endpoint in deployed environments.
 
 ### Get Firebase service account JSON (step by step)
 
