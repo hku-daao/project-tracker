@@ -4578,11 +4578,13 @@ function buildCombinedDailyReminderEmail(displayName, sections) {
     const itemHtml = [];
     section.items.forEach((item, idx) => {
       const prefix = `(${idx + 1}/${section.items.length})`;
+      const dueDisplay = eventEmailDateValue(item.dueYmd);
+      const dueLine = `${dueDisplay}${item.overdueText || ''}`;
       textLines.push(`${prefix} ${item.title}`);
       textLines.push(`Description: ${item.description}`);
       if (item.creatorName) textLines.push(`Creator: ${item.creatorName}`);
       if (item.picName) textLines.push(`PIC: ${item.picName}`);
-      textLines.push(`Due date: ${item.dueYmd}${item.overdueText || ''}`);
+      textLines.push(`Due date: ${dueLine}`);
       textLines.push(`Submission: ${item.submission}`);
       textLines.push(`URL: ${item.url}`);
       textLines.push('');
@@ -4593,7 +4595,7 @@ function buildCombinedDailyReminderEmail(displayName, sections) {
           <div style="white-space:pre-line;">Description: ${escapeHtml(item.description)}</div>
           ${item.creatorName ? `<div>Creator: ${escapeHtml(item.creatorName)}</div>` : ''}
           ${item.picName ? `<div>PIC: ${escapeHtml(item.picName)}</div>` : ''}
-          <div>Due date: ${escapeHtml(`${item.dueYmd}${item.overdueText || ''}`)}</div>
+          <div>Due date: ${escapeHtml(dueLine)}</div>
           <div>Submission: ${escapeHtml(item.submission)}</div>
           <div>URL: <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></div>
         </div>`);
