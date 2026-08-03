@@ -2169,10 +2169,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     _commentController.clear();
     await _notifyEmail(
-      'Task comment email',
-      (token) => BackendApi().notifyTaskCommentAdded(
+      'Task update email',
+      (token) => BackendApi().notifyTaskUpdated(
         idToken: token,
-        commentId: commentId,
+        taskId: task.id,
+        commentAddedText: text,
+        taskCommentId: commentId,
       ),
     );
     return true;
@@ -2278,6 +2280,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final comment = stripInlineImageMarkers(_commentController.text);
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         submission: 'Submitted',
@@ -2288,7 +2291,44 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not submit task', err);
         return;
       }
-      if (!await _commitExistingTaskInlineChanges(state, task)) return;
+      String? commentId;
+      if (comment.isNotEmpty ||
+          _hasPendingInlineImages('task_comment', 'draft')) {
+        final c = await DatabaseService.insertSingularCommentRow(
+          taskId: task.id,
+          description: comment.isNotEmpty
+              ? comment
+              : inlineImageOnlyCommentPlaceholder,
+          creatorStaffLookupKey: state.userStaffAppId,
+        );
+        if (c.error != null && mounted) {
+          await _showInfo('Could not add comment', c.error!);
+          return;
+        }
+        commentId = c.commentId;
+        if (commentId == null || commentId.isEmpty) {
+          if (mounted) {
+            await _showInfo(
+              'Could not add comment',
+              'The comment was not saved because the database did not return a comment id.',
+            );
+          }
+          return;
+        }
+        _commentController.clear();
+      }
+      final inlineErr = await _commitPendingInlineImages(
+        taskId: task.id,
+        state: state,
+        picKey: task.pic,
+        entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+      );
+      if (inlineErr != null && mounted) {
+        await _showInfo('Could not save inline image', inlineErr);
+        return;
+      }
+      await _loadTaskDescriptionInlineImages();
+      await _loadComments();
       state.replaceTask(
         task.copyWith(
           submission: 'Submitted',
@@ -2298,8 +2338,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       _notifyChanged();
       await _notifyEmail(
         'Task submission email',
-        (token) =>
-            BackendApi().notifyTaskSubmission(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskSubmission(
+          idToken: token,
+          taskId: task.id,
+          changes: [
+            {
+              'field': 'submission',
+              'oldValue': task.submission?.trim().isNotEmpty == true
+                  ? task.submission!.trim()
+                  : 'Pending',
+              'newValue': 'Submitted',
+            },
+          ],
+          commentAddedText: comment,
+          taskCommentId: commentId,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();

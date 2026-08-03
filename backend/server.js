@@ -5425,11 +5425,7 @@ async function handleNotifyProjectUpdated(req, res) {
       sendJson(req, res, 400, { error: 'Project has no update_by' });
       return;
     }
-    const { data: updaterStaff, error: uErr } = await db
-      .from('staff')
-      .select('id, name, email')
-      .eq('id', updaterId)
-      .maybeSingle();
+    const { data: updaterStaff, error: uErr } = await fetchStaffRowForCreateBy(db, updaterId);
     if (uErr || !updaterStaff) {
       sendJson(req, res, 400, { error: 'Updater staff not found' });
       return;
@@ -6583,19 +6579,14 @@ async function handleNotifyTaskUpdated(req, res) {
       }
       taskCommentRow = cRow;
     }
-    let updaterId = (taskRow.update_by || '').toString().trim();
-    if (!updaterId && taskCommentRow) {
-      updaterId = (taskCommentRow.create_by || '').toString().trim();
-    }
+    let updaterId = taskCommentRow
+      ? (taskCommentRow.create_by || '').toString().trim()
+      : (taskRow.update_by || '').toString().trim();
     if (!updaterId) {
       sendJson(req, res, 400, { error: 'Task has no update_by' });
       return;
     }
-    const { data: updaterStaff, error: uErr } = await db
-      .from('staff')
-      .select('id, name, email')
-      .eq('id', updaterId)
-      .maybeSingle();
+    const { data: updaterStaff, error: uErr } = await fetchStaffRowForCreateBy(db, updaterId);
     if (uErr || !updaterStaff) {
       sendJson(req, res, 400, { error: 'Updater staff not found' });
       return;
@@ -6871,10 +6862,9 @@ async function handleNotifySubtaskUpdated(req, res) {
       }
       subtaskCommentRow = scRow;
     }
-    let updaterId = (row.update_by || '').toString().trim();
-    if (!updaterId && subtaskCommentRow) {
-      updaterId = (subtaskCommentRow.create_by || '').toString().trim();
-    }
+    let updaterId = subtaskCommentRow
+      ? (subtaskCommentRow.create_by || '').toString().trim()
+      : (row.update_by || '').toString().trim();
     if (!updaterId) {
       sendJson(req, res, 400, { error: 'Sub-task has no update_by' });
       return;
@@ -7126,7 +7116,7 @@ ${landing}`;
 }
 
 /**
- * POST { taskId } — PIC only. To: create_by, Cc: pic. Submission for review.
+ * POST { taskId } — PIC only. To: creator and assignees. Submission for review.
  */
 async function handleNotifyTaskSubmission(req, res) {
   if (req.method !== 'POST') {
@@ -7195,55 +7185,157 @@ async function handleNotifyTaskSubmission(req, res) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'Creator has no email' });
-      return;
-    }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submitted for Review: ${taskTitleForSubject}`;
-    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
-    const creatorHi = staffDisplayName(creatorStaff, toEmail);
-    const safeCreatorHi = escapeHtml(creatorHi);
-    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safeCreatorHi},<br><br>
-This email is to inform you that the task has been submitted for your review. Please review the submitted work and make a judgement: accept or return.<br><br>
-${detailLines.html}<br><br>
-Please review the submitted task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${creatorHi},
-
-This email is to inform you that the task has been submitted for your review. Please review the submitted work and make a judgement: accept or return.
-
-${detailLines.text}
-
-Please review the submitted task in Project Tracker. ${eventTaskLinkText(taskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const ccAddr = picNotifyEmail || picEmail;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: ccAddr,
+    const detailLines = await buildTaskUpdateDetailLines(
+      db,
+      taskRow,
+      emailChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
+    const results = await sendTaskWorkflowEmailToAssignees({
+      taskRow,
+      actorStaffKey: picId,
+      actorReplyTo: picNotifyEmail || picEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: picNotifyEmail || picEmail,
+      intro:
+        'This email is to inform you that the task has been submitted for review. Please review the submitted work and make a judgement: accept or return.',
+      detailLines,
+      closing: 'Please review the submitted task in Project Tracker.',
+      taskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifyTaskSubmission:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
   }
 }
 
+async function sendTaskWorkflowEmailToAssignees({
+  taskRow,
+  actorStaffKey,
+  actorReplyTo,
+  subject,
+  intro,
+  detailLines,
+  closing,
+  taskId,
+}) {
+  const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+
+  const results = [];
+  for (const staffKey of recipientByNorm.values()) {
+    const { data: staffRow } = await fetchStaffRowForCreateBy(db, staffKey);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
+    if (!to) {
+      results.push({ staffId: staffKey, ok: false, skipped: 'no email on staff row' });
+      continue;
+    }
+    const recipientName = staffDisplayName(staffRow, to);
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+${escapeHtml(intro)}<br><br>
+${detailLines.html}<br><br>
+${escapeHtml(closing)} ${eventTaskLinkHtml(taskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${recipientName},
+
+${intro}
+
+${detailLines.text}
+
+${closing} ${eventTaskLinkText(taskId)}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
+      to,
+      subject,
+      text,
+      html,
+      from: NOTIFICATION_EMAIL_FROM,
+      replyTo: actorReplyTo || undefined,
+    });
+    results.push({
+      to,
+      ok: r.ok,
+      messageId: r.ok ? r.id : null,
+      error: r.ok ? null : r.error,
+      detail: r.ok ? null : r.detail,
+    });
+  }
+  return results;
+}
+
+async function sendSubtaskWorkflowEmailToAssignees({
+  row,
+  actorStaffKey,
+  actorReplyTo,
+  subject,
+  intro,
+  detailLines,
+  closing,
+  subtaskId,
+}) {
+  const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
+
+  const results = [];
+  for (const staffKey of recipientByNorm.values()) {
+    const { data: staffRow } = await fetchStaffRowForCreateBy(db, staffKey);
+    const to = await resolveStaffEmailForNotifications(db, staffRow);
+    if (!to) {
+      results.push({ staffId: staffKey, ok: false, skipped: 'no email on staff row' });
+      continue;
+    }
+    const recipientName = staffDisplayName(staffRow, to);
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+${escapeHtml(intro)}<br><br>
+${detailLines.html}<br><br>
+${escapeHtml(closing)} ${eventSubtaskLinkHtml(subtaskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${recipientName},
+
+${intro}
+
+${detailLines.text}
+
+${closing} ${eventSubtaskLinkText(subtaskId)}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
+      to,
+      subject,
+      text,
+      html,
+      from: NOTIFICATION_EMAIL_FROM,
+      replyTo: actorReplyTo || undefined,
+    });
+    results.push({
+      to,
+      ok: r.ok,
+      messageId: r.ok ? r.id : null,
+      error: r.ok ? null : r.error,
+      detail: r.ok ? null : r.detail,
+    });
+  }
+  return results;
+}
+
 /**
- * POST { taskId } — create_by only. To: pic, Cc: create_by. Task accepted.
+ * POST { taskId } — create_by only. To: creator and assignees. Task accepted.
  */
 async function handleNotifyTaskAccepted(req, res) {
   if (req.method !== 'POST') {
@@ -7300,59 +7392,36 @@ async function handleNotifyTaskAccepted(req, res) {
       });
       return;
     }
-    const picId = (taskRow.pic || '').toString().trim();
-    if (!picId) {
-      sendJson(req, res, 400, { error: 'Task has no PIC' });
-      return;
-    }
-    const { data: picStaff } = await db
-      .from('staff')
-      .select('id, email, name')
-      .eq('id', picId)
-      .maybeSingle();
-    if (!picStaff) {
-      sendJson(req, res, 400, { error: 'PIC staff not found' });
-      return;
-    }
-    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'PIC has no email' });
-      return;
-    }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Accepted: ${taskTitleForSubject}`;
-    const picHi = staffDisplayName(picStaff, toEmail);
-    const safePicHi = escapeHtml(picHi);
     const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
-This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.<br><br>
-${detailLines.html}<br><br>
-Please review the accepted task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${picHi},
-
-This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.
-
-${detailLines.text}
-
-Please review the accepted task in Project Tracker. ${eventTaskLinkText(taskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: creatorNotifyEmail || creatorEmail,
+    const results = await sendTaskWorkflowEmailToAssignees({
+      taskRow,
+      actorStaffKey: creatorRaw,
+      actorReplyTo: creatorNotifyEmail || creatorEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: creatorNotifyEmail || creatorEmail,
+      intro:
+        'This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.',
+      detailLines,
+      closing: 'Please review the accepted task in Project Tracker.',
+      taskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifyTaskAccepted:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -7360,7 +7429,7 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
- * POST { taskId } — create_by only. To: pic, Cc: create_by. Task returned.
+ * POST { taskId } — create_by only. To: creator and assignees. Task returned.
  */
 async function handleNotifyTaskReturned(req, res) {
   if (req.method !== 'POST') {
@@ -7417,59 +7486,36 @@ async function handleNotifyTaskReturned(req, res) {
       });
       return;
     }
-    const picId = (taskRow.pic || '').toString().trim();
-    if (!picId) {
-      sendJson(req, res, 400, { error: 'Task has no PIC' });
-      return;
-    }
-    const { data: picStaff } = await db
-      .from('staff')
-      .select('id, email, name')
-      .eq('id', picId)
-      .maybeSingle();
-    if (!picStaff) {
-      sendJson(req, res, 400, { error: 'PIC staff not found' });
-      return;
-    }
-    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'PIC has no email' });
-      return;
-    }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Returned: ${taskTitleForSubject}`;
-    const picHi = staffDisplayName(picStaff, toEmail);
-    const safePicHi = escapeHtml(picHi);
     const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
-This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.<br><br>
-${detailLines.html}<br><br>
-Please review the returned task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${picHi},
-
-This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.
-
-${detailLines.text}
-
-Please review the returned task in Project Tracker. ${eventTaskLinkText(taskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: creatorNotifyEmail || creatorEmail,
+    const results = await sendTaskWorkflowEmailToAssignees({
+      taskRow,
+      actorStaffKey: creatorRaw,
+      actorReplyTo: creatorNotifyEmail || creatorEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: creatorNotifyEmail || creatorEmail,
+      intro:
+        'This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.',
+      detailLines,
+      closing: 'Please review the returned task in Project Tracker.',
+      taskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, taskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifyTaskReturned:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -7477,7 +7523,7 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
- * POST { subtaskId } — PIC only. To: create_by, Cc: pic. Submission for review.
+ * POST { subtaskId } — PIC only. To: creator and assignees. Submission for review.
  */
 async function handleNotifySubtaskSubmission(req, res) {
   if (req.method !== 'POST') {
@@ -7547,47 +7593,41 @@ async function handleNotifySubtaskSubmission(req, res) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
-    const toEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'Creator has no email' });
-      return;
-    }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submitted for Review: ${subtaskTitleForSubject}`;
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
-    const creatorHi = staffDisplayName(creatorStaff, toEmail);
-    const safeCreatorHi = escapeHtml(creatorHi);
-    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safeCreatorHi},<br><br>
-This email is to inform you that the subtask has been submitted for your review. Please review the submitted work and make a judgement: accept or return.<br><br>
-${detailLines.html}<br><br>
-Please review the submitted subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${creatorHi},
-
-This email is to inform you that the subtask has been submitted for your review. Please review the submitted work and make a judgement: accept or return.
-
-${detailLines.text}
-
-Please review the submitted subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const ccAddr = picNotifyEmail || picEmail;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: ccAddr,
+    const detailLines = await buildSubtaskUpdateDetailLines(
+      db,
+      row,
+      emailChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
+    const results = await sendSubtaskWorkflowEmailToAssignees({
+      row,
+      actorStaffKey: picId,
+      actorReplyTo: picNotifyEmail || picEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: picNotifyEmail || picEmail,
+      intro:
+        'This email is to inform you that the subtask has been submitted for review. Please review the submitted work and make a judgement: accept or return.',
+      detailLines,
+      closing: 'Please review the submitted subtask in Project Tracker.',
+      subtaskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifySubtaskSubmission:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -7595,7 +7635,7 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
- * POST { subtaskId } — create_by only. To: pic, Cc: create_by. Sub-task accepted.
+ * POST { subtaskId } — create_by only. To: creator and assignees. Sub-task accepted.
  */
 async function handleNotifySubtaskAccepted(req, res) {
   if (req.method !== 'POST') {
@@ -7652,55 +7692,36 @@ async function handleNotifySubtaskAccepted(req, res) {
       });
       return;
     }
-    const picId = (row.pic || '').toString().trim();
-    if (!picId) {
-      sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
-      return;
-    }
-    const { data: picStaff } = await fetchStaffRowForCreateBy(db, picId);
-    if (!picStaff) {
-      sendJson(req, res, 400, { error: 'PIC staff not found' });
-      return;
-    }
-    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'PIC has no email' });
-      return;
-    }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Accepted: ${subtaskTitleForSubject}`;
-    const picHi = staffDisplayName(picStaff, toEmail);
-    const safePicHi = escapeHtml(picHi);
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
-This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.<br><br>
-${detailLines.html}<br><br>
-Please review the accepted subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${picHi},
-
-This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.
-
-${detailLines.text}
-
-Please review the accepted subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: creatorNotifyEmail || creatorEmail,
+    const results = await sendSubtaskWorkflowEmailToAssignees({
+      row,
+      actorStaffKey: creatorRaw,
+      actorReplyTo: creatorNotifyEmail || creatorEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: creatorNotifyEmail || creatorEmail,
+      intro:
+        'This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.',
+      detailLines,
+      closing: 'Please review the accepted subtask in Project Tracker.',
+      subtaskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifySubtaskAccepted:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -7708,7 +7729,7 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
- * POST { subtaskId } — create_by only. To: pic, Cc: create_by. Sub-task returned.
+ * POST { subtaskId } — create_by only. To: creator and assignees. Sub-task returned.
  */
 async function handleNotifySubtaskReturned(req, res) {
   if (req.method !== 'POST') {
@@ -7765,55 +7786,36 @@ async function handleNotifySubtaskReturned(req, res) {
       });
       return;
     }
-    const picId = (row.pic || '').toString().trim();
-    if (!picId) {
-      sendJson(req, res, 400, { error: 'Sub-task has no PIC' });
-      return;
-    }
-    const { data: picStaff } = await fetchStaffRowForCreateBy(db, picId);
-    if (!picStaff) {
-      sendJson(req, res, 400, { error: 'PIC staff not found' });
-      return;
-    }
-    const toEmail = await resolveStaffEmailForNotifications(db, picStaff);
-    if (!toEmail) {
-      sendJson(req, res, 400, { error: 'PIC has no email' });
-      return;
-    }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Returned: ${subtaskTitleForSubject}`;
-    const picHi = staffDisplayName(picStaff, toEmail);
-    const safePicHi = escapeHtml(picHi);
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
-    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
-This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.<br><br>
-${detailLines.html}<br><br>
-Please review the returned subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
-${projectTrackerEmailFooterHtml()}</div>`;
-    const text = `Dear ${picHi},
-
-This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.
-
-${detailLines.text}
-
-Please review the returned subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
-
-${projectTrackerEmailFooterText()}`;
-    const r = await sendNotificationEmail({
-      to: toEmail,
-      cc: creatorNotifyEmail || creatorEmail,
+    const results = await sendSubtaskWorkflowEmailToAssignees({
+      row,
+      actorStaffKey: creatorRaw,
+      actorReplyTo: creatorNotifyEmail || creatorEmail,
       subject,
-      text,
-      html,
-      from: NOTIFICATION_EMAIL_FROM,
-      replyTo: creatorNotifyEmail || creatorEmail,
+      intro:
+        'This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.',
+      detailLines,
+      closing: 'Please review the returned subtask in Project Tracker.',
+      subtaskId,
     });
-    if (!r.ok) {
-      sendJson(req, res, 502, { error: formatEmailFailure(r) });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
       return;
     }
-    sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
   } catch (e) {
     console.error('handleNotifySubtaskReturned:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
@@ -7934,13 +7936,7 @@ async function handleNotifyTaskAction(req, res, action) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const subject = `[Project Tracker] Task ${cfg.subject}: ${mailSubjectSingleLine(taskName)}`;
     const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
-    const recipientByNorm = new Map();
-    for (const id of collectTaskAssigneeStaffIds(taskRow)) {
-      const raw = String(id || '').trim();
-      if (!raw) continue;
-      recipientByNorm.set(raw.toLowerCase(), raw);
-    }
-    recipientByNorm.delete(String(actorId).trim().toLowerCase());
+    const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
     const results = [];
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
@@ -8053,13 +8049,7 @@ async function handleNotifySubtaskAction(req, res, action) {
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subject = `[Project Tracker] Subtask ${cfg.subject}: ${mailSubjectSingleLine(subtaskName)}`;
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
-    const recipientByNorm = new Map();
-    for (const id of collectSubtaskAssigneeStaffIds(row)) {
-      const raw = String(id || '').trim();
-      if (!raw) continue;
-      recipientByNorm.set(raw.toLowerCase(), raw);
-    }
-    recipientByNorm.delete(String(actorId).trim().toLowerCase());
+    const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
     const results = [];
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);

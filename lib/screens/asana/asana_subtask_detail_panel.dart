@@ -1292,7 +1292,10 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
         paused ? 'Sub-task paused email' : 'Sub-task resumed email',
         (token) => paused
             ? BackendApi().notifySubtaskPaused(idToken: token, subtaskId: s.id)
-            : BackendApi().notifySubtaskResumed(idToken: token, subtaskId: s.id),
+            : BackendApi().notifySubtaskResumed(
+                idToken: token,
+                subtaskId: s.id,
+              ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -1781,10 +1784,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
       } else if (commentId != null) {
         await _notifyEmail(
-          'Sub-task comment email',
-          (token) => BackendApi().notifySubtaskCommentAdded(
+          'Sub-task update email',
+          (token) => BackendApi().notifySubtaskUpdated(
             idToken: token,
-            commentId: commentId!,
+            subtaskId: s!.id,
+            commentAddedText: commentText,
+            subtaskCommentId: commentId!,
           ),
         );
       }
@@ -1997,6 +2002,17 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         (token) => BackendApi().notifySubtaskSubmission(
           idToken: token,
           subtaskId: s.id,
+          changes: [
+            {
+              'field': 'submission',
+              'oldValue': s.submission?.trim().isNotEmpty == true
+                  ? s.submission!.trim()
+                  : 'Pending',
+              'newValue': 'Submitted',
+            },
+          ],
+          commentAddedText: commentText,
+          subtaskCommentId: commentId,
         ),
       );
     } finally {

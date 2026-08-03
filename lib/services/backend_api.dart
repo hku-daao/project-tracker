@@ -385,12 +385,27 @@ class BackendApi {
     }
   }
 
-  /// PIC submission for review — To creator, Cc PIC.
+  /// PIC submission for review — To creator and assignees.
   Future<String?> notifyTaskSubmission({
     required String idToken,
     required String taskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    String? taskCommentId,
   }) async {
     try {
+      final payload = <String, dynamic>{'taskId': taskId};
+      if (changes != null && changes.isNotEmpty) {
+        payload['changes'] = changes;
+      }
+      final c = commentAddedText?.trim();
+      if (c != null && c.isNotEmpty) {
+        payload['commentAddedText'] = c;
+      }
+      final tc = taskCommentId?.trim();
+      if (tc != null && tc.isNotEmpty) {
+        payload['taskCommentId'] = tc;
+      }
       final response = await http
           .post(
             url('/api/notify/task-submission'),
@@ -398,7 +413,7 @@ class BackendApi {
               'Authorization': 'Bearer $idToken',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({'taskId': taskId}),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 60));
       if (response.statusCode == 200) return null;
@@ -413,7 +428,7 @@ class BackendApi {
     }
   }
 
-  /// Creator accepted — To PIC, Cc creator.
+  /// Creator accepted — To creator and assignees.
   Future<String?> notifyTaskAccepted({
     required String idToken,
     required String taskId,
@@ -441,7 +456,7 @@ class BackendApi {
     }
   }
 
-  /// Creator returned — To PIC, Cc creator.
+  /// Creator returned — To creator and assignees.
   Future<String?> notifyTaskReturned({
     required String idToken,
     required String taskId,
@@ -469,12 +484,27 @@ class BackendApi {
     }
   }
 
-  /// PIC submission for review — To creator, Cc PIC.
+  /// PIC submission for review — To creator and assignees.
   Future<String?> notifySubtaskSubmission({
     required String idToken,
     required String subtaskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    String? subtaskCommentId,
   }) async {
     try {
+      final payload = <String, dynamic>{'subtaskId': subtaskId};
+      if (changes != null && changes.isNotEmpty) {
+        payload['changes'] = changes;
+      }
+      final c = commentAddedText?.trim();
+      if (c != null && c.isNotEmpty) {
+        payload['commentAddedText'] = c;
+      }
+      final sc = subtaskCommentId?.trim();
+      if (sc != null && sc.isNotEmpty) {
+        payload['subtaskCommentId'] = sc;
+      }
       final response = await http
           .post(
             url('/api/notify/subtask-submission'),
@@ -482,7 +512,7 @@ class BackendApi {
               'Authorization': 'Bearer $idToken',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({'subtaskId': subtaskId}),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 60));
       if (response.statusCode == 200) return null;
@@ -497,7 +527,7 @@ class BackendApi {
     }
   }
 
-  /// Creator accepted — To PIC, Cc creator.
+  /// Creator accepted — To creator and assignees.
   Future<String?> notifySubtaskAccepted({
     required String idToken,
     required String subtaskId,
@@ -525,7 +555,7 @@ class BackendApi {
     }
   }
 
-  /// Creator returned — To PIC, Cc creator.
+  /// Creator returned — To creator and assignees.
   Future<String?> notifySubtaskReturned({
     required String idToken,
     required String subtaskId,
@@ -581,27 +611,75 @@ class BackendApi {
     }
   }
 
-  Future<String?> notifyTaskDeleted({required String idToken, required String taskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/task-deleted', payload: {'taskId': taskId});
+  Future<String?> notifyTaskDeleted({
+    required String idToken,
+    required String taskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-deleted',
+    payload: {'taskId': taskId},
+  );
 
-  Future<String?> notifyTaskRestored({required String idToken, required String taskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/task-restored', payload: {'taskId': taskId});
+  Future<String?> notifyTaskRestored({
+    required String idToken,
+    required String taskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-restored',
+    payload: {'taskId': taskId},
+  );
 
-  Future<String?> notifyTaskPaused({required String idToken, required String taskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/task-paused', payload: {'taskId': taskId});
+  Future<String?> notifyTaskPaused({
+    required String idToken,
+    required String taskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-paused',
+    payload: {'taskId': taskId},
+  );
 
-  Future<String?> notifyTaskResumed({required String idToken, required String taskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/task-resumed', payload: {'taskId': taskId});
+  Future<String?> notifyTaskResumed({
+    required String idToken,
+    required String taskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-resumed',
+    payload: {'taskId': taskId},
+  );
 
-  Future<String?> notifySubtaskDeleted({required String idToken, required String subtaskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-deleted', payload: {'subtaskId': subtaskId});
+  Future<String?> notifySubtaskDeleted({
+    required String idToken,
+    required String subtaskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-deleted',
+    payload: {'subtaskId': subtaskId},
+  );
 
-  Future<String?> notifySubtaskRestored({required String idToken, required String subtaskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-restored', payload: {'subtaskId': subtaskId});
+  Future<String?> notifySubtaskRestored({
+    required String idToken,
+    required String subtaskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-restored',
+    payload: {'subtaskId': subtaskId},
+  );
 
-  Future<String?> notifySubtaskPaused({required String idToken, required String subtaskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-paused', payload: {'subtaskId': subtaskId});
+  Future<String?> notifySubtaskPaused({
+    required String idToken,
+    required String subtaskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-paused',
+    payload: {'subtaskId': subtaskId},
+  );
 
-  Future<String?> notifySubtaskResumed({required String idToken, required String subtaskId}) =>
-      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-resumed', payload: {'subtaskId': subtaskId});
+  Future<String?> notifySubtaskResumed({
+    required String idToken,
+    required String subtaskId,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-resumed',
+    payload: {'subtaskId': subtaskId},
+  );
 }
