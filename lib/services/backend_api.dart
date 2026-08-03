@@ -552,4 +552,56 @@ class BackendApi {
       return e.toString();
     }
   }
+
+  Future<String?> _postNotifyAction({
+    required String idToken,
+    required String path,
+    required Map<String, String> payload,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            url(path),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
+      } catch (_) {
+        return 'HTTP ${response.statusCode}';
+      }
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  Future<String?> notifyTaskDeleted({required String idToken, required String taskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/task-deleted', payload: {'taskId': taskId});
+
+  Future<String?> notifyTaskRestored({required String idToken, required String taskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/task-restored', payload: {'taskId': taskId});
+
+  Future<String?> notifyTaskPaused({required String idToken, required String taskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/task-paused', payload: {'taskId': taskId});
+
+  Future<String?> notifyTaskResumed({required String idToken, required String taskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/task-resumed', payload: {'taskId': taskId});
+
+  Future<String?> notifySubtaskDeleted({required String idToken, required String subtaskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-deleted', payload: {'subtaskId': subtaskId});
+
+  Future<String?> notifySubtaskRestored({required String idToken, required String subtaskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-restored', payload: {'subtaskId': subtaskId});
+
+  Future<String?> notifySubtaskPaused({required String idToken, required String subtaskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-paused', payload: {'subtaskId': subtaskId});
+
+  Future<String?> notifySubtaskResumed({required String idToken, required String subtaskId}) =>
+      _postNotifyAction(idToken: idToken, path: '/api/notify/subtask-resumed', payload: {'subtaskId': subtaskId});
 }

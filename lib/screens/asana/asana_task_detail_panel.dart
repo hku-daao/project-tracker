@@ -2398,6 +2398,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       _notifyChanged();
       await _loadSubtasks();
+      await _notifyEmail(
+        'Task restored email',
+        (token) =>
+            BackendApi().notifyTaskRestored(idToken: token, taskId: task.id),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -2435,6 +2440,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       state.replaceTask(task.copyWith(dbStatus: 'Deleted'));
       _notifyChanged();
       await _loadSubtasks();
+      await _notifyEmail(
+        'Task deleted email',
+        (token) =>
+            BackendApi().notifyTaskDeleted(idToken: token, taskId: task.id),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -2461,6 +2471,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       state.replaceTask(task.copyWith(pauseStatus: 'Paused'));
       _notifyChanged();
+      await _notifyEmail(
+        'Task paused email',
+        (token) =>
+            BackendApi().notifyTaskPaused(idToken: token, taskId: task.id),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -2485,6 +2500,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       state.replaceTask(task.copyWith(pauseStatus: 'Not Paused'));
       _notifyChanged();
+      await _notifyEmail(
+        'Task resumed email',
+        (token) =>
+            BackendApi().notifyTaskResumed(idToken: token, taskId: task.id),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);

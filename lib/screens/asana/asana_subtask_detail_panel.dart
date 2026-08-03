@@ -1288,6 +1288,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
         });
       }
       widget.onChanged?.call();
+      await _notifyEmail(
+        paused ? 'Sub-task paused email' : 'Sub-task resumed email',
+        (token) => paused
+            ? BackendApi().notifySubtaskPaused(idToken: token, subtaskId: s.id)
+            : BackendApi().notifySubtaskResumed(idToken: token, subtaskId: s.id),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -1832,6 +1838,11 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         return;
       }
       _notifyParentTaskOfSubtaskChange();
+      await _notifyEmail(
+        'Sub-task deleted email',
+        (token) =>
+            BackendApi().notifySubtaskDeleted(idToken: token, subtaskId: s.id),
+      );
       if (mounted) widget.onClose?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2028,6 +2039,11 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       subtask: s,
       status: 'Incomplete',
       errorTitle: 'Could not restore sub-task',
+    );
+    await _notifyEmail(
+      'Sub-task restored email',
+      (token) =>
+          BackendApi().notifySubtaskRestored(idToken: token, subtaskId: s.id),
     );
   }
 

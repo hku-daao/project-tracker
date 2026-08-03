@@ -104,7 +104,7 @@ function buildTaskUpdatedAssigneeEmailHtml(p) {
   return `<div style="margin:0;${bodyFont}">Dear ${safeHi},<br><br>
 ${intro}<br><br>
 ${details}<br><br>
-Please review the updated task information in Project Tracker.<br><br>
+Please review the updated task information in Project Tracker. ${eventInlineLinkHtml('Task link', p.taskUrl)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
 }
 
@@ -118,7 +118,7 @@ ${intro}
 
 ${details}
 
-Please review the updated task information in Project Tracker.
+Please review the updated task information in Project Tracker. ${eventInlineLinkText('Task link', p.taskUrl)}
 
 ${projectTrackerEmailFooterText()}`;
 }
@@ -140,7 +140,7 @@ function buildSubtaskUpdatedAssigneeEmailHtml(p) {
   return `<div style="margin:0;${bodyFont}">Dear ${safeHi},<br><br>
 ${intro}<br><br>
 ${details}<br><br>
-Please review the updated subtask information in Project Tracker.<br><br>
+Please review the updated subtask information in Project Tracker. ${eventInlineLinkHtml('Subtask link', p.subtaskUrl)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
 }
 
@@ -154,7 +154,7 @@ ${intro}
 
 ${details}
 
-Please review the updated subtask information in Project Tracker.
+Please review the updated subtask information in Project Tracker. ${eventInlineLinkText('Subtask link', p.subtaskUrl)}
 
 ${projectTrackerEmailFooterText()}`;
 }
@@ -1063,6 +1063,15 @@ function eventEmailDateValue(value) {
       timeZone: 'UTC',
     }).format(d);
   }
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(parsed);
+  }
   return raw;
 }
 
@@ -1077,11 +1086,41 @@ function changedDateText(change, currentValue) {
 }
 
 function detailLineHtml(label, valueHtml) {
-  return `&bull; <strong>${escapeHtml(label)}:</strong> ${valueHtml}`;
+  return `<strong>${escapeHtml(label)}:</strong> ${valueHtml}`;
 }
 
 function detailLineText(label, valueText) {
-  return `- ${label}: ${valueText}`;
+  return `${label}: ${valueText}`;
+}
+
+function eventInlineLinkHtml(label, url) {
+  const href = String(url || '').trim();
+  if (!href) return '';
+  return `${escapeHtml(label)}: <a href="${escapeHtml(href)}" style="color:#1565C0;">${escapeHtml(href)}</a>`;
+}
+
+function eventInlineLinkText(label, url) {
+  const href = String(url || '').trim();
+  if (!href) return '';
+  return `${label}: ${href}`;
+}
+
+function eventTaskLinkHtml(taskId) {
+  const url = taskWebAppUrl(taskId);
+  return `Task link: <a href="${escapeHtml(url)}" style="color:#1565C0;">${escapeHtml(url)}</a>`;
+}
+
+function eventTaskLinkText(taskId) {
+  return `Task link: ${taskWebAppUrl(taskId)}`;
+}
+
+function eventSubtaskLinkHtml(subtaskId) {
+  const url = subtaskWebAppUrl(subtaskId);
+  return `Subtask link: <a href="${escapeHtml(url)}" style="color:#1565C0;">${escapeHtml(url)}</a>`;
+}
+
+function eventSubtaskLinkText(subtaskId) {
+  return `Subtask link: ${subtaskWebAppUrl(subtaskId)}`;
 }
 
 function projectTrackerEmailFooterHtml() {
@@ -1193,14 +1232,12 @@ async function projectNameForEmail(dbClient, projectId) {
 }
 
 async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = {}) {
-  const taskId = String(taskRow.id || '').trim();
-  const taskUrl = taskWebAppUrl(taskId);
   const projectName = await projectNameForEmail(dbClient, taskRow.project_id);
   const creatorName = await staffNameForEmail(dbClient, taskRow.create_by);
   const assigneeNames = await staffNamesForEmail(dbClient, collectTaskAssigneeStaffIds(taskRow));
   const picName = await staffNameForEmail(dbClient, taskRow.pic);
   const rows = [
-    ['Task name', changedValueHtml(changeMap.get('taskName'), taskRow.task_name), changedValueText(changeMap.get('taskName'), taskRow.task_name)],
+    ['Task', changedValueHtml(changeMap.get('taskName'), taskRow.task_name), changedValueText(changeMap.get('taskName'), taskRow.task_name)],
     ['Description', changedValueHtml(changeMap.get('description'), taskRow.description), changedValueText(changeMap.get('description'), taskRow.description)],
     ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
     ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
@@ -1219,36 +1256,32 @@ async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = 
       emailPlainValue(extra.commentText),
     ]);
   }
-  rows.push([
-    'URL',
-    `<a href="${escapeHtml(taskUrl)}" style="color:#1565C0;">${escapeHtml(taskUrl)}</a>`,
-    taskUrl,
-  ]);
   return {
-    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br>'),
-    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n'),
+    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br><br>'),
+    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n\n'),
   };
 }
 
 async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {}) {
-  const subtaskId = String(row.id || '').trim();
-  const subtaskUrl = subtaskWebAppUrl(subtaskId);
   const creatorName = await staffNameForEmail(dbClient, row.create_by);
   const assigneeNames = await staffNamesForEmail(dbClient, collectSubtaskAssigneeStaffIds(row));
   const picName = await staffNameForEmail(dbClient, row.pic);
   let projectName = '';
+  let parentTaskName = '';
   if (row.task_id) {
     const { data: taskRow } = await dbClient
       .from('task')
-      .select('project_id')
+      .select('task_name, project_id')
       .eq('id', row.task_id)
       .maybeSingle();
+    parentTaskName = (taskRow?.task_name || '').toString().trim();
     projectName = await projectNameForEmail(dbClient, taskRow?.project_id);
   }
   const rows = [
-    ['Subtask name', changedValueHtml(changeMap.get('subtaskName'), row.subtask_name), changedValueText(changeMap.get('subtaskName'), row.subtask_name)],
+    ['Subtask', changedValueHtml(changeMap.get('subtaskName'), row.subtask_name), changedValueText(changeMap.get('subtaskName'), row.subtask_name)],
     ['Description', changedValueHtml(changeMap.get('description'), row.description), changedValueText(changeMap.get('description'), row.description)],
     ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
+    ['Task', escapeHtml(emailPlainValue(parentTaskName)), emailPlainValue(parentTaskName)],
     ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
     ['Assignees', changedValueHtml(changeMap.get('assignees'), assigneeNames), changedValueText(changeMap.get('assignees'), assigneeNames)],
     ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],
@@ -1265,14 +1298,9 @@ async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {
       emailPlainValue(extra.commentText),
     ]);
   }
-  rows.push([
-    'URL',
-    `<a href="${escapeHtml(subtaskUrl)}" style="color:#1565C0;">${escapeHtml(subtaskUrl)}</a>`,
-    subtaskUrl,
-  ]);
   return {
-    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br>'),
-    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n'),
+    html: rows.map(([label, html]) => detailLineHtml(label, html)).join('<br><br>'),
+    text: rows.map(([label, _html, text]) => detailLineText(label, text)).join('\n\n'),
   };
 }
 
@@ -5089,16 +5117,24 @@ async function handleNotifyTaskAssigned(req, res) {
       (creatorStaff.name || '').trim() ||
       creatorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
-    const dueLine = formatTaskDueDateYYYYMMDD(taskRow.due_date);
-    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
 
     const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
 
-    const subject = "You've been assigned a task";
+    const subject = `[Project Tracker] New Task Assigned: ${mailSubjectSingleLine(taskName)}`;
 
     const results = [];
+    const creatorNorm = creatorId.toLowerCase();
 
     for (const staffUuid of assigneeIds) {
+      if (String(staffUuid).trim().toLowerCase() === creatorNorm) {
+        results.push({
+          staffId: staffUuid,
+          ok: true,
+          skipped: 'task creator is excluded from task creation email',
+        });
+        continue;
+      }
       const { data: s } = await db
         .from('staff')
         .select('email, name')
@@ -5109,12 +5145,21 @@ async function handleNotifyTaskAssigned(req, res) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;
       }
-      const safeCreator = escapeHtml(staffDisplayName);
-      const safeTitle = escapeHtml(taskName);
-      const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
-      const safeLanding = escapeHtml(landing);
-      const html = `<p>${safeCreator} assigned you a task.</p><p><a href="${escapeHtml(taskUrl)}">${safeTitle}</a></p><p>Due Date: ${escapeHtml(dueLine)}</p><p><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></p>`;
-      const text = `${staffDisplayName} assigned you a task.\n${taskName}\n${taskUrl}\nDue Date: ${dueLine}\nProject Tracker\n${landing}`;
+      const recipientName = (s?.name || '').trim() || to;
+      const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+This email is to inform you that a new task has been created and assigned to you.<br><br>
+${detailLines.html}<br><br>
+Please review the new task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+      const text = `Dear ${recipientName},
+
+This email is to inform you that a new task has been created and assigned to you.
+
+${detailLines.text}
+
+Please review the new task in Project Tracker. ${eventTaskLinkText(taskId)}
+
+${projectTrackerEmailFooterText()}`;
       const r = await sendNotificationEmail({
         to,
         subject,
@@ -5622,15 +5667,22 @@ async function handleNotifySubtaskAssigned(req, res) {
       creatorEmail;
     const subtaskName =
       (row.subtask_name || '').toString().trim() || '(no title)';
-    const dueLine = formatTaskDueDateYYYYMMDD(row.due_date);
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
-    const landing = `${PROJECT_TRACKER_LANDING_URL}/`;
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
     const assigneeUuids = collectSubtaskAssigneeStaffIds(row);
-    const subject = "You've been assigned a sub-task";
+    const subject = `[Project Tracker] New Subtask Assigned: ${mailSubjectSingleLine(subtaskName)}`;
     const results = [];
     const seenEmails = new Set();
+    const creatorNorm = creatorId.toLowerCase();
 
     for (const staffUuid of assigneeUuids) {
+      if (String(staffUuid).trim().toLowerCase() === creatorNorm) {
+        results.push({
+          staffId: staffUuid,
+          ok: true,
+          skipped: 'subtask creator is excluded from subtask creation email',
+        });
+        continue;
+      }
       const { data: s } = await db
         .from('staff')
         .select('email, name')
@@ -5643,13 +5695,21 @@ async function handleNotifySubtaskAssigned(req, res) {
       }
       if (seenEmails.has(to)) continue;
       seenEmails.add(to);
-      const safeCreator = escapeHtml(staffDisplayName);
-      const safeName = escapeHtml(subtaskName);
-      const safeUrl = escapeHtml(subtaskUrl);
-      const safeDue = escapeHtml(dueLine);
-      const safeLanding = escapeHtml(landing);
-      const html = `<div style="font-family: Aptos, Arial, Helvetica, sans-serif; font-size: 12pt;">${safeCreator} assigned you a sub-task.<br><br><a href="${safeUrl}"><strong><u>${safeName}</u></strong></a><br><br>Due Date: ${safeDue}<br><br><a href="${safeLanding}" style="color:#1565C0;">Project Tracker</a></div>`;
-      const text = `${staffDisplayName} assigned you a sub-task.\n\n${subtaskName}\n${subtaskUrl}\n\nDue Date: ${dueLine}\n\nProject Tracker\n${landing}`;
+      const recipientName = (s?.name || '').trim() || to;
+      const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+This email is to inform you that a new subtask has been created and assigned to you.<br><br>
+${detailLines.html}<br><br>
+Please review the new subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+      const text = `Dear ${recipientName},
+
+This email is to inform you that a new subtask has been created and assigned to you.
+
+${detailLines.text}
+
+Please review the new subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
+
+${projectTrackerEmailFooterText()}`;
       const r = await sendNotificationEmail({
         to,
         subject,
@@ -7142,18 +7202,25 @@ async function handleNotifyTaskSubmission(req, res) {
     }
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
-    const subject = `Submission for ${taskTitleForSubject}`;
+    const subject = `[Project Tracker] Task Submitted for Review: ${taskTitleForSubject}`;
     const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const creatorHi = staffDisplayName(creatorStaff, toEmail);
-    const picLineName = staffDisplayName(picStaff, picAddr);
     const safeCreatorHi = escapeHtml(creatorHi);
-    const safePicLine = escapeHtml(picLineName);
-    const bodyLinesHtml = `Hi ${safeCreatorHi}.<br><br>${safePicLine} would like to seek you to review below task:`;
-    const bodyLinesText = [
-      `Hi ${creatorHi}.`,
-      `${picLineName} would like to seek you to review below task:`,
-    ];
-    const { html, text } = buildTaskWorkflowEmailShell(taskName, taskUrl, bodyLinesHtml, bodyLinesText);
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safeCreatorHi},<br><br>
+This email is to inform you that the task has been submitted for your review. Please review the submitted work and make a judgement: accept or return.<br><br>
+${detailLines.html}<br><br>
+Please review the submitted task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${creatorHi},
+
+This email is to inform you that the task has been submitted for your review. Please review the submitted work and make a judgement: accept or return.
+
+${detailLines.text}
+
+Please review the submitted task in Project Tracker. ${eventTaskLinkText(taskId)}
+
+${projectTrackerEmailFooterText()}`;
     const ccAddr = picNotifyEmail || picEmail;
     const r = await sendNotificationEmail({
       to: toEmail,
@@ -7255,19 +7322,21 @@ async function handleNotifyTaskAccepted(req, res) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Accepted: ${taskTitleForSubject}`;
-    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
     const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
     const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
 This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.<br><br>
 ${detailLines.html}<br><br>
+Please review the accepted task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
     const text = `Dear ${picHi},
 
 This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.
 
 ${detailLines.text}
+
+Please review the accepted task in Project Tracker. ${eventTaskLinkText(taskId)}
 
 ${projectTrackerEmailFooterText()}`;
     const r = await sendNotificationEmail({
@@ -7370,19 +7439,21 @@ async function handleNotifyTaskReturned(req, res) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Returned: ${taskTitleForSubject}`;
-    const taskUrl = `${PUBLIC_WEB_APP_URL}/?task=${encodeURIComponent(taskId)}`;
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
     const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
     const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
 This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.<br><br>
 ${detailLines.html}<br><br>
+Please review the returned task in Project Tracker. ${eventTaskLinkHtml(taskId)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
     const text = `Dear ${picHi},
 
 This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.
 
 ${detailLines.text}
+
+Please review the returned task in Project Tracker. ${eventTaskLinkText(taskId)}
 
 ${projectTrackerEmailFooterText()}`;
     const r = await sendNotificationEmail({
@@ -7483,23 +7554,25 @@ async function handleNotifySubtaskSubmission(req, res) {
     }
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
-    const subject = `Submission for ${subtaskTitleForSubject}`;
+    const subject = `[Project Tracker] Subtask Submitted for Review: ${subtaskTitleForSubject}`;
     const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const creatorHi = staffDisplayName(creatorStaff, toEmail);
-    const picLineName = staffDisplayName(picStaff, picAddr);
     const safeCreatorHi = escapeHtml(creatorHi);
-    const safePicLine = escapeHtml(picLineName);
-    const bodyLinesHtml = `Hi ${safeCreatorHi}.<br><br>${safePicLine} would like to seek you to review below sub-task:`;
-    const bodyLinesText = [
-      `Hi ${creatorHi}.`,
-      `${picLineName} would like to seek you to review below sub-task:`,
-    ];
-    const { html, text } = buildSubtaskWorkflowEmailShell(
-      subtaskName,
-      subtaskUrl,
-      bodyLinesHtml,
-      bodyLinesText,
-    );
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safeCreatorHi},<br><br>
+This email is to inform you that the subtask has been submitted for your review. Please review the submitted work and make a judgement: accept or return.<br><br>
+${detailLines.html}<br><br>
+Please review the submitted subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear ${creatorHi},
+
+This email is to inform you that the subtask has been submitted for your review. Please review the submitted work and make a judgement: accept or return.
+
+${detailLines.text}
+
+Please review the submitted subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
+
+${projectTrackerEmailFooterText()}`;
     const ccAddr = picNotifyEmail || picEmail;
     const r = await sendNotificationEmail({
       to: toEmail,
@@ -7597,19 +7670,21 @@ async function handleNotifySubtaskAccepted(req, res) {
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Accepted: ${subtaskTitleForSubject}`;
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
     const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
 This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.<br><br>
 ${detailLines.html}<br><br>
+Please review the accepted subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
     const text = `Dear ${picHi},
 
 This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.
 
 ${detailLines.text}
+
+Please review the accepted subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
 
 ${projectTrackerEmailFooterText()}`;
     const r = await sendNotificationEmail({
@@ -7708,19 +7783,21 @@ async function handleNotifySubtaskReturned(req, res) {
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Returned: ${subtaskTitleForSubject}`;
-    const subtaskUrl = subtaskWebAppUrl(subtaskId);
     const picHi = staffDisplayName(picStaff, toEmail);
     const safePicHi = escapeHtml(picHi);
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
     const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${safePicHi},<br><br>
 This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.<br><br>
 ${detailLines.html}<br><br>
+Please review the returned subtask in Project Tracker. ${eventSubtaskLinkHtml(subtaskId)}<br><br>
 ${projectTrackerEmailFooterHtml()}</div>`;
     const text = `Dear ${picHi},
 
 This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.
 
 ${detailLines.text}
+
+Please review the returned subtask in Project Tracker. ${eventSubtaskLinkText(subtaskId)}
 
 ${projectTrackerEmailFooterText()}`;
     const r = await sendNotificationEmail({
@@ -7739,6 +7816,298 @@ ${projectTrackerEmailFooterText()}`;
     sendJson(req, res, 200, { ok: true, subtaskId, messageId: r.id || null });
   } catch (e) {
     console.error('handleNotifySubtaskReturned:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+const TASK_ACTION_EMAIL = {
+  deleted: {
+    subject: 'Deleted',
+    intro:
+      'This email is to inform you that the task has been deleted. This task is removed from the active list.',
+    closing: 'Please review the deleted task in Project Tracker.',
+  },
+  restored: {
+    subject: 'Restored',
+    intro:
+      'This email is to inform you that the task has been restored. This deleted task is brought back to the active list.',
+    closing: 'Please review the restored task in Project Tracker.',
+  },
+  paused: {
+    subject: 'Paused',
+    intro:
+      'This email is to inform you that the task has been paused. Work on this task is temporarily suspended.',
+    closing: 'Please review the paused task in Project Tracker.',
+  },
+  resumed: {
+    subject: 'Resumed',
+    intro:
+      'This email is to inform you that the task has been resumed. Work on this task continues after being paused.',
+    closing: 'Please review the resumed task in Project Tracker.',
+  },
+};
+
+const SUBTASK_ACTION_EMAIL = {
+  deleted: {
+    subject: 'Deleted',
+    intro:
+      'This email is to inform you that the subtask has been deleted. This subtask is removed from the active list.',
+    closing: 'Please review the deleted subtask in Project Tracker.',
+  },
+  restored: {
+    subject: 'Restored',
+    intro:
+      'This email is to inform you that the subtask has been restored. This deleted subtask is brought back to the active list.',
+    closing: 'Please review the restored subtask in Project Tracker.',
+  },
+  paused: {
+    subject: 'Paused',
+    intro:
+      'This email is to inform you that the subtask has been paused. Work on this subtask is temporarily suspended.',
+    closing: 'Please review the paused subtask in Project Tracker.',
+  },
+  resumed: {
+    subject: 'Resumed',
+    intro:
+      'This email is to inform you that the subtask has been resumed. Work on this subtask continues after being paused.',
+    closing: 'Please review the resumed subtask in Project Tracker.',
+  },
+};
+
+async function handleNotifyTaskAction(req, res, action) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const cfg = TASK_ACTION_EMAIL[action];
+  if (!cfg) {
+    sendJson(req, res, 400, { error: 'Unknown task action' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const taskId = (body.taskId || '').trim();
+    if (!taskId) {
+      sendJson(req, res, 400, { error: 'taskId required' });
+      return;
+    }
+    const { data: taskRow, error: tErr } = await db
+      .from('task')
+      .select('*')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (tErr || !taskRow) {
+      sendJson(req, res, 404, { error: 'Task not found' });
+      return;
+    }
+    const actorId = (taskRow.update_by || taskRow.create_by || '').toString().trim();
+    const { data: actorStaff } = await fetchStaffRowForCreateBy(db, actorId);
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const actorMatchesSession = await sessionEmailBelongsToStaffRow(db, actorStaff, sessionEmail);
+    if (!actorMatchesSession) {
+      sendJson(req, res, 403, {
+        error: 'Only the user who performed the task action can send action emails',
+      });
+      return;
+    }
+    const actorReplyTo = (
+      (await resolveStaffEmailForNotifications(db, actorStaff)) ||
+      (actorStaff?.email || '').trim()
+    ).trim();
+    const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
+    const subject = `[Project Tracker] Task ${cfg.subject}: ${mailSubjectSingleLine(taskName)}`;
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const recipientByNorm = new Map();
+    for (const id of collectTaskAssigneeStaffIds(taskRow)) {
+      const raw = String(id || '').trim();
+      if (!raw) continue;
+      recipientByNorm.set(raw.toLowerCase(), raw);
+    }
+    recipientByNorm.delete(String(actorId).trim().toLowerCase());
+    const results = [];
+    for (const staffUuid of recipientByNorm.values()) {
+      const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
+      const to = await resolveStaffEmailForNotifications(db, s);
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      const recipientName = staffDisplayName(s, to);
+      const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+${escapeHtml(cfg.intro)}<br><br>
+${detailLines.html}<br><br>
+${escapeHtml(cfg.closing)} ${eventTaskLinkHtml(taskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+      const text = `Dear ${recipientName},
+
+${cfg.intro}
+
+${detailLines.text}
+
+${cfg.closing} ${eventTaskLinkText(taskId)}
+
+${projectTrackerEmailFooterText()}`;
+      const r = await sendNotificationEmail({
+        to,
+        subject,
+        text,
+        html,
+        from: NOTIFICATION_EMAIL_FROM,
+        replyTo: actorReplyTo || sessionEmail || undefined,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        messageId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      action,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifyTaskAction:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+async function handleNotifySubtaskAction(req, res, action) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const cfg = SUBTASK_ACTION_EMAIL[action];
+  if (!cfg) {
+    sendJson(req, res, 400, { error: 'Unknown subtask action' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: sErr } = await db
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (sErr || !row) {
+      sendJson(req, res, 404, { error: 'Subtask not found' });
+      return;
+    }
+    const actorId = (row.update_by || row.create_by || '').toString().trim();
+    const { data: actorStaff } = await fetchStaffRowForCreateBy(db, actorId);
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const actorMatchesSession = await sessionEmailBelongsToStaffRow(db, actorStaff, sessionEmail);
+    if (!actorMatchesSession) {
+      sendJson(req, res, 403, {
+        error: 'Only the user who performed the subtask action can send action emails',
+      });
+      return;
+    }
+    const actorReplyTo = (
+      (await resolveStaffEmailForNotifications(db, actorStaff)) ||
+      (actorStaff?.email || '').trim()
+    ).trim();
+    const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
+    const subject = `[Project Tracker] Subtask ${cfg.subject}: ${mailSubjectSingleLine(subtaskName)}`;
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const recipientByNorm = new Map();
+    for (const id of collectSubtaskAssigneeStaffIds(row)) {
+      const raw = String(id || '').trim();
+      if (!raw) continue;
+      recipientByNorm.set(raw.toLowerCase(), raw);
+    }
+    recipientByNorm.delete(String(actorId).trim().toLowerCase());
+    const results = [];
+    for (const staffUuid of recipientByNorm.values()) {
+      const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
+      const to = await resolveStaffEmailForNotifications(db, s);
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      const recipientName = staffDisplayName(s, to);
+      const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+${escapeHtml(cfg.intro)}<br><br>
+${detailLines.html}<br><br>
+${escapeHtml(cfg.closing)} ${eventSubtaskLinkHtml(subtaskId)}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+      const text = `Dear ${recipientName},
+
+${cfg.intro}
+
+${detailLines.text}
+
+${cfg.closing} ${eventSubtaskLinkText(subtaskId)}
+
+${projectTrackerEmailFooterText()}`;
+      const r = await sendNotificationEmail({
+        to,
+        subject,
+        text,
+        html,
+        from: NOTIFICATION_EMAIL_FROM,
+        replyTo: actorReplyTo || sessionEmail || undefined,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        messageId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      action,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifySubtaskAction:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
   }
 }
@@ -7857,6 +8226,22 @@ const server = http.createServer(async (req, res) => {
     await handleNotifyTaskReturned(req, res);
     return;
   }
+  if (path === '/api/notify/task-deleted' && req.method === 'POST') {
+    await handleNotifyTaskAction(req, res, 'deleted');
+    return;
+  }
+  if (path === '/api/notify/task-restored' && req.method === 'POST') {
+    await handleNotifyTaskAction(req, res, 'restored');
+    return;
+  }
+  if (path === '/api/notify/task-paused' && req.method === 'POST') {
+    await handleNotifyTaskAction(req, res, 'paused');
+    return;
+  }
+  if (path === '/api/notify/task-resumed' && req.method === 'POST') {
+    await handleNotifyTaskAction(req, res, 'resumed');
+    return;
+  }
   if (path === '/api/notify/subtask-submission' && req.method === 'POST') {
     await handleNotifySubtaskSubmission(req, res);
     return;
@@ -7867,6 +8252,22 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/subtask-returned' && req.method === 'POST') {
     await handleNotifySubtaskReturned(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-deleted' && req.method === 'POST') {
+    await handleNotifySubtaskAction(req, res, 'deleted');
+    return;
+  }
+  if (path === '/api/notify/subtask-restored' && req.method === 'POST') {
+    await handleNotifySubtaskAction(req, res, 'restored');
+    return;
+  }
+  if (path === '/api/notify/subtask-paused' && req.method === 'POST') {
+    await handleNotifySubtaskAction(req, res, 'paused');
+    return;
+  }
+  if (path === '/api/notify/subtask-resumed' && req.method === 'POST') {
+    await handleNotifySubtaskAction(req, res, 'resumed');
     return;
   }
   if (path === '/api/cron/urgent-task-reminders' && req.method === 'POST') {
