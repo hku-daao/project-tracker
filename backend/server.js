@@ -56,6 +56,8 @@ const TASK_UPDATE_NOTIFY_FIELD_LABELS = {
   startDate: 'Start date',
   dueDate: 'Due date',
   submission: 'Submission',
+  files: 'Files',
+  urls: 'URLs',
 };
 
 const TASK_UPDATE_NOTIFY_MAX_CHANGES = 8;
@@ -74,6 +76,8 @@ const SUBTASK_UPDATE_NOTIFY_FIELD_LABELS = {
   startDate: 'Start date',
   dueDate: 'Due date',
   submission: 'Submission',
+  files: 'Files',
+  urls: 'URLs',
 };
 
 /** Allowed keys from Flutter for project-updated email lines (display label is server-side). */
@@ -1040,6 +1044,13 @@ function emailChangeMap(rawChanges) {
   return map;
 }
 
+function workflowCompositeChangeMap(rawChanges) {
+  const map = emailChangeMap(rawChanges);
+  map.delete('status');
+  map.delete('submission');
+  return map;
+}
+
 function changedValueHtml(change, currentValue) {
   if (!change) return escapeHtml(emailPlainValue(currentValue));
   return `<strong><span style="color:#B00020;">${escapeHtml(emailPlainValue(change.oldValue))}</span></strong> -&gt; <strong><span style="color:#188038;">${escapeHtml(emailPlainValue(change.newValue))}</span></strong>`;
@@ -1048,6 +1059,29 @@ function changedValueHtml(change, currentValue) {
 function changedValueText(change, currentValue) {
   if (!change) return emailPlainValue(currentValue);
   return `${emailPlainValue(change.oldValue)} -> ${emailPlainValue(change.newValue)}`;
+}
+
+function changedActionHtml(change) {
+  if (!change) return '';
+  const oldValue = emailPlainValue(change.oldValue);
+  const newValue = emailPlainValue(change.newValue);
+  const hasOld = oldValue !== '-';
+  const hasNew = newValue !== '-';
+  if (hasOld && hasNew) return changedValueHtml(change, '');
+  if (hasNew) {
+    return `<strong><span style="color:#188038;">${escapeHtml(newValue)}</span></strong>`;
+  }
+  return `<strong><span style="color:#B00020;">${escapeHtml(oldValue)}</span></strong>`;
+}
+
+function changedActionText(change) {
+  if (!change) return '';
+  const oldValue = emailPlainValue(change.oldValue);
+  const newValue = emailPlainValue(change.newValue);
+  const hasOld = oldValue !== '-';
+  const hasNew = newValue !== '-';
+  if (hasOld && hasNew) return changedValueText(change, '');
+  return hasNew ? newValue : oldValue;
 }
 
 function eventEmailDateValue(value) {
@@ -1249,11 +1283,16 @@ async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = 
     ['Due date', changedDateHtml(changeMap.get('dueDate'), taskRow.due_date), changedDateText(changeMap.get('dueDate'), taskRow.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), taskRow.submission), changedValueText(changeMap.get('submission'), taskRow.submission)],
   ];
-  if (extra.commentText) {
+  const commentText = extra.commentText || extra.commentAddedText;
+  const filesChange = changeMap.get('files');
+  if (filesChange) rows.push(['Files', changedActionHtml(filesChange), changedActionText(filesChange)]);
+  const urlsChange = changeMap.get('urls');
+  if (urlsChange) rows.push(['URLs', changedActionHtml(urlsChange), changedActionText(urlsChange)]);
+  if (commentText) {
     rows.push([
       'Comment',
-      `<span style="color:#188038;">${escapeHtml(emailPlainValue(extra.commentText))}</span>`,
-      emailPlainValue(extra.commentText),
+      `<strong><span style="color:#188038;">${escapeHtml(emailPlainValue(commentText))}</span></strong>`,
+      emailPlainValue(commentText),
     ]);
   }
   return {
@@ -1291,11 +1330,16 @@ async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {
     ['Due date', changedDateHtml(changeMap.get('dueDate'), row.due_date), changedDateText(changeMap.get('dueDate'), row.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), row.submission), changedValueText(changeMap.get('submission'), row.submission)],
   ];
-  if (extra.commentText) {
+  const commentText = extra.commentText || extra.commentAddedText;
+  const filesChange = changeMap.get('files');
+  if (filesChange) rows.push(['Files', changedActionHtml(filesChange), changedActionText(filesChange)]);
+  const urlsChange = changeMap.get('urls');
+  if (urlsChange) rows.push(['URLs', changedActionHtml(urlsChange), changedActionText(urlsChange)]);
+  if (commentText) {
     rows.push([
       'Comment',
-      `<span style="color:#188038;">${escapeHtml(emailPlainValue(extra.commentText))}</span>`,
-      emailPlainValue(extra.commentText),
+      `<strong><span style="color:#188038;">${escapeHtml(emailPlainValue(commentText))}</span></strong>`,
+      emailPlainValue(commentText),
     ]);
   }
   return {
@@ -5117,7 +5161,12 @@ async function handleNotifyTaskAssigned(req, res) {
       (creatorStaff.name || '').trim() ||
       creatorEmail;
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
-    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const detailLines = await buildTaskUpdateDetailLines(
+      db,
+      taskRow,
+      emailChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
 
     const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
 
@@ -5135,12 +5184,11 @@ async function handleNotifyTaskAssigned(req, res) {
         });
         continue;
       }
-      const { data: s } = await db
-        .from('staff')
-        .select('email, name')
-        .eq('id', staffUuid)
-        .maybeSingle();
-      const to = (s?.email || '').trim();
+      const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
+      const to = (
+        (await resolveStaffEmailForNotifications(db, s)) ||
+        (s?.email || '').trim()
+      ).trim();
       if (!to) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;
@@ -6456,11 +6504,7 @@ async function handleNotifySubtaskEditedComment(req, res) {
     const replyTo = editorReplyTo || sessionEmail || undefined;
 
     for (const staffUuid of recipientByNorm.values()) {
-      const { data: s } = await db
-        .from('staff')
-        .select('id, email, name')
-        .eq('id', staffUuid)
-        .maybeSingle();
+      const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
       const to = (
         (await resolveStaffEmailForNotifications(db, s)) ||
         (s?.email || '').trim()
@@ -6702,6 +6746,11 @@ async function handleNotifyTaskUpdated(req, res) {
     ) {
       recipientByNorm.set(creatorNormKey, creatorId);
     }
+    mergeRecipientStaffKeys(recipientByNorm, await requestWorkflowExtraRecipientStaffKeys(body));
+    mergeRecipientStaffKeys(
+      recipientByNorm,
+      await removedAssigneeStaffKeysFromChange(db, changeMap),
+    );
 
     const omitSelfCreatorForFieldUpdates =
       changeLinesHtmlParts.length > 0 &&
@@ -6902,19 +6951,6 @@ async function handleNotifySubtaskUpdated(req, res) {
       'Colleague';
     const creatorId = (row.create_by || '').toString().trim();
     const updaterNorm = String(updaterId).trim().toLowerCase();
-    const creatorNorm = creatorId ? creatorId.toLowerCase() : '';
-    if (!creatorId || updaterNorm !== creatorNorm) {
-      sendJson(req, res, 200, {
-        ok: true,
-        skipped: true,
-        subtaskId,
-        message:
-          'Sub-task update notification emails are sent only when the sub-task creator saves changes or adds a comment.',
-        recipients: 0,
-        results: [],
-      });
-      return;
-    }
 
     const subtaskTitle =
       (row.subtask_name || '').toString().trim() || '(no title)';
@@ -6985,6 +7021,11 @@ async function handleNotifySubtaskUpdated(req, res) {
     }
 
     const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
+    mergeRecipientStaffKeys(recipientByNorm, await requestWorkflowExtraRecipientStaffKeys(body));
+    mergeRecipientStaffKeys(
+      recipientByNorm,
+      await removedAssigneeStaffKeysFromChange(db, changeMap),
+    );
     recipientByNorm.delete(updaterNorm);
     const results = [];
     const replyTo =
@@ -7191,13 +7232,15 @@ async function handleNotifyTaskSubmission(req, res) {
     const detailLines = await buildTaskUpdateDetailLines(
       db,
       taskRow,
-      emailChangeMap(body.changes),
+      workflowCompositeChangeMap(body.changes),
       { commentAddedText: body.commentAddedText },
     );
     const results = await sendTaskWorkflowEmailToAssignees({
       taskRow,
       actorStaffKey: picId,
       actorReplyTo: picNotifyEmail || picEmail,
+      recipientStaffKeys: [taskRow.create_by],
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the task has been submitted for review. Please review the submitted work and make a judgement: accept or return.',
@@ -7226,17 +7269,105 @@ async function handleNotifyTaskSubmission(req, res) {
   }
 }
 
+function recipientStaffMap(staffKeys) {
+  const recipientByNorm = new Map();
+  for (const rawKey of staffKeys || []) {
+    const raw = String(rawKey || '').trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
+  }
+  return recipientByNorm;
+}
+
+function mergeRecipientStaffKeys(recipientByNorm, staffKeys) {
+  for (const rawKey of staffKeys || []) {
+    const raw = String(rawKey || '').trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    if (!recipientByNorm.has(key)) recipientByNorm.set(key, raw);
+  }
+}
+
+function requestExtraRecipientStaffKeys(body) {
+  return Array.isArray(body?.extraRecipientStaffKeys)
+    ? body.extraRecipientStaffKeys
+    : [];
+}
+
+function splitAssigneeEmailNames(value) {
+  return String(value || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+async function removedAssigneeStaffKeysFromChange(dbClient, changeMap) {
+  const change = changeMap?.get?.('assignees');
+  if (!change) return [];
+  const oldNames = splitAssigneeEmailNames(change.oldValue);
+  const newNames = new Set(
+    splitAssigneeEmailNames(change.newValue).map((name) => name.toLowerCase()),
+  );
+  const removedNames = oldNames.filter(
+    (name) => !newNames.has(name.toLowerCase()),
+  );
+  if (removedNames.length === 0) return [];
+
+  const removedNameSet = new Set(removedNames.map((name) => name.toLowerCase()));
+  const { data: rows, error } = await dbClient
+    .from('staff')
+    .select('id, name');
+  if (error) return [];
+  return (rows || [])
+    .filter((row) => removedNameSet.has(String(row?.name || '').trim().toLowerCase()))
+    .map((row) => String(row?.id || '').trim())
+    .filter(Boolean);
+}
+
+async function assigneeStaffKeysFromChange(dbClient, changeMap) {
+  const change = changeMap?.get?.('assignees');
+  if (!change) return [];
+  const changedNames = [
+    ...splitAssigneeEmailNames(change.oldValue),
+    ...splitAssigneeEmailNames(change.newValue),
+  ];
+  if (changedNames.length === 0) return [];
+
+  const changedNameSet = new Set(changedNames.map((name) => name.toLowerCase()));
+  const { data: rows, error } = await dbClient
+    .from('staff')
+    .select('id, name');
+  if (error) return [];
+  return (rows || [])
+    .filter((row) => changedNameSet.has(String(row?.name || '').trim().toLowerCase()))
+    .map((row) => String(row?.id || '').trim())
+    .filter(Boolean);
+}
+
+async function requestWorkflowExtraRecipientStaffKeys(body) {
+  return [
+    ...requestExtraRecipientStaffKeys(body),
+    ...(await assigneeStaffKeysFromChange(db, emailChangeMap(body?.changes))),
+  ];
+}
+
 async function sendTaskWorkflowEmailToAssignees({
   taskRow,
   actorStaffKey,
   actorReplyTo,
+  recipientStaffKeys,
+  extraRecipientStaffKeys,
   subject,
   intro,
   detailLines,
   closing,
   taskId,
 }) {
-  const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+  const recipientByNorm = Array.isArray(recipientStaffKeys)
+    ? recipientStaffMap(recipientStaffKeys)
+    : buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+  mergeRecipientStaffKeys(recipientByNorm, extraRecipientStaffKeys);
 
   const results = [];
   for (const staffKey of recipientByNorm.values()) {
@@ -7284,13 +7415,18 @@ async function sendSubtaskWorkflowEmailToAssignees({
   row,
   actorStaffKey,
   actorReplyTo,
+  recipientStaffKeys,
+  extraRecipientStaffKeys,
   subject,
   intro,
   detailLines,
   closing,
   subtaskId,
 }) {
-  const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
+  const recipientByNorm = Array.isArray(recipientStaffKeys)
+    ? recipientStaffMap(recipientStaffKeys)
+    : buildTaskUpdatedDefaultRecipientStaffIds(row);
+  mergeRecipientStaffKeys(recipientByNorm, extraRecipientStaffKeys);
 
   const results = [];
   for (const staffKey of recipientByNorm.values()) {
@@ -7395,11 +7531,17 @@ async function handleNotifyTaskAccepted(req, res) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Accepted: ${taskTitleForSubject}`;
-    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const detailLines = await buildTaskUpdateDetailLines(
+      db,
+      taskRow,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const results = await sendTaskWorkflowEmailToAssignees({
       taskRow,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.',
@@ -7489,11 +7631,17 @@ async function handleNotifyTaskReturned(req, res) {
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const taskTitleForSubject = mailSubjectSingleLine(taskName).replace(/"/g, '');
     const subject = `[Project Tracker] Task Submission Returned: ${taskTitleForSubject}`;
-    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const detailLines = await buildTaskUpdateDetailLines(
+      db,
+      taskRow,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const results = await sendTaskWorkflowEmailToAssignees({
       taskRow,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the task submission has been returned. The creator reviewed this task submission and returned it for revision.',
@@ -7599,13 +7747,15 @@ async function handleNotifySubtaskSubmission(req, res) {
     const detailLines = await buildSubtaskUpdateDetailLines(
       db,
       row,
-      emailChangeMap(body.changes),
+      workflowCompositeChangeMap(body.changes),
       { commentAddedText: body.commentAddedText },
     );
     const results = await sendSubtaskWorkflowEmailToAssignees({
       row,
       actorStaffKey: picId,
       actorReplyTo: picNotifyEmail || picEmail,
+      recipientStaffKeys: [row.create_by],
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the subtask has been submitted for review. Please review the submitted work and make a judgement: accept or return.',
@@ -7695,11 +7845,17 @@ async function handleNotifySubtaskAccepted(req, res) {
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Accepted: ${subtaskTitleForSubject}`;
-    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const detailLines = await buildSubtaskUpdateDetailLines(
+      db,
+      row,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const results = await sendSubtaskWorkflowEmailToAssignees({
       row,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.',
@@ -7789,11 +7945,17 @@ async function handleNotifySubtaskReturned(req, res) {
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subtaskTitleForSubject = mailSubjectSingleLine(subtaskName).replace(/"/g, '');
     const subject = `[Project Tracker] Subtask Submission Returned: ${subtaskTitleForSubject}`;
-    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const detailLines = await buildSubtaskUpdateDetailLines(
+      db,
+      row,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const results = await sendSubtaskWorkflowEmailToAssignees({
       row,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
       subject,
       intro:
         'This email is to inform you that the subtask submission has been returned. The creator reviewed this subtask submission and returned it for revision.',
@@ -7818,6 +7980,208 @@ async function handleNotifySubtaskReturned(req, res) {
     });
   } catch (e) {
     console.error('handleNotifySubtaskReturned:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+async function handleNotifyTaskUndoSubmissionDecision(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const taskId = (body.taskId || '').trim();
+    if (!taskId) {
+      sendJson(req, res, 400, { error: 'taskId required' });
+      return;
+    }
+    const { data: taskRow, error: tErr } = await db
+      .from('task')
+      .select('*')
+      .eq('id', taskId)
+      .maybeSingle();
+    if (tErr || !taskRow) {
+      sendJson(req, res, 404, { error: 'Task not found' });
+      return;
+    }
+    const actorId = (taskRow.update_by || taskRow.create_by || '').toString().trim();
+    const { data: actorStaff } = await fetchStaffRowForCreateBy(db, actorId);
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const actorMatchesSession = await sessionEmailBelongsToStaffRow(db, actorStaff, sessionEmail);
+    if (!actorMatchesSession) {
+      sendJson(req, res, 403, {
+        error: 'Only the user who performed the task undo can send undo emails',
+      });
+      return;
+    }
+    const actorReplyTo = (
+      (await resolveStaffEmailForNotifications(db, actorStaff)) ||
+      (actorStaff?.email || '').trim()
+    ).trim();
+    const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
+    const subject = `[Project Tracker] Task Submission Decision Undone: ${mailSubjectSingleLine(taskName)}`;
+    const changes = [];
+    const oldStatus = String(body.oldStatus || '').trim();
+    const newStatus = String(taskRow.status || '').trim();
+    if (oldStatus && oldStatus !== newStatus) {
+      changes.push({ field: 'status', oldValue: oldStatus, newValue: newStatus });
+    }
+    const oldSubmission = String(body.oldSubmission || '').trim();
+    const newSubmission = String(taskRow.submission || '').trim();
+    if (oldSubmission && oldSubmission !== newSubmission) {
+      changes.push({ field: 'submission', oldValue: oldSubmission, newValue: newSubmission });
+    }
+    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, workflowCompositeChangeMap(body.changes), {
+      commentAddedText: body.commentAddedText,
+    });
+    const results = await sendTaskWorkflowEmailToAssignees({
+      taskRow,
+      actorStaffKey: actorId,
+      actorReplyTo,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
+      subject,
+      intro:
+        'This email is to inform you that the previous submission decision for this task has been undone. The task is now back to pending review.',
+      detailLines,
+      closing: 'Please review the task whose submission decision was undone in Project Tracker.',
+      taskId,
+    });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
+      return;
+    }
+    sendJson(req, res, 200, {
+      ok: true,
+      taskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifyTaskUndoSubmissionDecision:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+async function handleNotifySubtaskUndoSubmissionDecision(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const subtaskId = (body.subtaskId || '').trim();
+    if (!subtaskId) {
+      sendJson(req, res, 400, { error: 'subtaskId required' });
+      return;
+    }
+    const { data: row, error: sErr } = await db
+      .from('subtask')
+      .select('*')
+      .eq('id', subtaskId)
+      .maybeSingle();
+    if (sErr || !row) {
+      sendJson(req, res, 404, { error: 'Subtask not found' });
+      return;
+    }
+    const actorId = (row.update_by || row.create_by || '').toString().trim();
+    const { data: actorStaff } = await fetchStaffRowForCreateBy(db, actorId);
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    const actorMatchesSession = await sessionEmailBelongsToStaffRow(db, actorStaff, sessionEmail);
+    if (!actorMatchesSession) {
+      sendJson(req, res, 403, {
+        error: 'Only the user who performed the subtask undo can send undo emails',
+      });
+      return;
+    }
+    const actorReplyTo = (
+      (await resolveStaffEmailForNotifications(db, actorStaff)) ||
+      (actorStaff?.email || '').trim()
+    ).trim();
+    const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
+    const subject = `[Project Tracker] Subtask Submission Decision Undone: ${mailSubjectSingleLine(subtaskName)}`;
+    const changes = [];
+    const oldStatus = String(body.oldStatus || '').trim();
+    const newStatus = String(row.status || '').trim();
+    if (oldStatus && oldStatus !== newStatus) {
+      changes.push({ field: 'status', oldValue: oldStatus, newValue: newStatus });
+    }
+    const oldSubmission = String(body.oldSubmission || '').trim();
+    const newSubmission = String(row.submission || '').trim();
+    if (oldSubmission && oldSubmission !== newSubmission) {
+      changes.push({ field: 'submission', oldValue: oldSubmission, newValue: newSubmission });
+    }
+    const detailLines = await buildSubtaskUpdateDetailLines(db, row, workflowCompositeChangeMap(body.changes), {
+      commentAddedText: body.commentAddedText,
+    });
+    const results = await sendSubtaskWorkflowEmailToAssignees({
+      row,
+      actorStaffKey: actorId,
+      actorReplyTo,
+      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
+      subject,
+      intro:
+        'This email is to inform you that the previous submission decision for this subtask has been undone. The subtask is now back to pending review.',
+      detailLines,
+      closing: 'Please review the subtask whose submission decision was undone in Project Tracker.',
+      subtaskId,
+    });
+    const failed = results.find((x) => x.ok === false && !x.skipped);
+    if (failed) {
+      sendJson(req, res, 502, {
+        error: failed.error || 'Failed to send notification email',
+        detail: failed.detail || null,
+        results,
+      });
+      return;
+    }
+    sendJson(req, res, 200, {
+      ok: true,
+      subtaskId,
+      recipients: results.filter((x) => x.ok && !x.skipped).length,
+      results,
+    });
+  } catch (e) {
+    console.error('handleNotifySubtaskUndoSubmissionDecision:', e);
     sendJson(req, res, 500, { error: e.message || String(e) });
   }
 }
@@ -7935,8 +8299,18 @@ async function handleNotifyTaskAction(req, res, action) {
     ).trim();
     const taskName = (taskRow.task_name || '').toString().trim() || '(no title)';
     const subject = `[Project Tracker] Task ${cfg.subject}: ${mailSubjectSingleLine(taskName)}`;
-    const detailLines = await buildTaskUpdateDetailLines(db, taskRow, new Map());
+    const detailLines = await buildTaskUpdateDetailLines(
+      db,
+      taskRow,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(taskRow);
+    mergeRecipientStaffKeys(recipientByNorm, await requestWorkflowExtraRecipientStaffKeys(body));
+    mergeRecipientStaffKeys(
+      recipientByNorm,
+      await assigneeStaffKeysFromChange(db, emailChangeMap(body.changes)),
+    );
     const results = [];
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
@@ -8048,8 +8422,18 @@ async function handleNotifySubtaskAction(req, res, action) {
     ).trim();
     const subtaskName = (row.subtask_name || '').toString().trim() || '(no title)';
     const subject = `[Project Tracker] Subtask ${cfg.subject}: ${mailSubjectSingleLine(subtaskName)}`;
-    const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
+    const detailLines = await buildSubtaskUpdateDetailLines(
+      db,
+      row,
+      workflowCompositeChangeMap(body.changes),
+      { commentAddedText: body.commentAddedText },
+    );
     const recipientByNorm = buildTaskUpdatedDefaultRecipientStaffIds(row);
+    mergeRecipientStaffKeys(recipientByNorm, await requestWorkflowExtraRecipientStaffKeys(body));
+    mergeRecipientStaffKeys(
+      recipientByNorm,
+      await assigneeStaffKeysFromChange(db, emailChangeMap(body.changes)),
+    );
     const results = [];
     for (const staffUuid of recipientByNorm.values()) {
       const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
@@ -8216,6 +8600,10 @@ const server = http.createServer(async (req, res) => {
     await handleNotifyTaskReturned(req, res);
     return;
   }
+  if (path === '/api/notify/task-undo' && req.method === 'POST') {
+    await handleNotifyTaskUndoSubmissionDecision(req, res);
+    return;
+  }
   if (path === '/api/notify/task-deleted' && req.method === 'POST') {
     await handleNotifyTaskAction(req, res, 'deleted');
     return;
@@ -8242,6 +8630,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/subtask-returned' && req.method === 'POST') {
     await handleNotifySubtaskReturned(req, res);
+    return;
+  }
+  if (path === '/api/notify/subtask-undo' && req.method === 'POST') {
+    await handleNotifySubtaskUndoSubmissionDecision(req, res);
     return;
   }
   if (path === '/api/notify/subtask-deleted' && req.method === 'POST') {

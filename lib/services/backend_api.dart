@@ -25,6 +25,19 @@ class BackendApi {
   static const String notifySubtaskUpdatedBackendNotDeployed =
       'NOTIFY_SUBTASK_UPDATED_BACKEND_NOT_DEPLOYED';
 
+  List<String> _cleanStaffKeys(List<String>? staffKeys) {
+    final seen = <String>{};
+    final cleaned = <String>[];
+    for (final raw in staffKeys ?? const <String>[]) {
+      final key = raw.trim();
+      final norm = key.toLowerCase();
+      if (key.isEmpty || seen.contains(norm)) continue;
+      seen.add(norm);
+      cleaned.add(key);
+    }
+    return cleaned;
+  }
+
   /// Emails sub-task assignees after creation (creator only). No-op when server has
   /// `EMAIL_SENDING_ENABLED=false`.
   Future<String?> notifySubtaskAssigned({
@@ -276,6 +289,7 @@ class BackendApi {
     required String taskId,
     List<Map<String, String>>? changes,
     String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
 
     /// Singular `comment.id` when the update email should use comment audit fields.
     String? taskCommentId,
@@ -292,6 +306,10 @@ class BackendApi {
       final tc = taskCommentId?.trim();
       if (tc != null && tc.isNotEmpty) {
         payload['taskCommentId'] = tc;
+      }
+      final extra = _cleanStaffKeys(extraRecipientStaffKeys);
+      if (extra.isNotEmpty) {
+        payload['extraRecipientStaffKeys'] = extra;
       }
       final response = await http
           .post(
@@ -329,6 +347,7 @@ class BackendApi {
     required String subtaskId,
     List<Map<String, String>>? changes,
     String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
 
     /// `subtask_comment.id` when only a creator comment was saved (no subtask `update_by`).
     String? subtaskCommentId,
@@ -345,6 +364,10 @@ class BackendApi {
       final sc = subtaskCommentId?.trim();
       if (sc != null && sc.isNotEmpty) {
         payload['subtaskCommentId'] = sc;
+      }
+      final extra = _cleanStaffKeys(extraRecipientStaffKeys);
+      if (extra.isNotEmpty) {
+        payload['extraRecipientStaffKeys'] = extra;
       }
       final response = await http
           .post(
@@ -392,6 +415,7 @@ class BackendApi {
     List<Map<String, String>>? changes,
     String? commentAddedText,
     String? taskCommentId,
+    List<String>? extraRecipientStaffKeys,
   }) async {
     try {
       final payload = <String, dynamic>{'taskId': taskId};
@@ -405,6 +429,10 @@ class BackendApi {
       final tc = taskCommentId?.trim();
       if (tc != null && tc.isNotEmpty) {
         payload['taskCommentId'] = tc;
+      }
+      final extra = _cleanStaffKeys(extraRecipientStaffKeys);
+      if (extra.isNotEmpty) {
+        payload['extraRecipientStaffKeys'] = extra;
       }
       final response = await http
           .post(
@@ -432,57 +460,54 @@ class BackendApi {
   Future<String?> notifyTaskAccepted({
     required String idToken,
     required String taskId,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/notify/task-accepted'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'taskId': taskId}),
-          )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
-    } catch (e) {
-      return e.toString();
-    }
-  }
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-accepted',
+    payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
 
   /// Creator returned — To creator and assignees.
   Future<String?> notifyTaskReturned({
     required String idToken,
     required String taskId,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/notify/task-returned'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'taskId': taskId}),
-          )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
-    } catch (e) {
-      return e.toString();
-    }
-  }
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-returned',
+    payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
+
+  Future<String?> notifyTaskUndoSubmissionDecision({
+    required String idToken,
+    required String taskId,
+    required String oldStatus,
+    required String oldSubmission,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/task-undo',
+    payload: {
+      'taskId': taskId,
+      'oldStatus': oldStatus,
+      'oldSubmission': oldSubmission,
+    },
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
 
   /// PIC submission for review — To creator and assignees.
   Future<String?> notifySubtaskSubmission({
@@ -491,6 +516,7 @@ class BackendApi {
     List<Map<String, String>>? changes,
     String? commentAddedText,
     String? subtaskCommentId,
+    List<String>? extraRecipientStaffKeys,
   }) async {
     try {
       final payload = <String, dynamic>{'subtaskId': subtaskId};
@@ -504,6 +530,10 @@ class BackendApi {
       final sc = subtaskCommentId?.trim();
       if (sc != null && sc.isNotEmpty) {
         payload['subtaskCommentId'] = sc;
+      }
+      final extra = _cleanStaffKeys(extraRecipientStaffKeys);
+      if (extra.isNotEmpty) {
+        payload['extraRecipientStaffKeys'] = extra;
       }
       final response = await http
           .post(
@@ -531,64 +561,75 @@ class BackendApi {
   Future<String?> notifySubtaskAccepted({
     required String idToken,
     required String subtaskId,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/notify/subtask-accepted'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'subtaskId': subtaskId}),
-          )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
-    } catch (e) {
-      return e.toString();
-    }
-  }
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-accepted',
+    payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
 
   /// Creator returned — To creator and assignees.
   Future<String?> notifySubtaskReturned({
     required String idToken,
     required String subtaskId,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/notify/subtask-returned'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'subtaskId': subtaskId}),
-          )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
-    } catch (e) {
-      return e.toString();
-    }
-  }
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-returned',
+    payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
+
+  Future<String?> notifySubtaskUndoSubmissionDecision({
+    required String idToken,
+    required String subtaskId,
+    required String oldStatus,
+    required String oldSubmission,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
+  }) => _postNotifyAction(
+    idToken: idToken,
+    path: '/api/notify/subtask-undo',
+    payload: {
+      'subtaskId': subtaskId,
+      'oldStatus': oldStatus,
+      'oldSubmission': oldSubmission,
+    },
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
+  );
 
   Future<String?> _postNotifyAction({
     required String idToken,
     required String path,
-    required Map<String, String> payload,
+    required Map<String, dynamic> payload,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) async {
     try {
+      if (changes != null && changes.isNotEmpty) {
+        payload['changes'] = changes;
+      }
+      final c = commentAddedText?.trim();
+      if (c != null && c.isNotEmpty) {
+        payload['commentAddedText'] = c;
+      }
+      final extra = _cleanStaffKeys(extraRecipientStaffKeys);
+      if (extra.isNotEmpty) {
+        payload['extraRecipientStaffKeys'] = extra;
+      }
       final response = await http
           .post(
             url(path),
@@ -614,72 +655,120 @@ class BackendApi {
   Future<String?> notifyTaskDeleted({
     required String idToken,
     required String taskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/task-deleted',
     payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifyTaskRestored({
     required String idToken,
     required String taskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/task-restored',
     payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifyTaskPaused({
     required String idToken,
     required String taskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/task-paused',
     payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifyTaskResumed({
     required String idToken,
     required String taskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/task-resumed',
     payload: {'taskId': taskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifySubtaskDeleted({
     required String idToken,
     required String subtaskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/subtask-deleted',
     payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifySubtaskRestored({
     required String idToken,
     required String subtaskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/subtask-restored',
     payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifySubtaskPaused({
     required String idToken,
     required String subtaskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/subtask-paused',
     payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 
   Future<String?> notifySubtaskResumed({
     required String idToken,
     required String subtaskId,
+    List<Map<String, String>>? changes,
+    String? commentAddedText,
+    List<String>? extraRecipientStaffKeys,
   }) => _postNotifyAction(
     idToken: idToken,
     path: '/api/notify/subtask-resumed',
     payload: {'subtaskId': subtaskId},
+    changes: changes,
+    commentAddedText: commentAddedText,
+    extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
 }

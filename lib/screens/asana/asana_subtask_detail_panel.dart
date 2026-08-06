@@ -206,6 +206,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final _reasonController = TextEditingController();
   final _commentController = TextEditingController();
   final List<_SubtaskAttachmentDraft> _attachments = [];
+  final Map<String, String> _savedFileAttachmentLabelsById = {};
+  final Map<String, String> _savedUrlAttachmentLabelsById = {};
   List<SubtaskCommentRowDisplay> _comments = [];
   final Map<String, TextEditingController> _postedCommentControllers = {};
   final Map<String, String> _postedCommentSavedText = {};
@@ -428,20 +430,29 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       if (!mounted) return;
       setState(() {
         _clearAttachments();
+        _savedFileAttachmentLabelsById.clear();
+        _savedUrlAttachmentLabelsById.clear();
         for (final r in files) {
+          final label = (r.description?.trim().isNotEmpty == true)
+              ? r.description!
+              : (r.filename ?? '');
+          if (r.id.trim().isNotEmpty) {
+            _savedFileAttachmentLabelsById[r.id] = label.trim();
+          }
           _attachments.add(
             _SubtaskAttachmentDraft(
               id: r.id,
               url: r.url,
-              desc: (r.description?.trim().isNotEmpty == true)
-                  ? r.description
-                  : r.filename,
+              desc: label,
               mimeType: r.mimeType,
               isWebsiteLink: false,
             ),
           );
         }
         for (final r in urls) {
+          if (r.id.trim().isNotEmpty) {
+            _savedUrlAttachmentLabelsById[r.id] = r.label.trim();
+          }
           _attachments.add(
             _SubtaskAttachmentDraft(
               id: r.id,
@@ -715,7 +726,77 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
     _addChange(changes, 'startDate', _date(s.startDate), _date(_startDate));
     _addChange(changes, 'dueDate', _date(s.dueDate), _date(_dueDate));
+    _appendAttachmentChangesForEmail(changes);
     return changes;
+  }
+
+  String _attachmentEmailLabel(_SubtaskAttachmentDraft draft) {
+    final desc = draft.descController.text.trim();
+    if (desc.isNotEmpty) return desc;
+    final pending = draft.pendingFilename?.trim();
+    if (pending != null && pending.isNotEmpty) return pending;
+    return draft.urlController.text.trim();
+  }
+
+  void _appendAttachmentChangesForEmail(List<Map<String, String>> changes) {
+    final currentFilesById = <String, String>{};
+    final currentUrlsById = <String, String>{};
+    final addedFiles = <String>[];
+    final addedUrls = <String>[];
+
+    for (final draft in _attachments) {
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      final id = draft.id?.trim();
+      if (_draftShowsAsWebsiteLink(draft)) {
+        if (id == null || id.isEmpty) {
+          addedUrls.add('Added $label');
+        } else {
+          currentUrlsById[id] = label;
+        }
+      } else {
+        if (id == null || id.isEmpty) {
+          addedFiles.add('Added $label');
+        } else {
+          currentFilesById[id] = label;
+        }
+      }
+    }
+
+    final removedFiles = <String>[];
+    for (final entry in _savedFileAttachmentLabelsById.entries) {
+      if (!currentFilesById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedFiles.add('Removed ${entry.value}');
+      }
+    }
+    final removedUrls = <String>[];
+    for (final entry in _savedUrlAttachmentLabelsById.entries) {
+      if (!currentUrlsById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedUrls.add('Removed ${entry.value}');
+      }
+    }
+
+    final fileChanges = [...addedFiles, ...removedFiles].join('; ');
+    if (fileChanges.isNotEmpty) {
+      changes.add({'field': 'files', 'oldValue': '', 'newValue': fileChanges});
+    }
+    final urlChanges = [...addedUrls, ...removedUrls].join('; ');
+    if (urlChanges.isNotEmpty) {
+      changes.add({'field': 'urls', 'oldValue': '', 'newValue': urlChanges});
+    }
+  }
+
+  List<String> _subtaskAssigneeChangeRecipientStaffKeys(SingularSubtask s) {
+    final seen = <String>{};
+    final keys = <String>[];
+    for (final raw in [...s.assigneeIds, ..._assigneeIds]) {
+      final key = raw.trim();
+      final norm = key.toLowerCase();
+      if (key.isEmpty || seen.contains(norm)) continue;
+      seen.add(norm);
+      keys.add(key);
+    }
+    return keys;
   }
 
   bool _isCreator(AppState state) {
@@ -727,6 +808,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   bool _isPic(AppState state, SingularSubtask s) {
     return _matchesCurrentStaff(state, s.pic);
+  }
+
+  bool _canEditSubtaskDetails(AppState state, SingularSubtask? s) {
+    if (_effectiveCreateMode || _isCreator(state)) return true;
+    return s != null && !s.isDeleted && _isPic(state, s);
   }
 
   bool _isAssignee(AppState state, SingularSubtask s) {
@@ -889,7 +975,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   bool _canUndoAcceptOrReturn(SingularSubtask s) {
     if (s.isDeleted) return false;
     final submission = s.submission?.trim().toLowerCase() ?? '';
-    return submission == 'accepted' || submission == 'returned';
+    return submission == 'accepted';
   }
 
   bool _canPicSubmit(SingularSubtask s) {
@@ -1265,6 +1351,13 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _subtaskAssigneeChangeRecipientStaffKeys(s);
+      final composite = await _savePendingSubtaskEditsForWorkflowEmail(
+        state,
+        s,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.updateSubtaskRow(
         subtaskId: s.id,
         updatePauseStatus: true,
@@ -1291,10 +1384,33 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       await _notifyEmail(
         paused ? 'Sub-task paused email' : 'Sub-task resumed email',
         (token) => paused
-            ? BackendApi().notifySubtaskPaused(idToken: token, subtaskId: s.id)
+            ? BackendApi().notifySubtaskPaused(
+                idToken: token,
+                subtaskId: s.id,
+                changes: [
+                  ...composite.changes,
+                  {
+                    'field': 'status',
+                    'oldValue': 'Incomplete',
+                    'newValue': 'Paused',
+                  },
+                ],
+                commentAddedText: composite.comment,
+                extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+              )
             : BackendApi().notifySubtaskResumed(
                 idToken: token,
                 subtaskId: s.id,
+                changes: [
+                  ...composite.changes,
+                  {
+                    'field': 'status',
+                    'oldValue': 'Paused',
+                    'newValue': 'Incomplete',
+                  },
+                ],
+                commentAddedText: composite.comment,
+                extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
               ),
       );
     } finally {
@@ -1359,15 +1475,15 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         priority: _localPriority,
         startDate: _startDate,
         dueDate: _dueDate,
-        canEditName: _effectiveCreateMode || _isCreator(state),
-        canEditReason: _effectiveCreateMode || _isCreator(state),
+        canEditName: _canEditSubtaskDetails(state, _subtask),
+        canEditReason: _canEditSubtaskDetails(state, _subtask),
         reason: _reasonController.text.trim(),
         parentTaskContext: _buildParentContext(p, state),
         staff: _pickerStaff
             .map((s) => (id: s.assigneeId, name: s.name.trim()))
             .where((s) => s.name.isNotEmpty)
             .toList(),
-        canSuggestAssignees: _effectiveCreateMode || _isCreator(state),
+        canSuggestAssignees: _canEditSubtaskDetails(state, _subtask),
         selectedAssigneeIds: Set<String>.from(_assigneeIds),
         picAssigneeId: _picAssigneeId,
         websiteAttachments: _websiteAttachmentsForAi(),
@@ -1503,7 +1619,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
-    if ((_effectiveCreateMode || _isCreator(state)) && _assigneeIds.isEmpty) {
+    final canEditDetails = _canEditSubtaskDetails(state, s);
+    if (canEditDetails && _assigneeIds.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Assignee required',
@@ -1512,7 +1629,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
-    if ((_effectiveCreateMode || _isCreator(state)) &&
+    if (canEditDetails &&
         (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
       await showAsanaInfoDialog(
         context: context,
@@ -1673,10 +1790,11 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       }
 
       final isCreator = _isCreator(state);
-      final changesForEmail = isCreator
+      final canEditDetails = _canEditSubtaskDetails(state, s);
+      final changesForEmail = canEditDetails
           ? _subtaskChangesForEmail(state, s!)
           : <Map<String, String>>[];
-      if (isCreator) {
+      if (canEditDetails) {
         final err = await DatabaseService.updateSubtaskRow(
           subtaskId: s!.id,
           subtaskName: newName,
@@ -1771,7 +1889,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       _subtaskAi?.clearAllSuggestions();
       await _load();
       _notifyParentTaskOfSubtaskChange();
-      if (isCreator) {
+      if (canEditDetails) {
         await _notifyEmail(
           'Sub-task update email',
           (token) => BackendApi().notifySubtaskUpdated(
@@ -1779,6 +1897,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             subtaskId: s!.id,
             changes: changesForEmail,
             commentAddedText: commentText,
+            extraRecipientStaffKeys: s.assigneeIds,
             subtaskCommentId: commentId,
           ),
         );
@@ -1799,6 +1918,164 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     }
   }
 
+  Future<
+    ({List<Map<String, String>> changes, String comment, String? commentId})?
+  >
+  _savePendingSubtaskEditsForWorkflowEmail(
+    AppState state,
+    SingularSubtask s,
+  ) async {
+    final newName = _nameController.text.trim();
+    if (newName.isEmpty) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Sub-task name required',
+        content: 'Please fill in the sub-task name before continuing.',
+        palette: widget.palette,
+      );
+      return null;
+    }
+    final canEditDetails = _canEditSubtaskDetails(state, s);
+    if (canEditDetails && _assigneeIds.isEmpty) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Assignee required',
+        content: 'Select at least one assignee before continuing.',
+        palette: widget.palette,
+      );
+      return null;
+    }
+    if (canEditDetails &&
+        (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'PIC required',
+        content: 'Choose a PIC from the sub-task assignees before continuing.',
+        palette: widget.palette,
+      );
+      return null;
+    }
+    if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await showAsanaConfirmDialog(
+        context: context,
+        title: 'Reason required',
+        content:
+            'Please explain why this sub-task needs more time than expected before continuing.',
+        confirmText: 'OK',
+        palette: widget.palette,
+      );
+      return null;
+    }
+
+    final changesForEmail = canEditDetails
+        ? _subtaskChangesForEmail(state, s)
+        : <Map<String, String>>[];
+    if (canEditDetails) {
+      final err = await DatabaseService.updateSubtaskRow(
+        subtaskId: s.id,
+        subtaskName: newName,
+        description: stripInlineImageMarkers(_descController.text),
+        priorityDisplay: priorityToDisplayName(_localPriority),
+        status: s.status,
+        clearStartDate: _startDate == null,
+        startDate: _startDate,
+        clearDueDate: _dueDate == null,
+        dueDate: _dueDate,
+        assigneeSlots: _assigneeIds.toList(),
+        picStaffLookupKey: _picAssigneeId ?? '',
+        updateChangeDueReason: true,
+        changeDueReason: _needsChangeDueReason()
+            ? _reasonController.text.trim()
+            : null,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not update sub-task',
+          content: err,
+          palette: widget.palette,
+        );
+        return null;
+      }
+    }
+
+    final attErr = await _replaceSubtaskFileAndUrlAttachments(s.id);
+    if (attErr != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not save attachments',
+        content: attErr,
+        palette: widget.palette,
+      );
+      return null;
+    }
+
+    final commentText = stripInlineImageMarkers(_commentController.text);
+    if (!await _saveDirtyPostedComments(state)) return null;
+    String? commentId;
+    if (commentText.isNotEmpty ||
+        _hasPendingInlineImages('subtask_comment', 'draft')) {
+      final ins = await DatabaseService.insertSubtaskCommentRow(
+        subtaskId: s.id,
+        description: commentText.isNotEmpty
+            ? commentText
+            : inlineImageOnlyCommentPlaceholder,
+        creatorStaffLookupKey: state.userStaffAppId,
+      );
+      if (ins.error != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not add comment',
+          content: ins.error!,
+          palette: widget.palette,
+        );
+        return null;
+      }
+      commentId = ins.commentId;
+      if (commentId == null || commentId.isEmpty) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not add comment',
+          content:
+              'The comment was not saved because the database did not return a comment id.',
+          palette: widget.palette,
+        );
+        return null;
+      }
+      _commentController.clear();
+      await _loadComments(s);
+    }
+    final inlineErr = await _commitPendingInlineImages(
+      subtask: s,
+      state: state,
+      entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+    );
+    if (inlineErr != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not save inline image',
+        content: inlineErr,
+        palette: widget.palette,
+      );
+      return null;
+    }
+    await _loadAttachments(s);
+    return (
+      changes: changesForEmail,
+      comment: commentText,
+      commentId: commentId,
+    );
+  }
+
   Future<void> _deleteSubtask() async {
     if (await _blockAdminReadOnlyWrite()) return;
     final s = _subtask;
@@ -1816,6 +2093,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _subtaskAssigneeChangeRecipientStaffKeys(s);
+      final composite = await _savePendingSubtaskEditsForWorkflowEmail(
+        state,
+        s,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.markSubtaskDeleted(
         subtaskId: s.id,
         updaterStaffLookupKey: state.userStaffAppId,
@@ -1829,24 +2113,25 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
-      final inlineErr = await _commitPendingInlineImages(
-        subtask: s,
-        state: state,
-      );
-      if (inlineErr != null && mounted) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Could not save inline image',
-          content: inlineErr,
-          palette: widget.palette,
-        );
-        return;
-      }
       _notifyParentTaskOfSubtaskChange();
       await _notifyEmail(
         'Sub-task deleted email',
-        (token) =>
-            BackendApi().notifySubtaskDeleted(idToken: token, subtaskId: s.id),
+        (token) => BackendApi().notifySubtaskDeleted(
+          idToken: token,
+          subtaskId: s.id,
+          changes: [
+            ...composite.changes,
+            {
+              'field': 'status',
+              'oldValue': s.status.trim().isNotEmpty
+                  ? s.status.trim()
+                  : 'Incomplete',
+              'newValue': 'Deleted',
+            },
+          ],
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
       if (mounted) widget.onClose?.call();
     } finally {
@@ -1857,7 +2142,141 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _markCompleted(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    await _setWorkflowState(
+    final newName = _nameController.text.trim();
+    if (newName.isEmpty) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Sub-task name required',
+        content: 'Please fill in the sub-task name before continuing.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    final canEditDetails = _canEditSubtaskDetails(state, s);
+    if (canEditDetails && _assigneeIds.isEmpty) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Assignee required',
+        content: 'Select at least one assignee before continuing.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (canEditDetails &&
+        (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'PIC required',
+        content: 'Choose a PIC from the sub-task assignees before continuing.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
+      await showAsanaConfirmDialog(
+        context: context,
+        title: 'Reason required',
+        content:
+            'Please explain why this sub-task needs more time than expected before continuing.',
+        confirmText: 'OK',
+        palette: widget.palette,
+      );
+      return;
+    }
+    final changesForEmail = canEditDetails
+        ? _subtaskChangesForEmail(state, s)
+        : <Map<String, String>>[];
+    final commentText = stripInlineImageMarkers(_commentController.text);
+    if (canEditDetails) {
+      final err = await DatabaseService.updateSubtaskRow(
+        subtaskId: s.id,
+        subtaskName: newName,
+        description: stripInlineImageMarkers(_descController.text),
+        priorityDisplay: priorityToDisplayName(_localPriority),
+        status: s.status,
+        clearStartDate: _startDate == null,
+        startDate: _startDate,
+        clearDueDate: _dueDate == null,
+        dueDate: _dueDate,
+        assigneeSlots: _assigneeIds.toList(),
+        picStaffLookupKey: _picAssigneeId ?? '',
+        updateChangeDueReason: true,
+        changeDueReason: _needsChangeDueReason()
+            ? _reasonController.text.trim()
+            : null,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not update sub-task',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+    }
+    if (!await _saveDirtyPostedComments(state)) return;
+    String? commentId;
+    if (commentText.isNotEmpty ||
+        _hasPendingInlineImages('subtask_comment', 'draft')) {
+      final ins = await DatabaseService.insertSubtaskCommentRow(
+        subtaskId: s.id,
+        description: commentText.isNotEmpty
+            ? commentText
+            : inlineImageOnlyCommentPlaceholder,
+        creatorStaffLookupKey: state.userStaffAppId,
+      );
+      if (ins.error != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not add comment',
+          content: ins.error!,
+          palette: widget.palette,
+        );
+        return;
+      }
+      commentId = ins.commentId;
+      if (commentId == null || commentId.isEmpty) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not add comment',
+          content:
+              'The comment was not saved because the database did not return a comment id.',
+          palette: widget.palette,
+        );
+        return;
+      }
+      _commentController.clear();
+      await _loadComments(s);
+    }
+    final inlineErr = await _commitPendingInlineImages(
+      subtask: s,
+      state: state,
+      entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+    );
+    if (inlineErr != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not save inline image',
+        content: inlineErr,
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (_isCreator(state)) {
+      final attErr = await _replaceSubtaskFileAndUrlAttachments(s.id);
+      if (attErr != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not save attachments',
+          content: attErr,
+          palette: widget.palette,
+        );
+        return;
+      }
+    }
+    final ok = await _setWorkflowState(
       state: state,
       subtask: s,
       status: 'Completed',
@@ -1865,13 +2284,35 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       completionDateAt: s.submitDate ?? DateTime.now().toUtc(),
       errorTitle: 'Could not mark sub-task completed',
     );
-    if (s.submission?.trim() == 'Submitted') {
-      await _notifyEmail(
-        'Sub-task accepted email',
-        (token) =>
-            BackendApi().notifySubtaskAccepted(idToken: token, subtaskId: s.id),
-      );
-    }
+    if (!ok) return;
+    final assigneeChangeRecipientStaffKeys =
+        _subtaskAssigneeChangeRecipientStaffKeys(s);
+    await _notifyEmail(
+      'Sub-task accepted email',
+      (token) => BackendApi().notifySubtaskAccepted(
+        idToken: token,
+        subtaskId: s.id,
+        changes: [
+          ...changesForEmail,
+          {
+            'field': 'status',
+            'oldValue': s.status.trim().isNotEmpty
+                ? s.status.trim()
+                : 'Incomplete',
+            'newValue': 'Completed',
+          },
+          {
+            'field': 'submission',
+            'oldValue': s.submission?.trim().isNotEmpty == true
+                ? s.submission!.trim()
+                : 'Pending',
+            'newValue': 'Accepted',
+          },
+        ],
+        commentAddedText: commentText,
+        extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+      ),
+    );
   }
 
   Future<void> _submitSubtask(AppState state, SingularSubtask s) async {
@@ -1892,78 +2333,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final attErr = await _replaceSubtaskFileAndUrlAttachments(s.id);
-      if (attErr != null && mounted) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Could not save attachments',
-          content: attErr,
-          palette: widget.palette,
-        );
-        return;
-      }
-      String? commentId;
-      if (commentText.isNotEmpty ||
-          _hasPendingInlineImages('subtask_comment', 'draft')) {
-        final ins = await DatabaseService.insertSubtaskCommentRow(
-          subtaskId: s.id,
-          description: commentText.isNotEmpty
-              ? commentText
-              : inlineImageOnlyCommentPlaceholder,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (ins.error != null && mounted) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not add comment',
-            content: ins.error!,
-            palette: widget.palette,
-          );
-          return;
-        }
-        commentId = ins.commentId;
-        if (commentId == null || commentId.isEmpty) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not add comment',
-            content:
-                'The comment was not saved because the database did not return a comment id.',
-            palette: widget.palette,
-          );
-          return;
-        }
-        final inlineErr = await _commitPendingInlineImages(
-          subtask: s,
-          state: state,
-          entityIdOverrides: {'draft': commentId},
-        );
-        if (inlineErr != null && mounted) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not save inline image',
-            content: inlineErr,
-            palette: widget.palette,
-          );
-          return;
-        }
-        _commentController.clear();
-        await _loadComments(s);
-      }
-      if (commentId == null) {
-        final inlineErr = await _commitPendingInlineImages(
-          subtask: s,
-          state: state,
-        );
-        if (inlineErr != null && mounted) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not save inline image',
-            content: inlineErr,
-            palette: widget.palette,
-          );
-          return;
-        }
-      }
+      final assigneeChangeRecipientStaffKeys =
+          _subtaskAssigneeChangeRecipientStaffKeys(s);
+      final composite = await _savePendingSubtaskEditsForWorkflowEmail(
+        state,
+        s,
+      );
+      if (composite == null) return;
       final isCreator = _isCreator(state);
       final err = await DatabaseService.updateSubtaskRow(
         subtaskId: s.id,
@@ -1981,19 +2357,6 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         );
         return;
       }
-      final inlineErr = await _commitPendingInlineImages(
-        subtask: s,
-        state: state,
-      );
-      if (inlineErr != null && mounted) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Could not save inline image',
-          content: inlineErr,
-          palette: widget.palette,
-        );
-        return;
-      }
       _subtaskAi?.clearAllSuggestions();
       await _load();
       _notifyParentTaskOfSubtaskChange();
@@ -2003,6 +2366,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           idToken: token,
           subtaskId: s.id,
           changes: [
+            ...composite.changes,
             {
               'field': 'submission',
               'oldValue': s.submission?.trim().isNotEmpty == true
@@ -2011,8 +2375,9 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               'newValue': 'Submitted',
             },
           ],
-          commentAddedText: commentText,
-          subtaskCommentId: commentId,
+          commentAddedText: composite.comment,
+          subtaskCommentId: composite.commentId,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
         ),
       );
     } finally {
@@ -2023,47 +2388,148 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _returnSubtask(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    await _setWorkflowState(
-      state: state,
-      subtask: s,
-      submission: 'Returned',
-      errorTitle: 'Could not return sub-task',
-    );
-    await _notifyEmail(
-      'Sub-task returned email',
-      (token) =>
-          BackendApi().notifySubtaskReturned(idToken: token, subtaskId: s.id),
-    );
+    setState(() => _saving = true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final assigneeChangeRecipientStaffKeys =
+          _subtaskAssigneeChangeRecipientStaffKeys(s);
+      final composite = await _savePendingSubtaskEditsForWorkflowEmail(
+        state,
+        s,
+      );
+      if (composite == null) return;
+      final isCreator = _isCreator(state);
+      final err = await DatabaseService.updateSubtaskRow(
+        subtaskId: s.id,
+        submission: 'Returned',
+        updaterStaffLookupKey: isCreator ? state.userStaffAppId : null,
+        bumpSubtaskRowAuditFields: isCreator,
+      );
+      if (err != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not return sub-task',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+      _subtaskAi?.clearAllSuggestions();
+      await _load();
+      _notifyParentTaskOfSubtaskChange();
+      await _notifyEmail(
+        'Sub-task returned email',
+        (token) => BackendApi().notifySubtaskReturned(
+          idToken: token,
+          subtaskId: s.id,
+          changes: [
+            ...composite.changes,
+            {
+              'field': 'submission',
+              'oldValue': s.submission?.trim().isNotEmpty == true
+                  ? s.submission!.trim()
+                  : 'Submitted',
+              'newValue': 'Returned',
+            },
+          ],
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
+      );
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _undoAcceptOrReturn(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    await _setWorkflowState(
-      state: state,
-      subtask: s,
-      status: 'Incomplete',
-      submission: 'Pending',
-      clearCompletionDate: true,
-      errorTitle: 'Could not undo sub-task status',
-    );
+    final oldStatus = s.status.trim().isNotEmpty
+        ? s.status.trim()
+        : 'Completed';
+    final oldSubmission = (s.submission ?? '').trim().isNotEmpty
+        ? s.submission!.trim()
+        : 'Pending';
+    setState(() => _saving = true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final assigneeChangeRecipientStaffKeys =
+          _subtaskAssigneeChangeRecipientStaffKeys(s);
+      final composite = await _savePendingSubtaskEditsForWorkflowEmail(
+        state,
+        s,
+      );
+      if (composite == null) return;
+      final isCreator = _isCreator(state);
+      final err = await DatabaseService.updateSubtaskRow(
+        subtaskId: s.id,
+        status: 'Incomplete',
+        submission: 'Pending',
+        updaterStaffLookupKey: isCreator ? state.userStaffAppId : null,
+        clearCompletionDate: true,
+        bumpSubtaskRowAuditFields: isCreator,
+      );
+      if (err != null && mounted) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not undo sub-task status',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+      _subtaskAi?.clearAllSuggestions();
+      await _load();
+      _notifyParentTaskOfSubtaskChange();
+      await _notifyEmail(
+        'Sub-task undo email',
+        (token) => BackendApi().notifySubtaskUndoSubmissionDecision(
+          idToken: token,
+          subtaskId: s.id,
+          oldStatus: oldStatus,
+          oldSubmission: oldSubmission,
+          changes: composite.changes,
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
+      );
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _undoDeleted(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    await _setWorkflowState(
+    final ok = await _setWorkflowState(
       state: state,
       subtask: s,
       status: 'Incomplete',
       errorTitle: 'Could not restore sub-task',
     );
+    if (!ok) return;
+    final assigneeChangeRecipientStaffKeys =
+        _subtaskAssigneeChangeRecipientStaffKeys(s);
     await _notifyEmail(
       'Sub-task restored email',
-      (token) =>
-          BackendApi().notifySubtaskRestored(idToken: token, subtaskId: s.id),
+      (token) => BackendApi().notifySubtaskRestored(
+        idToken: token,
+        subtaskId: s.id,
+        changes: [
+          {
+            'field': 'status',
+            'oldValue': s.status.trim().isNotEmpty
+                ? s.status.trim()
+                : 'Deleted',
+            'newValue': 'Incomplete',
+          },
+        ],
+        extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+      ),
     );
   }
 
-  Future<void> _setWorkflowState({
+  Future<bool> _setWorkflowState({
     required AppState state,
     required SingularSubtask subtask,
     String? status,
@@ -2072,7 +2538,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     bool clearCompletionDate = false,
     required String errorTitle,
   }) async {
-    if (await _blockAdminReadOnlyWrite()) return;
+    if (await _blockAdminReadOnlyWrite()) return false;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2093,11 +2559,12 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           content: err,
           palette: widget.palette,
         );
-        return;
+        return false;
       }
       _subtaskAi?.clearAllSuggestions();
       await _load();
       _notifyParentTaskOfSubtaskChange();
+      return true;
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -2845,6 +3312,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     final state = context.watch<AppState>();
     final isCreator = _effectiveCreateMode || _isCreator(state);
     final isPic = s != null && _isPic(state, s);
+    final canEditDetails = _canEditSubtaskDetails(state, s);
     final isAssigneeOnly =
         s != null && _isAssignee(state, s) && !isCreator && !isPic;
     _parentTask =
@@ -2893,7 +3361,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (isCreator) ...[
+          if (canEditDetails) ...[
             AsanaHoverTextField(
               controller: _nameController,
               canEdit: true,
@@ -2919,7 +3387,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               children: [
                 AsanaHoverTextField(
                   controller: _descController,
-                  canEdit: isCreator,
+                  canEdit: canEditDetails,
                   readOnly: _saving,
                   maxLines: 8,
                   minLines: 2,
@@ -2931,7 +3399,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                     enabled: !_saving,
                     onAdd: _addDraftSubtaskDescriptionInlineImage,
                   )
-                else if (isCreator && s != null)
+                else if (canEditDetails && s != null)
                   InlineImageToolbar(
                     enabled: !_saving,
                     onAdd: () => _addSubtaskDescriptionInlineImage(s),
@@ -2949,7 +3417,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               ],
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.description),
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.description),
           if (parent != null)
             AsanaDetailTwoColumnRow(
               label: 'Parent Task',
@@ -2970,7 +3438,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               child: Builder(
                 builder: (anchorContext) => CompositedTransformTarget(
                   link: _assigneeAnchorLink,
-                  child: isCreator
+                  child: canEditDetails
                       ? AsanaAssigneeFieldValue(
                           assignees: _assigneeRowsForDisplay(state),
                           canEdit: true,
@@ -2991,13 +3459,13 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               ),
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.assignees),
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.assignees),
           AsanaDetailTwoColumnRow(
             label: 'PIC',
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _picAnchorLink,
-                child: isCreator
+                child: canEditDetails
                     ? AsanaAssigneeFieldValue(
                         assignees: _picAssigneeId != null
                             ? [
@@ -3025,7 +3493,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               ),
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.pic),
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.pic),
           AsanaDetailTwoColumnRow(
             label: 'Priority',
             child: Builder(
@@ -3033,7 +3501,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                 link: _priorityAnchorLink,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: isCreator
+                  child: canEditDetails
                       ? MouseRegion(
                           cursor: SystemMouseCursors.click,
                           child: GestureDetector(
@@ -3050,7 +3518,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
               ),
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.priority),
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.priority),
           AsanaDetailTwoColumnRow(
             label: 'Status',
             child: Builder(
@@ -3085,28 +3553,28 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             child: Builder(
               builder: (anchorContext) => AsanaHoverTapValue(
                 value: _date(_startDate),
-                canEdit: isCreator,
+                canEdit: canEditDetails,
                 onTap: _saving
                     ? null
                     : (_) => _pickStartDueRange(anchorContext),
               ),
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.startDate),
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.startDate),
           AsanaDetailTwoColumnRow(
             label: 'Due date',
             child: Builder(
               builder: (anchorContext) => AsanaHoverTapValue(
                 value: _date(_dueDate),
-                canEdit: isCreator,
+                canEdit: canEditDetails,
                 onTap: _saving
                     ? null
                     : (_) => _pickStartDueRange(anchorContext),
               ),
             ),
           ),
-          if (isCreator) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
-          if (isCreator &&
+          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+          if (canEditDetails &&
               (_needsChangeDueReason() ||
                   _reasonController.text.trim().isNotEmpty))
             Column(
@@ -3126,7 +3594,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                 _aiSuggestions(AsanaTaskAiFieldKey.reason),
               ],
             )
-          else if (!isCreator && (s?.changeDueReason ?? '').trim().isNotEmpty)
+          else if (!canEditDetails &&
+              (s?.changeDueReason ?? '').trim().isNotEmpty)
             AsanaDetailLabelValue(
               label: 'Reason',
               child: AsanaDetailPlainValue(text: s!.changeDueReason!.trim()),

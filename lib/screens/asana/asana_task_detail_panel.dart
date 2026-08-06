@@ -126,6 +126,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final Map<String, String> _postedCommentSavedText = {};
   String? _savingPostedCommentId;
   final List<_AttachmentDraft> _attachments = [];
+  final Map<String, String> _savedFileAttachmentLabelsById = {};
+  final Map<String, String> _savedUrlAttachmentLabelsById = {};
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
   final List<_InlineImageDraft> _pendingInlineImageAdds = [];
@@ -929,20 +931,29 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (!mounted) return;
       setState(() {
         _clearAttachments();
+        _savedFileAttachmentLabelsById.clear();
+        _savedUrlAttachmentLabelsById.clear();
         for (final r in files) {
+          final label = (r.description?.trim().isNotEmpty == true)
+              ? r.description!
+              : (r.filename ?? '');
+          if (r.id.trim().isNotEmpty) {
+            _savedFileAttachmentLabelsById[r.id] = label.trim();
+          }
           _attachments.add(
             _AttachmentDraft(
               id: r.id,
               url: r.url,
-              desc: (r.description?.trim().isNotEmpty == true)
-                  ? r.description
-                  : r.filename,
+              desc: label,
               mimeType: r.mimeType,
               isWebsiteLink: false,
             ),
           );
         }
         for (final r in urls) {
+          if (r.id.trim().isNotEmpty) {
+            _savedUrlAttachmentLabelsById[r.id] = r.label.trim();
+          }
           _attachments.add(
             _AttachmentDraft(
               id: r.id,
@@ -960,7 +971,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final state = context.read<AppState>();
     final task = widget.createMode ? null : state.taskById(widget.taskId ?? '');
     final canEditProject =
-        widget.createMode || (task != null && _isCreator(state, task));
+        widget.createMode ||
+        (task != null && (_isCreator(state, task) || _isPic(state, task)));
     final currentProjectId = task?.projectId?.trim();
     if (!canEditProject &&
         (currentProjectId == null || currentProjectId.isEmpty)) {
@@ -1071,7 +1083,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _canEditMetadata(AppState state, Task task) =>
-      _isCreator(state, task) && !_taskDeleted(task);
+      (_isCreator(state, task) || _isPic(state, task)) && !_taskDeleted(task);
 
   bool _canWriteComments(AppState state, Task task) =>
       (_isCreator(state, task) || _isTaskAssignee(state, task)) &&
@@ -1195,7 +1207,77 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       _formatDate(task.endDate),
       _formatDate(_dueDate),
     );
+    _appendAttachmentChangesForEmail(changes);
     return changes;
+  }
+
+  List<String> _taskAssigneeChangeRecipientStaffKeys(Task task) {
+    final seen = <String>{};
+    final keys = <String>[];
+    for (final raw in [...task.assigneeIds, ..._selectedAssigneeIds]) {
+      final key = raw.trim();
+      final norm = key.toLowerCase();
+      if (key.isEmpty || seen.contains(norm)) continue;
+      seen.add(norm);
+      keys.add(key);
+    }
+    return keys;
+  }
+
+  String _attachmentEmailLabel(_AttachmentDraft draft) {
+    final desc = draft.descController.text.trim();
+    if (desc.isNotEmpty) return desc;
+    final pending = draft.pendingFilename?.trim();
+    if (pending != null && pending.isNotEmpty) return pending;
+    return draft.urlController.text.trim();
+  }
+
+  void _appendAttachmentChangesForEmail(List<Map<String, String>> changes) {
+    final currentFilesById = <String, String>{};
+    final currentUrlsById = <String, String>{};
+    final addedFiles = <String>[];
+    final addedUrls = <String>[];
+
+    for (final draft in _attachments) {
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      final id = draft.id?.trim();
+      if (_draftShowsAsWebsiteLink(draft)) {
+        if (id == null || id.isEmpty) {
+          addedUrls.add('Added $label');
+        } else {
+          currentUrlsById[id] = label;
+        }
+      } else {
+        if (id == null || id.isEmpty) {
+          addedFiles.add('Added $label');
+        } else {
+          currentFilesById[id] = label;
+        }
+      }
+    }
+
+    final removedFiles = <String>[];
+    for (final entry in _savedFileAttachmentLabelsById.entries) {
+      if (!currentFilesById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedFiles.add('Removed ${entry.value}');
+      }
+    }
+    final removedUrls = <String>[];
+    for (final entry in _savedUrlAttachmentLabelsById.entries) {
+      if (!currentUrlsById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedUrls.add('Removed ${entry.value}');
+      }
+    }
+
+    final fileChanges = [...addedFiles, ...removedFiles].join('; ');
+    if (fileChanges.isNotEmpty) {
+      changes.add({'field': 'files', 'oldValue': '', 'newValue': fileChanges});
+    }
+    final urlChanges = [...addedUrls, ...removedUrls].join('; ');
+    if (urlChanges.isNotEmpty) {
+      changes.add({'field': 'urls', 'oldValue': '', 'newValue': urlChanges});
+    }
   }
 
   /// Posted time on task comments (HK, 24h — matches legacy task detail).
@@ -1723,6 +1805,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     BuildContext context,
     AppState state, {
     required bool canEditAssignees,
+    required bool canEditPic,
     required String creatorLabel,
     String readOnlyAssigneesText = '',
     String readOnlyPicText = '',
@@ -1751,7 +1834,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       if (showAiSuggestions) _aiSuggestions(AsanaTaskAiFieldKey.assignees),
       AsanaDetailTwoColumnRow(
         label: 'PIC',
-        child: canEditAssignees
+        child: canEditPic
             ? (_selectedAssigneeIds.length > 1
                   ? AsanaHoverTapValue(
                       anchorLink: _picAnchorLink,
@@ -1989,19 +2072,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       return;
     }
-    if (_isCreator(state, task) && !await _validateAssigneesAndPic()) return;
+    if (!await _validateAssigneesAndPic()) return;
     if (!mounted) return;
     _taskAi?.clearAllSuggestions();
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final directorIds = _isCreator(state, task)
-          ? _selectedAssigneeIds.toList()
-          : List<String>.from(task.assigneeIds);
+      final directorIds = _selectedAssigneeIds.toList();
       final slots = await DatabaseService.assigneeSlotsForTask(directorIds);
-      final picKey = _isCreator(state, task)
-          ? _resolvePicKeyForSave()
-          : task.pic;
+      final picKey = _resolvePicKeyForSave();
       final selProj = _selectedProjectId?.trim();
       final curProj = task.projectId?.trim();
       final clearProject =
@@ -2094,6 +2173,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           taskId: task.id,
           changes: changesForEmail,
           commentAddedText: comment,
+          extraRecipientStaffKeys: task.assigneeIds,
           taskCommentId: commentId,
         ),
       );
@@ -2127,6 +2207,142 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
+  }
+
+  Future<
+    ({
+      List<Map<String, String>> changes,
+      String comment,
+      String? commentId,
+      Task updatedTask,
+    })?
+  >
+  _savePendingTaskEditsForWorkflowEmail(AppState state, Task task) async {
+    if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
+      await showAsanaConfirmDialog(
+        context: context,
+        title: 'Reason required',
+        content:
+            'Please explain why this task needs more time than expected before continuing.',
+        confirmText: 'OK',
+        palette: widget.palette,
+      );
+      return null;
+    }
+    if (_startDate != null &&
+        _dueDate != null &&
+        _startDate!.isAfter(_dueDate!)) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
+      await _showInfo(
+        'Invalid date range',
+        'Start date cannot be after due date.',
+      );
+      return null;
+    }
+    if (!await _validateAssigneesAndPic()) {
+      return null;
+    }
+
+    final directorIds = _selectedAssigneeIds.toList();
+    final slots = await DatabaseService.assigneeSlotsForTask(directorIds);
+    final picKey = _resolvePicKeyForSave();
+    final selProj = _selectedProjectId?.trim();
+    final curProj = task.projectId?.trim();
+    final clearProject =
+        (selProj == null || selProj.isEmpty) &&
+        curProj != null &&
+        curProj.isNotEmpty;
+
+    final changesForEmail = _taskChangesForEmail(state, task, directorIds);
+    final err = await DatabaseService.updateSingularTaskRow(
+      taskId: task.id,
+      taskName: _nameController.text.trim(),
+      description: stripInlineImageMarkers(_descController.text),
+      priority: priorityToDisplayName(_localPriority),
+      assigneeSlots: slots,
+      startDate: _startDate,
+      dueDate: _dueDate,
+      clearStartDate: _startDate == null,
+      clearDueDate: _dueDate == null,
+      updateByStaffLookupKey: state.userStaffAppId,
+      picStaffLookupKey: picKey,
+      updateChangeDueReason: true,
+      changeDueReason: _needsChangeDueReason()
+          ? _reasonController.text.trim()
+          : null,
+      clearProjectId: clearProject,
+      projectId: !clearProject && selProj != null && selProj.isNotEmpty
+          ? selProj
+          : null,
+    );
+    if (err != null && mounted) {
+      await _showInfo('Could not update task', err);
+      return null;
+    }
+
+    if (_canEditAttachments(state, task)) {
+      final errA = await _replaceTaskAttachments(task.id);
+      if (errA != null && mounted) {
+        await _showInfo('Task saved, attachments failed', errA);
+        return null;
+      }
+      await _loadAttachments();
+    }
+
+    final comment = stripInlineImageMarkers(_commentController.text);
+    String? commentId;
+    if (comment.isNotEmpty ||
+        _hasPendingInlineImages('task_comment', 'draft')) {
+      final c = await DatabaseService.insertSingularCommentRow(
+        taskId: task.id,
+        description: comment.isNotEmpty
+            ? comment
+            : inlineImageOnlyCommentPlaceholder,
+        creatorStaffLookupKey: state.userStaffAppId,
+      );
+      if (c.error != null && mounted) {
+        await _showInfo('Could not add comment', c.error!);
+        return null;
+      }
+      commentId = c.commentId;
+      if (commentId == null || commentId.isEmpty) {
+        if (mounted) {
+          await _showInfo(
+            'Could not add comment',
+            'The comment was not saved because the database did not return a comment id.',
+          );
+        }
+        return null;
+      }
+      _commentController.clear();
+    }
+
+    final inlineErr = await _commitPendingInlineImages(
+      taskId: task.id,
+      state: state,
+      picKey: picKey,
+      entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
+    );
+    if (inlineErr != null && mounted) {
+      await _showInfo('Could not save inline image', inlineErr);
+      return null;
+    }
+
+    await _loadTaskDescriptionInlineImages();
+    await _loadComments();
+    final updatedTask = _buildUpdatedTask(task, clearProject: clearProject);
+    state.replaceTask(updatedTask);
+    DatabaseService.invalidateSubtasksCacheForTask(task.id);
+    await _loadSubtasks();
+    return (
+      changes: changesForEmail,
+      comment: comment,
+      commentId: commentId,
+      updatedTask: updatedTask,
+    );
   }
 
   Future<bool> _postDraftCommentWithoutOverlay(
@@ -2233,8 +2449,24 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       return;
     }
     _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
     try {
-      final completedAt = task.submitDate ?? DateTime.now().toUtc();
+      final oldStatus =
+          (task.dbStatus ??
+                  (task.status == TaskStatus.done ? 'Completed' : 'Incomplete'))
+              .trim();
+      final oldSubmission = task.submission?.trim().isNotEmpty == true
+          ? task.submission!.trim()
+          : 'Pending';
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
+      final completedAt =
+          composite.updatedTask.submitDate ?? DateTime.now().toUtc();
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Completed',
@@ -2246,9 +2478,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not mark task completed', err);
         return;
       }
-      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
-        task.copyWith(
+        composite.updatedTask.copyWith(
           dbStatus: 'Completed',
           status: TaskStatus.done,
           submission: 'Accepted',
@@ -2256,14 +2487,29 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         ),
       );
       _notifyChanged();
-      if (task.submission?.trim() == 'Submitted') {
-        await _notifyEmail(
-          'Task accepted email',
-          (token) =>
-              BackendApi().notifyTaskAccepted(idToken: token, taskId: task.id),
-        );
-      }
+      await _notifyEmail(
+        'Task accepted email',
+        (token) => BackendApi().notifyTaskAccepted(
+          idToken: token,
+          taskId: task.id,
+          changes: [
+            ...composite.changes,
+            {
+              'field': 'status',
+              'oldValue': oldStatus.isNotEmpty ? oldStatus : 'Incomplete',
+              'newValue': 'Completed',
+            },
+            {
+              'field': 'submission',
+              'oldValue': oldSubmission,
+              'newValue': 'Accepted',
+            },
+          ],
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
+      );
     } finally {
+      AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
   }
@@ -2280,7 +2526,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
-      final comment = stripInlineImageMarkers(_commentController.text);
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         submission: 'Submitted',
@@ -2291,46 +2543,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not submit task', err);
         return;
       }
-      String? commentId;
-      if (comment.isNotEmpty ||
-          _hasPendingInlineImages('task_comment', 'draft')) {
-        final c = await DatabaseService.insertSingularCommentRow(
-          taskId: task.id,
-          description: comment.isNotEmpty
-              ? comment
-              : inlineImageOnlyCommentPlaceholder,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (c.error != null && mounted) {
-          await _showInfo('Could not add comment', c.error!);
-          return;
-        }
-        commentId = c.commentId;
-        if (commentId == null || commentId.isEmpty) {
-          if (mounted) {
-            await _showInfo(
-              'Could not add comment',
-              'The comment was not saved because the database did not return a comment id.',
-            );
-          }
-          return;
-        }
-        _commentController.clear();
-      }
-      final inlineErr = await _commitPendingInlineImages(
-        taskId: task.id,
-        state: state,
-        picKey: task.pic,
-        entityIdOverrides: commentId == null ? const {} : {'draft': commentId},
-      );
-      if (inlineErr != null && mounted) {
-        await _showInfo('Could not save inline image', inlineErr);
-        return;
-      }
-      await _loadTaskDescriptionInlineImages();
-      await _loadComments();
       state.replaceTask(
-        task.copyWith(
+        composite.updatedTask.copyWith(
           submission: 'Submitted',
           submitDate: DateTime.now().toUtc(),
         ),
@@ -2341,17 +2555,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         (token) => BackendApi().notifyTaskSubmission(
           idToken: token,
           taskId: task.id,
-          changes: [
-            {
-              'field': 'submission',
-              'oldValue': task.submission?.trim().isNotEmpty == true
-                  ? task.submission!.trim()
-                  : 'Pending',
-              'newValue': 'Submitted',
-            },
-          ],
-          commentAddedText: comment,
-          taskCommentId: commentId,
+          changes: composite.changes,
+          commentAddedText: composite.comment,
+          taskCommentId: composite.commentId,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
         ),
       );
     } finally {
@@ -2370,6 +2577,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
+      final changesForEmail = composite.changes
+          .map((change) => Map<String, String>.from(change))
+          .toList(growable: false);
+      final commentForEmail = composite.comment;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         submission: 'Returned',
@@ -2379,13 +2597,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not return task', err);
         return;
       }
-      if (!await _commitExistingTaskInlineChanges(state, task)) return;
-      state.replaceTask(task.copyWith(submission: 'Returned'));
+      state.replaceTask(composite.updatedTask.copyWith(submission: 'Returned'));
       _notifyChanged();
       await _notifyEmail(
         'Task returned email',
-        (token) =>
-            BackendApi().notifyTaskReturned(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskReturned(
+          idToken: token,
+          taskId: task.id,
+          changes: changesForEmail,
+          commentAddedText: commentForEmail,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2396,7 +2618,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _canUndoAcceptOrReturn(Task task) {
     if ((task.dbStatus ?? '').trim().toLowerCase() == 'deleted') return false;
     final s = task.submission?.trim().toLowerCase() ?? '';
-    return s == 'accepted' || s == 'returned';
+    return s == 'accepted';
   }
 
   Future<void> _undoAcceptOrReturn(AppState state, Task task) async {
@@ -2404,6 +2626,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final oldStatus =
+          (task.dbStatus ??
+                  (task.status == TaskStatus.done ? 'Completed' : 'Incomplete'))
+              .trim();
+      final oldSubmission = task.submission?.trim().isNotEmpty == true
+          ? task.submission!.trim()
+          : 'Pending';
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Incomplete',
@@ -2415,9 +2651,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not undo task status', err);
         return;
       }
-      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       state.replaceTask(
-        task.copyWith(
+        composite.updatedTask.copyWith(
           dbStatus: 'Incomplete',
           status: TaskStatus.todo,
           submission: 'Pending',
@@ -2425,6 +2660,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         ),
       );
       _notifyChanged();
+      await _notifyEmail(
+        'Task undo email',
+        (token) => BackendApi().notifyTaskUndoSubmissionDecision(
+          idToken: token,
+          taskId: task.id,
+          oldStatus: oldStatus.isNotEmpty ? oldStatus : 'Completed',
+          oldSubmission: oldSubmission,
+          changes: composite.changes,
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -2436,6 +2683,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final oldStatus =
+          (task.dbStatus ??
+                  (task.status == TaskStatus.done ? 'Completed' : 'Incomplete'))
+              .trim();
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Incomplete',
@@ -2453,8 +2706,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       await _loadSubtasks();
       await _notifyEmail(
         'Task restored email',
-        (token) =>
-            BackendApi().notifyTaskRestored(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskRestored(
+          idToken: token,
+          taskId: task.id,
+          changes: [
+            {
+              'field': 'status',
+              'oldValue': oldStatus.isNotEmpty ? oldStatus : 'Deleted',
+              'newValue': 'Incomplete',
+            },
+          ],
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2476,6 +2739,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final oldStatus =
+          (task.dbStatus ??
+                  (task.status == TaskStatus.done ? 'Completed' : 'Incomplete'))
+              .trim();
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
+      final changesForEmail = composite.changes
+          .map((change) => Map<String, String>.from(change))
+          .toList(growable: true);
+      final commentForEmail = composite.comment;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         status: 'Deleted',
@@ -2485,18 +2763,29 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not delete task', err);
         return;
       }
-      if (!await _commitExistingTaskInlineChanges(state, task)) return;
       await DatabaseService.markSubtasksDeletedForParentTask(
         taskId: task.id,
         updateByStaffLookupKey: state.userStaffAppId,
       );
-      state.replaceTask(task.copyWith(dbStatus: 'Deleted'));
+      state.replaceTask(composite.updatedTask.copyWith(dbStatus: 'Deleted'));
       _notifyChanged();
       await _loadSubtasks();
       await _notifyEmail(
         'Task deleted email',
-        (token) =>
-            BackendApi().notifyTaskDeleted(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskDeleted(
+          idToken: token,
+          taskId: task.id,
+          changes: [
+            {
+              'field': 'status',
+              'oldValue': oldStatus.isNotEmpty ? oldStatus : 'Incomplete',
+              'newValue': 'Deleted',
+            },
+            ...changesForEmail,
+          ],
+          commentAddedText: commentForEmail,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2512,6 +2801,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updatePauseStatus: true,
@@ -2522,12 +2818,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not pause task', err);
         return;
       }
-      state.replaceTask(task.copyWith(pauseStatus: 'Paused'));
+      state.replaceTask(composite.updatedTask.copyWith(pauseStatus: 'Paused'));
       _notifyChanged();
       await _notifyEmail(
         'Task paused email',
-        (token) =>
-            BackendApi().notifyTaskPaused(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskPaused(
+          idToken: token,
+          taskId: task.id,
+          changes: composite.changes,
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -2541,6 +2842,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
+      final assigneeChangeRecipientStaffKeys =
+          _taskAssigneeChangeRecipientStaffKeys(task);
+      final composite = await _savePendingTaskEditsForWorkflowEmail(
+        state,
+        task,
+      );
+      if (composite == null) return;
       final err = await DatabaseService.updateSingularTaskRow(
         taskId: task.id,
         updatePauseStatus: true,
@@ -2551,12 +2859,19 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not resume task', err);
         return;
       }
-      state.replaceTask(task.copyWith(pauseStatus: 'Not Paused'));
+      state.replaceTask(
+        composite.updatedTask.copyWith(pauseStatus: 'Not Paused'),
+      );
       _notifyChanged();
       await _notifyEmail(
         'Task resumed email',
-        (token) =>
-            BackendApi().notifyTaskResumed(idToken: token, taskId: task.id),
+        (token) => BackendApi().notifyTaskResumed(
+          idToken: token,
+          taskId: task.id,
+          changes: composite.changes,
+          commentAddedText: composite.comment,
+          extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
+        ),
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -3113,6 +3428,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             context,
             state,
             canEditAssignees: true,
+            canEditPic: true,
             creatorLabel: _creatorDisplayName(state),
             showAiSuggestions: true,
           ),
@@ -3276,7 +3592,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
     final showCommentAi = _canWriteComments(state, task) && !canEdit;
     if (canEdit) {
-      _ensureTaskAi(state, canSuggestAssignees: _isCreator(state, task));
+      _ensureTaskAi(state, canSuggestAssignees: true);
     }
     if (showCommentAi) {
       _ensureCommentAi(task);
@@ -3388,7 +3704,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ..._buildAssigneePicSection(
             context,
             state,
-            canEditAssignees: canEdit && _isCreator(state, task),
+            canEditAssignees: canEdit,
+            canEditPic: canEdit,
             creatorLabel: task.createByStaffName?.trim() ?? '',
             readOnlyAssigneesText: task.assigneeIds
                 .map((id) => _nameFor(state, id))
