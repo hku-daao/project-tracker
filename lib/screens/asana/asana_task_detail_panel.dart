@@ -700,10 +700,57 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final id = widget.taskId;
     if (id == null || !PostgrestConfig.isConfigured) return;
     try {
-      final list = await DatabaseService.fetchSubtasksForTask(id);
-      if (mounted)
-        setState(() => _subtasks = list.where((s) => !s.isDeleted).toList());
+      final state = context.read<AppState>();
+      final task = state.taskById(id);
+      final list = await DatabaseService.fetchSubtasksForTaskIncludingDeleted(
+        id,
+      );
+      final visible = list
+          .where((s) => _childSubtaskStatusRank(state, task, s) < 2)
+          .toList();
+      _sortChildSubtasksForDetail(state, task, visible);
+      if (mounted) setState(() => _subtasks = visible);
     } catch (_) {}
+  }
+
+  void _sortChildSubtasksForDetail(
+    AppState state,
+    Task? parentTask,
+    List<SingularSubtask> list,
+  ) {
+    list.sort((a, b) {
+      final status = _childSubtaskStatusRank(
+        state,
+        parentTask,
+        a,
+      ).compareTo(_childSubtaskStatusRank(state, parentTask, b));
+      if (status != 0) return status;
+      final due = _compareNullableDueDates(a.dueDate, b.dueDate);
+      if (due != 0) return due;
+      return a.subtaskName.toLowerCase().compareTo(b.subtaskName.toLowerCase());
+    });
+  }
+
+  int _childSubtaskStatusRank(
+    AppState state,
+    Task? parentTask,
+    SingularSubtask subtask,
+  ) {
+    if (subtask.isDeleted) return 3;
+    if (parentTask != null && _taskEffectivelyPaused(state, parentTask)) {
+      return 2;
+    }
+    if (subtask.isPaused) return 2;
+    final status = subtask.status.trim().toLowerCase();
+    if (status == 'completed' || status == 'complete') return 1;
+    return 0;
+  }
+
+  int _compareNullableDueDates(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return DateUtils.dateOnly(a).compareTo(DateUtils.dateOnly(b));
   }
 
   Future<List<SingularSubtask>?> _loadFreshActiveSubtasksForCompletion(

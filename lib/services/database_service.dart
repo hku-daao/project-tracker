@@ -1729,6 +1729,53 @@ class DatabaseService {
     }
   }
 
+  /// When a parent [project] is marked Deleted, set every non-deleted task
+  /// under it to Deleted, then cascade each task deletion to its subtasks.
+  static Future<String?> markTasksAndSubtasksDeletedForProject({
+    required String projectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = projectId.trim();
+    if (pid.isEmpty) return 'project id required';
+    try {
+      final res = await PostgrestClient.instance
+          .from('task')
+          .select()
+          .eq('project_id', pid);
+      final lookup = updateByStaffLookupKey?.trim();
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      };
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final status = _dbStatusRawFromRow(row['status']).toLowerCase();
+        if (status == 'deleted' || status == 'delete') continue;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        await PostgrestClient.instance
+            .from('task')
+            .update(map)
+            .eq('id', taskId);
+        await markSubtasksDeletedForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+      }
+      clearSubtaskListMemoryCache();
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Inserts [`project`] row; [assignees] are `staff.id` uuid strings (up to 20).
   static Future<({String? error, String? projectId})> insertProjectRow({
     required String name,

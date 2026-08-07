@@ -266,7 +266,11 @@ class AsanaDetailSubtaskList extends StatelessWidget {
           final name = s.subtaskName.trim().isEmpty
               ? '(Unnamed sub-task)'
               : s.subtaskName.trim();
-          final status = (parentPaused || s.isPaused) ? 'Paused' : s.status;
+          final status = s.isDeleted
+              ? 'Deleted'
+              : (parentPaused || s.isPaused)
+              ? 'Paused'
+              : s.status;
 
           return Material(
             color: tableColors.subtaskRow,

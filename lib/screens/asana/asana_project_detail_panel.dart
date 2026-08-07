@@ -232,11 +232,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         widget.projectId,
       );
       if (!mounted) return;
-      setState(
-        () => _tasks = list
-            .where((t) => !_taskDeleted(t) && !t.isArchivedCompleted)
-            .toList(),
-      );
+      final visible = list.where((t) => _childTaskStatusRank(t) < 2).toList();
+      _sortChildTasksForDetail(visible);
+      setState(() => _tasks = visible);
     } catch (_) {}
   }
 
@@ -406,10 +404,36 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   String _taskStatusLabel(Task t) {
+    if (_taskDeleted(t)) return 'Deleted';
     if ((_project?.isPaused ?? false) || t.isPaused) return 'Paused';
     final raw = t.dbStatus?.trim();
     if (raw != null && raw.isNotEmpty) return raw;
     return taskStatusDisplayNames[t.status] ?? 'Incomplete';
+  }
+
+  void _sortChildTasksForDetail(List<Task> list) {
+    list.sort((a, b) {
+      final status = _childTaskStatusRank(a).compareTo(_childTaskStatusRank(b));
+      if (status != 0) return status;
+      final due = _compareNullableDueDates(a.endDate, b.endDate);
+      if (due != 0) return due;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+  }
+
+  int _childTaskStatusRank(Task task) {
+    if (_taskDeleted(task)) return 3;
+    final status = _taskStatusLabel(task).trim().toLowerCase();
+    if (status == 'completed' || status == 'complete') return 1;
+    if (status == 'paused') return 2;
+    return 0;
+  }
+
+  int _compareNullableDueDates(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return DateUtils.dateOnly(a).compareTo(DateUtils.dateOnly(b));
   }
 
   String _labelForAssigneeId(String id, AppState state) {
@@ -792,6 +816,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           context: context,
           title: 'Could not delete project',
           content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+      final cascadeErr =
+          await DatabaseService.markTasksAndSubtasksDeletedForProject(
+            projectId: widget.projectId,
+            updateByStaffLookupKey: state.userStaffAppId,
+          );
+      if (!mounted) return;
+      if (cascadeErr != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Project deleted, but child items were not fully deleted',
+          content: cascadeErr,
           palette: widget.palette,
         );
         return;
