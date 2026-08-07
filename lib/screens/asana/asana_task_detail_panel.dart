@@ -115,6 +115,8 @@ class _InlineImageDraft {
 }
 
 class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
+  static const List<String> _complexityOptions = ['Low', 'Medium', 'High'];
+
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _reasonController = TextEditingController();
@@ -139,6 +141,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   String? _myStaffLookupKey;
 
   int _localPriority = priorityStandard;
+  String? _localComplexity;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _selectedProjectId;
@@ -159,6 +162,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _priorityAnchorLink = LayerLink();
+  final LayerLink _complexityAnchorLink = LayerLink();
   final LayerLink _attachmentAddAnchorLink = LayerLink();
 
   /// Value-column width/left for anchored menus (assignee field row).
@@ -367,6 +371,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _commentController.clear();
     _clearInlineImageDrafts();
     _localPriority = priorityStandard;
+    _localComplexity = null;
     final initialProjectId = widget.initialProjectId?.trim();
     _selectedProjectId = initialProjectId == null || initialProjectId.isEmpty
         ? null
@@ -685,6 +690,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _descController.text = stripInlineImageMarkers(task.description);
     _reasonController.text = task.changeDueReason ?? '';
     _localPriority = task.priority;
+    _localComplexity = task.complexity;
     _startDate = task.startDate;
     _dueDate = task.endDate;
     _selectedProjectId = task.projectId;
@@ -1244,6 +1250,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
     _addChange(
       changes,
+      'complexity',
+      _complexityText(task.complexity),
+      _complexityText(_localComplexity),
+    );
+    _addChange(
+      changes,
       'startDate',
       _formatDate(task.startDate),
       _formatDate(_startDate),
@@ -1334,6 +1346,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _isOwnComment(SingularCommentRowDisplay c) {
+    if (context.read<AppState>().adminViewMode) return false;
     if (c.isDeleted) return false;
     final author = c.createByStaffId?.trim();
     if (author == null || author.isEmpty) return false;
@@ -1523,6 +1536,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         _dueDate = _defaultDueForPriority(choice);
       }
     });
+  }
+
+  Future<void> _pickComplexity(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker) return;
+    final choice = await showAsanaAnchoredOptionMenu<String>(
+      anchorLink: _complexityAnchorLink,
+      anchorContext: anchorContext,
+      onClosed: _blockAnchoredPickerReopen,
+      options: _complexityOptions
+          .map((v) => AsanaAnchoredOption(value: v, label: v))
+          .toList(),
+    );
+    if (choice == null || !mounted) return;
+    setState(() => _localComplexity = choice);
+  }
+
+  String _complexityText(String? value) {
+    final v = value?.trim();
+    return v == null || v.isEmpty ? '—' : v;
   }
 
   Future<void> _pickProject(BuildContext anchorContext) async {
@@ -1960,6 +1992,14 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     if (!await _validateAssigneesAndPic()) return;
     if (!mounted) return;
+    final complexity = _localComplexity?.trim();
+    if (complexity == null || complexity.isEmpty) {
+      await _showInfo(
+        'Complexity required',
+        'Please choose Low, Medium, or High before continuing.',
+      );
+      return;
+    }
     final directorIds = _selectedAssigneeIds.toList();
     final picKey = _resolvePicKeyForSave();
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
@@ -1993,6 +2033,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ? null
             : stripInlineImageMarkers(_descController.text),
         priority: priorityToDisplayName(_localPriority),
+        complexity: complexity,
         startDate: _startDate,
         dueDate: _dueDate,
         creatorStaffLookupKey: state.userStaffAppId,
@@ -2141,6 +2182,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         taskName: _nameController.text.trim(),
         description: stripInlineImageMarkers(_descController.text),
         priority: priorityToDisplayName(_localPriority),
+        complexity: _localComplexity,
         assigneeSlots: slots,
         startDate: _startDate,
         dueDate: _dueDate,
@@ -2309,6 +2351,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       taskName: _nameController.text.trim(),
       description: stripInlineImageMarkers(_descController.text),
       priority: priorityToDisplayName(_localPriority),
+      complexity: _localComplexity,
       assigneeSlots: slots,
       startDate: _startDate,
       dueDate: _dueDate,
@@ -2945,6 +2988,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       assigneeIds: _selectedAssigneeIds.toList(),
       pic: _picAssigneeId,
       priority: _localPriority,
+      complexity: _localComplexity,
       startDate: _startDate,
       endDate: _dueDate,
       projectId: clearProject ? null : _selectedProjectId,
@@ -3399,19 +3443,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     AppState state,
     AsanaSlideChrome chrome,
   ) {
-    const canEdit = true;
-    _ensureTaskAi(state, canSuggestAssignees: true);
+    final canEdit = !state.adminViewMode;
+    if (canEdit) _ensureTaskAi(state, canSuggestAssignees: true);
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
       footer: _buildSlideFooterStack(
         chrome: chrome,
-        aiController: _taskAi,
-        actionBar: _ActionBar(
-          createMode: true,
-          saving: _saving,
-          palette: widget.palette,
-          onPrimary: () => _createTask(state),
-        ),
+        aiController: canEdit ? _taskAi : null,
+        actionBar: canEdit
+            ? _ActionBar(
+                createMode: true,
+                saving: _saving,
+                palette: widget.palette,
+                onPrimary: () => _createTask(state),
+              )
+            : null,
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3443,7 +3489,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   style: asanaDetailMultilineValueStyle(context),
                 ),
                 InlineImageToolbar(
-                  enabled: !_saving,
+                  enabled: canEdit && !_saving,
                   onAdd: _addDraftTaskDescriptionInlineImage,
                 ),
                 InlineImagePreviewList(
@@ -3464,9 +3510,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 ? AsanaHoverTapValue(
                     anchorLink: _projectAnchorLink,
                     value: _projectLabelForDraft(),
-                    canEdit: true,
+                    canEdit: canEdit,
                     emptyPlaceholder: 'Select project (optional)',
-                    onTap: _pickProject,
+                    onTap: canEdit ? _pickProject : null,
                   )
                 : const AsanaDetailPlainValue(text: ''),
           ),
@@ -3474,10 +3520,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ..._buildAssigneePicSection(
             context,
             state,
-            canEditAssignees: true,
-            canEditPic: true,
+            canEditAssignees: canEdit,
+            canEditPic: canEdit,
             creatorLabel: _creatorDisplayName(state),
-            showAiSuggestions: true,
+            showAiSuggestions: canEdit,
           ),
           AsanaDetailTwoColumnRow(
             label: 'Priority',
@@ -3487,9 +3533,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
+                    cursor: canEdit
+                        ? SystemMouseCursors.click
+                        : SystemMouseCursors.basic,
                     child: GestureDetector(
-                      onTap: _saving
+                      onTap: !canEdit || _saving
                           ? null
                           : () => _pickPriority(anchorContext),
                       child: AsanaPriorityChip(priority: _localPriority),
@@ -3505,12 +3553,28 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: AsanaDetailStatusPill(status: 'Incomplete'),
           ),
           AsanaDetailTwoColumnRow(
+            label: 'Complexity',
+            child: Builder(
+              builder: (anchorContext) => CompositedTransformTarget(
+                link: _complexityAnchorLink,
+                child: AsanaHoverTapValue(
+                  value: _localComplexity ?? '',
+                  canEdit: canEdit,
+                  emptyPlaceholder: 'Select complexity',
+                  onTap: !canEdit || _saving
+                      ? null
+                      : (_) => _pickComplexity(anchorContext),
+                ),
+              ),
+            ),
+          ),
+          AsanaDetailTwoColumnRow(
             label: 'Start date',
             child: AsanaHoverTapValue(
               value: _formatDate(_startDate),
-              canEdit: true,
+              canEdit: canEdit,
               emptyPlaceholder: 'Today',
-              onTap: _saving ? null : _pickStartDueRange,
+              onTap: !canEdit || _saving ? null : _pickStartDueRange,
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.startDate),
@@ -3518,8 +3582,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             label: 'Due date',
             child: AsanaHoverTapValue(
               value: _formatDate(_dueDate),
-              canEdit: true,
-              onTap: _saving ? null : _pickStartDueRange,
+              canEdit: canEdit,
+              onTap: !canEdit || _saving ? null : _pickStartDueRange,
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
@@ -3531,7 +3595,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   label: 'Reason',
                   child: AsanaHoverTextField(
                     controller: _reasonController,
-                    canEdit: true,
+                    canEdit: canEdit,
                     readOnly: _saving,
                     showOutline: true,
                     maxLines: 4,
@@ -3551,22 +3615,22 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             label: 'Files',
             attachments: _fileAttachments,
             createMode: true,
-            showAdd: true,
-            addEnabled: !_saving,
+            showAdd: canEdit,
+            addEnabled: canEdit && !_saving,
             addTooltip: 'Add file',
             onAdd: (_) => _addFileAttachment(),
-            allowRemove: true,
+            allowRemove: canEdit,
           ),
           _attachmentTwoColumnRow(
             label: 'Links',
             attachments: _urlAttachments,
             createMode: true,
-            showAdd: true,
-            addEnabled: !_saving,
+            showAdd: canEdit,
+            addEnabled: canEdit && !_saving,
             addTooltip: 'Add link',
             addAnchorLink: _attachmentAddAnchorLink,
             onAdd: _addUrlAttachment,
-            allowRemove: true,
+            allowRemove: canEdit,
             editAnchorContext: context,
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
@@ -3586,7 +3650,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   style: asanaDetailMultilineValueStyle(context),
                 ),
                 InlineImageToolbar(
-                  enabled: !_saving,
+                  enabled: canEdit && !_saving,
                   onAdd: _addDraftCommentInlineImage,
                 ),
                 InlineImagePreviewList(
@@ -3595,7 +3659,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     entityId: 'draft',
                     saved: const [],
                   ),
-                  onRemove: _removeInlineImagePreview,
+                  onRemove: canEdit ? _removeInlineImagePreview : null,
                 ),
               ],
             ),
@@ -3612,32 +3676,38 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     Task task,
     AsanaSlideChrome chrome,
   ) {
-    final canEdit = _canEditMetadata(state, task);
+    final adminReadOnly = state.adminViewMode;
+    final isCreator = !adminReadOnly && _isCreator(state, task);
+    final isPic = !adminReadOnly && _isPic(state, task);
+    final isAssigneeOnly =
+        !adminReadOnly &&
+        _isTaskAssignee(state, task) &&
+        !_isCreator(state, task) &&
+        !_isPic(state, task);
+    final canEdit = !adminReadOnly && _canEditMetadata(state, task);
     final tc = widget.palette.tableColors;
     final effectivelyPaused = _taskEffectivelyPaused(state, task);
 
     final showActionFooter = _ActionBar.hasVisibleActions(
       createMode: false,
       task: task,
-      isCreator: _isCreator(state, task),
-      isPic: _isPic(state, task),
-      isAssigneeOnly:
-          _isTaskAssignee(state, task) &&
-          !_isCreator(state, task) &&
-          !_isPic(state, task),
-      canDelete: _isCreator(state, task),
+      isCreator: isCreator,
+      isPic: isPic,
+      isAssigneeOnly: isAssigneeOnly,
+      canDelete: isCreator,
       canMarkComplete: !effectivelyPaused && _canMarkComplete(task),
       canUndoAcceptOrReturn: !effectivelyPaused && _canUndoAcceptOrReturn(task),
       canPause:
-          _isCreator(state, task) &&
+          isCreator &&
           !_taskDeleted(task) &&
           !effectivelyPaused &&
           !_taskCompleted(task),
-      canResume: _isCreator(state, task) && _taskPaused(task),
+      canResume: isCreator && _taskPaused(task),
       workflowPaused: effectivelyPaused,
     );
 
-    final showCommentAi = _canWriteComments(state, task) && !canEdit;
+    final showCommentAi =
+        !adminReadOnly && _canWriteComments(state, task) && !canEdit;
     if (canEdit) {
       _ensureTaskAi(state, canSuggestAssignees: true);
     }
@@ -3654,13 +3724,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             palette: widget.palette,
             state: state,
             task: task,
-            isCreator: _isCreator(state, task),
-            isPic: _isPic(state, task),
-            isAssigneeOnly:
-                _isTaskAssignee(state, task) &&
-                !_isCreator(state, task) &&
-                !_isPic(state, task),
-            canDelete: _isCreator(state, task),
+            isCreator: isCreator,
+            isPic: isPic,
+            isAssigneeOnly: isAssigneeOnly,
+            canDelete: isCreator,
             onUpdate: () => _save(state, task),
             onMarkComplete: () => _markCompleted(state, task),
             onSubmit: () => _submitTask(state, task),
@@ -3675,22 +3742,24 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             canUndoAcceptOrReturn:
                 !effectivelyPaused && _canUndoAcceptOrReturn(task),
             canPause:
-                _isCreator(state, task) &&
+                isCreator &&
                 !_taskDeleted(task) &&
                 !effectivelyPaused &&
                 !_taskCompleted(task),
-            canResume: _isCreator(state, task) && _taskPaused(task),
+            canResume: isCreator && _taskPaused(task),
             workflowPaused: effectivelyPaused,
           )
         : null;
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: _buildSlideFooterStack(
-        chrome: chrome,
-        aiController: aiController,
-        actionBar: actionBar,
-      ),
+      footer: adminReadOnly
+          ? null
+          : _buildSlideFooterStack(
+              chrome: chrome,
+              aiController: aiController,
+              actionBar: actionBar,
+            ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3819,6 +3888,24 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
           ),
           AsanaDetailTwoColumnRow(
+            label: 'Complexity',
+            child: canEdit
+                ? Builder(
+                    builder: (anchorContext) => CompositedTransformTarget(
+                      link: _complexityAnchorLink,
+                      child: AsanaHoverTapValue(
+                        value: _localComplexity ?? '',
+                        canEdit: true,
+                        emptyPlaceholder: 'Select complexity',
+                        onTap: _saving
+                            ? null
+                            : (_) => _pickComplexity(anchorContext),
+                      ),
+                    ),
+                  )
+                : AsanaDetailPlainValue(text: _complexityText(task.complexity)),
+          ),
+          AsanaDetailTwoColumnRow(
             label: 'Start date',
             child: AsanaHoverTapValue(
               value: _formatDate(_startDate),
@@ -3880,23 +3967,29 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               label: 'Files',
               attachments: _fileAttachments,
               createMode: false,
-              showAdd: true,
-              addEnabled: _canEditAttachments(state, task) && !_saving,
+              showAdd: !adminReadOnly,
+              addEnabled:
+                  !adminReadOnly &&
+                  _canEditAttachments(state, task) &&
+                  !_saving,
               addTooltip: 'Add file',
               onAdd: (_) => _addFileAttachment(task: task),
-              allowRemove: _canEditAttachments(state, task),
+              allowRemove: !adminReadOnly && _canEditAttachments(state, task),
             ),
             Builder(
               builder: (attachmentCtx) => _attachmentTwoColumnRow(
                 label: 'Links',
                 attachments: _urlAttachments,
                 createMode: false,
-                showAdd: true,
-                addEnabled: _canEditAttachments(state, task) && !_saving,
+                showAdd: !adminReadOnly,
+                addEnabled:
+                    !adminReadOnly &&
+                    _canEditAttachments(state, task) &&
+                    !_saving,
                 addTooltip: 'Add link',
                 addAnchorLink: _attachmentAddAnchorLink,
                 onAdd: _addUrlAttachment,
-                allowRemove: _canEditAttachments(state, task),
+                allowRemove: !adminReadOnly && _canEditAttachments(state, task),
                 editAnchorContext: attachmentCtx,
               ),
             ),
@@ -3913,7 +4006,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (_canWriteComments(state, task)) ...[
+                if (!adminReadOnly && _canWriteComments(state, task)) ...[
                   AsanaHoverTextField(
                     controller: _commentController,
                     canEdit: true,

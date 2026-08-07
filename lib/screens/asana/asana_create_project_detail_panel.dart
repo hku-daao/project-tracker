@@ -459,6 +459,9 @@ class _AsanaCreateProjectDetailPanelState
   }
 
   Widget _aiSuggestions(AsanaTaskAiFieldKey key) {
+    if (context.read<AppState>().adminViewMode) {
+      return const SizedBox.shrink();
+    }
     final c = _projectAi;
     if (c == null) return const SizedBox.shrink();
     return AsanaTaskAiInlineSuggestions(
@@ -808,7 +811,7 @@ class _AsanaCreateProjectDetailPanelState
     required String label,
     required List<_CreateProjectAttachmentDraft> attachments,
     required String addTooltip,
-    required void Function(BuildContext buttonContext) onAdd,
+    required void Function(BuildContext buttonContext)? onAdd,
     LayerLink? addAnchorLink,
     BuildContext? editAnchorContext,
   }) {
@@ -830,7 +833,7 @@ class _AsanaCreateProjectDetailPanelState
                 const SizedBox(width: 8),
                 AsanaDetailCircleAddButton(
                   onTap: onAdd,
-                  enabled: !_saving,
+                  enabled: onAdd != null && !_saving,
                   tooltip: addTooltip,
                   size: 22,
                   anchorLink: addAnchorLink,
@@ -890,6 +893,7 @@ class _AsanaCreateProjectDetailPanelState
     _CreateProjectAttachmentDraft draft, {
     BuildContext? editAnchorContext,
   }) {
+    final adminReadOnly = context.read<AppState>().adminViewMode;
     if (draft.isPendingFile) {
       final name = draft.pendingFilename?.trim().isNotEmpty == true
           ? draft.pendingFilename!.trim()
@@ -899,7 +903,7 @@ class _AsanaCreateProjectDetailPanelState
         title: name,
         subtitle: 'Uploads when you create the project',
         enabled: !_saving,
-        onRemove: () => _removeAttachmentDraft(draft),
+        onRemove: adminReadOnly ? null : () => _removeAttachmentDraft(draft),
         imageBytes: draft.pendingBytes,
         mimeType: draft.mimeType,
         showImagePreview: _shouldAttemptAttachmentImagePreview(draft),
@@ -915,8 +919,8 @@ class _AsanaCreateProjectDetailPanelState
       title: title,
       url: url,
       enabled: !_saving,
-      onRemove: () => _removeAttachmentDraft(draft),
-      onEditLink: isLink && editAnchorContext != null
+      onRemove: adminReadOnly ? null : () => _removeAttachmentDraft(draft),
+      onEditLink: !adminReadOnly && isLink && editAnchorContext != null
           ? () => _editAttachmentLink(editAnchorContext, draft)
           : null,
       imageBytes: draft.pendingBytes,
@@ -1105,8 +1109,9 @@ class _AsanaCreateProjectDetailPanelState
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    final canEdit = !state.adminViewMode;
     final chrome = AsanaSlideChrome(widget.palette);
-    _ensureProjectAi();
+    if (canEdit) _ensureProjectAi();
     final creatorName = () {
       final id = state.userStaffAppId?.trim();
       if (id == null || id.isEmpty) return '';
@@ -1115,45 +1120,47 @@ class _AsanaCreateProjectDetailPanelState
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_projectAi != null)
-            AsanaTaskAiDock(
-              controller: _projectAi!,
-              palette: widget.palette,
-              footerBorder: chrome.footerBorder,
-            ),
-          AsanaDetailSlideFooter(
-            backgroundColor: chrome.footer,
-            borderColor: chrome.footerBorder,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+      footer: canEdit
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                FilledButton(
-                  onPressed: _saving ? null : () => _create(state),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: widget.palette.accent,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
-                    ),
+                if (_projectAi != null)
+                  AsanaTaskAiDock(
+                    controller: _projectAi!,
+                    palette: widget.palette,
+                    footerBorder: chrome.footerBorder,
                   ),
-                  child: Text(_saving ? 'Creating…' : 'Create'),
+                AsanaDetailSlideFooter(
+                  backgroundColor: chrome.footer,
+                  borderColor: chrome.footerBorder,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      FilledButton(
+                        onPressed: _saving ? null : () => _create(state),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: widget.palette.accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: Text(_saving ? 'Creating…' : 'Create'),
+                      ),
+                    ],
+                  ),
                 ),
               ],
-            ),
-          ),
-        ],
-      ),
+            )
+          : null,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AsanaHoverTextField(
             controller: _nameController,
-            canEdit: true,
+            canEdit: canEdit,
             readOnly: _saving,
             maxLines: 3,
             minLines: 1,
@@ -1169,7 +1176,7 @@ class _AsanaCreateProjectDetailPanelState
               children: [
                 AsanaHoverTextField(
                   controller: _descController,
-                  canEdit: true,
+                  canEdit: canEdit,
                   readOnly: _saving,
                   maxLines: 8,
                   minLines: 2,
@@ -1177,7 +1184,7 @@ class _AsanaCreateProjectDetailPanelState
                   hintText: 'Please fill in project description',
                 ),
                 InlineImageToolbar(
-                  enabled: !_saving,
+                  enabled: canEdit && !_saving,
                   onAdd: () => _stageInlineImage(
                     entityType: 'project_description',
                     entityId: 'draft_description',
@@ -1188,7 +1195,7 @@ class _AsanaCreateProjectDetailPanelState
                     entityType: 'project_description',
                     entityId: 'draft_description',
                   ),
-                  onRemove: _removeInlineImagePreview,
+                  onRemove: canEdit ? _removeInlineImagePreview : null,
                 ),
               ],
             ),
@@ -1205,9 +1212,9 @@ class _AsanaCreateProjectDetailPanelState
               child: AsanaAssigneeFieldValue(
                 anchorLink: _assigneeAnchorLink,
                 assignees: _rowsForIds(_assigneeIds, state),
-                canEdit: !_saving,
-                onOpenPicker: _pickAssignees,
-                onRemove: _removeAssignee,
+                canEdit: canEdit && !_saving,
+                onOpenPicker: canEdit ? _pickAssignees : null,
+                onRemove: canEdit ? _removeAssignee : null,
               ),
             ),
           ),
@@ -1217,12 +1224,12 @@ class _AsanaCreateProjectDetailPanelState
             child: AsanaAssigneeFieldValue(
               anchorLink: _picAnchorLink,
               assignees: _rowsForIds(_picAssigneeIds, state),
-              canEdit: !_saving && _assigneeIds.isNotEmpty,
+              canEdit: canEdit && !_saving && _assigneeIds.isNotEmpty,
               emptyPlaceholder: _assigneeIds.isEmpty
                   ? 'Select assignees first'
                   : 'Select PIC(s)',
-              onOpenPicker: _pickPics,
-              onRemove: _removePic,
+              onOpenPicker: canEdit ? _pickPics : null,
+              onRemove: canEdit ? _removePic : null,
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.pic),
@@ -1232,12 +1239,14 @@ class _AsanaCreateProjectDetailPanelState
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _statusAnchorLink,
                 child: MouseRegion(
-                  cursor: _saving
+                  cursor: !canEdit || _saving
                       ? SystemMouseCursors.basic
                       : SystemMouseCursors.click,
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: _saving ? null : () => _pickStatus(anchorContext),
+                    onTap: !canEdit || _saving
+                        ? null
+                        : () => _pickStatus(anchorContext),
                     child: AsanaDetailStatusPill(status: _draftStatus),
                   ),
                 ),
@@ -1249,10 +1258,12 @@ class _AsanaCreateProjectDetailPanelState
             label: 'Start date',
             child: AsanaHoverTapValue(
               value: _formatDate(_startDate),
-              canEdit: true,
+              canEdit: canEdit,
               emptyPlaceholder: '-',
-              onTap: _saving ? null : _pickStartDate,
-              onClear: _saving ? null : () => setState(() => _startDate = null),
+              onTap: !canEdit || _saving ? null : _pickStartDate,
+              onClear: !canEdit || _saving
+                  ? null
+                  : () => setState(() => _startDate = null),
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.startDate),
@@ -1260,10 +1271,12 @@ class _AsanaCreateProjectDetailPanelState
             label: 'Due date',
             child: AsanaHoverTapValue(
               value: _formatDate(_endDate),
-              canEdit: true,
+              canEdit: canEdit,
               emptyPlaceholder: '-',
-              onTap: _saving ? null : _pickDueDate,
-              onClear: _saving ? null : () => setState(() => _endDate = null),
+              onTap: !canEdit || _saving ? null : _pickDueDate,
+              onClear: !canEdit || _saving
+                  ? null
+                  : () => setState(() => _endDate = null),
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
@@ -1272,7 +1285,7 @@ class _AsanaCreateProjectDetailPanelState
               label: 'Files',
               attachments: _fileAttachments,
               addTooltip: 'Add file',
-              onAdd: (_) => _addFileAttachment(),
+              onAdd: canEdit ? (_) => _addFileAttachment() : null,
             ),
           ),
           Builder(
@@ -1280,7 +1293,7 @@ class _AsanaCreateProjectDetailPanelState
               label: 'Links',
               attachments: _urlAttachments,
               addTooltip: 'Add website link',
-              onAdd: _addUrlAttachment,
+              onAdd: canEdit ? _addUrlAttachment : null,
               addAnchorLink: _attachmentAddAnchorLink,
               editAnchorContext: anchorContext,
             ),
@@ -1293,14 +1306,14 @@ class _AsanaCreateProjectDetailPanelState
               children: [
                 AsanaHoverTextField(
                   controller: _commentController,
-                  canEdit: true,
+                  canEdit: canEdit,
                   readOnly: _saving,
                   maxLines: 5,
                   minLines: 2,
                   style: asanaDetailMultilineValueStyle(context),
                 ),
                 InlineImageToolbar(
-                  enabled: !_saving,
+                  enabled: canEdit && !_saving,
                   onAdd: () => _stageInlineImage(
                     entityType: 'project_comment',
                     entityId: 'draft',
@@ -1311,7 +1324,7 @@ class _AsanaCreateProjectDetailPanelState
                     entityType: 'project_comment',
                     entityId: 'draft',
                   ),
-                  onRemove: _removeInlineImagePreview,
+                  onRemove: canEdit ? _removeInlineImagePreview : null,
                 ),
               ],
             ),

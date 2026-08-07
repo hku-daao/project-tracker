@@ -9,7 +9,12 @@ import 'services/task_fetch_visibility.dart';
 
 /// Global app state for Asana-style projects, tasks, staff, and teams.
 class AppState extends ChangeNotifier {
-  static const String adminViewAllowedEmail = 'kenkylee@hku.hk';
+  static const Set<String> adminViewAllowedEmails = {
+    'kenkylee@hku.hk',
+    'jcltai@hku.hk',
+    'ywang63@hku.hk',
+    'icarusm@hku.hk',
+  };
   static const String adminViewStorageKey = 'project_tracker_admin_view_mode';
 
   /// Staff members loaded from database (via /api/staff).
@@ -51,7 +56,7 @@ class AppState extends ChangeNotifier {
                 : _revampStaffLookup?.loginEmail)
             ?.trim()
             .toLowerCase();
-    return email == adminViewAllowedEmail;
+    return email != null && adminViewAllowedEmails.contains(email);
   }
 
   bool get adminViewMode => _adminViewMode && canUseAdminViewMode;

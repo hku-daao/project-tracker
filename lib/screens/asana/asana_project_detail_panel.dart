@@ -1032,7 +1032,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   bool _isOwnComment(ProjectCommentRowDisplay comment) =>
-      !comment.isDeleted && _uuidEquals(comment.createByStaffId, _myStaffUuid);
+      !context.read<AppState>().adminViewMode &&
+      !comment.isDeleted &&
+      _uuidEquals(comment.createByStaffId, _myStaffUuid);
 
   DateTime? _commentDisplayTimestamp(ProjectCommentRowDisplay comment) {
     final created = comment.createTimestampUtc;
@@ -2135,7 +2137,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     }
 
     final state = context.watch<AppState>();
-    final canEdit = _isCreator(p);
+    final adminReadOnly = state.adminViewMode;
+    final canEdit = !adminReadOnly && _isCreator(p);
     if (canEdit) _ensureProjectAi();
     final creatorLabel = (p.createByDisplayName ?? '').trim().isNotEmpty
         ? p.createByDisplayName!.trim()
@@ -2145,12 +2148,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: _buildSlideFooter(
-        chrome: chrome,
-        canEdit: canEdit,
-        p: p,
-        state: state,
-      ),
+      footer: adminReadOnly
+          ? null
+          : _buildSlideFooter(
+              chrome: chrome,
+              canEdit: canEdit,
+              p: p,
+              state: state,
+            ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2236,12 +2241,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.pic),
           AsanaDetailSectionHeader(
             title: 'Tasks',
-            showAddButton: true,
+            showAddButton: !adminReadOnly,
             addTooltip: 'Create task',
-            onAdd: widget.onPushCreateTask == null
+            onAdd: adminReadOnly || widget.onPushCreateTask == null
                 ? null
                 : (_) => widget.onPushCreateTask!(),
-            addEnabled: !_saving && widget.onPushCreateTask != null,
+            addEnabled:
+                !adminReadOnly && !_saving && widget.onPushCreateTask != null,
           ),
           if (_tasks.isNotEmpty)
             LayoutBuilder(

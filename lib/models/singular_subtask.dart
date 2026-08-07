@@ -10,6 +10,7 @@ class SingularSubtask {
     required this.subtaskName,
     required this.description,
     required this.priority,
+    this.complexity,
     this.startDate,
     this.dueDate,
     required this.status,
@@ -41,6 +42,7 @@ class SingularSubtask {
 
   /// 1 = Standard, 2 = URGENT
   final int priority;
+  final String? complexity;
   final DateTime? startDate;
   final DateTime? dueDate;
   final String status;
@@ -106,6 +108,7 @@ class SingularSubtask {
     String? subtaskName,
     String? description,
     int? priority,
+    String? complexity,
     DateTime? startDate,
     DateTime? dueDate,
     String? status,
@@ -134,6 +137,7 @@ class SingularSubtask {
       subtaskName: subtaskName ?? this.subtaskName,
       description: description ?? this.description,
       priority: priority ?? this.priority,
+      complexity: complexity ?? this.complexity,
       startDate: startDate ?? this.startDate,
       dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,

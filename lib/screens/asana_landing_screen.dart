@@ -17,6 +17,7 @@ import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
 import 'asana/asana_home_panel.dart';
+import 'asana/asana_performance_panel.dart';
 import 'asana/asana_projects_panel.dart';
 import 'asana/asana_tasks_panel.dart';
 import 'asana/asana_theme.dart';
@@ -332,6 +333,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             _openRootDetail(AsanaDetailSelection.subtask(id)),
       );
     }
+    if (adminViewMode && _selectedNav == 'Performance') {
+      return AsanaPerformancePanel(palette: palette);
+    }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
@@ -555,6 +559,26 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                 selected: false,
                 onTap: _openFeedbackForm,
               ),
+              if (context.watch<AppState>().adminViewMode)
+                _SidebarNavTile(
+                  label: 'Performance',
+                  palette: palette,
+                  selected: _selectedNav == 'Performance',
+                  onTap: () {
+                    if (_selectedNav != 'Performance') {
+                      _showNavigationLoadingUntilNextFrame();
+                    }
+                    setState(() {
+                      _selectedNav = 'Performance';
+                      _detailStack.clear();
+                      if (MediaQuery.sizeOf(context).width <
+                          _kSidebarAutoHideWidth) {
+                        _sidebarOpenOverride = false;
+                      }
+                    });
+                    _syncWebLocationToDetailStack();
+                  },
+                ),
               _ThemeSidebarExpandable(
                 palette: palette,
                 expanded: _themeMenuExpanded,
@@ -1164,6 +1188,7 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
         final initials = asanaStaffInitials(
           displayName.isNotEmpty ? displayName : '?',
         );
+        final avatarText = state.adminViewMode ? 'Admin' : initials;
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -1181,10 +1206,10 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
                   ),
                   alignment: Alignment.center,
                   child: Text(
-                    initials,
+                    avatarText,
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.labelLarge,
-                      fontSize: 14,
+                      fontSize: state.adminViewMode ? 11 : 14,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                       height: 1,

@@ -19,6 +19,7 @@ class Task {
   final String description;
   final List<String> assigneeIds; // Responsible Officer IDs
   final int priority; // 1 = Standard, 2 = Urgent
+  final String? complexity;
   final DateTime? startDate;
   final DateTime? endDate;
   final DateTime createdAt;
@@ -94,6 +95,7 @@ class Task {
     required this.description,
     required this.assigneeIds,
     required this.priority,
+    this.complexity,
     this.startDate,
     this.endDate,
     required this.createdAt,
@@ -128,6 +130,7 @@ class Task {
     String? description,
     List<String>? assigneeIds,
     int? priority,
+    String? complexity,
     DateTime? startDate,
     DateTime? endDate,
     DateTime? createdAt,
@@ -167,6 +170,7 @@ class Task {
       description: description ?? this.description,
       assigneeIds: assigneeIds ?? this.assigneeIds,
       priority: priority ?? this.priority,
+      complexity: complexity ?? this.complexity,
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       createdAt: createdAt ?? this.createdAt,

@@ -165,19 +165,22 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final state = context.watch<AppState>();
     final today = HkTime.todayDateOnlyHk();
     final dateLine = _formatHeaderDate(today);
-    final greeting = '${_greetingPhrase()}, ${_greetingDisplayName(state)}';
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
     final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
     final adminViewMode = state.adminViewMode;
+    final greetingName = adminViewMode
+        ? 'Administrator'
+        : _greetingDisplayName(state);
+    final greeting = '${_greetingPhrase()}, $greetingName';
 
     final all = _activeSingularTasks(state);
     final created =
         (adminViewMode
-              ? List<Task>.from(all)
+              ? all.where(_isIncomplete).toList()
               : all.where(state.taskIsCreatedByCurrentUser).toList())
           ..sort(_sortByDue);
     final assigned = adminViewMode
-        ? <Task>[]
+        ? (all.where(_isCompleted).toList()..sort(_sortByDueDescending))
         : (all
               .where((t) => AsanaTaskFilter.taskAssignedToCurrentUser(state, t))
               .toList()
@@ -261,7 +264,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     key: ValueKey('home-created-$layoutKey'),
                     palette: palette,
                     title: adminViewMode
-                        ? 'All active tasks'
+                        ? 'Incomplete Tasks'
                         : "Tasks I've created",
                     tasks: visibleCreated,
                     middleHeader: 'PIC',
@@ -278,13 +281,16 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                   final assignedCard = _HomeTaskCard(
                     key: ValueKey('home-assigned-$layoutKey'),
                     palette: palette,
-                    title: 'Tasks assigned to me',
+                    title: adminViewMode
+                        ? 'Completed Tasks'
+                        : 'Tasks assigned to me',
                     tasks: visibleAssigned,
-                    middleHeader: 'Creator',
-                    middleValue: (t) =>
-                        t.createByStaffName?.trim().isNotEmpty == true
-                        ? t.createByStaffName!.trim()
-                        : '—',
+                    middleHeader: adminViewMode ? 'PIC' : 'Creator',
+                    middleValue: adminViewMode
+                        ? (t) => _picLine(state, t.pic)
+                        : (t) => t.createByStaffName?.trim().isNotEmpty == true
+                              ? t.createByStaffName!.trim()
+                              : '—',
                     onOpenTask: widget.onOpenTask,
                     expanded: allowCollapse
                         ? (_expanded['assigned'] ?? true)
@@ -408,6 +414,16 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     if (ae == null) return 1;
     if (be == null) return -1;
     final c = ae.compareTo(be);
+    return c != 0 ? c : a.name.compareTo(b.name);
+  }
+
+  static int _sortByDueDescending(Task a, Task b) {
+    final ae = a.endDate;
+    final be = b.endDate;
+    if (ae == null && be == null) return a.name.compareTo(b.name);
+    if (ae == null) return 1;
+    if (be == null) return -1;
+    final c = be.compareTo(ae);
     return c != 0 ? c : a.name.compareTo(b.name);
   }
 
@@ -551,6 +567,11 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   static bool _isCompleted(Task t) {
     final s = t.dbStatus?.trim().toLowerCase() ?? '';
     return s == 'completed' || s == 'complete' || t.status == TaskStatus.done;
+  }
+
+  static bool _isIncomplete(Task t) {
+    final s = t.dbStatus?.trim().toLowerCase() ?? '';
+    return s == 'incomplete' || (s.isEmpty && t.status != TaskStatus.done);
   }
 
   static DateTime? _dateOnly(DateTime? d) {

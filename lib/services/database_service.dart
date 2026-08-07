@@ -613,6 +613,7 @@ class DatabaseService {
     String? taskName,
     String? description,
     String? priority,
+    String? complexity,
     List<String?>? assigneeSlots,
     DateTime? startDate,
     DateTime? dueDate,
@@ -654,6 +655,7 @@ class DatabaseService {
       if (taskName != null) map['task_name'] = taskName;
       if (description != null) map['description'] = description;
       if (priority != null) map['priority'] = priority;
+      if (complexity != null) map['complexity'] = complexity.trim();
       if (assigneeSlots != null) {
         for (var i = 0; i < 10; i++) {
           final key = 'assignee_${(i + 1).toString().padLeft(2, '0')}';
@@ -1276,6 +1278,7 @@ class DatabaseService {
       description: row['description'] as String? ?? '',
       assigneeIds: assigneeIds,
       priority: _priorityFromFlexible(row['priority']),
+      complexity: row['complexity'] as String?,
       startDate: _parseDate(row['start_date']),
       endDate: _parseDate(row['due_date']) ?? _parseDate(row['end_date']),
       createdAt: _parseDateTime(row['created_at'] ?? row['create_date']),
@@ -2716,6 +2719,7 @@ class DatabaseService {
     required String taskName,
     List<String?> assignees = const [],
     String? priority,
+    String? complexity,
     DateTime? startDate,
     DateTime? dueDate,
     String? description,
@@ -2748,6 +2752,7 @@ class DatabaseService {
       final map = <String, dynamic>{
         'task_name': name,
         'priority': priority,
+        'complexity': complexity?.trim(),
         'description': description,
         'status': s,
         'create_date': now,
@@ -3071,6 +3076,7 @@ class DatabaseService {
       subtaskName: row['subtask_name'] as String? ?? '',
       description: row['description'] as String? ?? '',
       priority: _priorityFromFlexible(row['priority']),
+      complexity: row['complexity'] as String?,
       startDate: _parseDate(row['start_date']),
       dueDate: _parseDate(row['due_date']),
       status: () {
@@ -3487,6 +3493,7 @@ class DatabaseService {
     required String subtaskName,
     required String description,
     required String priorityDisplay,
+    required String complexity,
     DateTime? startDate,
     DateTime? dueDate,
     required List<String?> assigneeStaffUuids,
@@ -3512,6 +3519,7 @@ class DatabaseService {
         'subtask_name': name,
         'description': description.trim(),
         'priority': priorityDisplay,
+        'complexity': complexity.trim(),
         'status': status?.trim().isNotEmpty == true
             ? status!.trim()
             : 'Incomplete',
@@ -3591,6 +3599,7 @@ class DatabaseService {
     String? subtaskName,
     String? description,
     String? priorityDisplay,
+    String? complexity,
     DateTime? startDate,
     bool clearStartDate = false,
     DateTime? dueDate,
@@ -3626,6 +3635,7 @@ class DatabaseService {
       if (subtaskName != null) map['subtask_name'] = subtaskName.trim();
       if (description != null) map['description'] = description.trim();
       if (priorityDisplay != null) map['priority'] = priorityDisplay;
+      if (complexity != null) map['complexity'] = complexity.trim();
       if (clearStartDate) {
         map['start_date'] = null;
       } else if (startDate != null) {

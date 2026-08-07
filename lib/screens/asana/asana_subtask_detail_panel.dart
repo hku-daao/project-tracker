@@ -194,6 +194,8 @@ class AsanaSubtaskDetailPanel extends StatefulWidget {
 }
 
 class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
+  static const List<String> _complexityOptions = ['Low', 'Medium', 'High'];
+
   SingularSubtask? _subtask;
   Task? _parentTask;
   ProjectRecord? _parentProject;
@@ -220,6 +222,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final Set<String> _assigneeIds = {};
   String? _picAssigneeId;
   int _localPriority = priorityStandard;
+  String? _localComplexity;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _draftStatus;
@@ -239,6 +242,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _priorityAnchorLink = LayerLink();
+  final LayerLink _complexityAnchorLink = LayerLink();
   final LayerLink _statusAnchorLink = LayerLink();
   final LayerLink _attachmentAddAnchorLink = LayerLink();
   final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
@@ -307,6 +311,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _assigneeIds.clear();
     _picAssigneeId = null;
     _localPriority = priorityStandard;
+    _localComplexity = null;
     _draftStatus = 'Incomplete';
     final today = HkTime.todayDateOnlyHk();
     _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
@@ -388,6 +393,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
             _picAssigneeId = row?.pic;
             if (_picAssigneeId?.isEmpty == true) _picAssigneeId = null;
             _localPriority = row?.priority ?? priorityStandard;
+            _localComplexity = row?.complexity;
             _startDate = row?.startDate;
             _dueDate = row?.dueDate;
             _draftStatus = row?.status;
@@ -724,6 +730,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       priorityToDisplayName(s.priority),
       priorityToDisplayName(_localPriority),
     );
+    _addChange(
+      changes,
+      'complexity',
+      _complexityText(s.complexity),
+      _complexityText(_localComplexity),
+    );
     _addChange(changes, 'startDate', _date(s.startDate), _date(_startDate));
     _addChange(changes, 'dueDate', _date(s.dueDate), _date(_dueDate));
     _appendAttachmentChangesForEmail(changes);
@@ -829,7 +841,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   bool _isOwnComment(AppState state, SubtaskCommentRowDisplay comment) {
-    return !comment.isDeleted &&
+    return !state.adminViewMode &&
+        !comment.isDeleted &&
         _matchesCurrentStaff(state, comment.createByStaffId);
   }
 
@@ -1292,6 +1305,25 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     });
   }
 
+  Future<void> _pickComplexity(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker) return;
+    final choice = await showAsanaAnchoredOptionMenu<String>(
+      anchorLink: _complexityAnchorLink,
+      anchorContext: anchorContext,
+      onClosed: _blockAnchoredPickerReopen,
+      options: _complexityOptions
+          .map((v) => AsanaAnchoredOption(value: v, label: v))
+          .toList(),
+    );
+    if (choice == null || !mounted) return;
+    setState(() => _localComplexity = choice);
+  }
+
+  String _complexityText(String? value) {
+    final v = value?.trim();
+    return v == null || v.isEmpty ? '—' : v;
+  }
+
   bool _needsChangeDueReason() {
     if (_startDate == null || _dueDate == null) return false;
     return dueDateExceedsPolicyForPriority(
@@ -1639,6 +1671,16 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
+    final complexity = _localComplexity?.trim();
+    if (_effectiveCreateMode && (complexity == null || complexity.isEmpty)) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Complexity required',
+        content: 'Please choose Low, Medium, or High before continuing.',
+        palette: widget.palette,
+      );
+      return;
+    }
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
       await showAsanaConfirmDialog(
         context: context,
@@ -1660,6 +1702,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           subtaskName: newName,
           description: stripInlineImageMarkers(_descController.text),
           priorityDisplay: priorityToDisplayName(_localPriority),
+          complexity: complexity!,
           status: _draftStatus,
           startDate: _startDate,
           dueDate: _dueDate,
@@ -1800,6 +1843,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           subtaskName: newName,
           description: stripInlineImageMarkers(_descController.text),
           priorityDisplay: priorityToDisplayName(_localPriority),
+          complexity: _localComplexity,
           status: _draftStatus,
           clearStartDate: _startDate == null,
           startDate: _startDate,
@@ -1984,6 +2028,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         subtaskName: newName,
         description: stripInlineImageMarkers(_descController.text),
         priorityDisplay: priorityToDisplayName(_localPriority),
+        complexity: _localComplexity,
         status: s.status,
         clearStartDate: _startDate == null,
         startDate: _startDate,
@@ -2193,6 +2238,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         subtaskName: newName,
         description: stripInlineImageMarkers(_descController.text),
         priorityDisplay: priorityToDisplayName(_localPriority),
+        complexity: _localComplexity,
         status: s.status,
         clearStartDate: _startDate == null,
         startDate: _startDate,
@@ -3160,6 +3206,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     required bool isPic,
     required bool isAssigneeOnly,
   }) {
+    if (state.adminViewMode) return const [];
     if (_effectiveCreateMode) {
       return [
         FilledButton(
@@ -3310,17 +3357,26 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
     }
     final state = context.watch<AppState>();
-    final isCreator = _effectiveCreateMode || _isCreator(state);
-    final isPic = s != null && _isPic(state, s);
-    final canEditDetails = _canEditSubtaskDetails(state, s);
+    final adminReadOnly = state.adminViewMode;
+    final isCreator =
+        !adminReadOnly && (_effectiveCreateMode || _isCreator(state));
+    final isPic = !adminReadOnly && s != null && _isPic(state, s);
+    final canEditDetails = !adminReadOnly && _canEditSubtaskDetails(state, s);
     final isAssigneeOnly =
-        s != null && _isAssignee(state, s) && !isCreator && !isPic;
+        !adminReadOnly &&
+        s != null &&
+        _isAssignee(state, s) &&
+        !isCreator &&
+        !isPic;
     _parentTask =
         state.taskById(widget.parentTaskId ?? s?.taskId ?? '') ?? _parentTask;
     final parent = _parentTask;
     final canEditAttachments =
-        _effectiveCreateMode ||
-        (s != null && !s.isDeleted && (isCreator || isPic || isAssigneeOnly));
+        !adminReadOnly &&
+        (_effectiveCreateMode ||
+            (s != null &&
+                !s.isDeleted &&
+                (isCreator || isPic || isAssigneeOnly)));
     final footerButtons = _buildFooterButtons(
       state: state,
       subtask: s,
@@ -3329,35 +3385,38 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       isAssigneeOnly: isAssigneeOnly,
     );
 
-    _ensureSubtaskAi(state);
+    if (!adminReadOnly) _ensureSubtaskAi(state);
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_subtaskAi != null)
-            AsanaTaskAiDock(
-              controller: _subtaskAi!,
-              palette: widget.palette,
-              footerBorder: chrome.footerBorder,
+      footer: adminReadOnly || (footerButtons.isEmpty && _subtaskAi == null)
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_subtaskAi != null)
+                  AsanaTaskAiDock(
+                    controller: _subtaskAi!,
+                    palette: widget.palette,
+                    footerBorder: chrome.footerBorder,
+                  ),
+                if (footerButtons.isNotEmpty)
+                  AsanaDetailSlideFooter(
+                    backgroundColor: chrome.footer,
+                    borderColor: chrome.footerBorder,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: footerButtons,
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          AsanaDetailSlideFooter(
-            backgroundColor: chrome.footer,
-            borderColor: chrome.footerBorder,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 8,
-                runSpacing: 8,
-                children: footerButtons,
-              ),
-            ),
-          ),
-        ],
-      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3547,6 +3606,24 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                       ),
               ),
             ),
+          ),
+          AsanaDetailTwoColumnRow(
+            label: 'Complexity',
+            child: (_effectiveCreateMode || canEditDetails)
+                ? Builder(
+                    builder: (anchorContext) => CompositedTransformTarget(
+                      link: _complexityAnchorLink,
+                      child: AsanaHoverTapValue(
+                        value: _localComplexity ?? '',
+                        canEdit: true,
+                        emptyPlaceholder: 'Select complexity',
+                        onTap: _saving
+                            ? null
+                            : (_) => _pickComplexity(anchorContext),
+                      ),
+                    ),
+                  )
+                : AsanaDetailPlainValue(text: _complexityText(s?.complexity)),
           ),
           AsanaDetailTwoColumnRow(
             label: 'Start date',
