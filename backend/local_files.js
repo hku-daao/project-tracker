@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_MULTIPART_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024;
+
 function getUploadDir() {
   return (process.env.UPLOAD_DIR || path.join(__dirname, '..', 'data', 'uploads')).trim();
 }
@@ -94,13 +97,15 @@ function parseMultipart(buffer, boundary) {
   return parts;
 }
 
-async function readRawBody(req, limitBytes = 55 * 1024 * 1024) {
+async function readRawBody(req, limitBytes = MAX_MULTIPART_BYTES) {
   const chunks = [];
   let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
     if (total > limitBytes) {
-      throw new Error('Payload too large');
+      const err = new Error('File is larger than 10 MB. It was not uploaded or saved.');
+      err.statusCode = 413;
+      throw err;
     }
     chunks.push(chunk);
   }
@@ -141,6 +146,12 @@ async function handleLocalFileUpload(req, res, sendJson, applyCors) {
       return;
     }
     const originalName = (filePart.filename || 'attachment').trim() || 'attachment';
+    if (filePart.body.length > MAX_UPLOAD_BYTES) {
+      sendJson(req, res, 413, {
+        error: `File "${originalName}" is larger than 10 MB. It was not uploaded or saved.`,
+      });
+      return;
+    }
     const relativePath = buildRelativePath(entityType, entityId, originalName);
     const abs = resolveStoredFile(relativePath);
     if (!abs) {
@@ -158,7 +169,7 @@ async function handleLocalFileUpload(req, res, sendJson, applyCors) {
       file_size_bytes: filePart.body.length,
     });
   } catch (e) {
-    sendJson(req, res, 500, { error: e.message || 'Upload failed' });
+    sendJson(req, res, e.statusCode || 500, { error: e.message || 'Upload failed' });
   }
 }
 

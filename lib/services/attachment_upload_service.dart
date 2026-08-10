@@ -17,7 +17,8 @@ class AttachmentUploadService {
   static const List<({String url, String label})> _emptyUploadedFiles =
       <({String url, String label})>[];
 
-  static const int _maxBytes = 50 * 1024 * 1024;
+  static const int _maxBytes = 10 * 1024 * 1024;
+  static const String _maxSizeLabel = '10 MB';
   static const int aclMetadataSlotCount = 10;
   static const String storageMetadataOriginalFileNameKey = 'originalFileName';
 
@@ -62,7 +63,9 @@ class AttachmentUploadService {
     const marker = '/api/files/';
     final idx = rawUrl.indexOf(marker);
     if (idx >= 0) {
-      return Uri.decodeComponent(rawUrl.substring(idx + marker.length).split('?').first);
+      return Uri.decodeComponent(
+        rawUrl.substring(idx + marker.length).split('?').first,
+      );
     }
     return null;
   }
@@ -108,11 +111,14 @@ class AttachmentUploadService {
       }
       final files = <({Uint8List bytes, String label})>[];
       for (final file in picked) {
-        final label = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
+        final label = file.name.trim().isEmpty
+            ? 'attachment'
+            : file.name.trim();
         if (file.bytes.length > _maxBytes) {
           return (
             files: _emptyPickedUploads,
-            error: 'File too large (max 50 MB): $label',
+            error:
+                'File "$label" is larger than $_maxSizeLabel. It was not uploaded or saved.',
           );
         }
         files.add((bytes: file.bytes, label: label));
@@ -131,6 +137,14 @@ class AttachmentUploadService {
     required Uint8List bytes,
     required List<String?> aclStaffKeys,
   }) async {
+    if (bytes.length > _maxBytes) {
+      return (
+        url: null,
+        label: null,
+        error:
+            'File "$originalFilename" is larger than $_maxSizeLabel. It was not uploaded or saved.',
+      );
+    }
     if (aclMetadataFromStaffKeys(aclStaffKeys).isEmpty) {
       return (
         url: null,
@@ -154,10 +168,19 @@ class AttachmentUploadService {
       final streamed = await req.send().timeout(const Duration(minutes: 2));
       final body = await streamed.stream.bytesToString();
       if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+        String? serverMessage;
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map) {
+            serverMessage = decoded['error']?.toString().trim();
+          }
+        } catch (_) {}
         return (
           url: null,
           label: null,
-          error: 'Upload failed (HTTP ${streamed.statusCode}): $body',
+          error: serverMessage != null && serverMessage.isNotEmpty
+              ? serverMessage
+              : 'Upload failed (HTTP ${streamed.statusCode}): $body',
         );
       }
       final json = jsonDecode(body) as Map<String, dynamic>;
@@ -180,7 +203,8 @@ class AttachmentUploadService {
     }
   }
 
-  static Future<({String? url, String? label, String? error})> uploadBytesForTask(
+  static Future<({String? url, String? label, String? error})>
+  uploadBytesForTask(
     String taskId, {
     required Uint8List bytes,
     required String originalFilename,
@@ -362,7 +386,8 @@ class AttachmentUploadService {
     return (files: uploaded, error: null);
   }
 
-  static Future<({String? url, String? label, String? error})> pickUploadForTask(
+  static Future<({String? url, String? label, String? error})>
+  pickUploadForTask(
     String taskId, {
     required List<String?> aclStaffKeys,
     void Function()? onUploadPhaseStarted,
