@@ -23,7 +23,8 @@ class LlmService {
 
   static String get _missingConfigMessage {
     final missing = <String>[];
-    if (LocalLlmConfig.apiKey.trim().isEmpty) {
+    if (LocalLlmConfig.authRequiresKey &&
+        LocalLlmConfig.apiKey.trim().isEmpty) {
       missing.add(
         'LOCAL_LLM_API_KEY (or secrets/internal_llm_api_key.txt)',
       );

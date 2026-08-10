@@ -65,6 +65,13 @@ const TASK_UPDATE_NOTIFY_MAX_CHANGES = 8;
 const TASK_UPDATE_NOTIFY_MAX_VALUE_LEN = 4000;
 const TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN = 8000;
 
+const LLM_PROXY_BASE_URL = String(
+  process.env.LLM_PROXY_BASE_URL ||
+    process.env.OLLAMA_LLM_BASE_URL ||
+    '',
+).trim().replace(/\/+$/, '');
+const LLM_PROXY_TIMEOUT_MS = Number(process.env.LLM_PROXY_TIMEOUT_MS || 120000);
+
 /** Allowed keys from Flutter for sub-task-updated email lines (display label is server-side). */
 const SUBTASK_UPDATE_NOTIFY_FIELD_LABELS = {
   subtaskName: 'Sub-task name',
@@ -862,6 +869,53 @@ async function handleApiStaff(req, res) {
   } catch (e) {
     console.error('handleApiStaff:', e);
     sendJson(req, res, 500, { error: 'Server error', message: e.message });
+  }
+}
+
+async function handleLlmChatCompletionsProxy(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  if (!LLM_PROXY_BASE_URL) {
+    sendJson(req, res, 503, {
+      error: 'LLM proxy is not configured',
+      message: 'Set LLM_PROXY_BASE_URL in backend environment.',
+    });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const upstreamBody = {
+      stream: false,
+      think: false,
+      ...(body || {}),
+    };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), LLM_PROXY_TIMEOUT_MS);
+    let upstream;
+    try {
+      upstream = await fetch(`${LLM_PROXY_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(upstreamBody),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    const text = await upstream.text();
+    applyCors(req, res, upstream.status, {
+      'Content-Type':
+        upstream.headers.get('content-type') || 'application/json',
+    });
+    res.end(text);
+  } catch (e) {
+    const aborted = e && e.name === 'AbortError';
+    sendJson(req, res, aborted ? 504 : 500, {
+      error: aborted ? 'LLM proxy timed out' : 'LLM proxy failed',
+      message: e.message || String(e),
+    });
   }
 }
 
@@ -8514,6 +8568,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/staff' && req.method === 'GET') {
     await handleApiStaff(req, res);
+    return;
+  }
+  if (path === '/api/llm/chat/completions' && req.method === 'POST') {
+    await handleLlmChatCompletionsProxy(req, res);
     return;
   }
   if (path === '/api/admin/snapshot' && req.method === 'GET') {

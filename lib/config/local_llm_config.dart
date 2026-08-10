@@ -37,6 +37,7 @@ class LocalLlmConfig {
 
   /// `apim` = HKU `api-key` header (api.hku.hk Vertex AI gateway).
   /// `bearer` = `Authorization: Bearer …` (Ollama / some OpenAI gateways).
+  /// `none` = no auth header (Project Tracker backend proxy / unauthenticated Ollama).
   /// `auto` = apim when base URL contains `api.hku.hk`, else bearer.
   static const String authMode = String.fromEnvironment(
     'LOCAL_LLM_AUTH',
@@ -48,8 +49,15 @@ class LocalLlmConfig {
 
   static bool get useLocalLlm => baseUrl.isNotEmpty;
 
+  static bool get authRequiresKey {
+    final mode = authMode.trim().toLowerCase();
+    return mode != 'none' && mode != 'noauth' && mode != 'off';
+  }
+
   static bool get isConfigured =>
-      useLocalLlm && apiKey.trim().isNotEmpty && model.trim().isNotEmpty;
+      useLocalLlm &&
+      model.trim().isNotEmpty &&
+      (!authRequiresKey || apiKey.trim().isNotEmpty);
 
   static String get chatCompletionsUrl => '$baseUrl/chat/completions';
 
@@ -62,6 +70,10 @@ class LocalLlmConfig {
 
   static Map<String, String> authorizationHeaders() {
     final key = apiKey.trim();
+    final mode = authMode.trim().toLowerCase();
+    if (mode == 'none' || mode == 'noauth' || mode == 'off') {
+      return const {};
+    }
     if (key.isEmpty) return const {};
     if (usesApimSubscriptionKey) {
       // HKU IT Vertex AI gateway expects `api-key`, not Azure APIM's
