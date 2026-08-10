@@ -1020,6 +1020,27 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     return submission != 'submitted' && submission != 'accepted';
   }
 
+  Future<bool> _suggestComplexityBeforeSubtaskWorkflowIfEmpty(
+    AppState state,
+  ) async {
+    if ((_localComplexity ?? '').trim().isNotEmpty) return false;
+    _ensureSubtaskAi(state);
+    final ai = _subtaskAi;
+    if (ai == null) return false;
+    await ai.analyseWithPrompt(
+      'The Complexity field is empty. Please suggest only the most appropriate Complexity value for this sub-task as Low, Medium, or High. Base the judgment on the sub-task name, sub-task description, parent task context, and parent project context if available.',
+    );
+    if (!mounted) return true;
+    await showAsanaInfoDialog(
+      context: context,
+      title: 'Complexity suggestion ready',
+      content:
+          'Please review the AI suggestion under Complexity, adopt Low, Medium, or High if appropriate, then click the workflow button again.',
+      palette: widget.palette,
+    );
+    return true;
+  }
+
   void _publishAssigneeSnapshot() {
     _assigneeSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
@@ -1434,6 +1455,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state) || s.isDeleted || s.isPaused == paused) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -1507,14 +1529,20 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   String _buildParentContext(Task? p, AppState state) {
     if (p == null) return '';
+    final projectDescription =
+        _parentProject?.description.trim().isNotEmpty == true
+        ? _parentProject!.description.trim()
+        : (p.projectDescription?.trim() ?? '');
     return '''
 Task: ${p.name.trim()}
 Description: ${p.description.trim()}
 Project: ${p.projectName?.trim() ?? '(none)'}
+Project description: ${projectDescription.isEmpty ? '(empty)' : projectDescription}
 Assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).join(', ')}
 PIC: ${_nameFor(state, p.pic)}
 Status: ${p.dbStatus ?? 'Incomplete'}
 Priority: ${priorityToDisplayName(p.priority)}
+Complexity: ${p.complexity?.trim().isNotEmpty == true ? p.complexity!.trim() : '(empty)'}
 Start: ${_date(p.startDate)}
 Due: ${_date(p.endDate)}
 Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).join(', ')}
@@ -1559,6 +1587,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             ? ''
             : _labelForAssigneeId(_picAssigneeId!, state),
         priority: _localPriority,
+        complexity: _localComplexity?.trim() ?? '',
         startDate: _startDate,
         dueDate: _dueDate,
         canEditName: _canEditSubtaskDetails(state, _subtask),
@@ -1585,6 +1614,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       }),
       onApplySubtaskPic: (id) => setState(() => _picAssigneeId = id),
       onApplySubtaskPriority: (p) => setState(() => _localPriority = p),
+      onApplySubtaskComplexity: (v) => setState(() => _localComplexity = v),
       onApplySubtaskStartDate: (d) =>
           setState(() => _startDate = DateTime(d.year, d.month, d.day)),
       onApplySubtaskDueDate: (d) =>
@@ -2181,6 +2211,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
     if (await _blockAdminReadOnlyWrite()) return;
     final s = _subtask;
     if (s == null || !_isCreator(context.read<AppState>())) return;
+    final state = context.read<AppState>();
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
       title: 'Delete sub-task?',
@@ -2190,7 +2222,6 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       palette: widget.palette,
     );
     if (ok != true || !mounted) return;
-    final state = context.read<AppState>();
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2243,6 +2274,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _markCompleted(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     final newName = _nameController.text.trim();
     if (newName.isEmpty) {
       await showAsanaInfoDialog(
@@ -2420,6 +2452,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _submitSubtask(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     final commentText = stripInlineImageMarkers(_commentController.text);
     if (_attachments.isEmpty &&
         commentText.isEmpty &&
@@ -2491,6 +2524,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _returnSubtask(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2547,6 +2581,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _undoAcceptOrReturn(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     final oldStatus = s.status.trim().isNotEmpty
         ? s.status.trim()
         : 'Completed';
@@ -2604,6 +2639,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
 
   Future<void> _undoDeleted(AppState state, SingularSubtask s) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     final ok = await _setWorkflowState(
       state: state,
       subtask: s,
@@ -3683,6 +3719,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                   )
                 : AsanaDetailPlainValue(text: _complexityText(s?.complexity)),
           ),
+          if (_effectiveCreateMode || canEditDetails)
+            _aiSuggestions(AsanaTaskAiFieldKey.complexity),
           AsanaDetailTwoColumnRow(
             label: 'Start date',
             child: Builder(

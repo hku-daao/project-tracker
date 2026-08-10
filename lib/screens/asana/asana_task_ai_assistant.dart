@@ -22,6 +22,7 @@ enum AsanaTaskAiFieldKey {
   assignees,
   pic,
   priority,
+  complexity,
   startDate,
   dueDate,
   reason,
@@ -98,9 +99,11 @@ class AsanaTaskAiFormSnapshot {
     required this.description,
     required this.commentDraft,
     required this.projectLabel,
+    required this.projectDescription,
     required this.assigneesLabel,
     required this.picLabel,
     required this.priority,
+    required this.complexity,
     required this.startDate,
     required this.dueDate,
     required this.reason,
@@ -118,9 +121,11 @@ class AsanaTaskAiFormSnapshot {
   final String description;
   final String commentDraft;
   final String projectLabel;
+  final String projectDescription;
   final String assigneesLabel;
   final String picLabel;
   final int priority;
+  final String complexity;
   final DateTime? startDate;
   final DateTime? dueDate;
   final String reason;
@@ -148,10 +153,14 @@ class AsanaTaskAiFormSnapshot {
       )
       ..writeln('- project: ${projectLabel.isEmpty ? "(none)" : projectLabel}')
       ..writeln(
+        '- project description: ${projectDescription.isEmpty ? "(empty)" : projectDescription}',
+      )
+      ..writeln(
         '- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}',
       )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
+      ..writeln('- complexity: ${complexity.isEmpty ? "(empty)" : complexity}')
       ..writeln(
         '- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}',
       )
@@ -180,6 +189,7 @@ class AsanaTaskAiFormSnapshot {
       buf.writeln('Available staff: ${staff.map((s) => s.name).join('; ')}');
     }
     buf.writeln('Priority options: Standard, URGENT');
+    buf.writeln('Complexity options: Low, Medium, High');
     return buf.toString();
   }
 
@@ -203,6 +213,7 @@ class AsanaSubtaskAiFormSnapshot {
     required this.assigneesLabel,
     required this.picLabel,
     required this.priority,
+    required this.complexity,
     required this.startDate,
     required this.dueDate,
     required this.canEditName,
@@ -222,6 +233,7 @@ class AsanaSubtaskAiFormSnapshot {
   final String assigneesLabel;
   final String picLabel;
   final int priority;
+  final String complexity;
   final DateTime? startDate;
   final DateTime? dueDate;
   final bool canEditName;
@@ -261,6 +273,7 @@ class AsanaSubtaskAiFormSnapshot {
       )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
+      ..writeln('- complexity: ${complexity.isEmpty ? "(empty)" : complexity}')
       ..writeln(
         '- start date: ${startDate == null ? "(empty)" : AsanaTaskAiFormSnapshot._ymd(startDate!)}',
       )
@@ -286,6 +299,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canSuggestAssignees) 'assignees',
         if (canSuggestAssignees) 'PIC',
         'priority',
+        'complexity',
         'startDate',
         'dueDate',
         if (canEditReason) 'reason',
@@ -299,6 +313,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canSuggestAssignees) 'assignees',
         if (canSuggestAssignees) 'PIC',
         'priority',
+        'complexity',
         'startDate',
         'dueDate',
         if (canEditReason) 'reason',
@@ -318,6 +333,7 @@ class AsanaSubtaskAiFormSnapshot {
       );
     }
     buf.writeln('Priority options: Standard, URGENT');
+    buf.writeln('Complexity options: Low, Medium, High');
     return buf.toString();
   }
 }
@@ -331,6 +347,7 @@ class AsanaSubtaskAiSuggestionBuilder {
     required void Function(Set<String> assigneeIds)? applyAssignees,
     required void Function(String picAssigneeId)? applyPic,
     required void Function(int priority)? applyPriority,
+    required void Function(String complexity)? applyComplexity,
     required void Function(DateTime start)? applyStartDate,
     required void Function(DateTime due)? applyDueDate,
     required void Function(String reason)? applyReason,
@@ -529,6 +546,35 @@ class AsanaSubtaskAiSuggestionBuilder {
             currentValue: priorityToDisplayName(form.priority),
             suggestedText: priorityToDisplayName(p),
             onAdopt: () => applyPriority(p),
+          ),
+        );
+      }
+    }
+
+    final complexityRaw = AsanaTaskAiSuggestionBuilder._str(raw['complexity']);
+    if (applyComplexity != null &&
+        complexityRaw != null &&
+        complexityRaw.isNotEmpty) {
+      final complexity = AsanaTaskAiSuggestionBuilder._parseComplexity(
+        complexityRaw,
+      );
+      if (complexity == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Complexity "$complexityRaw" was not recognized (use Low, Medium, or High).',
+            fieldKey: AsanaTaskAiFieldKey.complexity,
+          ),
+        );
+      } else {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.complexity,
+            fieldLabel: 'Complexity',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.complexity,
+            ),
+            suggestedText: complexity,
+            onAdopt: () => applyComplexity(complexity),
           ),
         );
       }
@@ -976,6 +1022,31 @@ class AsanaTaskAiSuggestionBuilder {
       }
     }
 
+    final complexityRaw = _str(raw['complexity']);
+    if (complexityRaw != null && complexityRaw.isNotEmpty) {
+      final complexity = _parseComplexity(complexityRaw);
+      if (complexity == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Complexity "$complexityRaw" was not recognized (use Low, Medium, or High).',
+            fieldKey: AsanaTaskAiFieldKey.complexity,
+          ),
+        );
+      } else {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.complexity,
+            fieldLabel: 'Complexity',
+            currentValue: AsanaTaskAiSuggestionLine._displayCurrent(
+              form.complexity,
+            ),
+            suggestedText: complexity,
+            onAdopt: () => apply.applyComplexity(complexity),
+          ),
+        );
+      }
+    }
+
     if (!datesBlocked) {
       final start = proposedStart;
       if (start != null && !_sameDateOnly(start, form.startDate)) {
@@ -1141,6 +1212,21 @@ class AsanaTaskAiSuggestionBuilder {
     return null;
   }
 
+  static String? _parseComplexity(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v.isEmpty) return null;
+    if (v == 'low' || v == 'simple' || v == 'easy' || v == 'minor') {
+      return 'Low';
+    }
+    if (v == 'medium' || v == 'moderate' || v == 'normal') {
+      return 'Medium';
+    }
+    if (v == 'high' || v == 'complex' || v == 'difficult' || v == 'hard') {
+      return 'High';
+    }
+    return null;
+  }
+
   static DateTime? _parseYmd(String raw) {
     final t = raw.trim();
     final m = RegExp(r'(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(t);
@@ -1298,6 +1384,7 @@ class AsanaTaskAiApply {
     required this.applyAssignees,
     required this.applyPic,
     required this.applyPriority,
+    required this.applyComplexity,
     required this.applyStartDate,
     required this.applyDueDate,
     required this.applyReason,
@@ -1311,6 +1398,7 @@ class AsanaTaskAiApply {
   final void Function(Set<String> assigneeIds) applyAssignees;
   final void Function(String picAssigneeId) applyPic;
   final void Function(int priority) applyPriority;
+  final void Function(String complexity) applyComplexity;
   final void Function(DateTime start) applyStartDate;
   final void Function(DateTime due) applyDueDate;
   final void Function(String reason) applyReason;
@@ -1336,6 +1424,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.onApplySubtaskAssignees,
     this.onApplySubtaskPic,
     this.onApplySubtaskPriority,
+    this.onApplySubtaskComplexity,
     this.onApplySubtaskStartDate,
     this.onApplySubtaskDueDate,
     this.onApplyReason,
@@ -1365,6 +1454,7 @@ class AsanaTaskAiController extends ChangeNotifier {
   final void Function(Set<String> assigneeIds)? onApplySubtaskAssignees;
   final void Function(String picAssigneeId)? onApplySubtaskPic;
   final void Function(int priority)? onApplySubtaskPriority;
+  final void Function(String complexity)? onApplySubtaskComplexity;
   final void Function(DateTime start)? onApplySubtaskStartDate;
   final void Function(DateTime due)? onApplySubtaskDueDate;
   final void Function(String reason)? onApplyReason;
@@ -1651,6 +1741,7 @@ class AsanaTaskAiController extends ChangeNotifier {
           applyAssignees: onApplySubtaskAssignees,
           applyPic: onApplySubtaskPic,
           applyPriority: onApplySubtaskPriority,
+          applyComplexity: onApplySubtaskComplexity,
           applyStartDate: onApplySubtaskStartDate,
           applyDueDate: onApplySubtaskDueDate,
           applyReason: onApplyReason,
@@ -1685,6 +1776,11 @@ class AsanaTaskAiController extends ChangeNotifier {
       _refreshCollapsedSummary();
       notifyListeners();
     }
+  }
+
+  Future<void> analyseWithPrompt(String prompt) async {
+    promptController.text = prompt;
+    await analyse();
   }
 }
 

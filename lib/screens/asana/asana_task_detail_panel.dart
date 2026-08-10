@@ -2573,8 +2573,27 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return true;
   }
 
+  Future<bool> _suggestComplexityBeforeTaskWorkflowIfEmpty(
+    AppState state,
+  ) async {
+    if ((_localComplexity ?? '').trim().isNotEmpty) return false;
+    _ensureTaskAi(state, canSuggestAssignees: true);
+    final ai = _taskAi;
+    if (ai == null) return false;
+    await ai.analyseWithPrompt(
+      'The Complexity field is empty. Please suggest only the most appropriate Complexity value for this task as Low, Medium, or High. Base the judgment on the task name, task description, and selected project context.',
+    );
+    if (!mounted) return true;
+    await _showInfo(
+      'Complexity suggestion ready',
+      'Please review the AI suggestion under Complexity, adopt Low, Medium, or High if appropriate, then click the workflow button again.',
+    );
+    return true;
+  }
+
   Future<void> _markCompleted(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     final activeSubtasks = await _loadFreshActiveSubtasksForCompletion(task.id);
     if (activeSubtasks == null) {
       await _showInfo(
@@ -2658,6 +2677,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _submitTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     if (_subtasks.any(subtaskPreventsParentTaskSubmission)) {
       await _showInfo(
         'Sub-tasks incomplete',
@@ -2716,6 +2736,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _returnTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2765,6 +2786,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _undoAcceptOrReturn(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2822,6 +2844,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _undoDeleted(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2869,6 +2892,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _deleteTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     final go = await showAsanaConfirmDialog(
       context: context,
       title: 'Delete task?',
@@ -2940,6 +2964,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (!_isCreator(state, task) || _taskDeleted(task) || _taskPaused(task)) {
       return;
     }
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2981,6 +3006,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _resumeTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state, task) || !_taskPaused(task)) return;
+    if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -3339,14 +3365,23 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final picLabel = _picAssigneeId != null
         ? _labelForAssigneeId(_picAssigneeId!, state)
         : '';
+    var projectDescription = '';
+    for (final p in _myProjects) {
+      if (p.id == _selectedProjectId) {
+        projectDescription = p.description.trim();
+        break;
+      }
+    }
     return AsanaTaskAiFormSnapshot(
       name: _nameController.text.trim(),
       description: stripInlineImageMarkers(_descController.text),
       commentDraft: stripInlineImageMarkers(_commentController.text),
       projectLabel: _projectLabelForDraft(),
+      projectDescription: projectDescription,
       assigneesLabel: assigneesLabel,
       picLabel: picLabel,
       priority: _localPriority,
+      complexity: _localComplexity?.trim() ?? '',
       startDate: _startDate,
       dueDate: _dueDate,
       reason: _reasonController.text.trim(),
@@ -3383,6 +3418,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }),
       applyPic: (id) => setState(() => _picAssigneeId = id),
       applyPriority: (p) => setState(() => _localPriority = p),
+      applyComplexity: (v) => setState(() => _localComplexity = v),
       applyStartDate: (d) => setState(() => _startDate = _dateOnly(d)),
       applyDueDate: (d) => setState(() => _dueDate = _dateOnly(d)),
       applyReason: (v) => setState(() => _reasonController.text = v),
@@ -3620,6 +3656,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               ),
             ),
           ),
+          _aiSuggestions(AsanaTaskAiFieldKey.complexity),
           AsanaDetailTwoColumnRow(
             label: 'Start date',
             child: AsanaHoverTapValue(
@@ -3957,6 +3994,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   )
                 : AsanaDetailPlainValue(text: _complexityText(task.complexity)),
           ),
+          if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.complexity),
           AsanaDetailTwoColumnRow(
             label: 'Start date',
             child: AsanaHoverTapValue(

@@ -25,9 +25,7 @@ class LlmService {
     final missing = <String>[];
     if (LocalLlmConfig.authRequiresKey &&
         LocalLlmConfig.apiKey.trim().isEmpty) {
-      missing.add(
-        'LOCAL_LLM_API_KEY (or secrets/internal_llm_api_key.txt)',
-      );
+      missing.add('LOCAL_LLM_API_KEY (or secrets/internal_llm_api_key.txt)');
     }
     if (LocalLlmConfig.model.trim().isEmpty) {
       missing.add('LOCAL_LLM_MODEL');
@@ -116,7 +114,7 @@ Schema:
 {
   "related": true or false,
   "message": "optional short note when nothing can be suggested",
-  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/dates/websiteLinks are set)",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/complexity/dates/websiteLinks are set)",
   "name": "string or null",
   "description": "string or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
@@ -124,6 +122,7 @@ Schema:
   "assigneeNames": ["names from available staff list"] or [],
   "picName": "one staff name (must be in assigneeNames if assignees set), or null",
   "priority": "Standard" or "URGENT" or null,
+  "complexity": "Low" or "Medium" or "High",
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
   "reason": "reason for needing a long time to complete the task, or null",
@@ -136,6 +135,11 @@ Rules:
 - The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
 - For optional structured fields (project, assignees, PIC, priority, dates, reason, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
+- To judge complexity, reference the task name and description. If a parent project is selected, also reference the project name and project description from the context.
+- IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
+- Venue booking, sending/preparing email, organizing a meeting, scheduling, basic coordination, and other routine administrative work tends to be Low.
+- Use Medium for work with moderate coordination, analysis, or judgment that is not clearly Low or High.
 - Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - comment: text for the Comments field (a draft posted when the user saves the task). When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
 - Use assignee and project names only from the provided staff/projects lists.
@@ -146,7 +150,7 @@ Rules:
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
 - reason: only suggest when the current form shows or implies a long duration that needs explanation. It should explain why the task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description (what the link is for). Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
-- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; do not list unchanged fields.
+- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, complexity, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
@@ -343,6 +347,7 @@ Schema:
   "assigneeNames": ["names from available sub-task assignees list"] or [],
   "picName": "one staff name (must be in assigneeNames if assignees set), or null",
   "priority": "Standard" or "URGENT" or null,
+  "complexity": "Low" or "Medium" or "High",
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
   "reason": "reason for needing a long time to complete the sub-task, or null",
@@ -356,6 +361,11 @@ Rules:
 - The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
 - For optional structured fields (assigneeNames, picName, priority, dates, reason, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
+- To judge complexity, reference the sub-task name and description, then combine that with the parent task name and description. If a parent project exists, also reference the project name and project description from the context.
+- IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
+- Venue booking, sending/preparing email, organizing a meeting, scheduling, basic coordination, and other routine administrative work tends to be Low.
+- Use Medium for work with moderate coordination, analysis, or judgment that is not clearly Low or High.
 - Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical, improve/expand it when reasonable; otherwise omit that specific field.
 - The description should be useful execution detail, not just a repeat of the name.
 - Use assignee and PIC names only from the available sub-task assignees list in context.
@@ -371,7 +381,7 @@ Rules:
 - Use the parent task context provided to understand the context of the sub-task.
 - If assignees are discussed, treat the "Available sub-task assignees" list in context as the only valid people. Never suggest assigning someone outside that list.
 - Attachments are represented as websiteLinks. Include URLs in websiteLinks, not in the comment text, unless the user explicitly asks to write them into the comment.
-- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language.
+- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
