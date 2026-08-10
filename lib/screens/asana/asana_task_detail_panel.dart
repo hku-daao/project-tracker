@@ -560,6 +560,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   void _removeAssignee(String assigneeId) {
+    final state = context.read<AppState>();
+    final task = widget.createMode ? null : state.taskById(widget.taskId ?? '');
+    if (_picSelfLockApplies(state, task) &&
+        _matchesCurrentStaffKey(state, assigneeId)) {
+      _showInfo(
+        'PIC cannot remove themselves',
+        'As PIC, you must remain both an assignee and the PIC.',
+      );
+      return;
+    }
     setState(() {
       _selectedAssigneeIds.remove(assigneeId);
       _syncPicAfterAssigneesChange();
@@ -588,6 +598,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       whenClosed: _blockAnchoredPickerReopen,
       onSelectionChanged: (s) {
         if (!mounted) return;
+        final state = context.read<AppState>();
+        final task = widget.createMode
+            ? null
+            : state.taskById(widget.taskId ?? '');
+        if (_picSelfLockApplies(state, task) &&
+            !s.any((id) => _matchesCurrentStaffKey(state, id))) {
+          _showInfo(
+            'PIC cannot remove themselves',
+            'As PIC, you must remain both an assignee and the PIC.',
+          );
+          return;
+        }
         setState(() {
           _selectedAssigneeIds
             ..clear()
@@ -1101,6 +1123,35 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final mine = state.userStaffAppId?.trim();
     if (mine != null && mine.isNotEmpty && mine == p) return true;
     return _uuidEquals(p, _myStaffUuid);
+  }
+
+  bool _matchesCurrentStaffKey(AppState state, String? staffKey) {
+    final key = staffKey?.trim();
+    if (key == null || key.isEmpty) return false;
+    final mine = state.userStaffAppId?.trim();
+    if (mine != null && mine.isNotEmpty && key == mine) return true;
+    return _uuidEquals(key, _myStaffUuid);
+  }
+
+  bool _picSelfLockApplies(AppState state, Task? task) {
+    if (task == null || widget.createMode) return false;
+    return _isPic(state, task) && !_isCreator(state, task);
+  }
+
+  Future<bool> _validatePicSelfLock() async {
+    final state = context.read<AppState>();
+    final task = widget.createMode ? null : state.taskById(widget.taskId ?? '');
+    if (!_picSelfLockApplies(state, task)) return true;
+    final selfInAssignees = _selectedAssigneeIds.any(
+      (id) => _matchesCurrentStaffKey(state, id),
+    );
+    final selfIsPic = _matchesCurrentStaffKey(state, _picAssigneeId);
+    if (selfInAssignees && selfIsPic) return true;
+    await _showInfo(
+      'PIC cannot remove themselves',
+      'As PIC, you must remain both an assignee and the PIC.',
+    );
+    return false;
   }
 
   bool _taskDeleted(Task task) =>
@@ -1870,6 +1921,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       await _showInfo('PIC required', 'Choose a PIC from the assignees.');
       return false;
     }
+    if (!await _validatePicSelfLock()) return false;
     return true;
   }
 
@@ -3821,7 +3873,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             context,
             state,
             canEditAssignees: canEdit,
-            canEditPic: canEdit,
+            canEditPic: canEdit && !_picSelfLockApplies(state, task),
             creatorLabel: task.createByStaffName?.trim() ?? '',
             readOnlyAssigneesText: task.assigneeIds
                 .map((id) => _nameFor(state, id))

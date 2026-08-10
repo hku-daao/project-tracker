@@ -822,6 +822,27 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     return _matchesCurrentStaff(state, s.pic);
   }
 
+  bool _picSelfLockApplies(AppState state, SingularSubtask? s) {
+    if (s == null || _effectiveCreateMode) return false;
+    return _isPic(state, s) && !_isCreator(state);
+  }
+
+  Future<bool> _validatePicSelfLock(AppState state, SingularSubtask? s) async {
+    if (!_picSelfLockApplies(state, s)) return true;
+    final selfInAssignees = _assigneeIds.any(
+      (id) => _matchesCurrentStaff(state, id),
+    );
+    final selfIsPic = _matchesCurrentStaff(state, _picAssigneeId);
+    if (selfInAssignees && selfIsPic) return true;
+    await showAsanaInfoDialog(
+      context: context,
+      title: 'PIC cannot remove themselves',
+      content: 'As PIC, you must remain both an assignee and the PIC.',
+      palette: widget.palette,
+    );
+    return false;
+  }
+
   bool _canEditSubtaskDetails(AppState state, SingularSubtask? s) {
     if (_effectiveCreateMode || _isCreator(state)) return true;
     return s != null && !s.isDeleted && _isPic(state, s);
@@ -1174,6 +1195,17 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   void _removeAssignee(String assigneeId) {
+    final state = context.read<AppState>();
+    if (_picSelfLockApplies(state, _subtask) &&
+        _matchesCurrentStaff(state, assigneeId)) {
+      showAsanaInfoDialog(
+        context: context,
+        title: 'PIC cannot remove themselves',
+        content: 'As PIC, you must remain both an assignee and the PIC.',
+        palette: widget.palette,
+      );
+      return;
+    }
     setState(() {
       _assigneeIds.remove(assigneeId);
       _syncPicAfterAssigneesChange();
@@ -1181,6 +1213,17 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   void _removePic(String assigneeId) {
+    final state = context.read<AppState>();
+    if (_picSelfLockApplies(state, _subtask) &&
+        _matchesCurrentStaff(state, assigneeId)) {
+      showAsanaInfoDialog(
+        context: context,
+        title: 'PIC cannot remove themselves',
+        content: 'As PIC, you must remain both an assignee and the PIC.',
+        palette: widget.palette,
+      );
+      return;
+    }
     setState(() => _picAssigneeId = null);
   }
 
@@ -1209,6 +1252,17 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       whenClosed: _blockAnchoredPickerReopen,
       onSelectionChanged: (s) {
         if (!mounted) return;
+        final state = context.read<AppState>();
+        if (_picSelfLockApplies(state, _subtask) &&
+            !s.any((id) => _matchesCurrentStaff(state, id))) {
+          showAsanaInfoDialog(
+            context: context,
+            title: 'PIC cannot remove themselves',
+            content: 'As PIC, you must remain both an assignee and the PIC.',
+            palette: widget.palette,
+          );
+          return;
+        }
         setState(() {
           _assigneeIds
             ..clear()
@@ -1671,6 +1725,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
+    if (!await _validatePicSelfLock(state, s)) return;
     final complexity = _localComplexity?.trim();
     if (_effectiveCreateMode && (complexity == null || complexity.isEmpty)) {
       await showAsanaInfoDialog(
@@ -2005,6 +2060,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return null;
     }
+    if (!await _validatePicSelfLock(state, s)) return null;
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -2217,6 +2273,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
+    if (!await _validatePicSelfLock(state, s)) return;
     if (_needsChangeDueReason() && _reasonController.text.trim().isEmpty) {
       await showAsanaConfirmDialog(
         context: context,
@@ -3362,6 +3419,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         !adminReadOnly && (_effectiveCreateMode || _isCreator(state));
     final isPic = !adminReadOnly && s != null && _isPic(state, s);
     final canEditDetails = !adminReadOnly && _canEditSubtaskDetails(state, s);
+    final picSelfLocked = !adminReadOnly && _picSelfLockApplies(state, s);
     final isAssigneeOnly =
         !adminReadOnly &&
         s != null &&
@@ -3524,7 +3582,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _picAnchorLink,
-                child: canEditDetails
+                child: canEditDetails && !picSelfLocked
                     ? AsanaAssigneeFieldValue(
                         assignees: _picAssigneeId != null
                             ? [
