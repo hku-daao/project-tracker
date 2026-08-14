@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../asana_landing_screen.dart';
+import 'asana_create_discussion_detail_panel.dart';
 import 'asana_detail_selection.dart';
 import 'asana_create_project_detail_panel.dart';
 import 'asana_project_detail_panel.dart';
@@ -20,6 +21,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
     this.onTaskCreated,
+    this.onDiscussionCreated,
     this.onProjectCreated,
     this.onProjectChanged,
     this.onSubtaskCreated,
@@ -37,6 +39,7 @@ class AsanaDetailPanelHost extends StatelessWidget {
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String taskId)? onTaskCreated;
+  final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
@@ -98,6 +101,11 @@ class AsanaDetailPanelHost extends StatelessWidget {
         palette: palette,
         onClose: onClose,
         onCreated: onProjectCreated,
+      ),
+      AsanaCreateDiscussionDetailSelection() => AsanaCreateDiscussionDetailPanel(
+        palette: palette,
+        onClose: onClose,
+        onCreated: onDiscussionCreated,
       ),
     };
   }

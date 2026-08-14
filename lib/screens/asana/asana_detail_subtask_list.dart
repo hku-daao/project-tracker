@@ -183,7 +183,7 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                       ),
                     Expanded(
                       child: Text(
-                        nameAndDueOnly ? 'Task Name' : 'Sub-task Name',
+                        'Sub-task Name',
                         style: header,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

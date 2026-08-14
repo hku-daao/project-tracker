@@ -3703,6 +3703,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
+            labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
             child: (_effectiveCreateMode || canEditDetails)
                 ? Builder(
                     builder: (anchorContext) => CompositedTransformTarget(

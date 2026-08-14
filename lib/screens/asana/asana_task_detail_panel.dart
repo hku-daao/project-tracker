@@ -3642,6 +3642,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
+            labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _complexityAnchorLink,
@@ -3978,6 +3979,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
+            labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
             child: canEdit
                 ? Builder(
                     builder: (anchorContext) => CompositedTransformTarget(

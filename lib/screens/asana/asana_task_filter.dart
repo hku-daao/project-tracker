@@ -908,6 +908,7 @@ class AsanaTaskFilter {
         activeTasks.where(
           (t) =>
               t.isSingularTableRow &&
+              _rowPassesRoleFilters(state, t, null, filters) &&
               !_hideIncompleteParentWhenCompletedOnly(t, filters),
         ),
       );
@@ -1127,9 +1128,13 @@ class AsanaTaskFilter {
       for (final t in activeTasks) {
         if (!t.isSingularTableRow) continue;
         if (_hideIncompleteParentWhenCompletedOnly(t, filters)) continue;
-        out.add(AsanaFlatRow.task(t));
+        final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
+        if (taskPassesRole) {
+          out.add(AsanaFlatRow.task(t));
+        }
         final subs = grouped[t.id] ?? [];
         for (final s in subs) {
+          if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
           if (!_subtaskPassesStatusChips(state, t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!_rowPassesDueDateSubtask(t, s, filters)) continue;

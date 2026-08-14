@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -43,18 +42,6 @@ class AttachmentUploadService {
     final base = objectPath.split('/').last;
     if (base.contains('.')) return null;
     return null;
-  }
-
-  static String _contentTypeForFilename(String name) {
-    final n = name.toLowerCase();
-    if (n.endsWith('.pdf')) return 'application/pdf';
-    if (n.endsWith('.png')) return 'image/png';
-    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
-    if (n.endsWith('.gif')) return 'image/gif';
-    if (n.endsWith('.webp')) return 'image/webp';
-    if (n.endsWith('.txt')) return 'text/plain';
-    if (n.endsWith('.csv')) return 'text/csv';
-    return 'application/octet-stream';
   }
 
   static String? objectPathFromStorageDownloadUrl(String rawUrl) {
@@ -200,6 +187,33 @@ class AttachmentUploadService {
     } catch (e, st) {
       debugPrint('_uploadBytes: $e\n$st');
       return (url: null, label: null, error: e.toString());
+    }
+  }
+
+  static Future<({String? url, String? label, String? error})>
+  uploadBytesForEntity({
+    required String entityType,
+    required String entityId,
+    required Uint8List bytes,
+    required String originalFilename,
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+  }) async {
+    if (entityType.trim().isEmpty || entityId.trim().isEmpty) {
+      return (url: null, label: null, error: 'Missing attachment owner');
+    }
+    try {
+      onUploadPhaseStarted?.call();
+      return await _uploadBytes(
+        entityType: entityType,
+        entityId: entityId,
+        originalFilename: originalFilename,
+        bytes: bytes,
+        aclStaffKeys: aclStaffKeys,
+      );
+    } finally {
+      onUploadPhaseEnded?.call();
     }
   }
 

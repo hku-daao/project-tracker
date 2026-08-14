@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
@@ -16,14 +15,12 @@ import 'asana/asana_archived_panel.dart';
 import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
+import 'asana/asana_discussion_panel.dart';
 import 'asana/asana_home_panel.dart';
 import 'asana/asana_performance_panel.dart';
 import 'asana/asana_projects_panel.dart';
 import 'asana/asana_tasks_panel.dart';
 import 'asana/asana_theme.dart';
-
-const String _kAsanaFeedbackFormUrl =
-    'https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=TrX5QnckukG_CXoNKoP_CXmxjjVqONdDujd4tWBFFN9UMk1ZS0EzMFZSSlFSMkhXTjI5UE82QThKTC4u';
 
 /// Header / body / footer colors for the right-hand detail slide.
 class AsanaSlideChrome {
@@ -268,16 +265,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     'All Tasks & Sub-tasks',
     'Tasks',
     'Projects',
+    'Discussion',
   ];
 
   AsanaLandingPalette get _palette => AsanaLandingPalette.byId(_themeId);
-
-  Future<void> _openFeedbackForm() async {
-    await launchUrl(
-      Uri.parse(_kAsanaFeedbackFormUrl),
-      mode: LaunchMode.externalApplication,
-    );
-  }
 
   void _showNavigationLoadingUntilNextFrame() {
     AsanaBlockingLoadingOverlay.show(context);
@@ -336,6 +327,18 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (adminViewMode && _selectedNav == 'Performance') {
       return AsanaPerformancePanel(palette: palette);
     }
+    if (_selectedNav == 'Discussion') {
+      return AsanaDiscussionPanel(
+        palette: palette,
+        searchQuery: searchQuery,
+        refreshToken: _detailRefreshToken,
+        onCreatePost: adminViewMode
+            ? null
+            : () => _openRootDetail(
+                const AsanaDetailSelection.createDiscussion(),
+              ),
+      );
+    }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
@@ -346,6 +349,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       );
     }
     return ColoredBox(color: palette.content);
+  }
+
+  bool get _searchAppliesToSelectedNav {
+    return _selectedNav == 'All Tasks & Sub-tasks' ||
+        _selectedNav == 'Tasks' ||
+        _selectedNav == 'Projects';
   }
 
   /// One slide host for the whole open/close cycle (inner task panel keeps its own key).
@@ -426,10 +435,26 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
 
   void _handleTaskCreated(String taskId) {
     setState(() {
-      _detailStack
-        ..clear()
-        ..add(AsanaDetailSelection.task(taskId));
+      if (_detailStack.length > 1 &&
+          _detailStack.last is AsanaCreateTaskDetailSelection) {
+        _detailStack
+          ..removeLast()
+          ..add(AsanaDetailSelection.task(taskId));
+      } else {
+        _detailStack
+          ..clear()
+          ..add(AsanaDetailSelection.task(taskId));
+      }
       _detailRefreshToken++;
+    });
+    _syncWebLocationToDetailStack();
+  }
+
+  void _handleDiscussionCreated() {
+    setState(() {
+      _detailStack.clear();
+      _detailRefreshToken++;
+      _selectedNav = 'Discussion';
     });
     _syncWebLocationToDetailStack();
   }
@@ -553,12 +578,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                     _syncWebLocationToDetailStack();
                   },
                 ),
-              _SidebarNavTile(
-                label: 'Feedback',
-                palette: palette,
-                selected: false,
-                onTap: _openFeedbackForm,
-              ),
               if (context.watch<AppState>().adminViewMode)
                 _SidebarNavTile(
                   label: 'Performance',
@@ -622,6 +641,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     final overlaySidebar = sidebarOverlay && sidebarOpen;
     final sidebarVisible = inlineSidebar || overlaySidebar;
     final compactBanner = screenWidth < 600;
+    final showSearchField = _searchAppliesToSelectedNav;
     final searchWidth = compactBanner ? screenWidth * 0.42 : screenWidth / 3;
     final asanaTheme = buildAsanaTheme(
       Theme.of(context),
@@ -671,59 +691,62 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                       ),
                       Expanded(
                         child: Center(
-                          child: SizedBox(
-                            width: searchWidth,
-                            height: searchBarHeight,
-                            child: TextField(
-                              controller: _searchController,
-                              style: searchTextStyle,
-                              decoration: InputDecoration(
-                                hintText: 'Search',
-                                hintStyle: asanaTextStyle(
-                                  asanaTheme.textTheme.bodyMedium,
-                                  fontSize: 14,
-                                  color: palette.darkChrome
-                                      ? palette.onSidebarMuted
-                                      : kAsanaTextSecondary,
-                                ),
-                                filled: true,
-                                fillColor: palette.searchField,
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical:
-                                      (searchBarHeight - titleFontSize * 1.2) /
-                                      2,
-                                ),
-                                prefixIcon: Icon(
-                                  Icons.search,
-                                  size: titleFontSize * 1.35,
-                                  color: palette.darkChrome
-                                      ? palette.onSidebarMuted
-                                      : Colors.black54,
-                                ),
-                                prefixIconConstraints: BoxConstraints(
-                                  minWidth: searchBarHeight,
-                                  minHeight: searchBarHeight,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide.none,
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide.none,
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: palette.accent,
-                                    width: 1.5,
+                          child: showSearchField
+                              ? SizedBox(
+                                  width: searchWidth,
+                                  height: searchBarHeight,
+                                  child: TextField(
+                                    controller: _searchController,
+                                    style: searchTextStyle,
+                                    decoration: InputDecoration(
+                                      hintText: 'Search',
+                                      hintStyle: asanaTextStyle(
+                                        asanaTheme.textTheme.bodyMedium,
+                                        fontSize: 14,
+                                        color: palette.darkChrome
+                                            ? palette.onSidebarMuted
+                                            : kAsanaTextSecondary,
+                                      ),
+                                      filled: true,
+                                      fillColor: palette.searchField,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical:
+                                            (searchBarHeight -
+                                                titleFontSize * 1.2) /
+                                            2,
+                                      ),
+                                      prefixIcon: Icon(
+                                        Icons.search,
+                                        size: titleFontSize * 1.35,
+                                        color: palette.darkChrome
+                                            ? palette.onSidebarMuted
+                                            : Colors.black54,
+                                      ),
+                                      prefixIconConstraints: BoxConstraints(
+                                        minWidth: searchBarHeight,
+                                        minHeight: searchBarHeight,
+                                      ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide(
+                                          color: palette.accent,
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            ),
-                          ),
+                                )
+                              : const SizedBox.shrink(),
                         ),
                       ),
                       Padding(
@@ -793,7 +816,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                               children: [
                                 _buildMainContent(
                                   palette: palette,
-                                  searchQuery: q,
+                                  searchQuery: _searchAppliesToSelectedNav
+                                      ? q
+                                      : '',
                                 ),
                                 Positioned.fill(
                                   child: IgnorePointer(
@@ -894,6 +919,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                 ),
                                             onTaskChanged: _handleTaskChanged,
                                             onTaskCreated: _handleTaskCreated,
+                                            onDiscussionCreated:
+                                                _handleDiscussionCreated,
                                             onProjectCreated:
                                                 _handleProjectCreated,
                                             onProjectChanged:

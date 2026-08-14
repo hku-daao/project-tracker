@@ -52,12 +52,14 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
     super.key,
     required this.label,
     required this.child,
+    this.labelTrailing,
     this.labelWidth = kAsanaDetailLabelColumnWidth,
     this.bottomPadding = 10,
   });
 
   final String label;
   final Widget child;
+  final Widget? labelTrailing;
   final double labelWidth;
   final double bottomPadding;
 
@@ -73,7 +75,22 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
         children: [
           SizedBox(
             width: effectiveLabelWidth,
-            child: Text(label, style: asanaDetailLabelStyle(context)),
+            child: labelTrailing == null
+                ? Text(label, style: asanaDetailLabelStyle(context))
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: asanaDetailLabelStyle(context),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      labelTrailing!,
+                    ],
+                  ),
           ),
           Expanded(child: child),
         ],
@@ -932,6 +949,118 @@ Future<void> showAsanaInfoDialog({
     confirmText: confirmText,
     palette: palette,
   );
+}
+
+class AsanaComplexityInfoButton extends StatelessWidget {
+  const AsanaComplexityInfoButton({super.key, required this.palette});
+
+  final AsanaLandingPalette palette;
+
+  Future<void> _showDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    final bodyStyle = asanaTextStyle(
+      theme.textTheme.bodyMedium,
+      fontSize: 14,
+      fontWeight: FontWeight.w400,
+      color: kAsanaTextSecondary,
+      height: 1.4,
+    )!;
+    final titleStyle = asanaTextStyle(
+      theme.textTheme.titleMedium,
+      fontSize: 18,
+      fontWeight: FontWeight.w600,
+      color: kAsanaTextPrimary,
+    )!;
+    final boldStyle = bodyStyle.copyWith(
+      color: kAsanaTextPrimary,
+      fontWeight: FontWeight.w700,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: palette.panelBackground,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
+        ),
+        elevation: 12,
+        child: Container(
+          width: 440,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SelectableText('How to choose Complexity', style: titleStyle),
+              const SizedBox(height: 12),
+              SelectableText.rich(
+                TextSpan(
+                  style: bodyStyle,
+                  children: [
+                    const TextSpan(
+                      text:
+                          'Complexity is about how difficult the work is to complete well, not about urgency or importance.\n\n',
+                    ),
+                    TextSpan(text: 'Low\n', style: boldStyle),
+                    const TextSpan(
+                      text:
+                          '- Clear goal and familiar steps.\n'
+                          '- Few dependencies, low uncertainty, and minimal coordination.\n\n',
+                    ),
+                    TextSpan(text: 'Medium\n', style: boldStyle),
+                    const TextSpan(
+                      text:
+                          '- Several steps, some analysis, or some coordination.\n'
+                          '- Moderate dependencies or follow-up checks may be needed.\n\n',
+                    ),
+                    TextSpan(text: 'High\n', style: boldStyle),
+                    const TextSpan(
+                      text:
+                          '- Significant uncertainty, risk, or many dependencies.\n'
+                          '- Requires substantial coordination, decisions, validation, or extended effort.',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: palette.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: const Text('OK'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What is complexity?',
+      child: IconButton(
+        onPressed: () => _showDialog(context),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
 }
 
 /// Submission pill for slide detail rows (matches table chip size).

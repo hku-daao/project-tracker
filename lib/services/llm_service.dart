@@ -71,22 +71,19 @@ class LlmService {
       'temperature': 0.35,
     });
 
-    final content = await _chatCompletionContent(body);
-    final parsed = _parseTitleDescriptionJson(content);
+    final map = await _chatCompletionJsonObject(body);
+    final parsed = _titleDescriptionFromMap(map);
     if (parsed == null) {
       throw FormatException(
-        'Could not parse JSON from model. Raw (truncated): '
-        '${content.length > 400 ? content.substring(0, 400) : content}',
+        'Could not parse title/description JSON from model.',
       );
     }
     return parsed;
   }
 
-  static ({String title, String description})? _parseTitleDescriptionJson(
-    String raw,
+  static ({String title, String description})? _titleDescriptionFromMap(
+    Map<String, dynamic> map,
   ) {
-    final map = parseJsonObjectFromModel(raw);
-    if (map == null) return null;
     final t = map['title'];
     final d = map['description'];
     if (t is! String || d is! String) return null;
@@ -169,15 +166,7 @@ Rules:
       'temperature': 0.25,
     });
 
-    final content = await _chatCompletionContent(body);
-    final map = parseJsonObjectFromModel(content);
-    if (map == null) {
-      throw FormatException(
-        'Could not parse JSON from model. Raw (truncated): '
-        '${content.length > 400 ? content.substring(0, 400) : content}',
-      );
-    }
-    return map;
+    return _chatCompletionJsonObject(body);
   }
 
   /// Structured project-field suggestions for the Asana project slide.
@@ -246,15 +235,7 @@ Rules:
       'temperature': 0.25,
     });
 
-    final content = await _chatCompletionContent(body);
-    final map = parseJsonObjectFromModel(content);
-    if (map == null) {
-      throw FormatException(
-        'Could not parse JSON from model. Raw (truncated): '
-        '${content.length > 400 ? content.substring(0, 400) : content}',
-      );
-    }
-    return map;
+    return _chatCompletionJsonObject(body);
   }
 
   /// Comment-only suggestions for assignees (does not touch task metadata).
@@ -309,15 +290,7 @@ Rules:
       'temperature': 0.25,
     });
 
-    final content = await _chatCompletionContent(body);
-    final map = parseJsonObjectFromModel(content);
-    if (map == null) {
-      throw FormatException(
-        'Could not parse JSON from model. Raw (truncated): '
-        '${content.length > 400 ? content.substring(0, 400) : content}',
-      );
-    }
-    return map;
+    return _chatCompletionJsonObject(body);
   }
 
   /// Structured subtask-field suggestions for the Asana subtask slide.
@@ -400,15 +373,160 @@ Rules:
       'temperature': 0.35,
     });
 
+    return _chatCompletionJsonObject(body);
+  }
+
+  /// Structured discussion-forum draft suggestions.
+  static Future<Map<String, dynamic>> suggestDiscussionThreadDraft({
+    required String userPrompt,
+    required String formContext,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(_missingConfigMessage);
+    }
+    final trimmed = userPrompt.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Prompt is empty');
+    }
+
+    const system = '''
+You help users draft Project Tracker discussion forum posts.
+Reply with ONLY one JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "title": "clear forum post title, or null",
+  "content": "well-structured forum post content, or null",
+  "category": "Announcement" or "Suggestion" or "Feature idea" or "Bug report" or "General",
+  "status": "Open" or "Resolved" or "Closed",
+  "overallComment": "1-2 sentences explaining the suggested forum draft"
+}
+
+Rules:
+- The forum is only for Project Tracker discussion: admin announcements, user suggestions, brainstorming new features, and bug/issue reporting.
+- Choose category from exactly: Announcement, Suggestion, Feature idea, Bug report, General.
+- Choose status from exactly: Open, Resolved, Closed. Use Open for new suggestions/issues unless the user clearly says it is already resolved or closed.
+- Use Announcement for admin/system updates, Suggestion for improvement suggestions, Feature idea for new feature brainstorming, Bug report for bugs/issues/errors, General otherwise.
+- Make the title concise and professional.
+- Make the content easy for Project Tracker maintainers to understand. For bug reports, include expected behavior, actual behavior, and reproduction steps when inferable.
+- Respect existing title/content/category/status in the context and improve them when useful.
+''';
+
+    final body = jsonEncode({
+      'model': _effectiveModel,
+      'messages': [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': '$formContext\n\nUser prompt:\n$trimmed'},
+      ],
+      'temperature': 0.25,
+    });
+
+    return _chatCompletionJsonObject(body);
+  }
+
+  static Future<String> suggestDiscussionReplyDraft({
+    required String userPrompt,
+    required String parentContext,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(_missingConfigMessage);
+    }
+    final trimmed = userPrompt.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Prompt is empty');
+    }
+
+    const system = '''
+You help users draft replies in the Project Tracker discussion forum.
+Reply with ONLY one JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "reply": "the suggested reply text"
+}
+
+Rules:
+- Draft a concise, professional reply.
+- Consider the provided parent post and parent replies as context.
+- Do not invent facts not supported by the context or user prompt.
+- Keep the reply suitable for a workplace discussion forum.
+''';
+
+    final body = jsonEncode({
+      'model': _effectiveModel,
+      'messages': [
+        {'role': 'system', 'content': system},
+        {
+          'role': 'user',
+          'content':
+              'Parent discussion context:\n$parentContext\n\nUser prompt:\n$trimmed',
+        },
+      ],
+      'temperature': 0.25,
+    });
+
+    final map = await _chatCompletionJsonObject(body);
+    final reply = map['reply']?.toString().trim();
+    if (reply == null || reply.isEmpty) {
+      throw const FormatException('Could not parse reply from model.');
+    }
+    return reply;
+  }
+
+  static Future<Map<String, dynamic>> _chatCompletionJsonObject(
+    String body,
+  ) async {
     final content = await _chatCompletionContent(body);
     final map = parseJsonObjectFromModel(content);
-    if (map == null) {
-      throw FormatException(
-        'Could not parse JSON from model. Raw (truncated): '
-        '${content.length > 400 ? content.substring(0, 400) : content}',
-      );
+    if (map != null) return map;
+
+    final repaired = await _repairJsonObjectResponse(
+      originalBody: body,
+      invalidContent: content,
+    );
+    if (repaired != null) return repaired;
+
+    throw FormatException(
+      'Could not parse JSON from model after automatic retry. '
+      'Original raw (truncated): ${_truncate(content)}',
+    );
+  }
+
+  static Future<Map<String, dynamic>?> _repairJsonObjectResponse({
+    required String originalBody,
+    required String invalidContent,
+  }) async {
+    try {
+      final decoded = jsonDecode(originalBody);
+      if (decoded is! Map<String, dynamic>) return null;
+      final originalMessages = decoded['messages'];
+      if (originalMessages is! List) return null;
+      final messages = [
+        for (final m in originalMessages) m,
+        {'role': 'assistant', 'content': invalidContent},
+        {
+          'role': 'user',
+          'content':
+              'The previous response was not valid JSON and could not be parsed. '
+              'Return ONLY one complete valid JSON object matching the same schema. '
+              'Preserve the same intended values. Escape quotes and newlines correctly. '
+              'Do not include markdown, code fences, comments, or text outside the JSON object.',
+        },
+      ];
+      final repairBody = jsonEncode({
+        ...decoded,
+        'messages': messages,
+        'temperature': 0,
+      });
+      final repairedContent = await _chatCompletionContent(repairBody);
+      return parseJsonObjectFromModel(repairedContent);
+    } catch (_) {
+      return null;
     }
-    return map;
+  }
+
+  static String _truncate(String value, [int maxLength = 400]) {
+    return value.length > maxLength ? value.substring(0, maxLength) : value;
   }
 
   static Future<String> _chatCompletionContent(String body) async {

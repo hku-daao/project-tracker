@@ -20,6 +20,7 @@ class AsanaDetailSlidePanel extends StatefulWidget {
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
     this.onTaskCreated,
+    this.onDiscussionCreated,
     this.onProjectCreated,
     this.onProjectChanged,
     this.onSubtaskCreated,
@@ -39,6 +40,7 @@ class AsanaDetailSlidePanel extends StatefulWidget {
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String taskId)? onTaskCreated;
+  final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
@@ -103,6 +105,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
       AsanaCreateTaskDetailSelection() => null,
       AsanaProjectDetailSelection() => null,
       AsanaCreateProjectDetailSelection() => null,
+      AsanaCreateDiscussionDetailSelection() => null,
       _ => stack.last,
     };
   }
@@ -129,6 +132,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
       AsanaCreateSubtaskDetailSelection() => 'Sub-task Details',
       AsanaProjectDetailSelection() ||
       AsanaCreateProjectDetailSelection() => 'Project Details',
+      AsanaCreateDiscussionDetailSelection() => 'Discussion',
     };
 
     return Material(
@@ -191,6 +195,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
                           widget.onPushCreateTaskForProject,
                       onPushTaskFromProject: widget.onPushTaskFromProject,
                       onTaskCreated: widget.onTaskCreated,
+                      onDiscussionCreated: widget.onDiscussionCreated,
                       onProjectCreated: widget.onProjectCreated,
                       onProjectChanged: widget.onProjectChanged,
                       onSubtaskCreated: widget.onSubtaskCreated,
@@ -215,6 +220,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
                           widget.onPushCreateTaskForProject,
                       onPushTaskFromProject: widget.onPushTaskFromProject,
                       onTaskCreated: widget.onTaskCreated,
+                      onDiscussionCreated: widget.onDiscussionCreated,
                       onProjectCreated: widget.onProjectCreated,
                       onProjectChanged: widget.onProjectChanged,
                       onSubtaskCreated: widget.onSubtaskCreated,
@@ -262,6 +268,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
     this.onTaskCreated,
+    this.onDiscussionCreated,
     this.onProjectCreated,
     this.onProjectChanged,
     this.onSubtaskCreated,
@@ -281,6 +288,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String taskId)? onTaskCreated;
+  final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
@@ -318,6 +326,7 @@ class _TaskWithOverlayStack extends StatelessWidget {
               onPushCreateTaskForProject: onPushCreateTaskForProject,
               onPushTaskFromProject: onPushTaskFromProject,
               onTaskCreated: onTaskCreated,
+              onDiscussionCreated: onDiscussionCreated,
               onProjectCreated: onProjectCreated,
               onProjectChanged: onProjectChanged,
               onSubtaskCreated: onSubtaskCreated,
@@ -349,6 +358,7 @@ class _DetailOverlayLayer extends StatefulWidget {
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
     this.onTaskCreated,
+    this.onDiscussionCreated,
     this.onProjectCreated,
     this.onProjectChanged,
     this.onSubtaskCreated,
@@ -365,6 +375,7 @@ class _DetailOverlayLayer extends StatefulWidget {
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String taskId)? onTaskCreated;
+  final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
@@ -417,6 +428,7 @@ class _DetailOverlayLayerState extends State<_DetailOverlayLayer>
           onPushCreateTaskForProject: widget.onPushCreateTaskForProject,
           onPushTaskFromProject: widget.onPushTaskFromProject,
           onTaskCreated: widget.onTaskCreated,
+          onDiscussionCreated: widget.onDiscussionCreated,
           onProjectCreated: widget.onProjectCreated,
           onProjectChanged: widget.onProjectChanged,
           onSubtaskCreated: widget.onSubtaskCreated,
@@ -445,6 +457,7 @@ class _ProjectWithOverlayStack extends StatelessWidget {
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
     this.onTaskCreated,
+    this.onDiscussionCreated,
     this.onProjectCreated,
     this.onProjectChanged,
     this.onSubtaskCreated,
@@ -465,6 +478,7 @@ class _ProjectWithOverlayStack extends StatelessWidget {
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String taskId)? onTaskCreated;
+  final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
   final VoidCallback? onProjectChanged;
   final void Function(String parentTaskId, String subtaskId)? onSubtaskCreated;
@@ -514,6 +528,7 @@ class _ProjectWithOverlayStack extends StatelessWidget {
         onPushCreateTaskForProject: onPushCreateTaskForProject,
         onPushTaskFromProject: onPushTaskFromProject,
         onTaskCreated: onTaskCreated,
+        onDiscussionCreated: onDiscussionCreated,
         onProjectCreated: onProjectCreated,
         onProjectChanged: onProjectChanged,
         onSubtaskCreated: onSubtaskCreated,
@@ -531,6 +546,7 @@ class _ProjectWithOverlayStack extends StatelessWidget {
       onPushCreateTaskForProject: onPushCreateTaskForProject,
       onPushTaskFromProject: onPushTaskFromProject,
       onTaskCreated: onTaskCreated,
+      onDiscussionCreated: onDiscussionCreated,
       onProjectCreated: onProjectCreated,
       onProjectChanged: onProjectChanged,
       onSubtaskCreated: onSubtaskCreated,

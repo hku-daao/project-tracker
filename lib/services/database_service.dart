@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../config/postgrest_config.dart';
 import '../models/assignee.dart';
+import '../models/forum.dart';
 import '../models/singular_comment.dart';
 import '../models/singular_subtask.dart';
 import '../models/staff_for_assignment.dart';
@@ -3985,5 +3986,458 @@ class DatabaseService {
       } catch (_) {}
     }
     return out;
+  }
+
+  static ForumThread _forumThreadFromRow(
+    Map<String, dynamic> row,
+    Map<String, String> staffNames,
+    Map<String, String> rootPostIds,
+    Map<String, int> threadReplyCounts,
+    Map<String, int> likeCounts,
+    Set<String> likedPostIds,
+  ) {
+    final createdBy = row['created_by']?.toString().trim();
+    final id = row['id']?.toString() ?? '';
+    final rootPostId = rootPostIds[id];
+    return ForumThread(
+      id: id,
+      title: row['title']?.toString() ?? '',
+      category: row['category']?.toString() ?? 'General',
+      status: row['status']?.toString() ?? 'Open',
+      pinned: row['pinned'] == true,
+      locked: row['locked'] == true,
+      createdBy: createdBy,
+      createdByName: createdBy == null || createdBy.isEmpty
+          ? null
+          : staffNames[createdBy] ?? createdBy,
+      createdAt: _parseDateTimeNullable(row['created_at']),
+      updatedBy: row['updated_by']?.toString(),
+      updatedAt: _parseDateTimeNullable(row['updated_at']),
+      rootPostId: rootPostId,
+      likeCount: rootPostId == null ? 0 : (likeCounts[rootPostId] ?? 0),
+      likedByCurrentUser:
+          rootPostId != null && likedPostIds.contains(rootPostId),
+      replyCount: threadReplyCounts[id] ?? 0,
+    );
+  }
+
+  static ForumPost _forumPostFromRow(
+    Map<String, dynamic> row,
+    Map<String, String> staffNames,
+    Map<String, int> likeCounts,
+    Set<String> likedPostIds,
+  ) {
+    final createdBy = row['created_by']?.toString().trim();
+    final id = row['id']?.toString() ?? '';
+    return ForumPost(
+      id: id,
+      threadId: row['thread_id']?.toString() ?? '',
+      parentPostId: row['parent_post_id']?.toString(),
+      depth: _flexIntFromRow(row['depth']),
+      content: row['content']?.toString() ?? '',
+      status: row['status']?.toString() ?? 'Active',
+      createdBy: createdBy,
+      createdByName: createdBy == null || createdBy.isEmpty
+          ? null
+          : staffNames[createdBy] ?? createdBy,
+      createdAt: _parseDateTimeNullable(row['created_at']),
+      updatedBy: row['updated_by']?.toString(),
+      updatedAt: _parseDateTimeNullable(row['updated_at']),
+      likeCount: likeCounts[id] ?? 0,
+      likedByCurrentUser: likedPostIds.contains(id),
+    );
+  }
+
+  static Future<List<ForumThread>> fetchForumThreads({
+    String? viewerStaffLookupKey,
+  }) async {
+    if (!_enabled) return [];
+    try {
+      final res = await PostgrestClient.instance
+          .from('forum_thread')
+          .select()
+          .order('pinned', ascending: false)
+          .order('updated_at', ascending: false);
+      final rows = (res as List)
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .where((r) => r['status']?.toString().trim() != 'Deleted')
+          .toList();
+      final staffKeys = rows
+          .map((r) => r['created_by']?.toString().trim() ?? '')
+          .where((k) => k.isNotEmpty);
+      final names = await _resolveStaffDisplayNames(staffKeys);
+      final threadIds = rows
+          .map((r) => r['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final rootPostIds = <String, String>{};
+      final threadReplyCounts = <String, int>{};
+      final rootLikeCounts = <String, int>{};
+      final likedRootPostIds = <String>{};
+      if (threadIds.isNotEmpty) {
+        try {
+          final postRows = await PostgrestClient.instance
+              .from('forum_post')
+              .select('id,thread_id,depth,status,created_at')
+              .inFilter('thread_id', threadIds)
+              .order('created_at', ascending: true);
+          for (final raw in (postRows as List)) {
+            final m = Map<String, dynamic>.from(raw as Map);
+            if (m['status']?.toString().trim() == 'Deleted') continue;
+            final threadId = m['thread_id']?.toString().trim();
+            final postId = m['id']?.toString().trim();
+            if (threadId == null ||
+                threadId.isEmpty ||
+                postId == null ||
+                postId.isEmpty) {
+              continue;
+            }
+            final depth = _flexIntFromRow(m['depth']);
+            if (depth == 0) {
+              rootPostIds.putIfAbsent(threadId, () => postId);
+            } else {
+              threadReplyCounts[threadId] =
+                  (threadReplyCounts[threadId] ?? 0) + 1;
+            }
+          }
+          final roots = rootPostIds.values.toList();
+          if (roots.isNotEmpty) {
+            try {
+              final likes = await PostgrestClient.instance
+                  .from('forum_post_like')
+                  .select('post_id,staff_id')
+                  .inFilter('post_id', roots);
+              final viewerStaffId = await _staffRowIdForAssigneeKey(
+                viewerStaffLookupKey ?? '',
+              );
+              for (final raw in (likes as List)) {
+                final m = Map<String, dynamic>.from(raw as Map);
+                final postId = m['post_id']?.toString().trim();
+                if (postId == null || postId.isEmpty) continue;
+                rootLikeCounts[postId] = (rootLikeCounts[postId] ?? 0) + 1;
+                final staffId = m['staff_id']?.toString().trim();
+                if (viewerStaffId != null &&
+                    viewerStaffId.isNotEmpty &&
+                    staffId == viewerStaffId) {
+                  likedRootPostIds.add(postId);
+                }
+              }
+            } catch (e) {
+              debugPrint('fetchForumThreadLikes: $e');
+            }
+          }
+        } catch (e) {
+          debugPrint('fetchForumThreadMetrics: $e');
+        }
+      }
+      return rows
+          .map(
+            (r) => _forumThreadFromRow(
+              r,
+              names,
+              rootPostIds,
+              threadReplyCounts,
+              rootLikeCounts,
+              likedRootPostIds,
+            ),
+          )
+          .where((t) => t.id.isNotEmpty)
+          .toList();
+    } catch (e) {
+      debugPrint('fetchForumThreads: $e');
+      return [];
+    }
+  }
+
+  static Future<List<ForumPost>> fetchForumPosts(
+    String threadId, {
+    String? viewerStaffLookupKey,
+  }) async {
+    if (!_enabled) return [];
+    final tid = threadId.trim();
+    if (tid.isEmpty) return [];
+    try {
+      final res = await PostgrestClient.instance
+          .from('forum_post')
+          .select()
+          .eq('thread_id', tid)
+          .order('depth', ascending: true)
+          .order('created_at', ascending: true);
+      final rows = (res as List)
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .where((r) => r['status']?.toString().trim() != 'Deleted')
+          .toList();
+      final staffKeys = rows
+          .map((r) => r['created_by']?.toString().trim() ?? '')
+          .where((k) => k.isNotEmpty);
+      final names = await _resolveStaffDisplayNames(staffKeys);
+      final postIds = rows
+          .map((r) => r['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final likeCounts = <String, int>{};
+      final likedPostIds = <String>{};
+      if (postIds.isNotEmpty) {
+        try {
+          final likes = await PostgrestClient.instance
+              .from('forum_post_like')
+              .select('post_id,staff_id')
+              .inFilter('post_id', postIds);
+          final viewerStaffId = await _staffRowIdForAssigneeKey(
+            viewerStaffLookupKey ?? '',
+          );
+          for (final raw in (likes as List)) {
+            final m = Map<String, dynamic>.from(raw as Map);
+            final postId = m['post_id']?.toString().trim();
+            if (postId == null || postId.isEmpty) continue;
+            likeCounts[postId] = (likeCounts[postId] ?? 0) + 1;
+            final staffId = m['staff_id']?.toString().trim();
+            if (viewerStaffId != null &&
+                viewerStaffId.isNotEmpty &&
+                staffId == viewerStaffId) {
+              likedPostIds.add(postId);
+            }
+          }
+        } catch (e) {
+          debugPrint('fetchForumPostLikes: $e');
+        }
+      }
+      return rows
+          .map((r) => _forumPostFromRow(r, names, likeCounts, likedPostIds))
+          .where((p) => p.id.isNotEmpty)
+          .toList();
+    } catch (e) {
+      debugPrint('fetchForumPosts: $e');
+      return [];
+    }
+  }
+
+  static Future<String?> setForumPostLike({
+    required String postId,
+    required bool liked,
+    String? staffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = postId.trim();
+    if (pid.isEmpty) return 'Post id is required.';
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(staffLookupKey ?? '');
+      if (staffId == null || staffId.isEmpty) {
+        return 'Sign in again to like this post.';
+      }
+      if (liked) {
+        try {
+          await PostgrestClient.instance.from('forum_post_like').insert({
+            'id': const Uuid().v4(),
+            'post_id': pid,
+            'staff_id': staffId,
+            'created_at': HkTime.timestampForDb(),
+          });
+        } catch (e) {
+          final msg = e.toString().toLowerCase();
+          if (!msg.contains('duplicate') && !msg.contains('23505')) {
+            rethrow;
+          }
+        }
+      } else {
+        await PostgrestClient.instance
+            .from('forum_post_like')
+            .delete()
+            .eq('post_id', pid)
+            .eq('staff_id', staffId);
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<({String? staffUuid, String? appId, String? name})>
+  fetchStaffIdentityByEmail(String email) async {
+    if (!_enabled) return (staffUuid: null, appId: null, name: null);
+    final target = email.trim().toLowerCase();
+    if (target.isEmpty) return (staffUuid: null, appId: null, name: null);
+    try {
+      final res = await PostgrestClient.instance
+          .from('staff')
+          .select('id,app_id,name,email')
+          .eq('email', target)
+          .maybeSingle();
+      if (res == null) return (staffUuid: null, appId: null, name: null);
+      final row = Map<String, dynamic>.from(res as Map);
+      return (
+        staffUuid: row['id']?.toString().trim(),
+        appId: row['app_id']?.toString().trim(),
+        name: row['name']?.toString().trim(),
+      );
+    } catch (e) {
+      debugPrint('fetchStaffIdentityByEmail: $e');
+      return (staffUuid: null, appId: null, name: null);
+    }
+  }
+
+  static Future<String?> createForumThread({
+    required String title,
+    required String content,
+    required String category,
+    String status = 'Open',
+    String? threadIdOverride,
+    String? rootPostIdOverride,
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final t = title.trim();
+    final c = content.trim();
+    if (t.isEmpty) return 'Title is required.';
+    if (c.isEmpty) return 'Content is required.';
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(
+        creatorStaffLookupKey ?? '',
+      );
+      final threadId = threadIdOverride?.trim().isNotEmpty == true
+          ? threadIdOverride!.trim()
+          : const Uuid().v4();
+      final rootPostId = rootPostIdOverride?.trim().isNotEmpty == true
+          ? rootPostIdOverride!.trim()
+          : const Uuid().v4();
+      final now = HkTime.timestampForDb();
+      await PostgrestClient.instance.from('forum_thread').insert({
+        'id': threadId,
+        'title': t,
+        'category': category.trim().isEmpty ? 'General' : category.trim(),
+        'status': status.trim().isEmpty ? 'Open' : status.trim(),
+        'created_by': staffId,
+        'created_at': now,
+        'updated_by': staffId,
+        'updated_at': now,
+      });
+      await PostgrestClient.instance.from('forum_post').insert({
+        'id': rootPostId,
+        'thread_id': threadId,
+        'parent_post_id': null,
+        'depth': 0,
+        'content': c,
+        'created_by': staffId,
+        'created_at': now,
+      });
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<({String? error, ForumPost? post})> createForumReply({
+    required String threadId,
+    required String parentPostId,
+    required int parentDepth,
+    required String content,
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return (error: 'Database not configured', post: null);
+    final tid = threadId.trim();
+    final pid = parentPostId.trim();
+    final c = content.trim();
+    if (tid.isEmpty || pid.isEmpty) {
+      return (error: 'Thread and parent post are required.', post: null);
+    }
+    if (c.isEmpty) return (error: 'Reply content is required.', post: null);
+    final depth = parentDepth + 1;
+    if (depth > 2) {
+      return (error: 'Replies can only go up to level 2.', post: null);
+    }
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(
+        creatorStaffLookupKey ?? '',
+      );
+      final now = HkTime.timestampForDb();
+      final replyId = const Uuid().v4();
+      await PostgrestClient.instance.from('forum_post').insert({
+        'id': replyId,
+        'thread_id': tid,
+        'parent_post_id': pid,
+        'depth': depth,
+        'content': c,
+        'created_by': staffId,
+        'created_at': now,
+      });
+      await PostgrestClient.instance
+          .from('forum_thread')
+          .update({'updated_by': staffId, 'updated_at': now})
+          .eq('id', tid);
+      return (
+        error: null,
+        post: ForumPost(
+          id: replyId,
+          threadId: tid,
+          parentPostId: pid,
+          depth: depth,
+          content: c,
+          status: 'Active',
+          createdBy: staffId,
+          createdAt: DateTime.tryParse(now),
+        ),
+      );
+    } catch (e) {
+      return (error: e.toString(), post: null);
+    }
+  }
+
+  static Future<String?> updateForumPost({
+    required String postId,
+    required String threadId,
+    required String content,
+    required String status,
+    String? threadTitle,
+    String? threadCategory,
+    String? threadStatus,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = postId.trim();
+    final tid = threadId.trim();
+    final c = content.trim();
+    if (pid.isEmpty || tid.isEmpty) return 'Post and thread are required.';
+    if (c.isEmpty) return 'Content is required.';
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(
+        updaterStaffLookupKey ?? '',
+      );
+      final now = HkTime.timestampForDb();
+      await PostgrestClient.instance
+          .from('forum_post')
+          .update({
+            'content': c,
+            'status': status.trim().isEmpty ? 'Active' : status.trim(),
+            'updated_by': staffId,
+            'updated_at': now,
+          })
+          .eq('id', pid);
+      final threadUpdate = <String, dynamic>{
+        'updated_by': staffId,
+        'updated_at': now,
+      };
+      if (threadTitle != null) {
+        final title = threadTitle.trim();
+        if (title.isEmpty) return 'Title is required.';
+        threadUpdate['title'] = title;
+      }
+      if (threadCategory != null) {
+        threadUpdate['category'] = threadCategory.trim().isEmpty
+            ? 'General'
+            : threadCategory.trim();
+      }
+      if (threadStatus != null) {
+        threadUpdate['status'] = threadStatus.trim().isEmpty
+            ? 'Open'
+            : threadStatus.trim();
+      }
+      await PostgrestClient.instance
+          .from('forum_thread')
+          .update(threadUpdate)
+          .eq('id', tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
   }
 }

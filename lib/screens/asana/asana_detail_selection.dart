@@ -14,6 +14,8 @@ sealed class AsanaDetailSelection {
       AsanaCreateTaskDetailSelection;
   const factory AsanaDetailSelection.createProject() =
       AsanaCreateProjectDetailSelection;
+  const factory AsanaDetailSelection.createDiscussion() =
+      AsanaCreateDiscussionDetailSelection;
 }
 
 final class AsanaTaskDetailSelection extends AsanaDetailSelection {
@@ -43,4 +45,8 @@ final class AsanaCreateTaskDetailSelection extends AsanaDetailSelection {
 
 final class AsanaCreateProjectDetailSelection extends AsanaDetailSelection {
   const AsanaCreateProjectDetailSelection();
+}
+
+final class AsanaCreateDiscussionDetailSelection extends AsanaDetailSelection {
+  const AsanaCreateDiscussionDetailSelection();
 }
