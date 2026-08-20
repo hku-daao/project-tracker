@@ -5,14 +5,17 @@ import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
 import '../../models/forum.dart';
+import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
 import '../../services/llm_service.dart';
+import '../../utils/attachment_file_pick.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart'
     show
         AsanaTaskDetailActionStyles,
         AsanaDetailLabelValue,
+        AsanaDetailSuggestedValueRow,
         AsanaDetailSlideFooter,
         AsanaDetailSlideScaffold,
         AsanaDetailTwoColumnRow,
@@ -27,6 +30,21 @@ import 'asana_inline_image_widgets.dart';
 import 'asana_task_ai_assistant.dart' show AsanaTaskAiColors;
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
+
+class _ForumInlineImageDraft {
+  _ForumInlineImageDraft({
+    required this.id,
+    required this.bytes,
+    required this.label,
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final Uint8List bytes;
+  final String label;
+  final int sortOrder;
+  String? get mimeType => _attachmentMimeTypeFromName(label);
+}
 
 class AsanaDiscussionPanel extends StatefulWidget {
   const AsanaDiscussionPanel({
@@ -78,6 +96,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
   bool _replyAiBusy = false;
   String? _replyAiMessage;
   String? _replyAiSuggestedDraft;
+  final List<_ForumInlineImageDraft> _pendingReplyInlineImageAdds = [];
   ForumPost? _editingPost;
   bool _editSaving = false;
 
@@ -311,6 +330,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       _replyAiPromptController.clear();
       _replyAiMessage = null;
       _replyAiSuggestedDraft = null;
+      _pendingReplyInlineImageAdds.clear();
     });
   }
 
@@ -393,6 +413,101 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     }
   }
 
+  Future<void> _showPostLikedBy(
+    AppState state,
+    ForumPost post,
+    BuildContext anchorContext,
+  ) async {
+    final viewerStaffId = state.effectiveStaffUuid?.trim().toLowerCase();
+    final users = await DatabaseService.fetchForumPostLikedBy(post.id);
+    if (!mounted || !anchorContext.mounted) return;
+    final sorted = users.toList()
+      ..sort((a, b) {
+        final aIsViewer =
+            viewerStaffId != null && a.staffId.toLowerCase() == viewerStaffId;
+        final bIsViewer =
+            viewerStaffId != null && b.staffId.toLowerCase() == viewerStaffId;
+        if (aIsViewer != bIsViewer) return aIsViewer ? -1 : 1;
+        final ad = a.likedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bd = b.likedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return ad.compareTo(bd);
+      });
+    final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+    final overlayBox =
+        Overlay.of(anchorContext).context.findRenderObject() as RenderBox?;
+    if (anchorBox == null || overlayBox == null) return;
+    final topLeft = anchorBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final bottomRight = anchorBox.localToGlobal(
+      anchorBox.size.bottomRight(Offset.zero),
+      ancestor: overlayBox,
+    );
+    final position = RelativeRect.fromRect(
+      Rect.fromLTRB(
+        topLeft.dx,
+        bottomRight.dy + 4,
+        bottomRight.dx,
+        bottomRight.dy + 4,
+      ),
+      Offset.zero & overlayBox.size,
+    );
+    await showMenu<void>(
+      context: anchorContext,
+      position: position,
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
+      items: [
+        const PopupMenuItem<void>(
+          enabled: false,
+          child: Text(
+            'Liked by',
+            style: TextStyle(
+              color: Color(0xFF111827),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        if (sorted.isEmpty)
+          const PopupMenuItem<void>(
+            enabled: false,
+            child: Text('No likes yet.'),
+          )
+        else
+          for (final user in sorted)
+            PopupMenuItem<void>(
+              enabled: false,
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: widget.palette.accent.withValues(
+                      alpha: 0.12,
+                    ),
+                    foregroundColor: widget.palette.accent,
+                    child: Text(
+                      _initialsForName(user.displayName),
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      viewerStaffId != null &&
+                              user.staffId.toLowerCase() == viewerStaffId
+                          ? '${user.displayName} (You)'
+                          : user.displayName,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      ],
+    );
+  }
+
   Future<void> _toggleThreadRootLike(AppState state, ForumThread thread) async {
     final rootPostId = thread.rootPostId;
     if (rootPostId == null || rootPostId.isEmpty) return;
@@ -463,6 +578,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     String? title,
     String? category,
     String? threadStatus,
+    List<_ForumInlineImageDraft> inlineImages = const [],
   }) async {
     if (_editSaving) return;
     setState(() => _editSaving = true);
@@ -480,6 +596,16 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     setState(() => _editSaving = false);
     if (error != null) {
       await _showError(error);
+      return;
+    }
+    final inlineErr = await _commitForumPostInlineImages(
+      postId: post.id,
+      state: state,
+      drafts: inlineImages,
+    );
+    if (!mounted) return;
+    if (inlineErr != null) {
+      await _showError(inlineErr);
       return;
     }
     setState(() => _editingPost = null);
@@ -506,6 +632,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       replyAiBusy: _replyAiBusy,
       replyAiMessage: _replyAiMessage,
       replyAiSuggestedDraft: _replyAiSuggestedDraft,
+      replyInlineImages: _replyInlinePreviewItems(),
       replySaving: _replySaving,
       authorMetaForKey: _authorTeamOfficeLabel,
       rounded: rounded,
@@ -513,9 +640,13 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       onEditPost: _startEditPost,
       onStartReply: _startReply,
       onToggleLike: (post) => _toggleLike(state, post),
+      onShowLikedBy: (post, anchorContext) =>
+          _showPostLikedBy(state, post, anchorContext),
       onCancelReply: _cancelReply,
       onAcceptReplyAiSuggestion: _acceptReplyAiSuggestion,
       onDismissReplyAiSuggestion: _dismissReplyAiSuggestion,
+      onAddReplyInlineImage: _addDraftReplyInlineImage,
+      onRemoveReplyInlineImage: _removeDraftReplyInlineImage,
       onAskReplyAi: _askReplyAi,
       onSubmitReply: (post) => _submitReply(state, post),
     );
@@ -546,6 +677,78 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       _replyAiSuggestedDraft = null;
       _replyAiMessage = null;
     });
+  }
+
+  Future<void> _addDraftReplyInlineImage() async {
+    final picked = await pickOneFileWithBytes();
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) {
+      await _showError('Could not read file data.');
+      return;
+    }
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    setState(() {
+      _pendingReplyInlineImageAdds.add(
+        _ForumInlineImageDraft(
+          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
+          bytes: picked.bytes,
+          label: label,
+          sortOrder: _pendingReplyInlineImageAdds.length,
+        ),
+      );
+    });
+  }
+
+  void _removeDraftReplyInlineImage(InlineImagePreviewItem image) {
+    setState(() {
+      _pendingReplyInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+    });
+  }
+
+  List<InlineImagePreviewItem> _replyInlinePreviewItems() {
+    return _pendingReplyInlineImageAdds
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        )
+        .toList();
+  }
+
+  Future<String?> _commitForumPostInlineImages({
+    required String postId,
+    required AppState state,
+    required List<_ForumInlineImageDraft> drafts,
+  }) async {
+    for (final draft in drafts) {
+      final upload = await AttachmentUploadService.uploadBytesForEntity(
+        entityType: 'forum_post_content',
+        entityId: postId,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: [state.effectiveStaffAppId],
+      );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
+      final ins = await DatabaseService.insertInlineAttachment(
+        entityType: 'forum_post_content',
+        entityId: postId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.effectiveStaffAppId,
+        sortOrder: draft.sortOrder,
+      );
+      if (ins.error != null) return ins.error;
+    }
+    return null;
   }
 
   String _replyParentContext(ForumPost parent) {
@@ -619,19 +822,22 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
           state.currentStaffDisplayName ?? result.post?.createdByName,
       createdAt: result.post?.createdAt ?? now,
     );
-    _cancelReply();
-    if (newPost != null) {
-      setState(() {
-        _posts = [..._posts, newPost];
-        _threads = [
-          for (final t in _threads)
-            if (t.id == parent.threadId)
-              t.copyWith(replyCount: t.replyCount + 1, updatedAt: now)
-            else
-              t,
-        ];
-      });
+    final replyId = newPost?.id;
+    if (replyId != null && replyId.isNotEmpty) {
+      final inlineErr = await _commitForumPostInlineImages(
+        postId: replyId,
+        state: state,
+        drafts: List<_ForumInlineImageDraft>.from(_pendingReplyInlineImageAdds),
+      );
+      if (!mounted) return;
+      if (inlineErr != null) {
+        await _showError(inlineErr);
+        return;
+      }
     }
+    _cancelReply();
+    await _loadThreads(selectThreadId: parent.threadId);
+    await _loadPosts(parent.threadId);
   }
 
   void _clearFilters() {
@@ -1082,6 +1288,8 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                         palette: widget.palette,
                         post: editingPost,
                         thread: editingThread,
+                        inlineImages:
+                            _postInlineImages[editingPost.id] ?? const [],
                         saving: _editSaving,
                         onClose: _closeEditPost,
                         onSave:
@@ -1091,6 +1299,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                               title,
                               category,
                               threadStatus,
+                              required inlineImages,
                             }) => _saveEditedPost(
                               state,
                               post: editingPost,
@@ -1099,6 +1308,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                               title: title,
                               category: category,
                               threadStatus: threadStatus,
+                              inlineImages: inlineImages,
                             ),
                       ),
                     ),
@@ -1170,11 +1380,26 @@ class _MobileDiscussionDetailSlide extends StatelessWidget {
   }
 }
 
+class _ForumEditAiSuggestion {
+  const _ForumEditAiSuggestion({
+    required this.id,
+    required this.fieldLabel,
+    required this.suggestedValue,
+    required this.onAdopt,
+  });
+
+  final String id;
+  final String fieldLabel;
+  final String suggestedValue;
+  final VoidCallback onAdopt;
+}
+
 class _ForumEditSlide extends StatefulWidget {
   const _ForumEditSlide({
     required this.palette,
     required this.post,
     required this.thread,
+    required this.inlineImages,
     required this.saving,
     required this.onClose,
     required this.onSave,
@@ -1183,6 +1408,7 @@ class _ForumEditSlide extends StatefulWidget {
   final AsanaLandingPalette palette;
   final ForumPost post;
   final ForumThread? thread;
+  final List<InlineAttachmentRow> inlineImages;
   final bool saving;
   final VoidCallback onClose;
   final Future<void> Function({
@@ -1191,6 +1417,7 @@ class _ForumEditSlide extends StatefulWidget {
     String? title,
     String? category,
     String? threadStatus,
+    required List<_ForumInlineImageDraft> inlineImages,
   })
   onSave;
 
@@ -1216,6 +1443,8 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
   String _threadStatus = 'Open';
   bool _aiBusy = false;
   String? _aiMessage;
+  List<_ForumEditAiSuggestion> _aiSuggestions = const [];
+  final List<_ForumInlineImageDraft> _pendingInlineImageAdds = [];
 
   @override
   void initState() {
@@ -1236,6 +1465,52 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
     _contentController.dispose();
     _aiPromptController.dispose();
     super.dispose();
+  }
+
+  Future<void> _addContentInlineImage() async {
+    final picked = await pickOneFileWithBytes();
+    if (!mounted || picked == null) return;
+    if (picked.bytes.isEmpty) return;
+    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    setState(() {
+      _pendingInlineImageAdds.add(
+        _ForumInlineImageDraft(
+          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
+          bytes: picked.bytes,
+          label: label,
+          sortOrder:
+              widget.inlineImages.length + _pendingInlineImageAdds.length,
+        ),
+      );
+    });
+  }
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    setState(() {
+      _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+    });
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems() {
+    final savedItems = widget.inlineImages.map(
+      (row) => InlineImagePreviewItem(
+        id: row.id,
+        inlineAttachment: row,
+        url: row.url,
+        description: row.description,
+        mimeType: row.mimeType,
+      ),
+    );
+    final draftItems = _pendingInlineImageAdds.map(
+      (draft) => InlineImagePreviewItem(
+        id: draft.id,
+        bytes: draft.bytes,
+        description: draft.label,
+        mimeType: draft.mimeType,
+        canRemove: true,
+      ),
+    );
+    return [...savedItems, ...draftItems];
   }
 
   Future<void> _pickCategory(BuildContext anchorContext) async {
@@ -1269,6 +1544,7 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
     setState(() {
       _aiBusy = true;
       _aiMessage = null;
+      _aiSuggestions = const [];
     });
     try {
       if (widget.post.depth == 0) {
@@ -1284,23 +1560,67 @@ Current forum draft:
 ''',
         );
         if (!mounted) return;
+        final title = raw['title']?.toString().trim();
+        final content = raw['content']?.toString().trim();
+        final category = raw['category']?.toString().trim();
+        final status = raw['status']?.toString().trim();
+        final suggestions = <_ForumEditAiSuggestion>[];
+        void addSuggestion({
+          required String id,
+          required String label,
+          required String current,
+          required String? suggested,
+          required VoidCallback onAdopt,
+        }) {
+          final value = suggested?.trim();
+          if (value == null || value.isEmpty) return;
+          if (_sameNormalizedText(value, current)) return;
+          suggestions.add(
+            _ForumEditAiSuggestion(
+              id: id,
+              fieldLabel: label,
+              suggestedValue: value,
+              onAdopt: onAdopt,
+            ),
+          );
+        }
+
+        addSuggestion(
+          id: 'title',
+          label: 'Topic',
+          current: _titleController.text,
+          suggested: title,
+          onAdopt: () => _titleController.text = title ?? '',
+        );
+        addSuggestion(
+          id: 'content',
+          label: 'Content',
+          current: _contentController.text,
+          suggested: content,
+          onAdopt: () => _contentController.text = content ?? '',
+        );
+        if (category != null && _categories.contains(category)) {
+          addSuggestion(
+            id: 'category',
+            label: 'Category',
+            current: _category,
+            suggested: category,
+            onAdopt: () => _category = category,
+          );
+        }
+        if (status != null &&
+            const {'Open', 'Resolved', 'Closed'}.contains(status)) {
+          addSuggestion(
+            id: 'status',
+            label: 'Status',
+            current: _threadStatus,
+            suggested: status,
+            onAdopt: () => _threadStatus = status,
+          );
+        }
         setState(() {
-          final title = raw['title']?.toString().trim();
-          final content = raw['content']?.toString().trim();
-          final category = raw['category']?.toString().trim();
-          final status = raw['status']?.toString().trim();
-          if (title != null && title.isNotEmpty) _titleController.text = title;
-          if (content != null && content.isNotEmpty) {
-            _contentController.text = content;
-          }
-          if (category != null && _categories.contains(category)) {
-            _category = category;
-          }
-          if (status != null &&
-              const {'Open', 'Resolved', 'Closed'}.contains(status)) {
-            _threadStatus = status;
-          }
           _aiMessage = raw['overallComment']?.toString().trim();
+          _aiSuggestions = suggestions;
         });
       } else {
         final draft = await LlmService.suggestDiscussionReplyDraft(
@@ -1308,9 +1628,20 @@ Current forum draft:
           parentContext: 'Current reply content: ${_contentController.text}',
         );
         if (!mounted) return;
+        final suggestions = <_ForumEditAiSuggestion>[];
+        if (!_sameNormalizedText(draft, _contentController.text)) {
+          suggestions.add(
+            _ForumEditAiSuggestion(
+              id: 'content',
+              fieldLabel: 'Content',
+              suggestedValue: draft.trim(),
+              onAdopt: () => _contentController.text = draft,
+            ),
+          );
+        }
         setState(() {
-          _contentController.text = draft;
-          _aiMessage = 'AI revised the reply content. Review before updating.';
+          _aiSuggestions = suggestions;
+          _aiMessage = 'AI revised the reply content. Review before applying.';
         });
       }
     } catch (e) {
@@ -1318,6 +1649,47 @@ Current forum draft:
     } finally {
       if (mounted) setState(() => _aiBusy = false);
     }
+  }
+
+  static bool _sameNormalizedText(String a, String b) {
+    String norm(String v) => v.trim().replaceAll(RegExp(r'\s+'), ' ');
+    return norm(a) == norm(b);
+  }
+
+  void _acceptAiSuggestion(_ForumEditAiSuggestion suggestion) {
+    setState(() {
+      suggestion.onAdopt();
+      _aiSuggestions = _aiSuggestions
+          .where((s) => s.id != suggestion.id)
+          .toList();
+    });
+  }
+
+  void _dismissAiSuggestion(_ForumEditAiSuggestion suggestion) {
+    setState(() {
+      _aiSuggestions = _aiSuggestions
+          .where((s) => s.id != suggestion.id)
+          .toList();
+    });
+  }
+
+  Widget _aiSuggestionsFor(String id) {
+    final colors = AsanaTaskAiColors.fromPalette(widget.palette);
+    final suggestions = _aiSuggestions.where((s) => s.id == id).toList();
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        for (final suggestion in suggestions)
+          _ForumEditAiSuggestionCard(
+            suggestion: suggestion,
+            colors: colors,
+            onAccept: () => _acceptAiSuggestion(suggestion),
+            onDismiss: () => _dismissAiSuggestion(suggestion),
+          ),
+      ],
+    );
   }
 
   @override
@@ -1407,6 +1779,10 @@ Current forum draft:
                                   threadStatus: _threadStatus,
                                   status: widget.post.status,
                                   content: _contentController.text,
+                                  inlineImages:
+                                      List<_ForumInlineImageDraft>.from(
+                                        _pendingInlineImageAdds,
+                                      ),
                                 ),
                           style: AsanaTaskDetailActionStyles.updateFilled(
                             widget.palette,
@@ -1432,22 +1808,37 @@ Current forum draft:
                       hintText: 'Please fill in discussion topic',
                       style: asanaDetailTitleStyle(context),
                     ),
+                    _aiSuggestionsFor('title'),
                     const SizedBox(height: 10),
                   ],
                   AsanaDetailLabelValue(
                     label: 'Content',
-                    child: AsanaHoverTextField(
-                      controller: _contentController,
-                      canEdit: true,
-                      readOnly: widget.saving,
-                      showOutline: true,
-                      maxLines: 12,
-                      minLines: 6,
-                      hintText:
-                          'Share your suggestion, issue report, feature idea, or announcement details.',
-                      style: asanaDetailMultilineValueStyle(context),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AsanaHoverTextField(
+                          controller: _contentController,
+                          canEdit: true,
+                          readOnly: widget.saving,
+                          showOutline: true,
+                          maxLines: 12,
+                          minLines: 6,
+                          hintText:
+                              'Share your suggestion, issue report, feature idea, or announcement details.',
+                          style: asanaDetailMultilineValueStyle(context),
+                        ),
+                        InlineImageToolbar(
+                          enabled: !widget.saving,
+                          onAdd: _addContentInlineImage,
+                        ),
+                        InlineImagePreviewList(
+                          images: _inlinePreviewItems(),
+                          onRemove: _removeInlineImagePreview,
+                        ),
+                      ],
                     ),
                   ),
+                  _aiSuggestionsFor('content'),
                   if (isRoot) ...[
                     AsanaDetailTwoColumnRow(
                       label: 'Category',
@@ -1464,6 +1855,7 @@ Current forum draft:
                         ),
                       ),
                     ),
+                    _aiSuggestionsFor('category'),
                     AsanaDetailTwoColumnRow(
                       label: 'Status',
                       child: Builder(
@@ -1479,6 +1871,7 @@ Current forum draft:
                         ),
                       ),
                     ),
+                    _aiSuggestionsFor('status'),
                   ],
                 ],
               ),
@@ -1698,6 +2091,167 @@ class _ForumEditAiDockState extends State<_ForumEditAiDock> {
   }
 }
 
+class _ForumEditAiSuggestionCard extends StatelessWidget {
+  const _ForumEditAiSuggestionCard({
+    required this.suggestion,
+    required this.colors,
+    required this.onAccept,
+    required this.onDismiss,
+  });
+
+  final _ForumEditAiSuggestion suggestion;
+  final AsanaTaskAiColors colors;
+  final VoidCallback onAccept;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final fullWidth = suggestion.id == 'title' || suggestion.id == 'content';
+    return AsanaDetailSuggestedValueRow(
+      insetLabelColumn: !fullWidth,
+      labelColor: colors.suggestedLabel,
+      borderColor: colors.boxBorder,
+      fillColor: colors.cardSurface,
+      wrapField: (field) =>
+          _ForumEditGlowingAdoptCard(colors: colors, child: field),
+      child: _ForumEditSuggestionRow(
+        suggestion: suggestion,
+        colors: colors,
+        onAccept: onAccept,
+        onDismiss: onDismiss,
+      ),
+    );
+  }
+}
+
+class _ForumEditSuggestionRow extends StatelessWidget {
+  const _ForumEditSuggestionRow({
+    required this.suggestion,
+    required this.colors,
+    required this.onAccept,
+    required this.onDismiss,
+  });
+
+  final _ForumEditAiSuggestion suggestion;
+  final AsanaTaskAiColors colors;
+  final VoidCallback onAccept;
+  final VoidCallback onDismiss;
+
+  static const _rejectColor = Color(0xFFC62828);
+
+  @override
+  Widget build(BuildContext context) {
+    final valueStyle = asanaDetailValueStyle(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            suggestion.suggestedValue,
+            style: valueStyle.copyWith(
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+            ),
+          ),
+        ),
+        _compactActionIcon(
+          tooltip: 'Dismiss suggestion',
+          icon: Icons.cancel_outlined,
+          color: _rejectColor,
+          onPressed: onDismiss,
+        ),
+        _compactActionIcon(
+          tooltip: 'Apply this suggestion',
+          icon: Icons.check_circle_outline,
+          color: colors.adoptIcon,
+          onPressed: onAccept,
+        ),
+      ],
+    );
+  }
+
+  Widget _compactActionIcon({
+    required String tooltip,
+    required IconData icon,
+    required Color color,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20, color: color),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+}
+
+class _ForumEditGlowingAdoptCard extends StatefulWidget {
+  const _ForumEditGlowingAdoptCard({required this.colors, required this.child});
+
+  final AsanaTaskAiColors colors;
+  final Widget child;
+
+  @override
+  State<_ForumEditGlowingAdoptCard> createState() =>
+      _ForumEditGlowingAdoptCardState();
+}
+
+class _ForumEditGlowingAdoptCardState extends State<_ForumEditGlowingAdoptCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = _controller.value;
+        final edge = Color.lerp(
+          widget.colors.accent,
+          Color.lerp(widget.colors.accent, Colors.white, 0.45)!,
+          t,
+        )!;
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: edge.withValues(alpha: 0.22 + t * 0.28),
+                blurRadius: 6 + t * 10,
+                spreadRadius: 0.5 + t * 1.5,
+              ),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
 class _ThreadList extends StatelessWidget {
   const _ThreadList({
     required this.palette,
@@ -1820,6 +2374,7 @@ class _ThreadDetail extends StatelessWidget {
     required this.replyAiBusy,
     required this.replyAiMessage,
     required this.replyAiSuggestedDraft,
+    required this.replyInlineImages,
     required this.replySaving,
     required this.authorMetaForKey,
     this.rounded = true,
@@ -1827,9 +2382,12 @@ class _ThreadDetail extends StatelessWidget {
     required this.onEditPost,
     required this.onStartReply,
     required this.onToggleLike,
+    required this.onShowLikedBy,
     required this.onCancelReply,
     required this.onAcceptReplyAiSuggestion,
     required this.onDismissReplyAiSuggestion,
+    required this.onAddReplyInlineImage,
+    required this.onRemoveReplyInlineImage,
     required this.onAskReplyAi,
     required this.onSubmitReply,
   });
@@ -1845,6 +2403,7 @@ class _ThreadDetail extends StatelessWidget {
   final bool replyAiBusy;
   final String? replyAiMessage;
   final String? replyAiSuggestedDraft;
+  final List<InlineImagePreviewItem> replyInlineImages;
   final bool replySaving;
   final String Function(String? staffKey) authorMetaForKey;
   final bool rounded;
@@ -1852,9 +2411,12 @@ class _ThreadDetail extends StatelessWidget {
   final ValueChanged<ForumPost> onEditPost;
   final ValueChanged<ForumPost> onStartReply;
   final ValueChanged<ForumPost> onToggleLike;
+  final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
   final VoidCallback onCancelReply;
   final VoidCallback onAcceptReplyAiSuggestion;
   final VoidCallback onDismissReplyAiSuggestion;
+  final VoidCallback onAddReplyInlineImage;
+  final void Function(InlineImagePreviewItem image) onRemoveReplyInlineImage;
   final Future<void> Function(ForumPost post) onAskReplyAi;
   final Future<void> Function(ForumPost post) onSubmitReply;
 
@@ -1954,6 +2516,7 @@ class _ThreadDetail extends StatelessWidget {
                                 onEditPost: onEditPost,
                                 onStartReply: onStartReply,
                                 onToggleLike: onToggleLike,
+                                onShowLikedBy: onShowLikedBy,
                               ),
                             ),
                             if (replyingToPost != null)
@@ -1971,12 +2534,16 @@ class _ThreadDetail extends StatelessWidget {
                                       aiBusy: replyAiBusy,
                                       aiMessage: replyAiMessage,
                                       aiSuggestedDraft: replyAiSuggestedDraft,
+                                      inlineImages: replyInlineImages,
                                       saving: replySaving,
                                       onAskAi: () => onAskReplyAi(parent),
                                       onAcceptAiSuggestion:
                                           onAcceptReplyAiSuggestion,
                                       onDismissAiSuggestion:
                                           onDismissReplyAiSuggestion,
+                                      onAddInlineImage: onAddReplyInlineImage,
+                                      onRemoveInlineImage:
+                                          onRemoveReplyInlineImage,
                                       onCancel: onCancelReply,
                                       onSubmit: () => onSubmitReply(parent),
                                     ),
@@ -2043,6 +2610,7 @@ class _PostTree extends StatelessWidget {
     required this.onEditPost,
     required this.onStartReply,
     required this.onToggleLike,
+    required this.onShowLikedBy,
   });
 
   final AsanaLandingPalette palette;
@@ -2055,6 +2623,7 @@ class _PostTree extends StatelessWidget {
   final ValueChanged<ForumPost> onEditPost;
   final ValueChanged<ForumPost> onStartReply;
   final ValueChanged<ForumPost> onToggleLike;
+  final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
 
   @override
   Widget build(BuildContext context) {
@@ -2095,6 +2664,7 @@ class _PostTree extends StatelessWidget {
               );
             },
             onToggleLike: onToggleLike,
+            onShowLikedBy: onShowLikedBy,
           ),
       ],
     );
@@ -2110,10 +2680,13 @@ class _ReplySlideComposer extends StatefulWidget {
     required this.aiBusy,
     required this.aiMessage,
     required this.aiSuggestedDraft,
+    required this.inlineImages,
     required this.saving,
     required this.onAskAi,
     required this.onAcceptAiSuggestion,
     required this.onDismissAiSuggestion,
+    required this.onAddInlineImage,
+    required this.onRemoveInlineImage,
     required this.onCancel,
     required this.onSubmit,
   });
@@ -2125,10 +2698,13 @@ class _ReplySlideComposer extends StatefulWidget {
   final bool aiBusy;
   final String? aiMessage;
   final String? aiSuggestedDraft;
+  final List<InlineImagePreviewItem> inlineImages;
   final bool saving;
   final VoidCallback onAskAi;
   final VoidCallback onAcceptAiSuggestion;
   final VoidCallback onDismissAiSuggestion;
+  final VoidCallback onAddInlineImage;
+  final void Function(InlineImagePreviewItem image) onRemoveInlineImage;
   final VoidCallback onCancel;
   final VoidCallback onSubmit;
 
@@ -2236,6 +2812,14 @@ class _ReplySlideComposerState extends State<_ReplySlideComposer> {
                         borderSide: const BorderSide(color: Color(0xFF6B7280)),
                       ),
                     ),
+                  ),
+                  InlineImageToolbar(
+                    enabled: !widget.saving,
+                    onAdd: widget.onAddInlineImage,
+                  ),
+                  InlineImagePreviewList(
+                    images: widget.inlineImages,
+                    onRemove: widget.onRemoveInlineImage,
                   ),
                   if (widget.aiSuggestedDraft != null &&
                       widget.aiSuggestedDraft!.trim().isNotEmpty) ...[
@@ -2539,6 +3123,7 @@ class _PostCard extends StatelessWidget {
     required this.onEdit,
     required this.onReply,
     required this.onToggleLike,
+    required this.onShowLikedBy,
   });
 
   final ForumPost post;
@@ -2551,6 +3136,7 @@ class _PostCard extends StatelessWidget {
   final ValueChanged<ForumPost> onEdit;
   final ValueChanged<ForumPost> onReply;
   final ValueChanged<ForumPost> onToggleLike;
+  final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
 
   @override
   Widget build(BuildContext context) {
@@ -2591,7 +3177,7 @@ class _PostCard extends StatelessWidget {
                     height: 1.45,
                   ),
                 ),
-                InlineImagePreviewList(
+                InlineImageContentStrip(
                   images: [
                     for (final row in inlineImages)
                       InlineImagePreviewItem.saved(row),
@@ -2606,6 +3192,9 @@ class _PostCard extends StatelessWidget {
                     replyCount: replyCount,
                     canReply: !locked,
                     onLike: () => onToggleLike(post),
+                    onShowLikedBy: post.likeCount > 0
+                        ? (anchorContext) => onShowLikedBy(post, anchorContext)
+                        : null,
                     onReply: () => onReply(post),
                   ),
                 ),
@@ -2625,6 +3214,7 @@ class _PostActionRow extends StatelessWidget {
     required this.replyCount,
     required this.canReply,
     required this.onLike,
+    required this.onShowLikedBy,
     required this.onReply,
   });
 
@@ -2633,6 +3223,7 @@ class _PostActionRow extends StatelessWidget {
   final int? replyCount;
   final bool canReply;
   final VoidCallback onLike;
+  final void Function(BuildContext anchorContext)? onShowLikedBy;
   final VoidCallback onReply;
 
   @override
@@ -2641,12 +3232,12 @@ class _PostActionRow extends StatelessWidget {
     final muted = kAsanaTextSecondary;
     return Row(
       children: [
-        _PostIconAction(
-          tooltip: liked ? 'Unlike' : 'Like',
-          icon: liked ? Icons.favorite : Icons.favorite_border,
-          count: likeCount,
-          color: liked ? const Color(0xFFE11D48) : muted,
-          onPressed: onLike,
+        _PostLikeAction(
+          liked: liked,
+          likeCount: likeCount,
+          mutedColor: muted,
+          onLike: onLike,
+          onShowLikedBy: onShowLikedBy,
         ),
         const SizedBox(width: 10),
         _PostIconAction(
@@ -2666,6 +3257,54 @@ class _PostActionRow extends StatelessWidget {
             ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _PostLikeAction extends StatelessWidget {
+  const _PostLikeAction({
+    required this.liked,
+    required this.likeCount,
+    required this.mutedColor,
+    required this.onLike,
+    required this.onShowLikedBy,
+  });
+
+  final bool liked;
+  final int likeCount;
+  final Color mutedColor;
+  final VoidCallback onLike;
+  final void Function(BuildContext anchorContext)? onShowLikedBy;
+
+  @override
+  Widget build(BuildContext context) {
+    final likeColor = liked ? const Color(0xFFE11D48) : mutedColor;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: liked ? 'Unlike' : 'Like',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: onLike,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Icon(
+                liked ? Icons.favorite : Icons.favorite_border,
+                size: 17,
+                color: likeColor,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        _PostIconActionCount(
+          count: likeCount,
+          color: likeColor,
+          onPressed: likeCount > 0 ? onShowLikedBy : null,
+          tooltip: likeCount > 0 ? 'See who liked this post' : null,
+        ),
       ],
     );
   }
@@ -2718,6 +3357,46 @@ class _PostIconAction extends StatelessWidget {
   }
 }
 
+class _PostIconActionCount extends StatelessWidget {
+  const _PostIconActionCount({
+    required this.count,
+    required this.color,
+    required this.onPressed,
+    required this.tooltip,
+  });
+
+  final int count;
+  final Color color;
+  final void Function(BuildContext anchorContext)? onPressed;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      count.toString(),
+      style: asanaTextStyle(
+        Theme.of(context).textTheme.bodySmall,
+        color: color,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    if (onPressed == null) return text;
+    return Tooltip(
+      message: tooltip ?? '',
+      child: Builder(
+        builder: (anchorContext) => InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => onPressed?.call(anchorContext),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: text,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 String _date(DateTime? value) {
   if (value != null) {
     final diff = DateTime.now().difference(value.toLocal());
@@ -2727,4 +3406,28 @@ String _date(DateTime? value) {
     }
   }
   return HkTime.formatInstantAsHk(value, 'yyyy-MM-dd');
+}
+
+String _initialsForName(String name) {
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) {
+    final value = parts.first;
+    return value.characters.take(2).toString().toUpperCase();
+  }
+  return '${parts.first.characters.first}${parts.last.characters.first}'
+      .toUpperCase();
+}
+
+String? _attachmentMimeTypeFromName(String name) {
+  final lower = name.trim().toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return null;
 }

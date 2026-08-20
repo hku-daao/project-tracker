@@ -4212,6 +4212,43 @@ class DatabaseService {
     }
   }
 
+  static Future<List<ForumPostLikeUser>> fetchForumPostLikedBy(
+    String postId,
+  ) async {
+    if (!_enabled) return [];
+    final pid = postId.trim();
+    if (pid.isEmpty) return [];
+    try {
+      final res = await PostgrestClient.instance
+          .from('forum_post_like')
+          .select('staff_id,created_at')
+          .eq('post_id', pid)
+          .order('created_at', ascending: true);
+      final rows = (res as List)
+          .map((raw) => Map<String, dynamic>.from(raw as Map))
+          .toList();
+      final staffIds = rows
+          .map((r) => r['staff_id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final names = await _resolveStaffDisplayNames(staffIds);
+      return [
+        for (final row in rows)
+          if ((row['staff_id']?.toString().trim() ?? '').isNotEmpty)
+            ForumPostLikeUser(
+              staffId: row['staff_id'].toString().trim(),
+              displayName:
+                  names[row['staff_id'].toString().trim()] ??
+                  row['staff_id'].toString().trim(),
+              likedAt: _parseDateTimeNullable(row['created_at']),
+            ),
+      ];
+    } catch (e) {
+      debugPrint('fetchForumPostLikedBy: $e');
+      return [];
+    }
+  }
+
   static Future<String?> setForumPostLike({
     required String postId,
     required bool liked,

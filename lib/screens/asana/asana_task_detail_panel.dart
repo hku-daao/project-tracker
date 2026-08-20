@@ -3994,7 +3994,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                       ),
                     ),
                   )
-                : AsanaDetailPlainValue(text: _complexityText(task.complexity)),
+                : AsanaDetailPlainValue(
+                    text: _complexityText(task.complexity),
+                    maxLines: 1,
+                  ),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.complexity),
           AsanaDetailTwoColumnRow(

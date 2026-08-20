@@ -408,6 +408,9 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
                             ? kAsanaTextPrimary
                             : kAsanaTextSecondary,
                       ),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   if (showClear)

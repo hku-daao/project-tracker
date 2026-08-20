@@ -137,3 +137,15 @@ class ForumPost {
     );
   }
 }
+
+class ForumPostLikeUser {
+  const ForumPostLikeUser({
+    required this.staffId,
+    required this.displayName,
+    this.likedAt,
+  });
+
+  final String staffId;
+  final String displayName;
+  final DateTime? likedAt;
+}

@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -104,6 +105,56 @@ class InlineImageThumbnail extends StatelessWidget {
       onRemove: onRemove,
       width: width,
       height: height,
+    );
+  }
+}
+
+class InlineImageContentStrip extends StatelessWidget {
+  const InlineImageContentStrip({
+    super.key,
+    required this.images,
+    this.height = 156,
+  });
+
+  final List<InlineImagePreviewItem> images;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: SizedBox(
+        height: height,
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(
+            scrollbars: false,
+            dragDevices: const {
+              PointerDeviceKind.touch,
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.stylus,
+              PointerDeviceKind.trackpad,
+            },
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const ClampingScrollPhysics(),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < images.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  _InlineImageContentPreview(
+                    key: ValueKey('content-${images[i].id}'),
+                    image: images[i],
+                    height: height,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -267,85 +318,10 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
 
   Future<void> _openInlineImageOverlay(BuildContext context) async {
     // Keep the preview controls usable even if a previous global loading overlay is stale.
-    AsanaBlockingLoadingOverlay.hideAll();
-    final data = await _future;
-    if (!context.mounted || data.bytes.isEmpty) return;
-    await showDialog<void>(
+    await _showInlineImageOverlay(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.72),
-      builder: (dialogContext) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(24),
-          backgroundColor: Colors.transparent,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => Navigator.of(dialogContext).pop(),
-                ),
-              ),
-              Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(dialogContext).size.width * 0.88,
-                    maxHeight: MediaQuery.of(dialogContext).size.height * 0.84,
-                  ),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Material(
-                          color: Colors.white,
-                          child: InteractiveViewer(
-                            minScale: 0.5,
-                            maxScale: 4,
-                            child: Image.memory(
-                              data.bytes,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _OverlayCircleButton(
-                              icon: Icons.download_outlined,
-                              tooltip: 'Download',
-                              onTap: () async {
-                                AsanaBlockingLoadingOverlay.hideAll();
-                                await openAttachmentBytesInSystemViewer(
-                                  data.bytes,
-                                  data.contentType,
-                                  _downloadName(),
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _OverlayCircleButton(
-                              icon: Icons.close,
-                              tooltip: 'Close',
-                              onTap: () {
-                                AsanaBlockingLoadingOverlay.hideAll();
-                                Navigator.of(dialogContext).pop();
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      imageFuture: _future,
+      downloadName: _downloadName(),
     );
   }
 
@@ -353,6 +329,108 @@ class _InlineImagePreviewState extends State<_InlineImagePreview> {
     final raw = widget.image.description?.trim();
     if (raw != null && raw.isNotEmpty) return raw;
     return 'inline-image';
+  }
+}
+
+class _InlineImageContentPreview extends StatefulWidget {
+  const _InlineImageContentPreview({
+    super.key,
+    required this.image,
+    required this.height,
+  });
+
+  final InlineImagePreviewItem image;
+  final double height;
+
+  @override
+  State<_InlineImageContentPreview> createState() =>
+      _InlineImageContentPreviewState();
+}
+
+class _InlineImageContentPreviewState
+    extends State<_InlineImageContentPreview> {
+  late Future<_InlineImageBytes> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadInlineImageBytes(widget.image);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineImageContentPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.image.id != widget.image.id ||
+        oldWidget.image.url != widget.image.url ||
+        oldWidget.image.bytes != widget.image.bytes) {
+      _future = _loadInlineImageBytes(widget.image);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_InlineImageBytes>(
+      future: _future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        Widget child;
+        if (data != null && data.bytes.isNotEmpty) {
+          child = Image.memory(
+            data.bytes,
+            height: widget.height,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+          );
+        } else if (snapshot.connectionState != ConnectionState.done) {
+          child = SizedBox(
+            width: widget.height,
+            height: widget.height,
+            child: const Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        } else {
+          child = SizedBox(
+            width: widget.height,
+            height: widget.height,
+            child: Center(
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Colors.grey.shade500,
+                size: 26,
+              ),
+            ),
+          );
+        }
+
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => _showInlineImageOverlay(
+              context: context,
+              imageFuture: _future,
+              downloadName: _downloadNameFromImage(widget.image),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -387,6 +465,96 @@ class _OverlayCircleButton extends StatelessWidget {
       ),
     );
   }
+}
+
+Future<void> _showInlineImageOverlay({
+  required BuildContext context,
+  required Future<_InlineImageBytes> imageFuture,
+  required String downloadName,
+}) async {
+  AsanaBlockingLoadingOverlay.hideAll();
+  final data = await imageFuture;
+  if (!context.mounted || data.bytes.isEmpty) return;
+  await showDialog<void>(
+    context: context,
+    barrierColor: Colors.black.withValues(alpha: 0.72),
+    builder: (dialogContext) {
+      return Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        backgroundColor: Colors.transparent,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(dialogContext).pop(),
+              ),
+            ),
+            Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(dialogContext).size.width * 0.88,
+                  maxHeight: MediaQuery.of(dialogContext).size.height * 0.84,
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Material(
+                        color: Colors.white,
+                        child: InteractiveViewer(
+                          minScale: 0.5,
+                          maxScale: 4,
+                          child: Image.memory(data.bytes, fit: BoxFit.contain),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _OverlayCircleButton(
+                            icon: Icons.download_outlined,
+                            tooltip: 'Download',
+                            onTap: () async {
+                              AsanaBlockingLoadingOverlay.hideAll();
+                              await openAttachmentBytesInSystemViewer(
+                                data.bytes,
+                                data.contentType,
+                                downloadName,
+                              );
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          _OverlayCircleButton(
+                            icon: Icons.close,
+                            tooltip: 'Close',
+                            onTap: () {
+                              AsanaBlockingLoadingOverlay.hideAll();
+                              Navigator.of(dialogContext).pop();
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+String _downloadNameFromImage(InlineImagePreviewItem image) {
+  final raw = image.description?.trim();
+  if (raw != null && raw.isNotEmpty) return raw;
+  return 'inline-image';
 }
 
 class _InlineImageBytes {

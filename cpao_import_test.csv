@@ -1,0 +1,6 @@
+row_type,Name,Description,Creator,Assignees 1,Assignees 2,Assignees 3,Assignees 4,Assignees 5,PIC,Status,Start Date,Due Date/Completion Date,Comment,Priority,Complexity
+project,Import P1,,Ken LEE,Martin MA,Ken LEE,Wai-kay PANG,,,Wai-kay PANG,In Progress,"Wednesday, August 12, 2026",,,,
+task,Import T1,,Ken LEE,Martin MA,Ken LEE,,,,Ken LEE,In Progress,"Tuesday, August 18, 2026","Sunday, August 23, 2026",Comment T1,,
+task,Import T2,,Ken LEE,Martin MA,,,,,Martin MA,In Progress,"Wednesday, August 19, 2026","Tuesday, August 25, 2026",,,
+subtask,Import S2-1,,Ken LEE,Martin MA,,,,,Martin MA,In Progress,"Wednesday, August 19, 2026","Wednesday, August 26, 2026",Comment S2-1,,
+,,,,,,,,,,,,,,,

@@ -3718,7 +3718,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                       ),
                     ),
                   )
-                : AsanaDetailPlainValue(text: _complexityText(s?.complexity)),
+                : AsanaDetailPlainValue(
+                    text: _complexityText(s?.complexity),
+                    maxLines: 1,
+                  ),
           ),
           if (_effectiveCreateMode || canEditDetails)
             _aiSuggestions(AsanaTaskAiFieldKey.complexity),

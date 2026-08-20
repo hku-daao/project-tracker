@@ -7595,11 +7595,17 @@ async function handleNotifyTaskAccepted(req, res) {
       workflowCompositeChangeMap(body.changes),
       { commentAddedText: body.commentAddedText },
     );
+    const creatorNorm = creatorRaw.toLowerCase();
+    const recipientStaffKeys = collectTaskAssigneeStaffIds(taskRow)
+      .filter((key) => String(key || '').trim().toLowerCase() !== creatorNorm);
+    const extraRecipientStaffKeys = (await requestWorkflowExtraRecipientStaffKeys(body))
+      .filter((key) => String(key || '').trim().toLowerCase() !== creatorNorm);
     const results = await sendTaskWorkflowEmailToAssignees({
       taskRow,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
-      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
+      recipientStaffKeys,
+      extraRecipientStaffKeys,
       subject,
       intro:
         'This email is to inform you that the task submission has been accepted. The creator reviewed this task submission and accepted it.',
@@ -7909,11 +7915,17 @@ async function handleNotifySubtaskAccepted(req, res) {
       workflowCompositeChangeMap(body.changes),
       { commentAddedText: body.commentAddedText },
     );
+    const creatorNorm = creatorRaw.toLowerCase();
+    const recipientStaffKeys = collectSubtaskAssigneeStaffIds(row)
+      .filter((key) => String(key || '').trim().toLowerCase() !== creatorNorm);
+    const extraRecipientStaffKeys = (await requestWorkflowExtraRecipientStaffKeys(body))
+      .filter((key) => String(key || '').trim().toLowerCase() !== creatorNorm);
     const results = await sendSubtaskWorkflowEmailToAssignees({
       row,
       actorStaffKey: creatorRaw,
       actorReplyTo: creatorNotifyEmail || creatorEmail,
-      extraRecipientStaffKeys: await requestWorkflowExtraRecipientStaffKeys(body),
+      recipientStaffKeys,
+      extraRecipientStaffKeys,
       subject,
       intro:
         'This email is to inform you that the subtask submission has been accepted. The creator reviewed this subtask submission and accepted it.',
