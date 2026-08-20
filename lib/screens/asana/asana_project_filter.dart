@@ -117,60 +117,57 @@ class AsanaProjectFilter {
   ) {
     if (state.adminViewMode) return true;
 
-    final mine = state.userStaffAppId?.trim();
-    final myUuid = state.userStaffId?.trim();
+    final mine = state.effectiveStaffAppId?.trim();
+    final visibilityKeys = state.taskVisibilityLookupKeys;
+
+    bool keyInVisibility(String? value) {
+      final v = value?.trim();
+      if (v == null || v.isEmpty) return false;
+      if (visibilityKeys.contains(v)) return true;
+      final lower = v.toLowerCase();
+      return visibilityKeys.any((k) => k.toLowerCase() == lower);
+    }
 
     if (scopes.isNotEmpty && !scopes.contains('all')) {
       bool pass = false;
       if (scopes.contains('assigned')) {
-        if (myUuid != null && myUuid.isNotEmpty) {
-          if (p.assigneeStaffUuids.any((u) => u.trim() == myUuid) ||
-              p.picStaffUuids.any((u) => u.trim() == myUuid)) {
-            pass = true;
-          }
+        if (p.assigneeStaffUuids.any(keyInVisibility) ||
+            p.picStaffUuids.any(keyInVisibility)) {
+          pass = true;
         }
       }
       if (!pass && scopes.contains('created')) {
-        if (myUuid != null && myUuid.isNotEmpty) {
-          if (p.createByStaffUuid?.trim() == myUuid) {
-            pass = true;
-          }
+        if (keyInVisibility(p.createByStaffUuid)) {
+          pass = true;
         }
       }
       if (!pass) return false;
     }
 
     if (mine == null || mine.isEmpty) return false;
-    if (myUuid != null &&
-        myUuid.isNotEmpty &&
-        p.createByStaffUuid?.trim() == myUuid) {
+    if (keyInVisibility(p.createByStaffUuid)) {
       return true;
     }
     for (final u in p.assigneeStaffUuids) {
-      final uid = u.trim();
-      if (myUuid != null && uid == myUuid) return true;
-      final appId = state.assigneeById(uid)?.id ?? uid;
-      if (appId == mine) return true;
-    }
-    if (myUuid != null &&
-        myUuid.isNotEmpty &&
-        p.picStaffUuids.any((u) => u.trim() == myUuid)) {
-      return true;
-    }
-    final subs = state.subordinateAppIds;
-    if (subs.isEmpty) return false;
-    final cb = p.createByStaffUuid?.trim();
-    if (cb != null && cb.isNotEmpty) {
-      final creatorApp = state.assigneeById(cb)?.id ?? cb;
-      if (subs.contains(creatorApp)) return true;
-    }
-    for (final u in p.assigneeStaffUuids) {
-      final appId = state.assigneeById(u.trim())?.id ?? u.trim();
-      if (subs.contains(appId)) return true;
+      if (keyInVisibility(u)) return true;
     }
     for (final u in p.picStaffUuids) {
-      final appId = state.assigneeById(u.trim())?.id ?? u.trim();
-      if (subs.contains(appId)) return true;
+      if (keyInVisibility(u)) return true;
+    }
+    if (_projectHasVisibleChildTask(p, state)) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool _projectHasVisibleChildTask(ProjectRecord p, AppState state) {
+    final projectId = p.id.trim();
+    if (projectId.isEmpty) return false;
+    for (final t in state.tasks) {
+      if (t.projectId?.trim() != projectId) continue;
+      final status = t.dbStatus?.trim().toLowerCase() ?? '';
+      if (status == 'deleted' || status == 'delete') continue;
+      if (state.taskMatchesSupervisorScope(t)) return true;
     }
     return false;
   }
@@ -194,25 +191,33 @@ class AsanaProjectFilter {
   }
 
   static bool projectCreatedByCurrentUser(AppState state, ProjectRecord p) {
-    final myUuid = state.effectiveStaffUuid?.trim();
-    final myApp = state.effectiveStaffAppId?.trim();
+    final visibilityKeys = state.taskVisibilityLookupKeys;
     final cb = p.createByStaffUuid?.trim();
     if (cb == null || cb.isEmpty) return false;
-    if (myUuid != null && myUuid.isNotEmpty && cb == myUuid) return true;
-    if (myApp != null && myApp.isNotEmpty && cb == myApp) return true;
-    return false;
+    return _keyInVisibilityKeys(cb, visibilityKeys);
   }
 
   static bool projectAssignedToCurrentUser(AppState state, ProjectRecord p) {
-    final myUuid = state.effectiveStaffUuid?.trim();
-    final myApp = state.effectiveStaffAppId?.trim();
+    final visibilityKeys = state.taskVisibilityLookupKeys;
     for (final u in p.assigneeStaffUuids) {
       final uid = u.trim();
       if (uid.isEmpty) continue;
-      if (myUuid != null && myUuid.isNotEmpty && uid == myUuid) return true;
-      if (myApp != null && myApp.isNotEmpty && uid == myApp) return true;
+      if (_keyInVisibilityKeys(uid, visibilityKeys)) return true;
+    }
+    for (final u in p.picStaffUuids) {
+      final uid = u.trim();
+      if (uid.isEmpty) continue;
+      if (_keyInVisibilityKeys(uid, visibilityKeys)) return true;
     }
     return false;
+  }
+
+  static bool _keyInVisibilityKeys(String value, Set<String> keys) {
+    final v = value.trim();
+    if (v.isEmpty) return false;
+    if (keys.contains(v)) return true;
+    final lower = v.toLowerCase();
+    return keys.any((k) => k.toLowerCase() == lower);
   }
 
   static bool _keyMatches(String? value, Iterable<String> selected) {

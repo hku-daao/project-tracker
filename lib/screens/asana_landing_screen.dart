@@ -307,6 +307,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onOpenProject: (id) =>
             _openRootDetail(AsanaDetailSelection.project(id)),
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onOpenSubtask: (id) =>
+            _openRootDetail(AsanaDetailSelection.subtask(id)),
         onCreateProject: adminViewMode
             ? null
             : () => _openRootDetail(const AsanaDetailSelection.createProject()),
@@ -751,22 +753,36 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                       ),
                       Padding(
                         padding: const EdgeInsets.only(left: 8, right: 12),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _AsanaBannerLogo(height: titleFontSize * 1.6),
-                            SizedBox(width: compactBanner ? 6 : 8),
-                            Text(
-                              compactBanner
-                                  ? 'Project\nTracker'
-                                  : 'Project Tracker',
-                              style: titleStyle?.copyWith(
-                                fontSize: compactBanner ? 12 : titleFontSize,
-                                height: compactBanner ? 1.05 : 1.2,
-                              ),
-                              maxLines: compactBanner ? 2 : 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 8,
                             ),
-                          ],
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _AsanaBannerLogo(height: titleFontSize * 1.6),
+                                SizedBox(width: compactBanner ? 6 : 8),
+                                Text(
+                                  compactBanner
+                                      ? 'Project\nTracker'
+                                      : 'Project Tracker',
+                                  style: titleStyle?.copyWith(
+                                    fontSize: compactBanner
+                                        ? 12
+                                        : titleFontSize,
+                                    height: compactBanner ? 1.05 : 1.2,
+                                  ),
+                                  maxLines: compactBanner ? 2 : 1,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ],
