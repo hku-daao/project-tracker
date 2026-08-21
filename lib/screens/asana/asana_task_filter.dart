@@ -1210,6 +1210,7 @@ class AsanaTaskFilter {
   static List<SingularSubtask> subtasksForExpandedPanel(
     List<SingularSubtask> subs,
     AsanaTaskFilterState filters, {
+    required AppState state,
     Task? parentTask,
   }) {
     Iterable<SingularSubtask> it = subs.where((s) => !s.isDeleted);
@@ -1217,7 +1218,20 @@ class AsanaTaskFilter {
       it = it.where((s) => _rowPassesDueDateSubtask(parentTask, s, filters));
     }
     final out = it.toList();
+    int statusRank(SingularSubtask s) {
+      if (s.isDeleted) return 3;
+      final status = parentTask == null
+          ? (s.isPaused ? 'paused' : s.status)
+          : subtaskDisplayStatus(state, parentTask, s);
+      final normalized = status.trim().toLowerCase();
+      if (normalized == 'completed' || normalized == 'complete') return 1;
+      if (normalized == 'paused') return 2;
+      return 0;
+    }
+
     out.sort((a, b) {
+      final status = statusRank(a).compareTo(statusRank(b));
+      if (status != 0) return status;
       final ad = a.dueDate;
       final bd = b.dueDate;
       if (ad == null && bd == null) {

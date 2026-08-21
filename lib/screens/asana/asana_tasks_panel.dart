@@ -486,6 +486,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                             AsanaTaskFilter.subtasksForExpandedPanel(
                               rawSubs,
                               _filters,
+                              state: state,
                               parentTask: t,
                             );
                         final visibleSubCount = subCount > 0
@@ -641,6 +642,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                 AsanaTaskFilter.subtasksForExpandedPanel(
                                   rawSubs,
                                   _filters,
+                                  state: state,
                                   parentTask: t,
                                 );
                             return Column(
@@ -1152,6 +1154,8 @@ class _TaskTableLayout {
   static const double singleLineExtent = 24;
   static const double hPad = 12;
   static const double submissionColWidth = 116;
+  static const double hierarchyIndentUnit =
+      (typeCol / 2 + typeColGap + nameGutter / 2) / 2;
 
   static const double _flexWeightSum =
       0.29 + 0.065 + 0.11 + 0.075 + 0.075 + 0.0665;
@@ -1671,7 +1675,13 @@ class _ItemTableRow extends StatelessWidget {
                   width: _TaskTableLayout.typeCol,
                   child: Center(
                     child: indentSubtaskBadge
-                        ? const SizedBox.shrink()
+                        ? Transform.translate(
+                            offset: const Offset(
+                              _TaskTableLayout.hierarchyIndentUnit / 2,
+                              0,
+                            ),
+                            child: typeLetter,
+                          )
                         : typeLetter,
                   ),
                 ),
@@ -1686,10 +1696,7 @@ class _ItemTableRow extends StatelessWidget {
                         height: _TaskTableLayout.singleLineExtent,
                         child: Center(
                           child: indentSubtaskBadge
-                              ? Transform.translate(
-                                  offset: const Offset(-8, 0),
-                                  child: typeLetter,
-                                )
+                              ? const SizedBox.shrink()
                               : (expandControl ?? const SizedBox.shrink()),
                         ),
                       ),

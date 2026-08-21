@@ -113,17 +113,39 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       grouped.putIfAbsent(projectId, () => []).add(task);
     }
     for (final list in grouped.values) {
-      list.sort((a, b) {
-        final ad = a.endDate;
-        final bd = b.endDate;
-        if (ad == null && bd == null) return a.name.compareTo(b.name);
-        if (ad == null) return 1;
-        if (bd == null) return -1;
-        final cmp = ad.compareTo(bd);
-        return cmp != 0 ? cmp : a.name.compareTo(b.name);
-      });
+      _sortProjectChildTasks(state, list);
     }
     return grouped;
+  }
+
+  void _sortProjectChildTasks(AppState state, List<Task> list) {
+    list.sort((a, b) {
+      final status = _projectChildTaskStatusRank(
+        state,
+        a,
+      ).compareTo(_projectChildTaskStatusRank(state, b));
+      if (status != 0) return status;
+      final due = _compareNullableDueDates(a.endDate, b.endDate);
+      if (due != 0) return due;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+  }
+
+  int _projectChildTaskStatusRank(AppState state, Task task) {
+    final status = AsanaTaskFilter.taskDisplayStatus(
+      state,
+      task,
+    ).trim().toLowerCase();
+    if (status == 'completed' || status == 'complete') return 1;
+    if (status == 'paused') return 2;
+    return 0;
+  }
+
+  int _compareNullableDueDates(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return DateUtils.dateOnly(a).compareTo(DateUtils.dateOnly(b));
   }
 
   Future<void> _ensureSubtasksLoadedForTasks(
@@ -140,6 +162,11 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         )
         .toList();
     if (ids.isEmpty) return;
+    final state = context.read<AppState>();
+    final taskById = {
+      for (final task in tasks)
+        if (task.id.trim().isNotEmpty) task.id.trim(): task,
+    };
     setState(() => _loadingSubtaskTaskIds.addAll(ids));
     try {
       final grouped =
@@ -147,7 +174,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       if (!mounted) return;
       setState(() {
         for (final id in ids) {
-          _subtasksByTask[id] = grouped[id] ?? const <SingularSubtask>[];
+          final list = List<SingularSubtask>.from(
+            grouped[id] ?? const <SingularSubtask>[],
+          );
+          final parentTask = taskById[id];
+          if (parentTask != null) {
+            _sortProjectChildSubtasks(state, parentTask, list);
+          }
+          _subtasksByTask[id] = list;
           _loadingSubtaskTaskIds.remove(id);
         }
       });
@@ -160,6 +194,40 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         }
       });
     }
+  }
+
+  void _sortProjectChildSubtasks(
+    AppState state,
+    Task parentTask,
+    List<SingularSubtask> list,
+  ) {
+    list.sort((a, b) {
+      final status = _projectChildSubtaskStatusRank(
+        state,
+        parentTask,
+        a,
+      ).compareTo(_projectChildSubtaskStatusRank(state, parentTask, b));
+      if (status != 0) return status;
+      final due = _compareNullableDueDates(a.dueDate, b.dueDate);
+      if (due != 0) return due;
+      return a.subtaskName.toLowerCase().compareTo(b.subtaskName.toLowerCase());
+    });
+  }
+
+  int _projectChildSubtaskStatusRank(
+    AppState state,
+    Task parentTask,
+    SingularSubtask subtask,
+  ) {
+    if (subtask.isDeleted) return 3;
+    final status = AsanaTaskFilter.subtaskDisplayStatus(
+      state,
+      parentTask,
+      subtask,
+    ).trim().toLowerCase();
+    if (status == 'completed' || status == 'complete') return 1;
+    if (status == 'paused') return 2;
+    return 0;
   }
 
   void _toggleProjectExpanded(String projectId, List<Task> tasks) {
@@ -1269,8 +1337,8 @@ class _ProjectTaskDataRow extends StatelessWidget {
     );
     final cols = _ProjectExpandedTaskTableLayout(tableWidth);
     final hasSubtasks = subtasks.isNotEmpty;
-    final showSubtaskExpansion =
-        loadingSubtasks || hasSubtasks || subtasksKnown;
+    final showSubtaskControl = loadingSubtasks || hasSubtasks;
+    final showSubtaskExpansion = loadingSubtasks || hasSubtasks;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1307,7 +1375,9 @@ class _ProjectTaskDataRow extends StatelessWidget {
                       child: Center(
                         child: Transform.translate(
                           offset: const Offset(
-                            _ProjectExpandedTaskTableLayout.hierarchyIndentStep,
+                            _ProjectExpandedTaskTableLayout
+                                    .hierarchyIndentStep /
+                                2,
                             0,
                           ),
                           child: AsanaRowTypeLetter(
@@ -1331,11 +1401,13 @@ class _ProjectTaskDataRow extends StatelessWidget {
                             height: _ProjectExpandedTaskTableLayout
                                 .singleLineExtent,
                             child: Center(
-                              child: _ProjectNestedExpandChevron(
-                                expanded: expanded,
-                                loading: loadingSubtasks,
-                                onPressed: onToggleExpand,
-                              ),
+                              child: showSubtaskControl
+                                  ? _ProjectNestedExpandChevron(
+                                      expanded: expanded,
+                                      loading: loadingSubtasks,
+                                      onPressed: onToggleExpand,
+                                    )
+                                  : const SizedBox.shrink(),
                             ),
                           ),
                           Expanded(
@@ -1433,10 +1505,6 @@ class _ProjectTaskDataRow extends StatelessWidget {
                   if (loadingSubtasks)
                     const _ProjectSubtaskStatusRow(
                       message: 'Loading sub-tasks...',
-                    )
-                  else if (subtasks.isEmpty)
-                    const _ProjectSubtaskStatusRow(
-                      message: 'No sub-tasks found',
                     )
                   else
                     for (var i = 0; i < subtasks.length; i++)
@@ -1597,9 +1665,7 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
                       child: Center(
                         child: Transform.translate(
                           offset: const Offset(
-                            _ProjectExpandedTaskTableLayout
-                                    .hierarchyIndentStep *
-                                2,
+                            _ProjectExpandedTaskTableLayout.hierarchyIndentStep,
                             0,
                           ),
                           child: AsanaRowTypeLetter(
@@ -2125,8 +2191,8 @@ class _ProjectMobileTaskRow extends StatelessWidget {
     final valueStyle = asanaTableRowValueStyle(context, completed: completed);
     final name = task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim();
     final hasSubtasks = subtasks.isNotEmpty;
-    final showSubtaskExpansion =
-        loadingSubtasks || hasSubtasks || subtasksKnown;
+    final showSubtaskControl = loadingSubtasks || hasSubtasks;
+    final showSubtaskExpansion = loadingSubtasks || hasSubtasks;
     final metaLine = [
       'Cr: ${(task.createByStaffName ?? '').trim().isEmpty ? '—' : task.createByStaffName!.trim()}',
       'PIC: ${_formatTaskPic(appState, task.pic)}',
@@ -2152,11 +2218,16 @@ class _ProjectMobileTaskRow extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _ProjectNestedExpandChevron(
-                            expanded: expanded,
-                            loading: loadingSubtasks,
-                            onPressed: onToggleExpand,
-                          ),
+                          if (showSubtaskControl)
+                            _ProjectNestedExpandChevron(
+                              expanded: expanded,
+                              loading: loadingSubtasks,
+                              onPressed: onToggleExpand,
+                            )
+                          else
+                            SizedBox(
+                              width: _ProjectExpandedTaskTableLayout.nameGutter,
+                            ),
                           AsanaRowTypeLetter(
                             letter: 'T',
                             completed: completed,
@@ -2208,14 +2279,6 @@ class _ProjectMobileTaskRow extends StatelessWidget {
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: Text('Loading sub-tasks...'),
-                    ),
-                  )
-                else if (subtasks.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(32, 8, 14, 10),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('No sub-tasks found'),
                     ),
                   )
                 else
