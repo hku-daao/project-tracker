@@ -579,6 +579,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     String? category,
     String? threadStatus,
     List<_ForumInlineImageDraft> inlineImages = const [],
+    List<InlineAttachmentRow> deletedInlineImages = const [],
   }) async {
     if (_editSaving) return;
     setState(() => _editSaving = true);
@@ -606,6 +607,14 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     if (!mounted) return;
     if (inlineErr != null) {
       await _showError(inlineErr);
+      return;
+    }
+    final deleteErr = await _markForumPostInlineImagesDeleted(
+      deletedInlineImages,
+    );
+    if (!mounted) return;
+    if (deleteErr != null) {
+      await _showError(deleteErr);
       return;
     }
     setState(() => _editingPost = null);
@@ -747,6 +756,16 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
         sortOrder: draft.sortOrder,
       );
       if (ins.error != null) return ins.error;
+    }
+    return null;
+  }
+
+  Future<String?> _markForumPostInlineImagesDeleted(
+    List<InlineAttachmentRow> rows,
+  ) async {
+    for (final row in rows) {
+      final err = await DatabaseService.markInlineAttachmentDeleted(row.id);
+      if (err != null) return err;
     }
     return null;
   }
@@ -1300,6 +1319,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                               category,
                               threadStatus,
                               required inlineImages,
+                              required deletedInlineImages,
                             }) => _saveEditedPost(
                               state,
                               post: editingPost,
@@ -1309,6 +1329,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                               category: category,
                               threadStatus: threadStatus,
                               inlineImages: inlineImages,
+                              deletedInlineImages: deletedInlineImages,
                             ),
                       ),
                     ),
@@ -1418,6 +1439,7 @@ class _ForumEditSlide extends StatefulWidget {
     String? category,
     String? threadStatus,
     required List<_ForumInlineImageDraft> inlineImages,
+    required List<InlineAttachmentRow> deletedInlineImages,
   })
   onSave;
 
@@ -1445,6 +1467,7 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
   String? _aiMessage;
   List<_ForumEditAiSuggestion> _aiSuggestions = const [];
   final List<_ForumInlineImageDraft> _pendingInlineImageAdds = [];
+  final List<InlineAttachmentRow> _pendingInlineImageDeletes = [];
 
   @override
   void initState() {
@@ -1464,6 +1487,8 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
     _titleController.dispose();
     _contentController.dispose();
     _aiPromptController.dispose();
+    _pendingInlineImageAdds.clear();
+    _pendingInlineImageDeletes.clear();
     super.dispose();
   }
 
@@ -1487,20 +1512,31 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
     setState(() {
-      _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      final saved = image.inlineAttachment;
+      if (saved != null) {
+        if (!_pendingInlineImageDeletes.any((row) => row.id == saved.id)) {
+          _pendingInlineImageDeletes.add(saved);
+        }
+      } else {
+        _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      }
     });
   }
 
   List<InlineImagePreviewItem> _inlinePreviewItems() {
-    final savedItems = widget.inlineImages.map(
-      (row) => InlineImagePreviewItem(
-        id: row.id,
-        inlineAttachment: row,
-        url: row.url,
-        description: row.description,
-        mimeType: row.mimeType,
-      ),
-    );
+    final deletedIds = _pendingInlineImageDeletes.map((row) => row.id).toSet();
+    final savedItems = widget.inlineImages
+        .where((row) => !deletedIds.contains(row.id))
+        .map(
+          (row) => InlineImagePreviewItem(
+            id: row.id,
+            inlineAttachment: row,
+            url: row.url,
+            description: row.description,
+            mimeType: row.mimeType,
+            canRemove: true,
+          ),
+        );
     final draftItems = _pendingInlineImageAdds.map(
       (draft) => InlineImagePreviewItem(
         id: draft.id,
@@ -1782,6 +1818,10 @@ Current forum draft:
                                   inlineImages:
                                       List<_ForumInlineImageDraft>.from(
                                         _pendingInlineImageAdds,
+                                      ),
+                                  deletedInlineImages:
+                                      List<InlineAttachmentRow>.from(
+                                        _pendingInlineImageDeletes,
                                       ),
                                 ),
                           style: AsanaTaskDetailActionStyles.updateFilled(
