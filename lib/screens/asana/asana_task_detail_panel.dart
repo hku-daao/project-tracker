@@ -3650,6 +3650,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   value: _localComplexity ?? '',
                   canEdit: canEdit,
                   emptyPlaceholder: 'Select complexity',
+                  maxLines: 2,
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  shrinkToContent: false,
                   onTap: !canEdit || _saving
                       ? null
                       : (_) => _pickComplexity(anchorContext),
@@ -3664,6 +3668,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               value: _formatDate(_startDate),
               canEdit: canEdit,
               emptyPlaceholder: 'Today',
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              shrinkToContent: false,
               onTap: !canEdit || _saving ? null : _pickStartDueRange,
             ),
           ),
@@ -3673,6 +3681,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: AsanaHoverTapValue(
               value: _formatDate(_dueDate),
               canEdit: canEdit,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              shrinkToContent: false,
               onTap: !canEdit || _saving ? null : _pickStartDueRange,
             ),
           ),
@@ -3988,6 +4000,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                         value: _localComplexity ?? '',
                         canEdit: true,
                         emptyPlaceholder: 'Select complexity',
+                        maxLines: 2,
+                        softWrap: true,
+                        overflow: TextOverflow.visible,
+                        shrinkToContent: false,
                         onTap: _saving
                             ? null
                             : (_) => _pickComplexity(anchorContext),
@@ -4005,6 +4021,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: AsanaHoverTapValue(
               value: _formatDate(_startDate),
               canEdit: canEdit,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              shrinkToContent: false,
               onTap: _saving ? null : _pickStartDueRange,
             ),
           ),
@@ -4014,6 +4034,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: AsanaHoverTapValue(
               value: _formatDate(_dueDate),
               canEdit: canEdit,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              shrinkToContent: false,
               onTap: _saving ? null : _pickStartDueRange,
             ),
           ),

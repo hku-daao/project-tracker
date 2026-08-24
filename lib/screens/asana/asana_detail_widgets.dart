@@ -347,6 +347,10 @@ class AsanaHoverTapValue extends StatefulWidget {
     this.onClear,
     this.emptyPlaceholder = '',
     this.anchorLink,
+    this.maxLines = 1,
+    this.softWrap = false,
+    this.overflow = TextOverflow.ellipsis,
+    this.shrinkToContent = true,
   });
 
   final String value;
@@ -359,6 +363,10 @@ class AsanaHoverTapValue extends StatefulWidget {
 
   /// When set, anchored overlays can follow this field on resize / scroll.
   final LayerLink? anchorLink;
+  final int? maxLines;
+  final bool softWrap;
+  final TextOverflow overflow;
+  final bool shrinkToContent;
 
   @override
   State<AsanaHoverTapValue> createState() => _AsanaHoverTapValueState();
@@ -395,8 +403,9 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
           ),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: IntrinsicWidth(
-              child: Stack(
+            child: _maybeShrinkToContent(
+              widget.shrinkToContent,
+              Stack(
                 clipBehavior: Clip.none,
                 children: [
                   Padding(
@@ -408,9 +417,9 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
                             ? kAsanaTextPrimary
                             : kAsanaTextSecondary,
                       ),
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: widget.maxLines,
+                      softWrap: widget.softWrap,
+                      overflow: widget.overflow,
                     ),
                   ),
                   if (showClear)
@@ -431,6 +440,11 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
     }
     return child;
   }
+}
+
+Widget _maybeShrinkToContent(bool shrink, Widget child) {
+  if (!shrink) return child;
+  return IntrinsicWidth(child: child);
 }
 
 class _AsanaSmallClearButton extends StatelessWidget {
