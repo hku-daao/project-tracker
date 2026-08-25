@@ -621,6 +621,7 @@ class DatabaseService {
     bool clearStartDate = false,
     bool clearDueDate = false,
     String? status,
+    String? commencementStatus,
     String? submission,
     String? updateByStaffLookupKey,
 
@@ -675,6 +676,11 @@ class DatabaseService {
         map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
       }
       if (status != null) map['status'] = status;
+      if (commencementStatus != null) {
+        map['commencement_status'] = _normalizedCommencementStatus(
+          commencementStatus,
+        );
+      }
       if (submission != null) map['submission'] = submission;
       final lookup = updateByStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
@@ -1289,6 +1295,9 @@ class DatabaseService {
       progressPercent: _flexIntFromRow(row['progress_percent']),
       isSingularTableRow: true,
       dbStatus: statusRaw.isEmpty ? null : statusRaw,
+      commencementStatus: _normalizedCommencementStatus(
+        row['commencement_status'],
+      ),
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
       createByStaffName: _createByDisplayName(
         row,
@@ -2725,6 +2734,7 @@ class DatabaseService {
     DateTime? dueDate,
     String? description,
     String status = 'Incomplete',
+    String commencementStatus = 'In progress',
     String? creatorStaffLookupKey,
 
     /// `staff.app_id` or uuid; stored as `task.pic` (staff id).
@@ -2756,6 +2766,9 @@ class DatabaseService {
         'complexity': complexity?.trim(),
         'description': description,
         'status': s,
+        'commencement_status': _normalizedCommencementStatus(
+          commencementStatus,
+        ),
         'create_date': now,
         'update_date': now,
         'last_updated': now,
@@ -3040,6 +3053,12 @@ class DatabaseService {
     return raw.toString().trim();
   }
 
+  static String _normalizedCommencementStatus(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    if (value == 'to be commenced') return 'To be commenced';
+    return 'In progress';
+  }
+
   static SingularSubtask? _singularSubtaskFromRow(
     Map<String, dynamic> row,
     Map<String, String> staffUuidToAppId,
@@ -3084,6 +3103,9 @@ class DatabaseService {
         final raw = _dbStatusRawFromRow(row['status']);
         return raw.isEmpty ? 'Incomplete' : raw;
       }(),
+      commencementStatus: _normalizedCommencementStatus(
+        row['commencement_status'],
+      ),
       submission: _submissionFromRow(row['submission']),
       submitDate: _parseDateTimeNullable(row['submit_date']),
       completionDate: _parseDateTimeNullable(row['completion_date']),
@@ -3503,6 +3525,7 @@ class DatabaseService {
     String? initialComment,
     String? changeDueReason,
     String? status,
+    String commencementStatus = 'In progress',
     String? pauseStatus,
   }) async {
     if (!_enabled) return (error: 'Database not configured', subtaskId: null);
@@ -3524,6 +3547,9 @@ class DatabaseService {
         'status': status?.trim().isNotEmpty == true
             ? status!.trim()
             : 'Incomplete',
+        'commencement_status': _normalizedCommencementStatus(
+          commencementStatus,
+        ),
         'submission': 'Pending',
         'create_date': now,
         'update_date': now,
@@ -3606,6 +3632,7 @@ class DatabaseService {
     DateTime? dueDate,
     bool clearDueDate = false,
     String? status,
+    String? commencementStatus,
     String? submission,
     List<String?>? assigneeSlots,
 
@@ -3648,6 +3675,11 @@ class DatabaseService {
         map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
       }
       if (status != null) map['status'] = status;
+      if (commencementStatus != null) {
+        map['commencement_status'] = _normalizedCommencementStatus(
+          commencementStatus,
+        );
+      }
       if (submission != null) map['submission'] = submission;
       if (assigneeSlots != null) {
         final assigneeStaffIds = await _staffRowIdSlotsForAssigneeKeys(
@@ -4472,6 +4504,84 @@ class DatabaseService {
           .from('forum_thread')
           .update(threadUpdate)
           .eq('id', tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> softDeleteForumPostCascade({
+    required String postId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = postId.trim();
+    if (pid.isEmpty) return 'Post is required.';
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(
+        updaterStaffLookupKey ?? '',
+      );
+      if (staffId == null || staffId.isEmpty) {
+        return 'Sign in again to remove this discussion item.';
+      }
+
+      final rawPost = await PostgrestClient.instance
+          .from('forum_post')
+          .select('id,thread_id,parent_post_id,depth,status,created_by')
+          .eq('id', pid)
+          .maybeSingle();
+      if (rawPost == null) return 'Discussion item was not found.';
+      final post = Map<String, dynamic>.from(rawPost as Map);
+      final creator = post['created_by']?.toString().trim();
+      if (creator == null || creator.isEmpty || creator != staffId) {
+        return 'Only the creator can remove this discussion item.';
+      }
+      final threadId = post['thread_id']?.toString().trim();
+      if (threadId == null || threadId.isEmpty) {
+        return 'Discussion thread is required.';
+      }
+
+      final depth = _flexIntFromRow(post['depth']);
+      final ids = <String>{pid};
+      if (depth <= 0) {
+        final descendants = await PostgrestClient.instance
+            .from('forum_post')
+            .select('id')
+            .eq('thread_id', threadId);
+        for (final raw in (descendants as List)) {
+          final id = (raw as Map)['id']?.toString().trim();
+          if (id != null && id.isNotEmpty) ids.add(id);
+        }
+      } else if (depth == 1) {
+        final children = await PostgrestClient.instance
+            .from('forum_post')
+            .select('id')
+            .eq('parent_post_id', pid);
+        for (final raw in (children as List)) {
+          final id = (raw as Map)['id']?.toString().trim();
+          if (id != null && id.isNotEmpty) ids.add(id);
+        }
+      }
+
+      final now = HkTime.timestampForDb();
+      await PostgrestClient.instance
+          .from('forum_post')
+          .update({
+            'status': 'Deleted',
+            'updated_by': staffId,
+            'updated_at': now,
+          })
+          .inFilter('id', ids.toList());
+
+      final threadUpdate = <String, dynamic>{
+        'updated_by': staffId,
+        'updated_at': now,
+      };
+      if (depth <= 0) threadUpdate['status'] = 'Deleted';
+      await PostgrestClient.instance
+          .from('forum_thread')
+          .update(threadUpdate)
+          .eq('id', threadId);
       return null;
     } catch (e) {
       return e.toString();

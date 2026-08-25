@@ -14,6 +14,7 @@ class SingularSubtask {
     this.startDate,
     this.dueDate,
     required this.status,
+    this.commencementStatus = 'In progress',
     this.submission,
     this.submitDate,
     this.completionDate,
@@ -46,6 +47,7 @@ class SingularSubtask {
   final DateTime? startDate;
   final DateTime? dueDate;
   final String status;
+  final String commencementStatus;
   final String? submission;
 
   /// When assignee clicked **Submit** (`subtask.submit_date`).
@@ -112,6 +114,7 @@ class SingularSubtask {
     DateTime? startDate,
     DateTime? dueDate,
     String? status,
+    String? commencementStatus,
     String? submission,
     DateTime? submitDate,
     bool clearSubmitDate = false,
@@ -141,6 +144,7 @@ class SingularSubtask {
       startDate: startDate ?? this.startDate,
       dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,
+      commencementStatus: commencementStatus ?? this.commencementStatus,
       submission: submission ?? this.submission,
       submitDate: clearSubmitDate ? null : (submitDate ?? this.submitDate),
       completionDate: clearCompletionDate

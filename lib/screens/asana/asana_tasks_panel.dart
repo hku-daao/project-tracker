@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
@@ -378,6 +379,12 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                 title: 'Status',
                 value: _statusLabel(),
                 onPressed: _showStatusMenu,
+              ),
+              AsanaFilterDropdown(
+                title: 'Commence',
+                value: _commencementLabel(),
+                buttonWidth: 148,
+                onPressed: _showCommencementMenu,
               ),
               AsanaFilterDropdown(
                 title: 'Submission',
@@ -755,6 +762,13 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     return _filters.submissions.map((k) => labels[k] ?? k).join(', ');
   }
 
+  String _commencementLabel() {
+    if (_filters.commencementStatuses.isEmpty) return 'All';
+    return _filters.commencementStatuses
+        .map(normalizeCommencementStatus)
+        .join(', ');
+  }
+
   String _staffFilterLabel(AppState state, List<String> ids) {
     if (ids.isEmpty) return 'All';
     if (ids.length == 1)
@@ -1017,6 +1031,34 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     );
     if (selection != null) {
       setState(() => _filters.statuses = selection);
+      _onFiltersChanged();
+    }
+  }
+
+  Future<void> _showCommencementMenu(BuildContext buttonContext) async {
+    const allKey = '__all__';
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(
+          key: commencementInProgress,
+          label: commencementInProgress,
+        ),
+        AsanaFilterCheckboxOption(
+          key: commencementToBeCommenced,
+          label: commencementToBeCommenced,
+        ),
+      ],
+      initialSelection: _filters.commencementStatuses,
+    );
+    if (selection != null) {
+      setState(() {
+        _filters.commencementStatuses = selection
+            .difference({allKey, 'all'})
+            .map(normalizeCommencementStatus)
+            .toSet();
+      });
       _onFiltersChanged();
     }
   }

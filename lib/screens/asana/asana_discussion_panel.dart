@@ -24,7 +24,8 @@ import 'asana_detail_widgets.dart'
         asanaDetailLabelStyle,
         asanaDetailMultilineValueStyle,
         asanaDetailTitleStyle,
-        asanaDetailValueStyle;
+        asanaDetailValueStyle,
+        showAsanaConfirmDialog;
 import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_task_ai_assistant.dart' show AsanaTaskAiColors;
@@ -570,6 +571,37 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     setState(() => _editingPost = null);
   }
 
+  Future<void> _removePost(AppState state, ForumPost post) async {
+    final isRootPost = post.depth <= 0;
+    final confirmed = await showAsanaConfirmDialog(
+      context: context,
+      title: isRootPost ? 'Remove discussion post?' : 'Remove reply?',
+      content: isRootPost
+          ? 'This will delete the post and all replies under it. This cannot be undone.'
+          : 'This will delete this reply and any replies under it. This cannot be undone.',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (confirmed != true || !mounted) return;
+    final err = await DatabaseService.softDeleteForumPostCascade(
+      postId: post.id,
+      updaterStaffLookupKey: state.effectiveStaffAppId,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      await _showError(err);
+      return;
+    }
+    if (_editingPost?.id == post.id) {
+      setState(() => _editingPost = null);
+    }
+    await _loadThreads(selectThreadId: isRootPost ? null : post.threadId);
+    if (!isRootPost && _selectedThreadId == post.threadId) {
+      await _loadPosts(post.threadId);
+    }
+  }
+
   Future<void> _saveEditedPost(
     AppState state, {
     required ForumPost post,
@@ -647,6 +679,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       rounded: rounded,
       canEditPost: (post) => _canEditPost(state, post),
       onEditPost: _startEditPost,
+      onRemovePost: (post) => _removePost(state, post),
       onStartReply: _startReply,
       onToggleLike: (post) => _toggleLike(state, post),
       onShowLikedBy: (post, anchorContext) =>
@@ -1106,16 +1139,85 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
   Future<void> _showError(String message) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Could not save discussion'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Dialog(
+          backgroundColor: widget.palette.panelBackground,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
           ),
-        ],
-      ),
+          elevation: 12,
+          child: Container(
+            width: 440,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SelectableText(
+                  'Could not save discussion',
+                  style: asanaTextStyle(
+                    theme.textTheme.titleMedium,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  message,
+                  style: asanaTextStyle(
+                    theme.textTheme.bodyMedium,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: kAsanaTextSecondary,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: message)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kAsanaTextPrimary,
+                        side: const BorderSide(color: Color(0xFFEDEAE9)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: const Text('Copy error'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: widget.palette.accent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1311,6 +1413,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
                             _postInlineImages[editingPost.id] ?? const [],
                         saving: _editSaving,
                         onClose: _closeEditPost,
+                        onRemove: () => _removePost(state, editingPost),
                         onSave:
                             ({
                               required content,
@@ -1423,6 +1526,7 @@ class _ForumEditSlide extends StatefulWidget {
     required this.inlineImages,
     required this.saving,
     required this.onClose,
+    required this.onRemove,
     required this.onSave,
   });
 
@@ -1432,6 +1536,7 @@ class _ForumEditSlide extends StatefulWidget {
   final List<InlineAttachmentRow> inlineImages;
   final bool saving;
   final VoidCallback onClose;
+  final VoidCallback onRemove;
   final Future<void> Function({
     required String content,
     required String status,
@@ -1800,6 +1905,15 @@ Current forum draft:
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
+                        FilledButton.icon(
+                          onPressed: widget.saving ? null : widget.onRemove,
+                          style: AsanaTaskDetailActionStyles.deleteFilled(
+                            context: context,
+                          ),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text('Remove'),
+                        ),
+                        const Spacer(),
                         FilledButton(
                           onPressed: widget.saving ? null : widget.onClose,
                           style: cancelStyle,
@@ -2420,6 +2534,7 @@ class _ThreadDetail extends StatelessWidget {
     this.rounded = true,
     required this.canEditPost,
     required this.onEditPost,
+    required this.onRemovePost,
     required this.onStartReply,
     required this.onToggleLike,
     required this.onShowLikedBy,
@@ -2449,6 +2564,7 @@ class _ThreadDetail extends StatelessWidget {
   final bool rounded;
   final bool Function(ForumPost post) canEditPost;
   final ValueChanged<ForumPost> onEditPost;
+  final ValueChanged<ForumPost> onRemovePost;
   final ValueChanged<ForumPost> onStartReply;
   final ValueChanged<ForumPost> onToggleLike;
   final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
@@ -2554,6 +2670,7 @@ class _ThreadDetail extends StatelessWidget {
                                 authorMetaForKey: authorMetaForKey,
                                 canEditPost: canEditPost,
                                 onEditPost: onEditPost,
+                                onRemovePost: onRemovePost,
                                 onStartReply: onStartReply,
                                 onToggleLike: onToggleLike,
                                 onShowLikedBy: onShowLikedBy,
@@ -2648,6 +2765,7 @@ class _PostTree extends StatelessWidget {
     required this.authorMetaForKey,
     required this.canEditPost,
     required this.onEditPost,
+    required this.onRemovePost,
     required this.onStartReply,
     required this.onToggleLike,
     required this.onShowLikedBy,
@@ -2661,6 +2779,7 @@ class _PostTree extends StatelessWidget {
   final String Function(String? staffKey) authorMetaForKey;
   final bool Function(ForumPost post) canEditPost;
   final ValueChanged<ForumPost> onEditPost;
+  final ValueChanged<ForumPost> onRemovePost;
   final ValueChanged<ForumPost> onStartReply;
   final ValueChanged<ForumPost> onToggleLike;
   final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
@@ -2696,6 +2815,7 @@ class _PostTree extends StatelessWidget {
             authorMetaForKey: authorMetaForKey,
             canEdit: canEditPost(post),
             onEdit: onEditPost,
+            onRemove: onRemovePost,
             onReply: (target) {
               final parentId = target.parentPostId;
               final parent = parentId == null ? null : byId[parentId];
@@ -3161,6 +3281,7 @@ class _PostCard extends StatelessWidget {
     required this.authorMetaForKey,
     required this.canEdit,
     required this.onEdit,
+    required this.onRemove,
     required this.onReply,
     required this.onToggleLike,
     required this.onShowLikedBy,
@@ -3174,6 +3295,7 @@ class _PostCard extends StatelessWidget {
   final String Function(String? staffKey) authorMetaForKey;
   final bool canEdit;
   final ValueChanged<ForumPost> onEdit;
+  final ValueChanged<ForumPost> onRemove;
   final ValueChanged<ForumPost> onReply;
   final ValueChanged<ForumPost> onToggleLike;
   final void Function(ForumPost post, BuildContext anchorContext) onShowLikedBy;
@@ -3231,10 +3353,12 @@ class _PostCard extends StatelessWidget {
                     likeCount: post.likeCount,
                     replyCount: replyCount,
                     canReply: !locked,
+                    canRemove: canEdit,
                     onLike: () => onToggleLike(post),
                     onShowLikedBy: post.likeCount > 0
                         ? (anchorContext) => onShowLikedBy(post, anchorContext)
                         : null,
+                    onRemove: () => onRemove(post),
                     onReply: () => onReply(post),
                   ),
                 ),
@@ -3253,8 +3377,10 @@ class _PostActionRow extends StatelessWidget {
     required this.likeCount,
     required this.replyCount,
     required this.canReply,
+    required this.canRemove,
     required this.onLike,
     required this.onShowLikedBy,
+    required this.onRemove,
     required this.onReply,
   });
 
@@ -3262,8 +3388,10 @@ class _PostActionRow extends StatelessWidget {
   final int likeCount;
   final int? replyCount;
   final bool canReply;
+  final bool canRemove;
   final VoidCallback onLike;
   final void Function(BuildContext anchorContext)? onShowLikedBy;
+  final VoidCallback onRemove;
   final VoidCallback onReply;
 
   @override
@@ -3287,6 +3415,16 @@ class _PostActionRow extends StatelessWidget {
           color: muted,
           onPressed: canReply ? onReply : null,
         ),
+        if (canRemove) ...[
+          const SizedBox(width: 10),
+          _PostIconAction(
+            tooltip: 'Remove',
+            icon: Icons.delete_outline,
+            count: null,
+            color: const Color(0xFFC62828),
+            onPressed: onRemove,
+          ),
+        ],
         if (!canReply) ...[
           const SizedBox(width: 8),
           Text(

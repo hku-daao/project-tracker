@@ -12,10 +12,17 @@ import 'asana_filter_widgets.dart';
 import 'asana_theme.dart';
 import '../asana_landing_screen.dart';
 
+enum AsanaPerformanceViewMode { group, individual }
+
 class AsanaPerformancePanel extends StatefulWidget {
-  const AsanaPerformancePanel({super.key, required this.palette});
+  const AsanaPerformancePanel({
+    super.key,
+    required this.palette,
+    required this.viewMode,
+  });
 
   final AsanaLandingPalette palette;
+  final AsanaPerformanceViewMode viewMode;
 
   @override
   State<AsanaPerformancePanel> createState() => _AsanaPerformancePanelState();
@@ -485,29 +492,30 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
         children: [
-          _OfficePerformanceSection(
-            daao: daao,
-            cpao: cpao,
-            palette: widget.palette,
-          ),
-          const SizedBox(height: 24),
-          _IndividualPerformanceBlock(
-            performance: individual,
-            workMonths: filteredWorkMonths,
-            periodStartMonth: _periodStartMonth,
-            periodEndMonth: _periodEndMonth,
-            onPeriodStartChanged: (value) {
-              setState(() {
-                _periodStartMonth = value;
-              });
-            },
-            onPeriodEndChanged: (value) {
-              setState(() {
-                _periodEndMonth = value;
-              });
-            },
-            palette: widget.palette,
-          ),
+          if (widget.viewMode == AsanaPerformanceViewMode.group)
+            _OfficePerformanceSection(
+              daao: daao,
+              cpao: cpao,
+              palette: widget.palette,
+            ),
+          if (widget.viewMode == AsanaPerformanceViewMode.individual)
+            _IndividualPerformanceBlock(
+              performance: individual,
+              workMonths: filteredWorkMonths,
+              periodStartMonth: _periodStartMonth,
+              periodEndMonth: _periodEndMonth,
+              onPeriodStartChanged: (value) {
+                setState(() {
+                  _periodStartMonth = value;
+                });
+              },
+              onPeriodEndChanged: (value) {
+                setState(() {
+                  _periodEndMonth = value;
+                });
+              },
+              palette: widget.palette,
+            ),
         ],
       ),
     );
@@ -1063,18 +1071,11 @@ class _IndividualPerformanceBlock extends StatelessWidget {
               palette: palette,
             ),
             const SizedBox(height: 18),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _PerformanceSectionTitle(
-                    title: 'Work Output',
-                    subtitle:
-                        'Completed hands-on task/subtask output by role and complexity for the selected months.',
-                  ),
-                ),
-                _WorkOutputScoreInfoButton(palette: palette),
-              ],
+            _PerformanceSectionTitle(
+              title: 'Work Output',
+              subtitle:
+                  'Completed hands-on task/subtask output by role and complexity for the selected months.',
+              trailing: _WorkOutputScoreInfoButton(palette: palette),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -1085,34 +1086,20 @@ class _IndividualPerformanceBlock extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 22),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _PerformanceSectionTitle(
-                    title: 'Delegation',
-                    subtitle:
-                        'Work this staff member created for others to complete, summarizing management and follow-through for the selected months.',
-                  ),
-                ),
-                _DelegationScoreInfoButton(palette: palette),
-              ],
+            _PerformanceSectionTitle(
+              title: 'Delegation',
+              subtitle:
+                  'Work this staff member created for others to complete, summarizing management and follow-through for the selected months.',
+              trailing: _DelegationScoreInfoButton(palette: palette),
             ),
             const SizedBox(height: 12),
             _DelegationCard(month: summaryMonth, palette: palette),
             const SizedBox(height: 22),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _PerformanceSectionTitle(
-                    title: 'Work Creation Activity',
-                    subtitle:
-                        'How actively this staff member creates work items in Project Tracker, split by task type and delegation pattern.',
-                  ),
-                ),
-                _WorkInitiationScoreInfoButton(palette: palette),
-              ],
+            _PerformanceSectionTitle(
+              title: 'Work Creation Activity',
+              subtitle:
+                  'How actively this staff member creates work items in Project Tracker, split by task type and delegation pattern.',
+              trailing: _WorkInitiationScoreInfoButton(palette: palette),
             ),
             const SizedBox(height: 8),
             _workInitiationTable(context, summaryMonth),
@@ -1124,23 +1111,37 @@ class _IndividualPerformanceBlock extends StatelessWidget {
 }
 
 class _PerformanceSectionTitle extends StatelessWidget {
-  const _PerformanceSectionTitle({required this.title, required this.subtitle});
+  const _PerformanceSectionTitle({
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
 
   final String title;
   final String subtitle;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: asanaTextStyle(
-            Theme.of(context).textTheme.titleMedium,
-            fontWeight: FontWeight.w700,
-            color: kAsanaTextPrimary,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                title,
+                style: asanaTextStyle(
+                  Theme.of(context).textTheme.titleMedium,
+                  fontWeight: FontWeight.w700,
+                  color: kAsanaTextPrimary,
+                ),
+              ),
+            ),
+            if (trailing != null) ...[const SizedBox(width: 4), trailing!],
+          ],
         ),
         const SizedBox(height: 3),
         Text(

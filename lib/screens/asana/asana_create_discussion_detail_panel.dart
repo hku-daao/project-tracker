@@ -260,18 +260,11 @@ Current forum draft:
     final title = _titleController.text.trim();
     final content = _contentController.text.trim();
     if (title.isEmpty || content.isEmpty) {
-      await showDialog<void>(
+      await showAsanaInfoDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Missing content'),
-          content: const Text('Please fill in both title and content.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
+        title: 'Missing content',
+        content: 'Please fill in both title and content.',
+        palette: widget.palette,
       );
       return;
     }
@@ -291,18 +284,11 @@ Current forum draft:
         creatorStaffLookupKey: state.effectiveStaffAppId,
       );
       if (err != null && mounted) {
-        await showDialog<void>(
+        await showAsanaInfoDialog(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Could not create discussion'),
-            content: Text(err),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
+          title: 'Could not create discussion',
+          content: err,
+          palette: widget.palette,
         );
         return;
       }
@@ -324,18 +310,11 @@ Current forum draft:
 
   Future<void> _showInfo(String title, String content) async {
     if (!mounted) return;
-    await showDialog<void>(
+    await showAsanaInfoDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(content),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+      title: title,
+      content: content,
+      palette: widget.palette,
     );
   }
 

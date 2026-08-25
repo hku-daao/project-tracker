@@ -1,3 +1,4 @@
+import '../../commencement_status.dart';
 import '../../app_state.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
@@ -27,6 +28,7 @@ class AsanaTaskFilterState {
   /// Empty = all statuses / all submissions (no chip filter).
   Set<String> statuses = {};
   Set<String> submissions = {};
+  Set<String> commencementStatuses = {};
   DateTime? createDateStart;
   DateTime? createDateEnd;
   Set<String> overdueOptions = {};
@@ -54,6 +56,7 @@ class AsanaTaskFilterState {
     'scopes': scopes.toList(),
     'statuses': statuses.toList(),
     'submissions': submissions.toList(),
+    'commencementStatuses': commencementStatuses.toList(),
     'createDateStart': createDateStart?.millisecondsSinceEpoch,
     'createDateEnd': createDateEnd?.millisecondsSinceEpoch,
     'sortKey': sortKey,
@@ -69,6 +72,9 @@ class AsanaTaskFilterState {
     scopes = _stringSet(data['scopes']);
     statuses = _stringSet(data['statuses']);
     submissions = _stringSet(data['submissions']);
+    commencementStatuses = _stringSet(
+      data['commencementStatuses'],
+    ).difference({'all', '__all__'}).map(normalizeCommencementStatus).toSet();
     overdueOptions = _stringSet(data['overdueOptions']);
     createDateStart = _dateFromMs(data['createDateStart']);
     createDateEnd = _dateFromMs(data['createDateEnd']);
@@ -106,6 +112,7 @@ class AsanaTaskFilterState {
     scopes = {};
     statuses = {statusIncomplete};
     submissions = {submissionPending};
+    commencementStatuses.clear();
     overdueOptions.clear();
     sortKey = 'created';
     sortAscending = false;
@@ -122,6 +129,7 @@ class AsanaTaskFilterState {
     resetToDefaults();
     statuses.clear();
     submissions.clear();
+    commencementStatuses.clear();
   }
 
   /// Restore filters saved from the main landing / Overview screen.
@@ -223,6 +231,26 @@ class AsanaTaskFilter {
 
   static Set<String> _normalizedStatuses(AsanaTaskFilterState filters) =>
       filters.statuses.difference({'all', '__all__'});
+
+  static Set<String> _normalizedCommencementStatuses(
+    AsanaTaskFilterState filters,
+  ) => filters.commencementStatuses
+      .difference({'all', '__all__'})
+      .map(normalizeCommencementStatus)
+      .toSet();
+
+  static bool _rowPassesCommencement(
+    Task task,
+    SingularSubtask? sub,
+    AsanaTaskFilterState filters,
+  ) {
+    final wanted = _normalizedCommencementStatuses(filters);
+    if (wanted.isEmpty) return true;
+    final current = normalizeCommencementStatus(
+      sub == null ? task.commencementStatus : sub.commencementStatus,
+    );
+    return wanted.contains(current);
+  }
 
   static bool _singularCompleted(Task t) {
     final s = t.dbStatus?.trim().toLowerCase() ?? '';
@@ -793,6 +821,7 @@ class AsanaTaskFilter {
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
       final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
+      final taskPassesCommencement = _rowPassesCommencement(t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsRoleFiltered = subs
           .where((s) => _rowPassesRoleFilters(state, t, s, filters))
@@ -802,7 +831,7 @@ class AsanaTaskFilter {
           .toList();
       final subsDeleted = subsRoleFiltered.where((s) => s.isDeleted).toList();
       if (filters.overdueOptions.contains('overdue')) {
-        if (taskPassesRole && t.overdue == 'Yes') {
+        if (taskPassesRole && taskPassesCommencement && t.overdue == 'Yes') {
           if (!searchActive) {
             if (_rowPassesDueDate(t, null, filters)) out.add(t);
           } else if (taskSearchMatches(state, t, tokens) &&
@@ -842,6 +871,7 @@ class AsanaTaskFilter {
             }
           }
           if (wantParent &&
+              taskPassesCommencement &&
               !_hideIncompleteParentWhenCompletedOnly(t, filters)) {
             out.add(t);
           }
@@ -856,7 +886,9 @@ class AsanaTaskFilter {
             .where((s) => _rowPassesDueDateSubtask(t, s, filters))
             .toList();
         final taskInRange =
-            taskPassesRole && _rowPassesDueDate(t, null, filters);
+            taskPassesRole &&
+            taskPassesCommencement &&
+            _rowPassesDueDate(t, null, filters);
         if (!taskInRange && subsInRange.isEmpty && subsDeletedInRange.isEmpty) {
           continue;
         }
@@ -865,13 +897,17 @@ class AsanaTaskFilter {
         final showParent = filters.createDateEngaged
             ? taskInRange
             : (taskInRange || hasVisibleSubs);
-        if (showParent && !_hideIncompleteParentWhenCompletedOnly(t, filters)) {
+        if (showParent &&
+            taskPassesCommencement &&
+            !_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(t);
         }
         continue;
       }
       final taskTextMatch =
-          taskPassesRole && taskSearchMatches(state, t, tokens);
+          taskPassesRole &&
+          taskPassesCommencement &&
+          taskSearchMatches(state, t, tokens);
       if (taskTextMatch) {
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(t);
@@ -893,7 +929,9 @@ class AsanaTaskFilter {
           break;
         }
       }
-      if (anySub && !_hideIncompleteParentWhenCompletedOnly(t, filters)) {
+      if (anySub &&
+          taskPassesCommencement &&
+          !_hideIncompleteParentWhenCompletedOnly(t, filters)) {
         out.add(t);
       }
     }
@@ -909,6 +947,7 @@ class AsanaTaskFilter {
           (t) =>
               t.isSingularTableRow &&
               _rowPassesRoleFilters(state, t, null, filters) &&
+              _rowPassesCommencement(t, null, filters) &&
               !_hideIncompleteParentWhenCompletedOnly(t, filters),
         ),
       );
@@ -979,6 +1018,7 @@ class AsanaTaskFilter {
           : <SingularSubtask>[];
 
       void addTaskIfAllowed() {
+        if (!_rowPassesCommencement(t, null, filters)) return;
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(AsanaFlatRow.task(t));
         }
@@ -987,6 +1027,7 @@ class AsanaTaskFilter {
       void addSubsInRange(List<SingularSubtask> list) {
         for (final s in list) {
           if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
+          if (!_rowPassesCommencement(t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!searchActive) {
             if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
@@ -1048,6 +1089,7 @@ class AsanaTaskFilter {
       }
       for (final s in subsNonDeleted) {
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
+        if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
@@ -1055,6 +1097,7 @@ class AsanaTaskFilter {
       }
       for (final s in subsDeleted) {
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
+        if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
         if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
@@ -1129,12 +1172,13 @@ class AsanaTaskFilter {
         if (!t.isSingularTableRow) continue;
         if (_hideIncompleteParentWhenCompletedOnly(t, filters)) continue;
         final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
-        if (taskPassesRole) {
+        if (taskPassesRole && _rowPassesCommencement(t, null, filters)) {
           out.add(AsanaFlatRow.task(t));
         }
         final subs = grouped[t.id] ?? [];
         for (final s in subs) {
           if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
+          if (!_rowPassesCommencement(t, s, filters)) continue;
           if (!_subtaskPassesStatusChips(state, t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
@@ -1214,6 +1258,9 @@ class AsanaTaskFilter {
     Task? parentTask,
   }) {
     Iterable<SingularSubtask> it = subs.where((s) => !s.isDeleted);
+    if (parentTask != null) {
+      it = it.where((s) => _rowPassesCommencement(parentTask, s, filters));
+    }
     if (filters.createDateEngaged && parentTask != null) {
       it = it.where((s) => _rowPassesDueDateSubtask(parentTask, s, filters));
     }
@@ -1273,6 +1320,7 @@ class AsanaTaskFilter {
 
     bool includeSub(SingularSubtask s) {
       if (!_rowPassesRoleFilters(state, task, s, filters)) return false;
+      if (!_rowPassesCommencement(task, s, filters)) return false;
       if (_shouldOmitSubtaskRow(task, s, filters)) return false;
       if (filters.overdueOptions.contains('overdue') && s.overdue != 'Yes')
         return false;

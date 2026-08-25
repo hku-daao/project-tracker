@@ -32,6 +32,9 @@ class Task {
   /// Raw `task.status` from DB for singular table (e.g. Incomplete, Completed).
   final String? dbStatus;
 
+  /// User-selected commencement state: `In progress` or `To be commenced`.
+  final String commencementStatus;
+
   /// Last updater display name (singular `task.update_by` → `staff.name`).
   final String? updateByStaffName;
 
@@ -103,6 +106,7 @@ class Task {
     this.progressPercent = 0,
     this.isSingularTableRow = false,
     this.dbStatus,
+    this.commencementStatus = 'In progress',
     this.updateByStaffName,
     this.createByStaffName,
     this.createByAssigneeKey,
@@ -138,6 +142,7 @@ class Task {
     int? progressPercent,
     bool? isSingularTableRow,
     String? dbStatus,
+    String? commencementStatus,
     String? updateByStaffName,
     String? createByStaffName,
     String? createByAssigneeKey,
@@ -178,6 +183,7 @@ class Task {
       progressPercent: progressPercent ?? this.progressPercent,
       isSingularTableRow: isSingularTableRow ?? this.isSingularTableRow,
       dbStatus: dbStatus ?? this.dbStatus,
+      commencementStatus: commencementStatus ?? this.commencementStatus,
       updateByStaffName: updateByStaffName ?? this.updateByStaffName,
       createByStaffName: createByStaffName ?? this.createByStaffName,
       createByAssigneeKey: createByAssigneeKey ?? this.createByAssigneeKey,

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
@@ -223,6 +224,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   String? _picAssigneeId;
   int _localPriority = priorityStandard;
   String? _localComplexity;
+  String _localCommencementStatus = commencementInProgress;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _draftStatus;
@@ -242,8 +244,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _priorityAnchorLink = LayerLink();
+  final LayerLink _commencementAnchorLink = LayerLink();
   final LayerLink _complexityAnchorLink = LayerLink();
-  final LayerLink _statusAnchorLink = LayerLink();
   final LayerLink _attachmentAddAnchorLink = LayerLink();
   final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
   int _anchoredPickerReopenBlockedUntilMs = 0;
@@ -312,6 +314,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _picAssigneeId = null;
     _localPriority = priorityStandard;
     _localComplexity = null;
+    _localCommencementStatus = commencementInProgress;
     _draftStatus = 'Incomplete';
     final today = HkTime.todayDateOnlyHk();
     _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
@@ -394,6 +397,9 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
             if (_picAssigneeId?.isEmpty == true) _picAssigneeId = null;
             _localPriority = row?.priority ?? priorityStandard;
             _localComplexity = row?.complexity;
+            _localCommencementStatus = normalizeCommencementStatus(
+              row?.commencementStatus,
+            );
             _startDate = row?.startDate;
             _dueDate = row?.dueDate;
             _draftStatus = row?.status;
@@ -735,6 +741,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       'complexity',
       _complexityText(s.complexity),
       _complexityText(_localComplexity),
+    );
+    _addChange(
+      changes,
+      'commencementStatus',
+      normalizeCommencementStatus(s.commencementStatus),
+      _localCommencementStatus,
     );
     _addChange(changes, 'startDate', _date(s.startDate), _date(_startDate));
     _addChange(changes, 'dueDate', _date(s.dueDate), _date(_dueDate));
@@ -1409,21 +1421,38 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
   }
 
-  Future<void> _pickStatus(BuildContext anchorContext) async {
+  bool get _toBeCommenced =>
+      _localCommencementStatus == commencementToBeCommenced;
+
+  void _restoreDefaultDatesIfMissing() {
+    _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
+      HkTime.todayDateOnlyHk(),
+      _holidaySkipYmd,
+    );
+    _startDate ??= _anchorCreateDate;
+    _dueDate ??= _defaultDueForPriority(_localPriority);
+  }
+
+  Future<void> _pickCommencementStatus(BuildContext anchorContext) async {
     if (!_canOpenAnchoredPicker) return;
-    const options = [
-      AsanaAnchoredOption(value: 'Incomplete', label: 'Incomplete'),
-      AsanaAnchoredOption(value: 'Completed', label: 'Completed'),
-    ];
     final choice = await showAsanaAnchoredOptionMenu<String>(
-      anchorLink: _statusAnchorLink,
+      anchorLink: _commencementAnchorLink,
       anchorContext: anchorContext,
       onClosed: _blockAnchoredPickerReopen,
-      options: options,
+      options: commencementStatusOptions
+          .map((v) => AsanaAnchoredOption(value: v, label: v))
+          .toList(),
     );
-    if (choice != null && mounted) {
-      setState(() => _draftStatus = choice);
-    }
+    if (choice == null || !mounted) return;
+    setState(() {
+      _localCommencementStatus = normalizeCommencementStatus(choice);
+      if (_toBeCommenced) {
+        _startDate = null;
+        _dueDate = null;
+      } else {
+        _restoreDefaultDatesIfMissing();
+      }
+    });
   }
 
   bool _parentProjectPaused(AppState state) {
@@ -1789,6 +1818,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           priorityDisplay: priorityToDisplayName(_localPriority),
           complexity: complexity!,
           status: _draftStatus,
+          commencementStatus: _localCommencementStatus,
           startDate: _startDate,
           dueDate: _dueDate,
           assigneeStaffUuids: _assigneeIds.toList(),
@@ -1930,6 +1960,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           priorityDisplay: priorityToDisplayName(_localPriority),
           complexity: _localComplexity,
           status: _draftStatus,
+          commencementStatus: _localCommencementStatus,
           clearStartDate: _startDate == null,
           startDate: _startDate,
           clearDueDate: _dueDate == null,
@@ -2116,6 +2147,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         priorityDisplay: priorityToDisplayName(_localPriority),
         complexity: _localComplexity,
         status: s.status,
+        commencementStatus: _localCommencementStatus,
         clearStartDate: _startDate == null,
         startDate: _startDate,
         clearDueDate: _dueDate == null,
@@ -2329,6 +2361,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         priorityDisplay: priorityToDisplayName(_localPriority),
         complexity: _localComplexity,
         status: s.status,
+        commencementStatus: _localCommencementStatus,
         clearStartDate: _startDate == null,
         startDate: _startDate,
         clearDueDate: _dueDate == null,
@@ -3649,6 +3682,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.pic),
           AsanaDetailTwoColumnRow(
             label: 'Priority',
+            labelTrailing: AsanaPriorityInfoButton(palette: widget.palette),
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _priorityAnchorLink,
@@ -3674,32 +3708,37 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.priority),
           AsanaDetailTwoColumnRow(
             label: 'Status',
-            child: Builder(
-              builder: (anchorContext) => CompositedTransformTarget(
-                link: _statusAnchorLink,
-                child: isCreator
-                    ? MouseRegion(
-                        cursor:
-                            (s != null && _subtaskEffectivelyPaused(state, s))
-                            ? SystemMouseCursors.basic
-                            : SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap:
-                              _saving ||
-                                  (s != null &&
-                                      _subtaskEffectivelyPaused(state, s))
-                              ? null
-                              : () => _pickStatus(anchorContext),
-                          child: AsanaDetailStatusPill(
-                            status: _subtaskDisplayStatus(state, s),
-                          ),
-                        ),
-                      )
-                    : AsanaDetailStatusPill(
-                        status: _subtaskDisplayStatus(state, s),
-                      ),
-              ),
+            labelTrailing: AsanaStatusInfoButton(
+              palette: widget.palette,
+              entityLabel: 'sub-task',
             ),
+            child: AsanaDetailStatusPill(
+              status: _subtaskDisplayStatus(state, s),
+            ),
+          ),
+          AsanaDetailTwoColumnRow(
+            label: 'Commence',
+            labelTrailing: AsanaCommencementInfoButton(
+              palette: widget.palette,
+              entityLabel: 'sub-task',
+            ),
+            child: (_effectiveCreateMode || canEditDetails)
+                ? Builder(
+                    builder: (anchorContext) => CompositedTransformTarget(
+                      link: _commencementAnchorLink,
+                      child: GestureDetector(
+                        onTap: _saving
+                            ? null
+                            : () => _pickCommencementStatus(anchorContext),
+                        child: AsanaDetailCommencementPill(
+                          status: _localCommencementStatus,
+                        ),
+                      ),
+                    ),
+                  )
+                : AsanaDetailCommencementPill(
+                    status: normalizeCommencementStatus(s?.commencementStatus),
+                  ),
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../commencement_status.dart';
 import '../../priority.dart';
 import 'asana_theme.dart';
 
@@ -177,6 +178,63 @@ class AsanaPriorityChip extends StatelessWidget {
         ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        softWrap: false,
+      ),
+    );
+  }
+}
+
+/// Colored pill for task / sub-task commencement status.
+class AsanaCommencementChip extends StatelessWidget {
+  const AsanaCommencementChip({
+    super.key,
+    required this.status,
+    this.fontSize = kAsanaTableChipFontSize,
+    this.preserveFullLabel = false,
+  });
+
+  final String status;
+  final double fontSize;
+  final bool preserveFullLabel;
+
+  static (String label, Color bg, Color fg) commencementStyle(String raw) {
+    final normalized = normalizeCommencementStatus(raw);
+    if (normalized == commencementToBeCommenced) {
+      return (
+        commencementToBeCommenced,
+        const Color(0xFFFFF3E0),
+        const Color(0xFFE65100),
+      );
+    }
+    return (
+      commencementInProgress,
+      const Color(0xFFE3F2FD),
+      const Color(0xFF1565C0),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, bg, fg) = commencementStyle(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: asanaTextStyle(
+          Theme.of(context).textTheme.bodyMedium,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w600,
+          color: fg,
+          height: 1.2,
+        ),
+        maxLines: 1,
+        overflow: preserveFullLabel
+            ? TextOverflow.visible
+            : TextOverflow.ellipsis,
         softWrap: false,
       ),
     );

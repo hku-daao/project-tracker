@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
@@ -142,6 +143,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   int _localPriority = priorityStandard;
   String? _localComplexity;
+  String _localCommencementStatus = commencementInProgress;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _selectedProjectId;
@@ -162,6 +164,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _priorityAnchorLink = LayerLink();
+  final LayerLink _commencementAnchorLink = LayerLink();
   final LayerLink _complexityAnchorLink = LayerLink();
   final LayerLink _attachmentAddAnchorLink = LayerLink();
 
@@ -372,6 +375,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _clearInlineImageDrafts();
     _localPriority = priorityStandard;
     _localComplexity = null;
+    _localCommencementStatus = commencementInProgress;
     final initialProjectId = widget.initialProjectId?.trim();
     _selectedProjectId = initialProjectId == null || initialProjectId.isEmpty
         ? null
@@ -713,6 +717,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _reasonController.text = task.changeDueReason ?? '';
     _localPriority = task.priority;
     _localComplexity = task.complexity;
+    _localCommencementStatus = normalizeCommencementStatus(
+      task.commencementStatus,
+    );
     _startDate = task.startDate;
     _dueDate = task.endDate;
     _selectedProjectId = task.projectId;
@@ -1307,6 +1314,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
     _addChange(
       changes,
+      'commencementStatus',
+      normalizeCommencementStatus(task.commencementStatus),
+      _localCommencementStatus,
+    );
+    _addChange(
+      changes,
       'startDate',
       _formatDate(task.startDate),
       _formatDate(_startDate),
@@ -1553,6 +1566,40 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
   }
 
+  bool get _toBeCommenced =>
+      _localCommencementStatus == commencementToBeCommenced;
+
+  void _restoreDefaultDatesIfMissing() {
+    _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
+      HkTime.todayDateOnlyHk(),
+      _holidaySkipYmd,
+    );
+    _startDate ??= _anchorCreateDate;
+    _dueDate ??= _defaultDueForPriority(_localPriority);
+  }
+
+  Future<void> _pickCommencementStatus(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker) return;
+    final choice = await showAsanaAnchoredOptionMenu<String>(
+      anchorLink: _commencementAnchorLink,
+      anchorContext: anchorContext,
+      onClosed: _blockAnchoredPickerReopen,
+      options: commencementStatusOptions
+          .map((v) => AsanaAnchoredOption(value: v, label: v))
+          .toList(),
+    );
+    if (choice == null || !mounted) return;
+    setState(() {
+      _localCommencementStatus = normalizeCommencementStatus(choice);
+      if (_toBeCommenced) {
+        _startDate = null;
+        _dueDate = null;
+      } else {
+        _restoreDefaultDatesIfMissing();
+      }
+    });
+  }
+
   Future<void> _pickStartDueRange(BuildContext anchorContext) async {
     final picked = await showAsanaAnchoredDateRangePicker(
       anchorContext: anchorContext,
@@ -1583,7 +1630,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (choice == null || !mounted) return;
     setState(() {
       _localPriority = choice;
-      if (widget.createMode) {
+      if (widget.createMode && !_toBeCommenced) {
         _dueDate = _defaultDueForPriority(choice);
       }
     });
@@ -2086,6 +2133,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             : stripInlineImageMarkers(_descController.text),
         priority: priorityToDisplayName(_localPriority),
         complexity: complexity,
+        commencementStatus: _localCommencementStatus,
         startDate: _startDate,
         dueDate: _dueDate,
         creatorStaffLookupKey: state.userStaffAppId,
@@ -2235,6 +2283,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         description: stripInlineImageMarkers(_descController.text),
         priority: priorityToDisplayName(_localPriority),
         complexity: _localComplexity,
+        commencementStatus: _localCommencementStatus,
         assigneeSlots: slots,
         startDate: _startDate,
         dueDate: _dueDate,
@@ -2404,6 +2453,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       description: stripInlineImageMarkers(_descController.text),
       priority: priorityToDisplayName(_localPriority),
       complexity: _localComplexity,
+      commencementStatus: _localCommencementStatus,
       assigneeSlots: slots,
       startDate: _startDate,
       dueDate: _dueDate,
@@ -3067,6 +3117,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       pic: _picAssigneeId,
       priority: _localPriority,
       complexity: _localComplexity,
+      commencementStatus: _localCommencementStatus,
       startDate: _startDate,
       endDate: _dueDate,
       projectId: clearProject ? null : _selectedProjectId,
@@ -3615,6 +3666,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ),
           AsanaDetailTwoColumnRow(
             label: 'Priority',
+            labelTrailing: AsanaPriorityInfoButton(palette: widget.palette),
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _priorityAnchorLink,
@@ -3636,9 +3688,33 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.priority),
-          const AsanaDetailTwoColumnRow(
+          AsanaDetailTwoColumnRow(
             label: 'Status',
-            child: AsanaDetailStatusPill(status: 'Incomplete'),
+            labelTrailing: AsanaStatusInfoButton(
+              palette: widget.palette,
+              entityLabel: 'task',
+            ),
+            child: const AsanaDetailStatusPill(status: 'Incomplete'),
+          ),
+          AsanaDetailTwoColumnRow(
+            label: 'Commence',
+            labelTrailing: AsanaCommencementInfoButton(
+              palette: widget.palette,
+              entityLabel: 'task',
+            ),
+            child: Builder(
+              builder: (anchorContext) => CompositedTransformTarget(
+                link: _commencementAnchorLink,
+                child: GestureDetector(
+                  onTap: !canEdit || _saving
+                      ? null
+                      : () => _pickCommencementStatus(anchorContext),
+                  child: AsanaDetailCommencementPill(
+                    status: _localCommencementStatus,
+                  ),
+                ),
+              ),
+            ),
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
@@ -3962,6 +4038,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           if (_subtasks.isNotEmpty) const SizedBox(height: 8),
           AsanaDetailTwoColumnRow(
             label: 'Priority',
+            labelTrailing: AsanaPriorityInfoButton(palette: widget.palette),
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _priorityAnchorLink,
@@ -3985,9 +4062,39 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.priority),
           AsanaDetailTwoColumnRow(
             label: 'Status',
+            labelTrailing: AsanaStatusInfoButton(
+              palette: widget.palette,
+              entityLabel: 'task',
+            ),
             child: AsanaDetailStatusPill(
               status: _taskDisplayStatus(state, task),
             ),
+          ),
+          AsanaDetailTwoColumnRow(
+            label: 'Commence',
+            labelTrailing: AsanaCommencementInfoButton(
+              palette: widget.palette,
+              entityLabel: 'task',
+            ),
+            child: canEdit
+                ? Builder(
+                    builder: (anchorContext) => CompositedTransformTarget(
+                      link: _commencementAnchorLink,
+                      child: GestureDetector(
+                        onTap: _saving
+                            ? null
+                            : () => _pickCommencementStatus(anchorContext),
+                        child: AsanaDetailCommencementPill(
+                          status: _localCommencementStatus,
+                        ),
+                      ),
+                    ),
+                  )
+                : AsanaDetailCommencementPill(
+                    status: normalizeCommencementStatus(
+                      task.commencementStatus,
+                    ),
+                  ),
           ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',

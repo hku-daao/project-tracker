@@ -326,8 +326,17 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             _openRootDetail(AsanaDetailSelection.subtask(id)),
       );
     }
-    if (adminViewMode && _selectedNav == 'Performance') {
-      return AsanaPerformancePanel(palette: palette);
+    if (adminViewMode && _selectedNav == 'Group Performance') {
+      return AsanaPerformancePanel(
+        palette: palette,
+        viewMode: AsanaPerformanceViewMode.group,
+      );
+    }
+    if (adminViewMode && _selectedNav == 'Individual Performance') {
+      return AsanaPerformancePanel(
+        palette: palette,
+        viewMode: AsanaPerformanceViewMode.individual,
+      );
     }
     if (_selectedNav == 'Discussion') {
       return AsanaDiscussionPanel(
@@ -581,25 +590,29 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                   },
                 ),
               if (context.watch<AppState>().adminViewMode)
-                _SidebarNavTile(
-                  label: 'Performance',
-                  palette: palette,
-                  selected: _selectedNav == 'Performance',
-                  onTap: () {
-                    if (_selectedNav != 'Performance') {
-                      _showNavigationLoadingUntilNextFrame();
-                    }
-                    setState(() {
-                      _selectedNav = 'Performance';
-                      _detailStack.clear();
-                      if (MediaQuery.sizeOf(context).width <
-                          _kSidebarAutoHideWidth) {
-                        _sidebarOpenOverride = false;
+                for (final label in const [
+                  'Group Performance',
+                  'Individual Performance',
+                ])
+                  _SidebarNavTile(
+                    label: label,
+                    palette: palette,
+                    selected: _selectedNav == label,
+                    onTap: () {
+                      if (_selectedNav != label) {
+                        _showNavigationLoadingUntilNextFrame();
                       }
-                    });
-                    _syncWebLocationToDetailStack();
-                  },
-                ),
+                      setState(() {
+                        _selectedNav = label;
+                        _detailStack.clear();
+                        if (MediaQuery.sizeOf(context).width <
+                            _kSidebarAutoHideWidth) {
+                          _sidebarOpenOverride = false;
+                        }
+                      });
+                      _syncWebLocationToDetailStack();
+                    },
+                  ),
               _ThemeSidebarExpandable(
                 palette: palette,
                 expanded: _themeMenuExpanded,

@@ -489,6 +489,21 @@ class AsanaDetailStatusPill extends StatelessWidget {
   }
 }
 
+class AsanaDetailCommencementPill extends StatelessWidget {
+  const AsanaDetailCommencementPill({super.key, required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    return UnconstrainedBox(
+      alignment: Alignment.centerLeft,
+      constrainedAxis: Axis.vertical,
+      child: AsanaCommencementChip(status: status, preserveFullLabel: true),
+    );
+  }
+}
+
 /// Circular [+] control (Attachments section, assignee field, etc.).
 class AsanaDetailCircleAddButton extends StatelessWidget {
   const AsanaDetailCircleAddButton({
@@ -1078,6 +1093,208 @@ class AsanaComplexityInfoButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class AsanaPriorityInfoButton extends StatelessWidget {
+  const AsanaPriorityInfoButton({super.key, required this.palette});
+
+  final AsanaLandingPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What is priority?',
+      child: IconButton(
+        onPressed: () => _showAsanaFieldInfoDialog(
+          context: context,
+          palette: palette,
+          title: 'How to choose Priority',
+          intro:
+              'Priority controls the assumed working-day target used by the app.',
+          sections: const [
+            ('Standard', 'Default priority. Assume 3 working days.'),
+            ('URGENT', 'Urgent priority. Assume 1 working day.'),
+          ],
+        ),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
+}
+
+class AsanaStatusInfoButton extends StatelessWidget {
+  const AsanaStatusInfoButton({
+    super.key,
+    required this.palette,
+    required this.entityLabel,
+  });
+
+  final AsanaLandingPalette palette;
+  final String entityLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What is status?',
+      child: IconButton(
+        onPressed: () => _showAsanaFieldInfoDialog(
+          context: context,
+          palette: palette,
+          title: 'How to read Status',
+          intro: 'Status is the workflow-controlled state of the $entityLabel.',
+          sections: [
+            (
+              'Incomplete',
+              'Work has not been completed yet. This is not manually changed to Completed from this field.',
+            ),
+            ('Completed', 'Work is done and accepted through the workflow.'),
+            (
+              'Deleted',
+              'The $entityLabel has been removed from normal active views.',
+            ),
+            (
+              'Paused',
+              'Work is temporarily stopped because this $entityLabel or its parent project is paused.',
+            ),
+          ],
+        ),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
+}
+
+class AsanaCommencementInfoButton extends StatelessWidget {
+  const AsanaCommencementInfoButton({
+    super.key,
+    required this.palette,
+    required this.entityLabel,
+  });
+
+  final AsanaLandingPalette palette;
+  final String entityLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What is commence?',
+      child: IconButton(
+        onPressed: () => _showAsanaFieldInfoDialog(
+          context: context,
+          palette: palette,
+          title: 'How to choose Commence',
+          intro:
+              'Commence records whether the $entityLabel is already in progress or should be started later.',
+          sections: [
+            (
+              'In progress',
+              'Default value. The $entityLabel has started or is ready to work on. Start date and due date follow the normal priority policy.',
+            ),
+            (
+              'To be commenced',
+              'The $entityLabel has not started yet. Start date and due date can be left blank.',
+            ),
+          ],
+        ),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
+}
+
+Future<void> _showAsanaFieldInfoDialog({
+  required BuildContext context,
+  required AsanaLandingPalette palette,
+  required String title,
+  required String intro,
+  required List<(String title, String body)> sections,
+}) async {
+  final theme = Theme.of(context);
+  final bodyStyle = asanaTextStyle(
+    theme.textTheme.bodyMedium,
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    color: kAsanaTextSecondary,
+    height: 1.4,
+  )!;
+  final titleStyle = asanaTextStyle(
+    theme.textTheme.titleMedium,
+    fontSize: 18,
+    fontWeight: FontWeight.w600,
+    color: kAsanaTextPrimary,
+  )!;
+  final boldStyle = bodyStyle.copyWith(
+    color: kAsanaTextPrimary,
+    fontWeight: FontWeight.w700,
+  );
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog(
+      backgroundColor: palette.panelBackground,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
+      ),
+      elevation: 12,
+      child: Container(
+        width: 440,
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SelectableText(title, style: titleStyle),
+            const SizedBox(height: 12),
+            SelectableText.rich(
+              TextSpan(
+                style: bodyStyle,
+                children: [
+                  TextSpan(text: '$intro\n\n'),
+                  for (var i = 0; i < sections.length; i++) ...[
+                    TextSpan(text: '${sections[i].$1}\n', style: boldStyle),
+                    TextSpan(
+                      text: i == sections.length - 1
+                          ? sections[i].$2
+                          : '${sections[i].$2}\n\n',
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: palette.accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                child: const Text('OK'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 /// Submission pill for slide detail rows (matches table chip size).
