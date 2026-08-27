@@ -239,7 +239,7 @@ class AsanaDetailPlainValue extends StatelessWidget {
   }
 }
 
-/// Text field used in slides; editable fields keep a visible outline.
+/// Text field used in slides; editable fields show an outline unless opted out.
 class AsanaHoverTextField extends StatefulWidget {
   const AsanaHoverTextField({
     super.key,
@@ -250,7 +250,7 @@ class AsanaHoverTextField extends StatefulWidget {
     this.style,
     this.readOnly = false,
     this.hintText,
-    this.showOutline = false,
+    this.showOutline = true,
   });
 
   final TextEditingController controller;
@@ -293,8 +293,7 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
       );
     }
 
-    final showBorder =
-        widget.showOutline || (widget.canEdit && !widget.readOnly) || _hovering;
+    final showBorder = widget.showOutline || (_hovering && !widget.readOnly);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
