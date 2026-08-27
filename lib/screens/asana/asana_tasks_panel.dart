@@ -635,6 +635,9 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                             state,
                                             row.task,
                                           ),
+                                    commencementStatus: isSub
+                                        ? sub.commencementStatus
+                                        : row.task.commencementStatus,
                                     submission: isSub
                                         ? sub.submission
                                         : row.task.submission,
@@ -1042,8 +1045,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       options: const [
         AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
         AsanaFilterCheckboxOption(
-          key: commencementInProgress,
-          label: commencementInProgress,
+          key: commencementCommenced,
+          label: commencementCommenced,
         ),
         AsanaFilterCheckboxOption(
           key: commencementToBeCommenced,
@@ -1195,12 +1198,13 @@ class _TaskTableLayout {
   /// Fixed height for name gutter + single-line row alignment.
   static const double singleLineExtent = 24;
   static const double hPad = 12;
-  static const double submissionColWidth = 116;
+  static const double commencementColWidth = 124;
+  static const double submissionColWidth = 104;
   static const double hierarchyIndentUnit =
       (typeCol / 2 + typeColGap + nameGutter / 2) / 2;
 
   static const double _flexWeightSum =
-      0.29 + 0.065 + 0.11 + 0.075 + 0.075 + 0.0665;
+      0.29 + 0.065 + 0.11 + 0.05625 + 0.06 + 0.05985;
 
   late final double _inner =
       (tableWidth -
@@ -1208,17 +1212,19 @@ class _TaskTableLayout {
               typeColGap -
               kAsanaTextColumnGap * textColumnGapCount -
               hPad * 2 -
-              kAsanaTableStatusColWidth -
+              kAsanaTableStatusColWidth * 0.9 -
+              commencementColWidth -
               submissionColWidth)
           .clamp(400, double.infinity);
 
   double get taskNameCol => _inner * (0.29 / _flexWeightSum);
   double get dueCol => _inner * (0.065 / _flexWeightSum);
   double get projectCol => _inner * (0.11 / _flexWeightSum);
-  double get creatorCol => _inner * (0.075 / _flexWeightSum);
-  double get picCol => _inner * (0.075 / _flexWeightSum);
-  double get priorityCol => _inner * (0.0665 / _flexWeightSum);
-  double get statusCol => kAsanaTableStatusColWidth;
+  double get creatorCol => _inner * (0.05625 / _flexWeightSum);
+  double get picCol => _inner * (0.06 / _flexWeightSum);
+  double get priorityCol => _inner * (0.05985 / _flexWeightSum);
+  double get statusCol => kAsanaTableStatusColWidth * 0.9;
+  double get commencementCol => commencementColWidth;
   double get submissionCol => submissionColWidth;
 }
 
@@ -1303,6 +1309,12 @@ class _TableHeaderRow extends StatelessWidget {
             rowHeight: _TaskTableLayout.singleLineExtent,
           ),
           asanaTableHeaderLabel(
+            width: cols.commencementCol,
+            label: 'Commence',
+            style: style,
+            rowHeight: _TaskTableLayout.singleLineExtent,
+          ),
+          asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
@@ -1364,6 +1376,7 @@ class _ExpandableTaskTableRow extends StatelessWidget {
             picKey: task.pic,
             priority: task.priority,
             status: AsanaTaskFilter.taskDisplayStatus(appState, task),
+            commencementStatus: task.commencementStatus,
             submission: task.submission,
             onArchiveTask: onArchiveTask,
             expandControl: hasSubs
@@ -1504,6 +1517,7 @@ class _SubtaskDataRow extends StatelessWidget {
             parent,
             subtask,
           ),
+          commencementStatus: subtask.commencementStatus,
           submission: subtask.submission,
           indentSubtaskBadge: true,
         ),
@@ -1596,6 +1610,12 @@ class _SubtaskSectionHeader extends StatelessWidget {
             rowHeight: _TaskTableLayout.singleLineExtent,
           ),
           asanaTableHeaderLabel(
+            width: cols.commencementCol,
+            label: 'Commence',
+            style: style,
+            rowHeight: _TaskTableLayout.singleLineExtent,
+          ),
+          asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
@@ -1650,6 +1670,7 @@ class _ItemTableRow extends StatelessWidget {
     required this.picKey,
     required this.priority,
     required this.status,
+    required this.commencementStatus,
     required this.submission,
     this.onArchiveTask,
     this.expandControl,
@@ -1669,6 +1690,7 @@ class _ItemTableRow extends StatelessWidget {
   final String? picKey;
   final int priority;
   final String status;
+  final String commencementStatus;
   final String? submission;
   final VoidCallback? onArchiveTask;
 
@@ -1819,6 +1841,12 @@ class _ItemTableRow extends StatelessWidget {
                   ),
                 ),
                 SizedBox(
+                  width: cols.commencementCol,
+                  child: AsanaTableCellChip(
+                    child: AsanaCommencementChip(status: commencementStatus),
+                  ),
+                ),
+                SizedBox(
                   width: cols.submissionCol,
                   child: AsanaTableCellChip(
                     child: AsanaSubmissionChip(submission: submission),
@@ -1875,6 +1903,9 @@ class _FlatMobileRow extends StatelessWidget {
             subtask!,
           )
         : AsanaTaskFilter.taskDisplayStatus(context.read<AppState>(), task);
+    final commencementStatus = isSubtask
+        ? subtask!.commencementStatus
+        : task.commencementStatus;
     final submission = isSubtask ? subtask!.submission : task.submission;
     final projectName = task.projectName?.trim() ?? '';
     final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
@@ -1943,6 +1974,7 @@ class _FlatMobileRow extends StatelessWidget {
                       runSpacing: 6,
                       children: [
                         AsanaStatusChip(status: status),
+                        AsanaCommencementChip(status: commencementStatus),
                         AsanaSubmissionChip(submission: submission),
                       ],
                     ),

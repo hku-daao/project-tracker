@@ -32,7 +32,7 @@ class Task {
   /// Raw `task.status` from DB for singular table (e.g. Incomplete, Completed).
   final String? dbStatus;
 
-  /// User-selected commencement state: `In progress` or `To be commenced`.
+  /// User-selected commencement state: `Commenced` or `To be commenced`.
   final String commencementStatus;
 
   /// Last updater display name (singular `task.update_by` → `staff.name`).
@@ -106,7 +106,7 @@ class Task {
     this.progressPercent = 0,
     this.isSingularTableRow = false,
     this.dbStatus,
-    this.commencementStatus = 'In progress',
+    this.commencementStatus = 'Commenced',
     this.updateByStaffName,
     this.createByStaffName,
     this.createByAssigneeKey,

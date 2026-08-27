@@ -155,7 +155,7 @@ class AsanaPriorityChip extends StatelessWidget {
     if (priority == priorityUrgent) {
       return ('URGENT', const Color(0xFFFFEBEE), const Color(0xFFC62828));
     }
-    return ('Standard', const Color(0xFFECEFF1), const Color(0xFF455A64));
+    return ('Standard', const Color(0xFFE0F2F1), const Color(0xFF00796B));
   }
 
   @override
@@ -207,7 +207,7 @@ class AsanaCommencementChip extends StatelessWidget {
       );
     }
     return (
-      commencementInProgress,
+      commencementCommenced,
       const Color(0xFFE3F2FD),
       const Color(0xFF1565C0),
     );

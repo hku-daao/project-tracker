@@ -1,8 +1,14 @@
 alter table public.task
-  add column if not exists commencement_status text not null default 'In progress';
+  add column if not exists commencement_status text not null default 'Commenced';
+
+alter table public.task
+  alter column commencement_status set default 'Commenced';
 
 alter table public.subtask
-  add column if not exists commencement_status text not null default 'In progress';
+  add column if not exists commencement_status text not null default 'Commenced';
+
+alter table public.subtask
+  alter column commencement_status set default 'Commenced';
 
 update public.task
 set
@@ -33,15 +39,23 @@ alter table public.subtask
 alter table public.task
   drop constraint if exists task_commencement_status_check;
 
+update public.task
+set commencement_status = 'Commenced'
+where lower(trim(commencement_status)) in ('in progress', 'commenced');
+
 alter table public.task
   add constraint task_commencement_status_check
-  check (commencement_status = any (array['In progress', 'To be commenced']));
+  check (commencement_status = any (array['Commenced', 'To be commenced']));
 
 alter table public.subtask
   drop constraint if exists subtask_commencement_status_check;
 
+update public.subtask
+set commencement_status = 'Commenced'
+where lower(trim(commencement_status)) in ('in progress', 'commenced');
+
 alter table public.subtask
   add constraint subtask_commencement_status_check
-  check (commencement_status = any (array['In progress', 'To be commenced']));
+  check (commencement_status = any (array['Commenced', 'To be commenced']));
 
 notify pgrst, 'reload schema';

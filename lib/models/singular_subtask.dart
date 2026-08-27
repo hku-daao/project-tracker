@@ -14,7 +14,7 @@ class SingularSubtask {
     this.startDate,
     this.dueDate,
     required this.status,
-    this.commencementStatus = 'In progress',
+    this.commencementStatus = 'Commenced',
     this.submission,
     this.submitDate,
     this.completionDate,

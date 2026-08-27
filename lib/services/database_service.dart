@@ -2734,7 +2734,7 @@ class DatabaseService {
     DateTime? dueDate,
     String? description,
     String status = 'Incomplete',
-    String commencementStatus = 'In progress',
+    String commencementStatus = 'Commenced',
     String? creatorStaffLookupKey,
 
     /// `staff.app_id` or uuid; stored as `task.pic` (staff id).
@@ -3056,7 +3056,7 @@ class DatabaseService {
   static String _normalizedCommencementStatus(dynamic raw) {
     final value = raw?.toString().trim().toLowerCase() ?? '';
     if (value == 'to be commenced') return 'To be commenced';
-    return 'In progress';
+    return 'Commenced';
   }
 
   static SingularSubtask? _singularSubtaskFromRow(
@@ -3525,7 +3525,7 @@ class DatabaseService {
     String? initialComment,
     String? changeDueReason,
     String? status,
-    String commencementStatus = 'In progress',
+    String commencementStatus = 'Commenced',
     String? pauseStatus,
   }) async {
     if (!_enabled) return (error: 'Database not configured', subtaskId: null);

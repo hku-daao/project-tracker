@@ -1,8 +1,8 @@
-const String commencementInProgress = 'In progress';
+const String commencementCommenced = 'Commenced';
 const String commencementToBeCommenced = 'To be commenced';
 
 const List<String> commencementStatusOptions = [
-  commencementInProgress,
+  commencementCommenced,
   commencementToBeCommenced,
 ];
 
@@ -11,5 +11,5 @@ String normalizeCommencementStatus(String? value) {
   if (raw == commencementToBeCommenced.toLowerCase()) {
     return commencementToBeCommenced;
   }
-  return commencementInProgress;
+  return commencementCommenced;
 }

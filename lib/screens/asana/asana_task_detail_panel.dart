@@ -143,7 +143,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   int _localPriority = priorityStandard;
   String? _localComplexity;
-  String _localCommencementStatus = commencementInProgress;
+  String _localCommencementStatus = commencementCommenced;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _selectedProjectId;
@@ -375,7 +375,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _clearInlineImageDrafts();
     _localPriority = priorityStandard;
     _localComplexity = null;
-    _localCommencementStatus = commencementInProgress;
+    _localCommencementStatus = commencementCommenced;
     final initialProjectId = widget.initialProjectId?.trim();
     _selectedProjectId = initialProjectId == null || initialProjectId.isEmpty
         ? null

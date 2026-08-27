@@ -224,7 +224,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   String? _picAssigneeId;
   int _localPriority = priorityStandard;
   String? _localComplexity;
-  String _localCommencementStatus = commencementInProgress;
+  String _localCommencementStatus = commencementCommenced;
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _draftStatus;
@@ -314,7 +314,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _picAssigneeId = null;
     _localPriority = priorityStandard;
     _localComplexity = null;
-    _localCommencementStatus = commencementInProgress;
+    _localCommencementStatus = commencementCommenced;
     _draftStatus = 'Incomplete';
     final today = HkTime.todayDateOnlyHk();
     _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(

@@ -1193,7 +1193,7 @@ class AsanaCommencementInfoButton extends StatelessWidget {
               'Commence records whether the $entityLabel is already in progress or should be started later.',
           sections: [
             (
-              'In progress',
+              'Commenced',
               'Default value. The $entityLabel has started or is ready to work on. Start date and due date follow the normal priority policy.',
             ),
             (
