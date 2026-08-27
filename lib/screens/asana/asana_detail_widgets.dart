@@ -239,7 +239,7 @@ class AsanaDetailPlainValue extends StatelessWidget {
   }
 }
 
-/// Text field border only when [canEdit] and pointer is hovering.
+/// Text field used in slides; editable fields keep a visible outline.
 class AsanaHoverTextField extends StatefulWidget {
   const AsanaHoverTextField({
     super.key,
@@ -293,7 +293,8 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
       );
     }
 
-    final showBorder = widget.showOutline || (_hovering && !widget.readOnly);
+    final showBorder =
+        widget.showOutline || (widget.canEdit && !widget.readOnly) || _hovering;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),

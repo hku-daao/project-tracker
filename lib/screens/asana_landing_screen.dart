@@ -28,14 +28,15 @@ class AsanaSlideChrome {
 
   final AsanaLandingPalette palette;
 
-  /// Top strip darker than the bottom action area (Asana: banner vs selectedNav).
+  /// Top strip darker than the bottom action area.
   Color get header => palette.darkChrome ? palette.banner : palette.banner;
   Color get onHeader => palette.onBanner;
   Color get body => palette.content;
-  Color get footer =>
-      palette.darkChrome ? palette.selectedNav : palette.sidebar;
+  Color get footer => palette.darkChrome
+      ? Color.alphaBlend(palette.banner.withValues(alpha: 0.10), Colors.white)
+      : palette.sidebar;
   Color get footerBorder => palette.darkChrome
-      ? palette.onSidebarMuted.withValues(alpha: 0.35)
+      ? palette.banner.withValues(alpha: 0.16)
       : palette.accent.withValues(alpha: 0.25);
 }
 
