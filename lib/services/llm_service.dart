@@ -111,7 +111,7 @@ Schema:
 {
   "related": true or false,
   "message": "optional short note when nothing can be suggested",
-  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/complexity/dates/websiteLinks are set)",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/commencementStatus/complexity/dates/websiteLinks are set)",
   "name": "string or null",
   "description": "string or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
@@ -119,6 +119,7 @@ Schema:
   "assigneeNames": ["names from available staff list"] or [],
   "picName": "one staff name (must be in assigneeNames if assignees set), or null",
   "priority": "Standard" or "URGENT" or null,
+  "commencementStatus": "Commenced" or "To be commenced" or null,
   "complexity": "Low" or "Medium" or "High",
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
@@ -131,7 +132,8 @@ Schema:
 Rules:
 - The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
-- For optional structured fields (project, assignees, PIC, priority, dates, reason, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- For optional structured fields (project, assignees, PIC, priority, commencementStatus, dates, reason, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- commencementStatus: use "To be commenced" when the prompt says or implies the task has not commenced, has not started yet, is pending commencement, or should wait before starting. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
 - To judge complexity, reference the task name and description. If a parent project is selected, also reference the project name and project description from the context.
 - IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
@@ -144,10 +146,11 @@ Rules:
 - PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them (e.g. "add A and B as assignees, C as PIC" → assigneeNames: A, B, C and picName: C).
 - picName must match someone in assigneeNames when both are set.
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
+- Relative dates such as "today", "tomorrow", "next week", "next Monday", or weekdays MUST be calculated from "Today (Hong Kong)" and the relative date reference in the context, not from existing form dates.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
 - reason: only suggest when the current form shows or implies a long duration that needs explanation. It should explain why the task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description (what the link is for). Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
-- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, complexity, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
+- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, commencementStatus, complexity, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
@@ -320,6 +323,7 @@ Schema:
   "assigneeNames": ["names from available sub-task assignees list"] or [],
   "picName": "one staff name (must be in assigneeNames if assignees set), or null",
   "priority": "Standard" or "URGENT" or null,
+  "commencementStatus": "Commenced" or "To be commenced" or null,
   "complexity": "Low" or "Medium" or "High",
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
@@ -333,7 +337,8 @@ Schema:
 Rules:
 - The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
-- For optional structured fields (assigneeNames, picName, priority, dates, reason, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- For optional structured fields (assigneeNames, picName, priority, commencementStatus, dates, reason, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- commencementStatus: use "To be commenced" when the prompt says or implies the sub-task has not commenced, has not started yet, is pending commencement, or should wait before starting. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
 - To judge complexity, reference the sub-task name and description, then combine that with the parent task name and description. If a parent project exists, also reference the project name and project description from the context.
 - IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
@@ -345,7 +350,7 @@ Rules:
 - Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
 - PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them.
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
-- Relative dates such as "today", "tomorrow", "next week", or weekdays MUST be calculated from "Today (Hong Kong)" in the context, not from the current form's existing start/due dates.
+- Relative dates such as "today", "tomorrow", "next week", "next Monday", or weekdays MUST be calculated from "Today (Hong Kong)" and the relative date reference in the context, not from the current form's existing start/due dates.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
 - comment: text for the Comments field. Compare to "comment (draft)" in context; omit if identical.
 - reason: only suggest when the context says reason is editable and the long duration needs explanation. It should explain why the sub-task needs that much time, in one concise sentence.

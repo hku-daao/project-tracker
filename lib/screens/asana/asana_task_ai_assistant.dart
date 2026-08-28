@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../commencement_status.dart';
 import '../../priority.dart';
 import '../../services/llm_service.dart';
 import '../../services/database_service.dart';
@@ -25,6 +26,7 @@ enum AsanaTaskAiFieldKey {
   complexity,
   startDate,
   dueDate,
+  commencementStatus,
   reason,
   comment,
   websiteLink,
@@ -104,6 +106,7 @@ class AsanaTaskAiFormSnapshot {
     required this.picLabel,
     required this.priority,
     required this.complexity,
+    required this.commencementStatus,
     required this.startDate,
     required this.dueDate,
     required this.reason,
@@ -126,6 +129,7 @@ class AsanaTaskAiFormSnapshot {
   final String picLabel;
   final int priority;
   final String complexity;
+  final String commencementStatus;
   final DateTime? startDate;
   final DateTime? dueDate;
   final String reason;
@@ -141,6 +145,7 @@ class AsanaTaskAiFormSnapshot {
   String buildLlmContext() {
     final buf = StringBuffer()
       ..writeln('Today (Hong Kong): ${_ymd(HkTime.todayDateOnlyHk())}')
+      ..writeln(_relativeDateInstruction())
       ..writeln(
         'Current form values (user may change; suggest only what the prompt implies):',
       )
@@ -160,6 +165,9 @@ class AsanaTaskAiFormSnapshot {
       )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
+      ..writeln(
+        '- commence: ${normalizeCommencementStatus(commencementStatus)}',
+      )
       ..writeln('- complexity: ${complexity.isEmpty ? "(empty)" : complexity}')
       ..writeln(
         '- start date: ${startDate == null ? "(empty)" : _ymd(startDate!)}',
@@ -189,12 +197,39 @@ class AsanaTaskAiFormSnapshot {
       buf.writeln('Available staff: ${staff.map((s) => s.name).join('; ')}');
     }
     buf.writeln('Priority options: Standard, URGENT');
+    buf.writeln('Commence options: Commenced, To be commenced');
     buf.writeln('Complexity options: Low, Medium, High');
     return buf.toString();
   }
 
   static String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  static String _relativeDateInstruction() {
+    final today = HkTime.todayDateOnlyHk();
+    final nextMonday = _nextWeekday(today, DateTime.monday);
+    return 'Relative date reference: today is ${_weekdayName(today.weekday)}. '
+        'Calculate "next Monday" from Today (Hong Kong); for today ${_ymd(today)}, next Monday is ${_ymd(nextMonday)}.';
+  }
+
+  static DateTime _nextWeekday(DateTime from, int weekday) {
+    var delta = (weekday - from.weekday) % DateTime.daysPerWeek;
+    if (delta == 0) delta = DateTime.daysPerWeek;
+    return DateTime(from.year, from.month, from.day).add(Duration(days: delta));
+  }
+
+  static String _weekdayName(int weekday) {
+    return const {
+          DateTime.monday: 'Monday',
+          DateTime.tuesday: 'Tuesday',
+          DateTime.wednesday: 'Wednesday',
+          DateTime.thursday: 'Thursday',
+          DateTime.friday: 'Friday',
+          DateTime.saturday: 'Saturday',
+          DateTime.sunday: 'Sunday',
+        }[weekday] ??
+        '';
+  }
 }
 
 /// Task-field assistant (create / creator edit) vs comment-only (assignees, etc.).
@@ -214,6 +249,7 @@ class AsanaSubtaskAiFormSnapshot {
     required this.picLabel,
     required this.priority,
     required this.complexity,
+    required this.commencementStatus,
     required this.startDate,
     required this.dueDate,
     required this.canEditName,
@@ -234,6 +270,7 @@ class AsanaSubtaskAiFormSnapshot {
   final String picLabel;
   final int priority;
   final String complexity;
+  final String commencementStatus;
   final DateTime? startDate;
   final DateTime? dueDate;
   final bool canEditName;
@@ -251,6 +288,7 @@ class AsanaSubtaskAiFormSnapshot {
       ..writeln(
         'Today (Hong Kong): ${AsanaTaskAiFormSnapshot._ymd(HkTime.todayDateOnlyHk())}',
       )
+      ..writeln(AsanaTaskAiFormSnapshot._relativeDateInstruction())
       ..writeln('Parent task details (read-only context):')
       ..writeln(
         parentTaskContext.trim().isEmpty
@@ -273,6 +311,9 @@ class AsanaSubtaskAiFormSnapshot {
       )
       ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
       ..writeln('- priority: ${priorityToDisplayName(priority)}')
+      ..writeln(
+        '- commence: ${normalizeCommencementStatus(commencementStatus)}',
+      )
       ..writeln('- complexity: ${complexity.isEmpty ? "(empty)" : complexity}')
       ..writeln(
         '- start date: ${startDate == null ? "(empty)" : AsanaTaskAiFormSnapshot._ymd(startDate!)}',
@@ -299,6 +340,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canSuggestAssignees) 'assignees',
         if (canSuggestAssignees) 'PIC',
         'priority',
+        'commencementStatus',
         'complexity',
         'startDate',
         'dueDate',
@@ -313,6 +355,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canSuggestAssignees) 'assignees',
         if (canSuggestAssignees) 'PIC',
         'priority',
+        'commencementStatus',
         'complexity',
         'startDate',
         'dueDate',
@@ -333,6 +376,7 @@ class AsanaSubtaskAiFormSnapshot {
       );
     }
     buf.writeln('Priority options: Standard, URGENT');
+    buf.writeln('Commence options: Commenced, To be commenced');
     buf.writeln('Complexity options: Low, Medium, High');
     return buf.toString();
   }
@@ -347,6 +391,7 @@ class AsanaSubtaskAiSuggestionBuilder {
     required void Function(Set<String> assigneeIds)? applyAssignees,
     required void Function(String picAssigneeId)? applyPic,
     required void Function(int priority)? applyPriority,
+    required void Function(String commencementStatus)? applyCommencementStatus,
     required void Function(String complexity)? applyComplexity,
     required void Function(DateTime start)? applyStartDate,
     required void Function(DateTime due)? applyDueDate,
@@ -546,6 +591,37 @@ class AsanaSubtaskAiSuggestionBuilder {
             currentValue: priorityToDisplayName(form.priority),
             suggestedText: priorityToDisplayName(p),
             onAdopt: () => applyPriority(p),
+          ),
+        );
+      }
+    }
+
+    final commencementRaw = AsanaTaskAiSuggestionBuilder._str(
+      raw['commencementStatus'],
+    );
+    if (applyCommencementStatus != null &&
+        commencementRaw != null &&
+        commencementRaw.isNotEmpty) {
+      final commencement =
+          AsanaTaskAiSuggestionBuilder._parseCommencementStatus(
+            commencementRaw,
+          );
+      if (commencement == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Commence "$commencementRaw" was not recognized (use Commenced or To be commenced).',
+            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+          ),
+        );
+      } else if (commencement !=
+          normalizeCommencementStatus(form.commencementStatus)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+            fieldLabel: 'Commence',
+            currentValue: normalizeCommencementStatus(form.commencementStatus),
+            suggestedText: commencement,
+            onAdopt: () => applyCommencementStatus(commencement),
           ),
         );
       }
@@ -1022,6 +1098,30 @@ class AsanaTaskAiSuggestionBuilder {
       }
     }
 
+    final commencementRaw = _str(raw['commencementStatus']);
+    if (commencementRaw != null && commencementRaw.isNotEmpty) {
+      final commencement = _parseCommencementStatus(commencementRaw);
+      if (commencement == null) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Commence "$commencementRaw" was not recognized (use Commenced or To be commenced).',
+            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+          ),
+        );
+      } else if (commencement !=
+          normalizeCommencementStatus(form.commencementStatus)) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.adopt(
+            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+            fieldLabel: 'Commence',
+            currentValue: normalizeCommencementStatus(form.commencementStatus),
+            suggestedText: commencement,
+            onAdopt: () => apply.applyCommencementStatus(commencement),
+          ),
+        );
+      }
+    }
+
     final complexityRaw = _str(raw['complexity']);
     if (complexityRaw != null && complexityRaw.isNotEmpty) {
       final complexity = _parseComplexity(complexityRaw);
@@ -1227,6 +1327,20 @@ class AsanaTaskAiSuggestionBuilder {
     return null;
   }
 
+  static String? _parseCommencementStatus(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'to be commenced' ||
+        v == 'not commenced' ||
+        v == 'not yet commenced' ||
+        v == 'not started yet') {
+      return commencementToBeCommenced;
+    }
+    if (v == 'commenced' || v == 'in progress' || v == 'started') {
+      return commencementCommenced;
+    }
+    return null;
+  }
+
   static DateTime? _parseYmd(String raw) {
     final t = raw.trim();
     final m = RegExp(r'(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(t);
@@ -1384,6 +1498,7 @@ class AsanaTaskAiApply {
     required this.applyAssignees,
     required this.applyPic,
     required this.applyPriority,
+    required this.applyCommencementStatus,
     required this.applyComplexity,
     required this.applyStartDate,
     required this.applyDueDate,
@@ -1398,6 +1513,7 @@ class AsanaTaskAiApply {
   final void Function(Set<String> assigneeIds) applyAssignees;
   final void Function(String picAssigneeId) applyPic;
   final void Function(int priority) applyPriority;
+  final void Function(String commencementStatus) applyCommencementStatus;
   final void Function(String complexity) applyComplexity;
   final void Function(DateTime start) applyStartDate;
   final void Function(DateTime due) applyDueDate;
@@ -1424,6 +1540,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.onApplySubtaskAssignees,
     this.onApplySubtaskPic,
     this.onApplySubtaskPriority,
+    this.onApplySubtaskCommencementStatus,
     this.onApplySubtaskComplexity,
     this.onApplySubtaskStartDate,
     this.onApplySubtaskDueDate,
@@ -1454,6 +1571,8 @@ class AsanaTaskAiController extends ChangeNotifier {
   final void Function(Set<String> assigneeIds)? onApplySubtaskAssignees;
   final void Function(String picAssigneeId)? onApplySubtaskPic;
   final void Function(int priority)? onApplySubtaskPriority;
+  final void Function(String commencementStatus)?
+  onApplySubtaskCommencementStatus;
   final void Function(String complexity)? onApplySubtaskComplexity;
   final void Function(DateTime start)? onApplySubtaskStartDate;
   final void Function(DateTime due)? onApplySubtaskDueDate;
@@ -1741,6 +1860,7 @@ class AsanaTaskAiController extends ChangeNotifier {
           applyAssignees: onApplySubtaskAssignees,
           applyPic: onApplySubtaskPic,
           applyPriority: onApplySubtaskPriority,
+          applyCommencementStatus: onApplySubtaskCommencementStatus,
           applyComplexity: onApplySubtaskComplexity,
           applyStartDate: onApplySubtaskStartDate,
           applyDueDate: onApplySubtaskDueDate,

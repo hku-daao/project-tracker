@@ -1617,6 +1617,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             : _labelForAssigneeId(_picAssigneeId!, state),
         priority: _localPriority,
         complexity: _localComplexity?.trim() ?? '',
+        commencementStatus: _localCommencementStatus,
         startDate: _startDate,
         dueDate: _dueDate,
         canEditName: _canEditSubtaskDetails(state, _subtask),
@@ -1643,6 +1644,15 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       }),
       onApplySubtaskPic: (id) => setState(() => _picAssigneeId = id),
       onApplySubtaskPriority: (p) => setState(() => _localPriority = p),
+      onApplySubtaskCommencementStatus: (v) => setState(() {
+        _localCommencementStatus = normalizeCommencementStatus(v);
+        if (_toBeCommenced) {
+          _startDate = null;
+          _dueDate = null;
+        } else {
+          _restoreDefaultDatesIfMissing();
+        }
+      }),
       onApplySubtaskComplexity: (v) => setState(() => _localComplexity = v),
       onApplySubtaskStartDate: (d) =>
           setState(() => _startDate = DateTime(d.year, d.month, d.day)),
@@ -3742,6 +3752,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                     status: normalizeCommencementStatus(s?.commencementStatus),
                   ),
           ),
+          if (_effectiveCreateMode || canEditDetails)
+            _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),

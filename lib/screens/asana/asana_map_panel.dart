@@ -1244,7 +1244,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
   });
 
   static const double _boxWidth = 174;
-  static const double _boxHeight = 72;
+  static const double _boxHeight = 88;
   static const double _horizontalGap = 28;
   static const double _verticalGap = 70;
   static const double _padding = 22;
@@ -1642,7 +1642,7 @@ class _DiagramBox extends StatelessWidget {
                     ? 'Untitled'
                     : item.node.name.trim(),
                 textAlign: TextAlign.center,
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: asanaTextStyle(
                   theme.textTheme.bodySmall,

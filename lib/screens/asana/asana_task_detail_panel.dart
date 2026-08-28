@@ -3433,6 +3433,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       picLabel: picLabel,
       priority: _localPriority,
       complexity: _localComplexity?.trim() ?? '',
+      commencementStatus: _localCommencementStatus,
       startDate: _startDate,
       dueDate: _dueDate,
       reason: _reasonController.text.trim(),
@@ -3469,6 +3470,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }),
       applyPic: (id) => setState(() => _picAssigneeId = id),
       applyPriority: (p) => setState(() => _localPriority = p),
+      applyCommencementStatus: (v) => setState(() {
+        _localCommencementStatus = normalizeCommencementStatus(v);
+        if (_toBeCommenced) {
+          _startDate = null;
+          _dueDate = null;
+        } else {
+          _restoreDefaultDatesIfMissing();
+        }
+      }),
       applyComplexity: (v) => setState(() => _localComplexity = v),
       applyStartDate: (d) => setState(() => _startDate = _dateOnly(d)),
       applyDueDate: (d) => setState(() => _dueDate = _dateOnly(d)),
@@ -3717,6 +3727,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               ),
             ),
           ),
+          _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
@@ -4099,6 +4110,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     ),
                   ),
           ),
+          if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
