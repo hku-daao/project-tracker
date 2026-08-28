@@ -1181,6 +1181,58 @@ class _MapMetaText extends StatelessWidget {
   }
 }
 
+class _InitialHorizontalScrollView extends StatefulWidget {
+  const _InitialHorizontalScrollView({
+    required this.initialOffset,
+    required this.child,
+  });
+
+  final double initialOffset;
+  final Widget child;
+
+  @override
+  State<_InitialHorizontalScrollView> createState() =>
+      _InitialHorizontalScrollViewState();
+}
+
+class _InitialHorizontalScrollViewState
+    extends State<_InitialHorizontalScrollView> {
+  late final ScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ScrollController(initialScrollOffset: widget.initialOffset);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InitialHorizontalScrollView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.initialOffset - widget.initialOffset).abs() < 1) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      _controller.jumpTo(
+        widget.initialOffset.clamp(0.0, _controller.position.maxScrollExtent),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _controller,
+      scrollDirection: Axis.horizontal,
+      child: widget.child,
+    );
+  }
+}
+
 class _ProjectTreeDiagram extends StatelessWidget {
   const _ProjectTreeDiagram({
     required this.palette,
@@ -1214,8 +1266,18 @@ class _ProjectTreeDiagram extends StatelessWidget {
         builder: (context, constraints) {
           _measure(root);
           final contentWidth = root.subtreeWidth + (_padding * 2);
-          final width = math.max(contentWidth, constraints.maxWidth);
-          _place(root, width / 2, _padding, 0);
+          final viewportWidth = constraints.maxWidth;
+          final fitsInViewport = contentWidth <= viewportWidth;
+          final width = fitsInViewport ? viewportWidth : contentWidth;
+          final rootCenter = fitsInViewport
+              ? width / 2
+              : _padding + root.subtreeWidth / 2;
+          _place(root, rootCenter, _padding, 0);
+          final initialScrollOffset = fitsInViewport
+              ? 0.0
+              : (rootCenter - viewportWidth / 2)
+                    .clamp(0.0, math.max(0.0, width - viewportWidth))
+                    .toDouble();
           final maxDepth = _maxDepth(root);
           final height =
               _padding * 2 +
@@ -1231,8 +1293,8 @@ class _ProjectTreeDiagram extends StatelessWidget {
                 PointerDeviceKind.trackpad,
               },
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+            child: _InitialHorizontalScrollView(
+              initialOffset: initialScrollOffset,
               child: SizedBox(
                 width: width,
                 height: height,
@@ -1431,8 +1493,18 @@ class _GenericTreeDiagram extends StatelessWidget {
           _measure(root);
           final contentWidth =
               root.subtreeWidth + (_ProjectTreeDiagram._padding * 2);
-          final width = math.max(contentWidth, constraints.maxWidth);
-          _place(root, width / 2, _ProjectTreeDiagram._padding);
+          final viewportWidth = constraints.maxWidth;
+          final fitsInViewport = contentWidth <= viewportWidth;
+          final width = fitsInViewport ? viewportWidth : contentWidth;
+          final rootCenter = fitsInViewport
+              ? width / 2
+              : _ProjectTreeDiagram._padding + root.subtreeWidth / 2;
+          _place(root, rootCenter, _ProjectTreeDiagram._padding);
+          final initialScrollOffset = fitsInViewport
+              ? 0.0
+              : (rootCenter - viewportWidth / 2)
+                    .clamp(0.0, math.max(0.0, width - viewportWidth))
+                    .toDouble();
           final maxDepth = _maxDepth(root);
           final height =
               _ProjectTreeDiagram._padding * 2 +
@@ -1442,8 +1514,8 @@ class _GenericTreeDiagram extends StatelessWidget {
                       _ProjectTreeDiagram._verticalGap);
           final placed = <_PlacedDiagramNode>[];
           _collect(root, placed);
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          return _InitialHorizontalScrollView(
+            initialOffset: initialScrollOffset,
             child: SizedBox(
               width: width,
               height: height,
