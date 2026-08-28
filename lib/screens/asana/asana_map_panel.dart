@@ -1269,15 +1269,11 @@ class _ProjectTreeDiagram extends StatelessWidget {
           final viewportWidth = constraints.maxWidth;
           final fitsInViewport = contentWidth <= viewportWidth;
           final width = fitsInViewport ? viewportWidth : contentWidth;
-          final rootCenter = fitsInViewport
-              ? width / 2
-              : _padding + root.subtreeWidth / 2;
-          _place(root, rootCenter, _padding, 0);
-          final initialScrollOffset = fitsInViewport
-              ? 0.0
-              : (rootCenter - viewportWidth / 2)
-                    .clamp(0.0, math.max(0.0, width - viewportWidth))
-                    .toDouble();
+          if (fitsInViewport) {
+            _place(root, width / 2, _padding, 0);
+          } else {
+            _placeWideRoot(root, viewportWidth / 2, _padding);
+          }
           final maxDepth = _maxDepth(root);
           final height =
               _padding * 2 +
@@ -1294,7 +1290,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
               },
             ),
             child: _InitialHorizontalScrollView(
-              initialOffset: initialScrollOffset,
+              initialOffset: 0,
               child: SizedBox(
                 width: width,
                 height: height,
@@ -1401,6 +1397,17 @@ class _ProjectTreeDiagram extends StatelessWidget {
     for (final child in node.children) {
       final childCenter = nextLeft + child.subtreeWidth / 2;
       _place(child, childCenter, top + _boxHeight + _verticalGap, depth + 1);
+      nextLeft += child.subtreeWidth + _horizontalGap;
+    }
+  }
+
+  void _placeWideRoot(_DiagramNode root, double rootCenterX, double top) {
+    root.x = rootCenterX;
+    root.y = top;
+    var nextLeft = _padding;
+    for (final child in root.children) {
+      final childCenter = nextLeft + child.subtreeWidth / 2;
+      _place(child, childCenter, top + _boxHeight + _verticalGap, 1);
       nextLeft += child.subtreeWidth + _horizontalGap;
     }
   }
