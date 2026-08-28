@@ -12,6 +12,7 @@ import '../../models/task.dart';
 import '../../services/database_service.dart';
 import '../asana_landing_screen.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_project_filter.dart';
 import 'asana_task_filter.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -107,6 +108,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     return tasks;
   }
 
+  List<ProjectRecord> _visibleProjects(AppState state) {
+    final filters = AsanaProjectFilterState();
+    return AsanaProjectFilter.apply(state, filters, searchQuery: '');
+  }
+
   List<SingularSubtask> _sortedSubtasks(List<SingularSubtask> subtasks) {
     final list = subtasks.where((s) => !s.isDeleted).toList();
     list.sort(
@@ -117,7 +123,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   List<_ProjectMapNode> _buildNodes(AppState state) {
-    final projects = state.projects.where((p) {
+    final projects = _visibleProjects(state).where((p) {
       final status = p.status.trim().toLowerCase();
       return status != 'deleted' && status != 'delete';
     }).toList()..sort(_compareProjects);
@@ -136,9 +142,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           _matches(project.name, query) ||
           _matches(_projectPicLabel(project), query) ||
           _matches(project.status, query);
+      final projectPassesFilters = _passesProjectFilters(state, project);
+      if (!projectPassesFilters) continue;
       final projectOwnMatches =
-          _passesProjectFilters(state, project) &&
-          _passesSearch(projectMatches, query);
+          projectPassesFilters && _passesSearch(projectMatches, query);
       final taskNodes = <_TaskMapNode>[];
       for (final task in tasks) {
         final subtasks = _subtasksByTask[task.id] ?? const <SingularSubtask>[];
@@ -594,7 +601,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   Map<String, String> _projectPicDisplayNames(AppState state) {
     final names = <String, String>{};
-    for (final project in state.projects) {
+    for (final project in _visibleProjects(state)) {
       for (var i = 0; i < project.picStaffUuids.length; i++) {
         final id = project.picStaffUuids[i].trim();
         if (id.isEmpty) continue;
@@ -608,13 +615,13 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   Iterable<String?> _projectCreatorKeys(AppState state) sync* {
-    for (final project in state.projects) {
+    for (final project in _visibleProjects(state)) {
       yield project.createByStaffUuid;
     }
   }
 
   Iterable<String?> _projectPicKeys(AppState state) sync* {
-    for (final project in state.projects) {
+    for (final project in _visibleProjects(state)) {
       for (final id in project.picStaffUuids) {
         yield id;
       }
@@ -622,7 +629,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   Iterable<String> _projectStatusValues(AppState state) sync* {
-    for (final project in state.projects) {
+    for (final project in _visibleProjects(state)) {
       final status = project.status.trim().toLowerCase();
       if (status == 'deleted' || status == 'delete') continue;
       yield project.isPaused ? 'Paused' : project.status;
