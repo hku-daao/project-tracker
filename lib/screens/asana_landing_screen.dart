@@ -17,6 +17,7 @@ import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
 import 'asana/asana_discussion_panel.dart';
 import 'asana/asana_home_panel.dart';
+import 'asana/asana_map_panel.dart';
 import 'asana/asana_performance_panel.dart';
 import 'asana/asana_projects_panel.dart';
 import 'asana/asana_tasks_panel.dart';
@@ -266,6 +267,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     'All Tasks & Sub-tasks',
     'Tasks',
     'Projects',
+    'Map',
     'Discussion',
   ];
 
@@ -313,6 +315,18 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onCreateProject: adminViewMode
             ? null
             : () => _openRootDetail(const AsanaDetailSelection.createProject()),
+      );
+    }
+    if (_selectedNav == 'Map') {
+      return AsanaMapPanel(
+        palette: palette,
+        searchQuery: searchQuery,
+        refreshToken: _detailRefreshToken,
+        onOpenProject: (id) =>
+            _openRootDetail(AsanaDetailSelection.project(id)),
+        onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onOpenSubtask: (id) =>
+            _openRootDetail(AsanaDetailSelection.subtask(id)),
       );
     }
     if (_selectedNav == 'Archived') {
@@ -366,7 +380,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool get _searchAppliesToSelectedNav {
     return _selectedNav == 'All Tasks & Sub-tasks' ||
         _selectedNav == 'Tasks' ||
-        _selectedNav == 'Projects';
+        _selectedNav == 'Projects' ||
+        _selectedNav == 'Map';
   }
 
   /// One slide host for the whole open/close cycle (inner task panel keeps its own key).
