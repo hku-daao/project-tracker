@@ -130,12 +130,13 @@ Widget asanaTableHeaderLabel({
   required String label,
   required TextStyle? style,
   double rowHeight = 24,
+  Alignment alignment = Alignment.centerLeft,
 }) {
   return SizedBox(
     width: width,
     height: rowHeight,
     child: Align(
-      alignment: Alignment.centerLeft,
+      alignment: alignment,
       child: Text(
         label,
         style: style,

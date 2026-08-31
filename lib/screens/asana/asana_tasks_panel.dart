@@ -697,13 +697,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                           PointerDeviceKind.trackpad,
                         },
                       ),
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: tableWidth,
-                          height: constraints.maxHeight,
-                          child: table,
-                        ),
+                      child: _HorizontalTaskTableScrollView(
+                        tableWidth: tableWidth,
+                        height: constraints.maxHeight,
+                        child: table,
                       ),
                     );
                   }
@@ -1179,6 +1176,58 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   }
 }
 
+class _HorizontalTaskTableScrollView extends StatefulWidget {
+  const _HorizontalTaskTableScrollView({
+    required this.tableWidth,
+    required this.height,
+    required this.child,
+  });
+
+  final double tableWidth;
+  final double height;
+  final Widget child;
+
+  @override
+  State<_HorizontalTaskTableScrollView> createState() =>
+      _HorizontalTaskTableScrollViewState();
+}
+
+class _HorizontalTaskTableScrollViewState
+    extends State<_HorizontalTaskTableScrollView> {
+  late final ScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scrollbar(
+      controller: _controller,
+      thumbVisibility: true,
+      notificationPredicate: (notification) =>
+          notification.metrics.axis == Axis.horizontal,
+      child: SingleChildScrollView(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: widget.tableWidth,
+          height: widget.height,
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
 /// Column widths for the Asana-style task table (fixed layout, no [Expanded] in scroll).
 class _TaskTableLayout {
   _TaskTableLayout(this.tableWidth);
@@ -1194,25 +1243,30 @@ class _TaskTableLayout {
 
   /// Plain-text columns (name, due, project, creator, PIC) each followed by a gap.
   static const int textColumnGapCount = 5;
+  static const double chipColumnGap = 8;
+  static const int chipColumnGapCount = 3;
 
   /// Fixed height for name gutter + single-line row alignment.
   static const double singleLineExtent = 24;
   static const double hPad = 12;
+  static const double priorityColWidth = 96;
+  static const double statusColWidth = 116;
   static const double commencementColWidth = 124;
   static const double submissionColWidth = 104;
   static const double hierarchyIndentUnit =
       (typeCol / 2 + typeColGap + nameGutter / 2) / 2;
 
-  static const double _flexWeightSum =
-      0.29 + 0.065 + 0.11 + 0.05625 + 0.06 + 0.05985;
+  static const double _flexWeightSum = 0.29 + 0.065 + 0.11 + 0.05625 + 0.06;
 
   late final double _inner =
       (tableWidth -
               typeCol -
               typeColGap -
               kAsanaTextColumnGap * textColumnGapCount -
+              chipColumnGap * chipColumnGapCount -
               hPad * 2 -
-              kAsanaTableStatusColWidth * 0.9 -
+              priorityColWidth -
+              statusColWidth -
               commencementColWidth -
               submissionColWidth)
           .clamp(400, double.infinity);
@@ -1222,8 +1276,8 @@ class _TaskTableLayout {
   double get projectCol => _inner * (0.11 / _flexWeightSum);
   double get creatorCol => _inner * (0.05625 / _flexWeightSum);
   double get picCol => _inner * (0.06 / _flexWeightSum);
-  double get priorityCol => _inner * (0.05985 / _flexWeightSum);
-  double get statusCol => kAsanaTableStatusColWidth * 0.9;
+  double get priorityCol => priorityColWidth;
+  double get statusCol => statusColWidth;
   double get commencementCol => commencementColWidth;
   double get submissionCol => submissionColWidth;
 }
@@ -1301,24 +1355,31 @@ class _TableHeaderRow extends StatelessWidget {
             label: 'Priority',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.statusCol,
             label: 'Status',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.commencementCol,
             label: 'Commence',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
         ],
       ),
@@ -1602,24 +1663,31 @@ class _SubtaskSectionHeader extends StatelessWidget {
             label: 'Priority',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.statusCol,
             label: 'Status',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.commencementCol,
             label: 'Commence',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
+          const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
+            alignment: Alignment.center,
           ),
         ],
       ),
@@ -1779,11 +1847,7 @@ class _ItemTableRow extends StatelessWidget {
                 asanaTextColumnGap(),
                 SizedBox(
                   width: cols.dueCol,
-                  child: Text(
-                    _formatDueDate(dueDate),
-                    style: rowValueStyle,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  child: _DueDateCell(dueDate: dueDate, style: rowValueStyle),
                 ),
                 asanaTextColumnGap(),
                 SizedBox(
@@ -1822,6 +1886,7 @@ class _ItemTableRow extends StatelessWidget {
                     child: AsanaPriorityChip(priority: priority),
                   ),
                 ),
+                const SizedBox(width: _TaskTableLayout.chipColumnGap),
                 SizedBox(
                   width: cols.statusCol,
                   child: AsanaTableCellChip(
@@ -1840,12 +1905,14 @@ class _ItemTableRow extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(width: _TaskTableLayout.chipColumnGap),
                 SizedBox(
                   width: cols.commencementCol,
                   child: AsanaTableCellChip(
                     child: AsanaCommencementChip(status: commencementStatus),
                   ),
                 ),
+                const SizedBox(width: _TaskTableLayout.chipColumnGap),
                 SizedBox(
                   width: cols.submissionCol,
                   child: AsanaTableCellChip(
@@ -2154,8 +2221,79 @@ String _formatDueDate(DateTime? d) {
   if (d == null) return '—';
   final today = HkTime.todayDateOnlyHk();
   final day = DateTime(d.year, d.month, d.day);
-  if (day == today) return 'Today';
+  if (_sameCalendarDay(day, today)) return 'Today';
   return HkTime.formatInstantAsHk(d, 'MMM d');
+}
+
+bool _sameCalendarDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+String? _dueBadgeLabel(DateTime? d) {
+  if (d == null) return null;
+  final today = HkTime.todayDateOnlyHk();
+  final day = DateTime(d.year, d.month, d.day);
+  if (_sameCalendarDay(day, today)) return 'Due today';
+  if (day.isBefore(today)) return 'Overdue';
+  return null;
+}
+
+class _DueDateCell extends StatelessWidget {
+  const _DueDateCell({required this.dueDate, required this.style});
+
+  final DateTime? dueDate;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = _dueBadgeLabel(dueDate);
+    if (badge == null) {
+      return Text(
+        _formatDueDate(dueDate),
+        style: style,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    final overdue = badge == 'Overdue';
+    final bg = overdue ? const Color(0xFFFFEBEE) : const Color(0xFFFFF3E0);
+    final fg = overdue ? const Color(0xFFC62828) : const Color(0xFFE65100);
+    return SizedBox(
+      height: 32,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Align(
+            alignment: Alignment.bottomLeft,
+            child: Text(
+              _formatDueDate(dueDate),
+              style: style,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Positioned(
+            top: -3,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(
+                badge,
+                style: asanaTextStyle(
+                  Theme.of(context).textTheme.labelSmall,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: fg,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 String _formatCreator(String? name) {

@@ -66,17 +66,23 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final effectiveLabelWidth = MediaQuery.sizeOf(context).width < 600
-        ? labelWidth / 2
+        ? (labelWidth < 136 ? labelWidth : 136.0)
         : labelWidth;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPadding),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
             width: effectiveLabelWidth,
             child: labelTrailing == null
-                ? Text(label, style: asanaDetailLabelStyle(context))
+                ? Text(
+                    label,
+                    style: asanaDetailLabelStyle(context),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                  )
                 : Row(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
@@ -85,6 +91,9 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
                         child: Text(
                           label,
                           style: asanaDetailLabelStyle(context),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -282,13 +291,12 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
       final text = widget.controller.text;
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Text(
+        child: SelectableText(
           text.isEmpty ? (widget.hintText ?? '') : text,
           style: text.isEmpty
               ? baseStyle.copyWith(color: kAsanaTextSecondary)
               : baseStyle,
           maxLines: widget.maxLines,
-          overflow: TextOverflow.ellipsis,
         ),
       );
     }
@@ -316,6 +324,7 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
           onTap: widget.readOnly
               ? null
               : () => AsanaBlockingLoadingOverlay.hideAll(),
+          enableInteractiveSelection: true,
           maxLines: widget.maxLines,
           minLines: widget.minLines,
           style: baseStyle,

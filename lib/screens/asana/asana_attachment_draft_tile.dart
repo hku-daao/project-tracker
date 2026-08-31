@@ -584,10 +584,10 @@ class _PlainBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: asanaDetailValueStyle(context)),
+        SelectableText(title, style: asanaDetailValueStyle(context)),
         if (subtitle != null && subtitle!.isNotEmpty) ...[
           const SizedBox(height: 2),
-          Text(subtitle!, style: asanaDetailLabelStyle(context)),
+          SelectableText(subtitle!, style: asanaDetailLabelStyle(context)),
         ],
       ],
     );
@@ -620,17 +620,12 @@ class _LinkBody extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text(
-                title,
-                style: titleStyle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: SelectableText(title, style: titleStyle, maxLines: 2),
             ),
           ),
         ),
         const SizedBox(height: 2),
-        Text.rich(
+        SelectableText.rich(
           TextSpan(
             children: [
               TextSpan(
@@ -642,7 +637,6 @@ class _LinkBody extends StatelessWidget {
             ],
           ),
           maxLines: 2,
-          overflow: TextOverflow.ellipsis,
         ),
         if (onEdit != null)
           Material(
