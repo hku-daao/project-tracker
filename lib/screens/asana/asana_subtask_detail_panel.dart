@@ -131,7 +131,7 @@ class _SubtaskCommentDisplayTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
+                SelectableText(
                   stripInlineImageMarkers(comment.description),
                   style: asanaDetailMultilineValueStyle(context).copyWith(
                     color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,

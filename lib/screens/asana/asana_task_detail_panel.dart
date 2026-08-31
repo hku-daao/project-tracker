@@ -1500,7 +1500,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
+              SelectableText(
                 stripInlineImageMarkers(c.description),
                 style: asanaDetailMultilineValueStyle(context).copyWith(
                   color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
