@@ -504,11 +504,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       p.description,
       _descController.text.trim(),
     );
+    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
     _addChange(
       changes,
       'assignees',
       AsanaProjectFilter.assigneesLine(p, state),
-      _namesFor(state, _assigneeIds),
+      _namesFor(state, effectiveAssigneeIds),
     );
     _addChange(
       changes,
@@ -543,14 +544,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   void _publishPicSnapshot() {
-    final picStaff = _pickerStaff
-        .where((s) => _assigneeIds.contains(s.assigneeId))
-        .toList();
     _picSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _assigneePickerLoading,
       offices: _pickerOffices,
-      teams: _pickerTeamsForStaff(picStaff),
-      staff: picStaff,
+      teams: _pickerTeamsForStaff(_pickerStaff),
+      staff: List<StaffForAssignment>.from(_pickerStaff),
       error: _assigneePickerError,
     );
   }
@@ -607,11 +605,26 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   void _syncPicAfterAssigneesChange() {
-    _picAssigneeIds.removeWhere((id) => !_assigneeIds.contains(id));
-    if (_assigneeIds.length == 1) {
-      _picAssigneeIds.add(_assigneeIds.first);
-    }
     _publishPicSnapshot();
+  }
+
+  Set<String> _visibleAssigneeIdsForPicker() {
+    return _assigneeIds
+        .where((id) => !_picAssigneeIds.contains(id.trim()))
+        .toSet();
+  }
+
+  List<String> _effectiveAssigneeIdsForSave({Set<String>? visibleIds}) {
+    final ids = <String>{};
+    for (final raw in visibleIds ?? _assigneeIds) {
+      final id = raw.trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+    for (final raw in _picAssigneeIds) {
+      final id = raw.trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+    return ids.toList();
   }
 
   void _removeAssignee(String assigneeId) {
@@ -622,7 +635,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   void _removePic(String assigneeId) {
-    setState(() => _picAssigneeIds.remove(assigneeId));
+    setState(() {
+      _picAssigneeIds.remove(assigneeId);
+      _assigneeIds.remove(assigneeId);
+      _syncPicAfterAssigneesChange();
+    });
   }
 
   Future<void> _pickAssignees(BuildContext anchorContext) async {
@@ -646,14 +663,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       anchorLink: _assigneeAnchorLink,
       anchorContext: anchorContext,
       snapshot: _assigneeSnapshot,
-      selectedIds: _assigneeIds,
+      selectedIds: _visibleAssigneeIdsForPicker(),
       whenClosed: _blockAnchoredPickerReopen,
       onSelectionChanged: (s) {
         if (!mounted) return;
         setState(() {
           _assigneeIds
             ..clear()
-            ..addAll(s);
+            ..addAll(_effectiveAssigneeIdsForSave(visibleIds: s));
           _syncPicAfterAssigneesChange();
         });
       },
@@ -662,11 +679,17 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
   Future<void> _pickPics(BuildContext anchorContext) async {
     if (!_canOpenAnchoredPicker || _saving) return;
-    if (_assigneeIds.isEmpty) {
+    if (_assigneePickerLoading || !_picSnapshot.value.hasData) {
+      await _loadAssigneePicker();
+    }
+    if (!mounted || !_picSnapshot.value.hasData) {
+      final err = _assigneePickerError?.trim();
       await showAsanaInfoDialog(
         context: context,
-        title: 'Assignees required',
-        content: 'Select assignees first.',
+        title: 'Could not load teammates',
+        content: err != null && err.isNotEmpty
+            ? err
+            : 'Please try again in a moment.',
         palette: widget.palette,
       );
       return;
@@ -677,13 +700,16 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       snapshot: _picSnapshot,
       selectedIds: _picAssigneeIds,
       whenClosed: _blockAnchoredPickerReopen,
-      directListOnly: true,
       onSelectionChanged: (s) {
         if (!mounted) return;
         setState(() {
+          for (final id in _picAssigneeIds) {
+            _assigneeIds.remove(id);
+          }
           _picAssigneeIds
             ..clear()
-            ..addAll(s.where(_assigneeIds.contains));
+            ..addAll(s);
+          _assigneeIds.addAll(_picAssigneeIds);
         });
       },
     );
@@ -910,7 +936,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   AsanaProjectAiFormSnapshot _aiFormSnapshot(AppState state) {
-    final assigneesLabel = _assigneeIds
+    final assigneesLabel = _visibleAssigneeIdsForPicker()
         .map((id) => _labelForAssigneeId(id, state))
         .join(', ');
     final picLabel = _picAssigneeIds
@@ -930,7 +956,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       assigneesLabel: assigneesLabel,
       picLabel: picLabel,
       staff: staff,
-      selectedAssigneeIds: Set<String>.from(_assigneeIds),
+      selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
       selectedPicAssigneeIds: Set<String>.from(_picAssigneeIds),
       websiteAttachments: _websiteAttachmentsForAi(),
     );
@@ -943,13 +969,17 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       applyAssignees: (ids) => setState(() {
         _assigneeIds
           ..clear()
-          ..addAll(ids);
+          ..addAll(_effectiveAssigneeIdsForSave(visibleIds: ids));
         _syncPicAfterAssigneesChange();
       }),
       applyPic: (ids) => setState(() {
+        for (final id in _picAssigneeIds) {
+          _assigneeIds.remove(id);
+        }
         _picAssigneeIds
           ..clear()
           ..addAll(ids);
+        _assigneeIds.addAll(_picAssigneeIds);
       }),
       applyStatus: (s) => setState(() => _draftStatus = s),
       applyStartDate: (d) => setState(() => _startDate = d),
@@ -1964,7 +1994,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       );
       return;
     }
-    if (_assigneeIds.isEmpty) {
+    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
+    if (effectiveAssigneeIds.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Assignee required',
@@ -1973,7 +2004,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       );
       return;
     }
-    if (_assigneeIds.length > 20) {
+    if (effectiveAssigneeIds.length > 20) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Too many assignees',
@@ -1983,13 +2014,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       return;
     }
     if (_picAssigneeIds.isEmpty) {
-      if (_assigneeIds.length == 1) {
-        _picAssigneeIds.add(_assigneeIds.first);
+      if (effectiveAssigneeIds.length == 1) {
+        _picAssigneeIds.add(effectiveAssigneeIds.first);
       } else {
         await showAsanaInfoDialog(
           context: context,
           title: 'PIC required',
-          content: 'Select at least one PIC from assignees.',
+          content: 'Select at least one PIC.',
           palette: widget.palette,
         );
         return;
@@ -2003,17 +2034,6 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         palette: widget.palette,
       );
       return;
-    }
-    for (final id in _picAssigneeIds) {
-      if (!_assigneeIds.contains(id)) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Invalid PIC',
-          content: 'Each PIC must be one of the project assignees.',
-          palette: widget.palette,
-        );
-        return;
-      }
     }
     if (_startDate != null &&
         _endDate != null &&
@@ -2031,7 +2051,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     _setSaving(true);
     try {
       final slots = await DatabaseService.assigneeSlotsForProject(
-        _assigneeIds.toList(),
+        effectiveAssigneeIds,
       );
       final picUuids = <String>[];
       for (final key in _picAssigneeIds) {
@@ -2216,7 +2236,10 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
               child: canEdit
                   ? AsanaAssigneeFieldValue(
                       anchorLink: _assigneeAnchorLink,
-                      assignees: _rowsForIds(_assigneeIds, state),
+                      assignees: _rowsForIds(
+                        _visibleAssigneeIdsForPicker(),
+                        state,
+                      ),
                       canEdit: !_saving,
                       onOpenPicker: _pickAssignees,
                       onRemove: _removeAssignee,
@@ -2231,10 +2254,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
                 ? AsanaAssigneeFieldValue(
                     anchorLink: _picAnchorLink,
                     assignees: _rowsForIds(_picAssigneeIds, state),
-                    canEdit: !_saving && _assigneeIds.isNotEmpty,
-                    emptyPlaceholder: _assigneeIds.isEmpty
-                        ? 'Select assignees first'
-                        : 'Select PIC(s)',
+                    canEdit: !_saving,
+                    emptyPlaceholder: 'Select PIC',
                     onOpenPicker: _pickPics,
                     onRemove: _removePic,
                   )

@@ -38,6 +38,7 @@ Future<void> showAsanaAssigneePicker({
   required ValueChanged<Set<String>> onSelectionChanged,
   VoidCallback? whenClosed,
   bool directListOnly = false,
+  bool singleSelect = false,
 }) {
   final media = MediaQuery.of(anchorContext);
   final panelWidth = asanaAnchoredFieldWidth(anchorContext);
@@ -59,6 +60,7 @@ Future<void> showAsanaAssigneePicker({
         initialSelected: selectedIds,
         maxPanelHeight: maxPanelHeight,
         directListOnly: directListOnly,
+        singleSelect: singleSelect,
         onSelectionChanged: onSelectionChanged,
         onDone: () {
           close();
@@ -74,6 +76,7 @@ class _AssigneePickerOverlay extends StatefulWidget {
     required this.initialSelected,
     required this.maxPanelHeight,
     required this.directListOnly,
+    required this.singleSelect,
     required this.onSelectionChanged,
     required this.onDone,
   });
@@ -82,6 +85,7 @@ class _AssigneePickerOverlay extends StatefulWidget {
   final Set<String> initialSelected;
   final double maxPanelHeight;
   final bool directListOnly;
+  final bool singleSelect;
   final ValueChanged<Set<String>> onSelectionChanged;
   final VoidCallback onDone;
 
@@ -101,6 +105,7 @@ class _AssigneePickerOverlayState extends State<_AssigneePickerOverlay> {
   void _toggle(String id, bool checked) {
     setState(() {
       if (checked) {
+        if (widget.singleSelect) _selected.clear();
         _selected.add(id);
       } else {
         _selected.remove(id);

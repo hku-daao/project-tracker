@@ -841,7 +841,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   Future<bool> _validatePicSelfLock(AppState state, SingularSubtask? s) async {
     if (!_picSelfLockApplies(state, s)) return true;
-    final selfInAssignees = _assigneeIds.any(
+    final selfInAssignees = _effectiveAssigneeIdsForSave().any(
       (id) => _matchesCurrentStaff(state, id),
     );
     final selfIsPic = _matchesCurrentStaff(state, _picAssigneeId);
@@ -1067,9 +1067,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       loading: _assigneePickerLoading,
       offices: _pickerOffices,
       teams: _pickerTeamsForRole(),
-      staff: _pickerStaff
-          .where((s) => _assigneeIds.contains(s.assigneeId))
-          .toList(),
+      staff: List<StaffForAssignment>.from(_pickerStaff),
       error: _assigneePickerError,
     );
   }
@@ -1191,14 +1189,6 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   void _syncPicAfterAssigneesChange() {
-    if (_assigneeIds.isEmpty) {
-      _picAssigneeId = null;
-    } else if (_assigneeIds.length == 1) {
-      _picAssigneeId = _assigneeIds.first;
-    } else if (_picAssigneeId != null &&
-        !_assigneeIds.contains(_picAssigneeId)) {
-      _picAssigneeId = null;
-    }
     _publishAssigneeSnapshot();
   }
 
@@ -1219,12 +1209,32 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   List<({String id, String name})> _assigneeRowsForDisplay(AppState state) {
+    final hiddenPic = _picAssigneeId?.trim();
     final rows =
         _assigneeIds
+            .where((id) => hiddenPic == null || id.trim() != hiddenPic)
             .map((id) => (id: id, name: _labelForAssigneeId(id, state)))
             .toList()
           ..sort((a, b) => a.name.compareTo(b.name));
     return rows;
+  }
+
+  Set<String> _visibleAssigneeIdsForPicker() {
+    final hiddenPic = _picAssigneeId?.trim();
+    return _assigneeIds
+        .where((id) => hiddenPic == null || id.trim() != hiddenPic)
+        .toSet();
+  }
+
+  List<String> _effectiveAssigneeIdsForSave({Set<String>? visibleIds}) {
+    final ids = <String>{};
+    for (final raw in visibleIds ?? _assigneeIds) {
+      final id = raw.trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+    final pic = _picAssigneeId?.trim();
+    if (pic != null && pic.isNotEmpty) ids.add(pic);
+    return ids.toList();
   }
 
   void _removeAssignee(String assigneeId) {
@@ -1257,7 +1267,14 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       );
       return;
     }
-    setState(() => _picAssigneeId = null);
+    setState(() {
+      final previousPic = _picAssigneeId?.trim();
+      _picAssigneeId = null;
+      if (previousPic != null && previousPic.isNotEmpty) {
+        _assigneeIds.remove(previousPic);
+      }
+      _syncPicAfterAssigneesChange();
+    });
   }
 
   Future<void> _pickAssignees(BuildContext anchorContext) async {
@@ -1281,13 +1298,15 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       anchorLink: _assigneeAnchorLink,
       anchorContext: anchorContext,
       snapshot: _assigneeSnapshot,
-      selectedIds: _assigneeIds,
+      selectedIds: _visibleAssigneeIdsForPicker(),
       whenClosed: _blockAnchoredPickerReopen,
       onSelectionChanged: (s) {
         if (!mounted) return;
         final state = context.read<AppState>();
         if (_picSelfLockApplies(state, _subtask) &&
-            !s.any((id) => _matchesCurrentStaff(state, id))) {
+            !_effectiveAssigneeIdsForSave(
+              visibleIds: s,
+            ).any((id) => _matchesCurrentStaff(state, id))) {
           showAsanaInfoDialog(
             context: context,
             title: 'PIC cannot remove themselves',
@@ -1299,7 +1318,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
         setState(() {
           _assigneeIds
             ..clear()
-            ..addAll(s);
+            ..addAll(_effectiveAssigneeIdsForSave(visibleIds: s));
           _syncPicAfterAssigneesChange();
         });
       },
@@ -1308,22 +1327,46 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   Future<void> _pickPic(BuildContext anchorContext, AppState state) async {
     if (!_canOpenAnchoredPicker) return;
-    final ids = _picMenuAssigneeIds(state);
-    final choice = await showAsanaAnchoredOptionMenu<String>(
+    if (_assigneePickerLoading || !_picSnapshot.value.hasData) {
+      await _loadAssigneeStaff();
+    }
+    if (!mounted || !_picSnapshot.value.hasData) {
+      final err = _assigneePickerError?.trim();
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not load teammates',
+        content: err != null && err.isNotEmpty
+            ? err
+            : 'Please try again in a moment.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    await showAsanaAssigneePicker(
       anchorLink: _picAnchorLink,
       anchorContext: anchorContext,
-      onClosed: _blockAnchoredPickerReopen,
-      options: ids
-          .map(
-            (id) => AsanaAnchoredOption(
-              value: id,
-              label: _labelForAssigneeId(id, state),
-            ),
-          )
-          .toList(),
+      snapshot: _picSnapshot,
+      selectedIds: {
+        if (_picAssigneeId?.trim().isNotEmpty == true) _picAssigneeId!.trim(),
+      },
+      singleSelect: true,
+      whenClosed: _blockAnchoredPickerReopen,
+      onSelectionChanged: (ids) {
+        if (!mounted) return;
+        final choice = ids.isEmpty ? null : ids.first;
+        setState(() {
+          final previousPic = _picAssigneeId?.trim();
+          if (previousPic != null && previousPic.isNotEmpty) {
+            _assigneeIds.remove(previousPic);
+          }
+          _picAssigneeId = choice;
+          if (choice != null && choice.isNotEmpty) {
+            _assigneeIds.add(choice);
+          }
+          _publishAssigneeSnapshot();
+        });
+      },
     );
-    if (!mounted || choice == null) return;
-    setState(() => _picAssigneeId = choice);
   }
 
   List<String> _picMenuAssigneeIds(AppState state) {
@@ -1333,7 +1376,17 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
             .where((u) => u.isNotEmpty)
             .toSet() ??
         const <String>{};
-    final ids = _assigneeIds.toList();
+    final ids = _pickerStaff
+        .map((s) => s.assigneeId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    final currentPic = _picAssigneeId?.trim();
+    if (currentPic != null &&
+        currentPic.isNotEmpty &&
+        !ids.contains(currentPic)) {
+      ids.add(currentPic);
+    }
     ids.sort((a, b) {
       final aProjectPic = _staffKeyMatchesProjectKeys(a, projectPicKeys);
       final bProjectPic = _staffKeyMatchesProjectKeys(b, projectPicKeys);
@@ -1629,7 +1682,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
             .where((s) => s.name.isNotEmpty)
             .toList(),
         canSuggestAssignees: _canEditSubtaskDetails(state, _subtask),
-        selectedAssigneeIds: Set<String>.from(_assigneeIds),
+        selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
         picAssigneeId: _picAssigneeId,
         websiteAttachments: _websiteAttachmentsForAi(),
       ),
@@ -1642,7 +1695,15 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           ..addAll(ids);
         _syncPicAfterAssigneesChange();
       }),
-      onApplySubtaskPic: (id) => setState(() => _picAssigneeId = id),
+      onApplySubtaskPic: (id) => setState(() {
+        final previousPic = _picAssigneeId?.trim();
+        if (previousPic != null && previousPic.isNotEmpty) {
+          _assigneeIds.remove(previousPic);
+        }
+        _picAssigneeId = id;
+        _assigneeIds.add(id);
+        _publishAssigneeSnapshot();
+      }),
       onApplySubtaskPriority: (p) => setState(() => _localPriority = p),
       onApplySubtaskCommencementStatus: (v) => setState(() {
         _localCommencementStatus = normalizeCommencementStatus(v);
@@ -1775,7 +1836,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return;
     }
     final canEditDetails = _canEditSubtaskDetails(state, s);
-    if (canEditDetails && _assigneeIds.isEmpty) {
+    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
+    if (canEditDetails && effectiveAssigneeIds.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Assignee required',
@@ -1785,11 +1847,18 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return;
     }
     if (canEditDetails &&
-        (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
+        effectiveAssigneeIds.length == 1 &&
+        _picAssigneeId == null) {
+      _picAssigneeId = effectiveAssigneeIds.first;
+      _assigneeIds.add(effectiveAssigneeIds.first);
+    }
+    if (canEditDetails &&
+        effectiveAssigneeIds.length > 1 &&
+        _picAssigneeId == null) {
       await showAsanaInfoDialog(
         context: context,
         title: 'PIC required',
-        content: 'Choose a PIC from the sub-task assignees before continuing.',
+        content: 'Choose a PIC before continuing.',
         palette: widget.palette,
       );
       return;
@@ -1831,7 +1900,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           commencementStatus: _localCommencementStatus,
           startDate: _startDate,
           dueDate: _dueDate,
-          assigneeStaffUuids: _assigneeIds.toList(),
+          assigneeStaffUuids: effectiveAssigneeIds,
           picStaffUuid: _picAssigneeId ?? '',
           creatorStaffLookupKey: state.userStaffAppId,
           initialComment: _hasPendingInlineImages('subtask_comment', 'draft')
@@ -1975,7 +2044,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
           startDate: _startDate,
           clearDueDate: _dueDate == null,
           dueDate: _dueDate,
-          assigneeSlots: _assigneeIds.toList(),
+          assigneeSlots: _effectiveAssigneeIdsForSave(),
           picStaffLookupKey: _picAssigneeId ?? '',
           updateChangeDueReason: true,
           changeDueReason: _needsChangeDueReason()
@@ -2108,7 +2177,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return null;
     }
     final canEditDetails = _canEditSubtaskDetails(state, s);
-    if (canEditDetails && _assigneeIds.isEmpty) {
+    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
+    if (canEditDetails && effectiveAssigneeIds.isEmpty) {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
       await showAsanaInfoDialog(
@@ -2120,13 +2190,20 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return null;
     }
     if (canEditDetails &&
-        (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
+        effectiveAssigneeIds.length == 1 &&
+        _picAssigneeId == null) {
+      _picAssigneeId = effectiveAssigneeIds.first;
+      _assigneeIds.add(effectiveAssigneeIds.first);
+    }
+    if (canEditDetails &&
+        effectiveAssigneeIds.length > 1 &&
+        _picAssigneeId == null) {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
       await showAsanaInfoDialog(
         context: context,
         title: 'PIC required',
-        content: 'Choose a PIC from the sub-task assignees before continuing.',
+        content: 'Choose a PIC before continuing.',
         palette: widget.palette,
       );
       return null;
@@ -2162,7 +2239,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         startDate: _startDate,
         clearDueDate: _dueDate == null,
         dueDate: _dueDate,
-        assigneeSlots: _assigneeIds.toList(),
+        assigneeSlots: effectiveAssigneeIds,
         picStaffLookupKey: _picAssigneeId ?? '',
         updateChangeDueReason: true,
         changeDueReason: _needsChangeDueReason()
@@ -2328,7 +2405,8 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return;
     }
     final canEditDetails = _canEditSubtaskDetails(state, s);
-    if (canEditDetails && _assigneeIds.isEmpty) {
+    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
+    if (canEditDetails && effectiveAssigneeIds.isEmpty) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Assignee required',
@@ -2338,11 +2416,18 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       return;
     }
     if (canEditDetails &&
-        (_picAssigneeId == null || !_assigneeIds.contains(_picAssigneeId))) {
+        effectiveAssigneeIds.length == 1 &&
+        _picAssigneeId == null) {
+      _picAssigneeId = effectiveAssigneeIds.first;
+      _assigneeIds.add(effectiveAssigneeIds.first);
+    }
+    if (canEditDetails &&
+        effectiveAssigneeIds.length > 1 &&
+        _picAssigneeId == null) {
       await showAsanaInfoDialog(
         context: context,
         title: 'PIC required',
-        content: 'Choose a PIC from the sub-task assignees before continuing.',
+        content: 'Choose a PIC before continuing.',
         palette: widget.palette,
       );
       return;
@@ -2376,7 +2461,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
         startDate: _startDate,
         clearDueDate: _dueDate == null,
         dueDate: _dueDate,
-        assigneeSlots: _assigneeIds.toList(),
+        assigneeSlots: effectiveAssigneeIds,
         picStaffLookupKey: _picAssigneeId ?? '',
         updateChangeDueReason: true,
         changeDueReason: _needsChangeDueReason()
@@ -3646,12 +3731,15 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                           onRemove: _saving ? null : _removeAssignee,
                         )
                       : AsanaDetailPlainValue(
-                          text:
-                              s?.assigneeIds
-                                  .map((id) => _nameFor(state, id))
-                                  .where((n) => n.isNotEmpty)
-                                  .join(', ') ??
-                              '',
+                          text: s == null
+                              ? ''
+                              : s.assigneeIds
+                                    .where(
+                                      (id) => (s.pic ?? '').trim() != id.trim(),
+                                    )
+                                    .map((id) => _nameFor(state, id))
+                                    .where((n) => n.isNotEmpty)
+                                    .join(', '),
                         ),
                 ),
               ),
@@ -3676,10 +3764,10 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
                                 ),
                               ]
                             : [],
-                        canEdit: _assigneeIds.isNotEmpty,
-                        emptyPlaceholder: 'Select assignees first',
+                        canEdit: _pickerStaff.isNotEmpty,
+                        emptyPlaceholder: 'Select PIC',
                         showAddButtonWhenNotEmpty: false,
-                        onOpenPicker: _saving || _assigneeIds.isEmpty
+                        onOpenPicker: _saving || _pickerStaff.isEmpty
                             ? null
                             : (_) => _pickPic(anchorContext, state),
                         onRemove: _saving ? null : _removePic,
