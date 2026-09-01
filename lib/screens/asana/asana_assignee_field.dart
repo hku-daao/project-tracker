@@ -123,7 +123,12 @@ class _AssigneeNameChipState extends State<_AssigneeNameChip> {
       children: [
         Padding(
           padding: EdgeInsets.only(top: 2, right: widget.canRemove ? 14 : 0),
-          child: Text(widget.name, style: asanaDetailValueStyle(context)),
+          child: Text(
+            widget.name,
+            style: asanaDetailValueStyle(context),
+            softWrap: true,
+            overflow: TextOverflow.visible,
+          ),
         ),
         if (widget.canRemove)
           Positioned(

@@ -2063,6 +2063,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                     : '',
                 canEdit: !_saving,
                 emptyPlaceholder: 'Select PIC',
+                maxLines: null,
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                shrinkToContent: false,
                 onTap: (ctx) => _pickPic(ctx, state),
               )
             : AsanaDetailPlainValue(text: readOnlyPicText),
