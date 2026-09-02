@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
 import '../../models/project_record.dart';
+import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
+import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_project_filter.dart';
@@ -92,6 +94,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     'people': true,
     'projects': true,
   };
+  Map<String, List<SingularSubtask>> _peopleSubtasksByTaskId = {};
+  String _peopleSubtaskTaskIdsKey = '';
+  int _peopleSubtaskLoadSerial = 0;
 
   void _toggleSection(String key) {
     setState(() => _expanded[key] = !(_expanded[key] ?? true));
@@ -174,6 +179,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final greeting = '${_greetingPhrase()}, $greetingName';
 
     final all = _activeSingularTasks(state);
+    _ensurePeopleSubtasksLoaded(all);
     final created =
         (adminViewMode
               ? all.where(_isIncomplete).toList()
@@ -188,7 +194,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final visibleCreated = _filterTasksBySearch(state, created, searchTokens);
     final visibleAssigned = _filterTasksBySearch(state, assigned, searchTokens);
 
-    final people = _peopleRows(state, all, today);
+    final people = _peopleRows(state, all, _peopleSubtasksByTaskId, today);
 
     final projects = state.projects;
     final projectsCreated = adminViewMode
@@ -407,6 +413,32 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     return out;
   }
 
+  void _ensurePeopleSubtasksLoaded(List<Task> tasks) {
+    final taskIds =
+        tasks.map((t) => t.id.trim()).where((id) => id.isNotEmpty).toList()
+          ..sort();
+    final key = taskIds.join('|');
+    if (key == _peopleSubtaskTaskIdsKey) return;
+    _peopleSubtaskTaskIdsKey = key;
+    final serial = ++_peopleSubtaskLoadSerial;
+    if (taskIds.isEmpty) {
+      if (_peopleSubtasksByTaskId.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && serial == _peopleSubtaskLoadSerial) {
+            setState(() => _peopleSubtasksByTaskId = {});
+          }
+        });
+      }
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final grouped =
+          await DatabaseService.fetchSubtasksGroupedForLandingPrefetch(taskIds);
+      if (!mounted || serial != _peopleSubtaskLoadSerial) return;
+      setState(() => _peopleSubtasksByTaskId = grouped);
+    });
+  }
+
   static int _sortByDue(Task a, Task b) {
     final ae = a.endDate;
     final be = b.endDate;
@@ -440,6 +472,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   static List<_PersonTaskSummary> _peopleRows(
     AppState state,
     List<Task> tasks,
+    Map<String, List<SingularSubtask>> subtasksByTaskId,
     DateTime today,
   ) {
     final rows = <_PersonTaskSummary>[];
@@ -460,6 +493,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
             counts: _countsForStaff(
               state,
               tasks,
+              subtasksByTaskId,
               today,
               appId,
               appId == mine ? myUuid : null,
@@ -475,7 +509,14 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       rows.add(
         _PersonTaskSummary(
           name: me?.name.trim().isNotEmpty == true ? me!.name.trim() : mine,
-          counts: _countsForStaff(state, tasks, today, mine, myUuid),
+          counts: _countsForStaff(
+            state,
+            tasks,
+            subtasksByTaskId,
+            today,
+            mine,
+            myUuid,
+          ),
           isSelf: true,
         ),
       );
@@ -499,7 +540,14 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       rows.add(
         _PersonTaskSummary(
           name: a?.name.trim().isNotEmpty == true ? a!.name.trim() : appId,
-          counts: _countsForStaff(state, tasks, today, appId, staffUuid),
+          counts: _countsForStaff(
+            state,
+            tasks,
+            subtasksByTaskId,
+            today,
+            appId,
+            staffUuid,
+          ),
         ),
       );
     }
@@ -532,6 +580,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   static _TaskCounts _countsForStaff(
     AppState state,
     List<Task> tasks,
+    Map<String, List<SingularSubtask>> subtasksByTaskId,
     DateTime today,
     String appId,
     String? staffUuid,
@@ -556,12 +605,58 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         incomplete++;
       }
     }
+    for (final subtasks in subtasksByTaskId.values) {
+      for (final s in subtasks) {
+        if (!_subtaskMatchesStaff(state, s, appId, staffUuid)) continue;
+        if (_subtaskCompleted(s)) {
+          completed++;
+          continue;
+        }
+        final due = _dateOnly(s.dueDate);
+        final start = _dateOnly(s.startDate);
+        if (due != null && due.isBefore(today)) {
+          overdue++;
+        } else if (start != null && start.isAfter(today)) {
+          upcoming++;
+        } else {
+          incomplete++;
+        }
+      }
+    }
     return _TaskCounts(
       overdue: overdue,
       incomplete: incomplete,
       completed: completed,
       upcoming: upcoming,
     );
+  }
+
+  static bool _subtaskMatchesStaff(
+    AppState state,
+    SingularSubtask s,
+    String appId,
+    String? staffUuid,
+  ) {
+    final pic = s.pic?.trim();
+    if (pic != null && pic.isNotEmpty) {
+      if (pic == appId) return true;
+      if (staffUuid != null && pic.toLowerCase() == staffUuid.toLowerCase()) {
+        return true;
+      }
+    }
+    for (final id in s.assigneeIds) {
+      final x = id.trim();
+      if (x == appId) return true;
+      if (staffUuid != null && x.toLowerCase() == staffUuid.toLowerCase()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool _subtaskCompleted(SingularSubtask s) {
+    final status = s.status.trim().toLowerCase();
+    return status == 'completed' || status == 'complete';
   }
 
   static bool _isCompleted(Task t) {
@@ -1174,8 +1269,8 @@ class _HomePeopleRow extends StatelessWidget {
       _HomeMetricChip(
         palette: palette,
         count: c.incomplete,
-        label: 'incomplete',
-        metric: 'incomplete',
+        label: 'ongoing',
+        metric: 'ongoing',
         useAcronym: useMetricAcronym,
       ),
       _HomeMetricChip(
@@ -1266,8 +1361,8 @@ class _HomeMetricChip extends StatelessWidget {
     switch (label) {
       case 'overdue':
         return 'OVD';
-      case 'incomplete':
-        return 'INC';
+      case 'ongoing':
+        return 'ONG';
       case 'completed':
         return 'CMP';
       case 'upcoming':

@@ -87,17 +87,12 @@ class AsanaLandingPalette {
   (Color bg, Color fg) homeMetricStyle(String metric) {
     switch (metric) {
       case 'overdue':
-        return (
-          Color.alphaBlend(accent.withValues(alpha: 0.18), listSurface),
-          accent,
-        );
+        return (const Color(0xFFFCE4E4), const Color(0xFFF06A6A));
       case 'completed':
         return (const Color(0xFFE8F5E9), const Color(0xFF2E7D32));
       case 'upcoming':
-        return (
-          Color.alphaBlend(accent.withValues(alpha: 0.14), listSurface),
-          darkChrome ? const Color(0xFF8E2424) : const Color(0xFF9E2A2A),
-        );
+        return (const Color(0xFFFDEAEA), const Color(0xFF8E2424));
+      case 'ongoing':
       case 'incomplete':
       default:
         return (const Color(0xFFECEFF1), const Color(0xFF455A64));

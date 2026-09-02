@@ -1847,7 +1847,14 @@ class _ItemTableRow extends StatelessWidget {
                 asanaTextColumnGap(),
                 SizedBox(
                   width: cols.dueCol,
-                  child: _DueDateCell(dueDate: dueDate, style: rowValueStyle),
+                  child: _DueDateCell(
+                    dueDate: dueDate,
+                    style: rowValueStyle,
+                    showBadge: _shouldShowDueDateBadge(
+                      status: status,
+                      submission: submission,
+                    ),
+                  ),
                 ),
                 asanaTextColumnGap(),
                 SizedBox(
@@ -2228,7 +2235,17 @@ String _formatDueDate(DateTime? d) {
 bool _sameCalendarDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
-String? _dueBadgeLabel(DateTime? d) {
+bool _shouldShowDueDateBadge({
+  required String status,
+  required String? submission,
+}) {
+  if (status.trim().toLowerCase() != 'incomplete') return false;
+  if ((submission ?? '').trim().toLowerCase() == 'submitted') return false;
+  return true;
+}
+
+String? _dueBadgeLabel(DateTime? d, {required bool showBadge}) {
+  if (!showBadge) return null;
   if (d == null) return null;
   final today = HkTime.todayDateOnlyHk();
   final day = DateTime(d.year, d.month, d.day);
@@ -2238,14 +2255,19 @@ String? _dueBadgeLabel(DateTime? d) {
 }
 
 class _DueDateCell extends StatelessWidget {
-  const _DueDateCell({required this.dueDate, required this.style});
+  const _DueDateCell({
+    required this.dueDate,
+    required this.style,
+    required this.showBadge,
+  });
 
   final DateTime? dueDate;
   final TextStyle? style;
+  final bool showBadge;
 
   @override
   Widget build(BuildContext context) {
-    final badge = _dueBadgeLabel(dueDate);
+    final badge = _dueBadgeLabel(dueDate, showBadge: showBadge);
     if (badge == null) {
       return Text(
         _formatDueDate(dueDate),
