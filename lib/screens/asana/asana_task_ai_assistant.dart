@@ -367,12 +367,9 @@ class AsanaSubtaskAiFormSnapshot {
         '\nYou may suggest changes to: ${editable.join(', ')}. (name is NOT modifiable by this user)',
       );
     }
-    buf.writeln(
-      'If assignees are discussed, only use people listed as allowable sub-task assignees in the parent task details.',
-    );
     if (canSuggestAssignees && staff.isNotEmpty) {
       buf.writeln(
-        'Available sub-task assignees: ${staff.map((s) => s.name).join('; ')}',
+        'Available staff for sub-task assignees and PIC: ${staff.map((s) => s.name).join('; ')}',
       );
     }
     buf.writeln('Priority options: Standard, URGENT');
@@ -602,10 +599,14 @@ class AsanaSubtaskAiSuggestionBuilder {
     if (applyCommencementStatus != null &&
         commencementRaw != null &&
         commencementRaw.isNotEmpty) {
-      final commencement =
+      var commencement =
           AsanaTaskAiSuggestionBuilder._parseCommencementStatus(
             commencementRaw,
           );
+      if (commencement == commencementToBeCommenced &&
+          (proposedStart != null || proposedDue != null)) {
+        commencement = commencementCommenced;
+      }
       if (commencement == null) {
         lines.add(
           AsanaTaskAiSuggestionLine.info(
@@ -615,13 +616,14 @@ class AsanaSubtaskAiSuggestionBuilder {
         );
       } else if (commencement !=
           normalizeCommencementStatus(form.commencementStatus)) {
+        final resolvedCommencement = commencement;
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.commencementStatus,
             fieldLabel: 'Commence',
             currentValue: normalizeCommencementStatus(form.commencementStatus),
-            suggestedText: commencement,
-            onAdopt: () => applyCommencementStatus(commencement),
+            suggestedText: resolvedCommencement,
+            onAdopt: () => applyCommencementStatus(resolvedCommencement),
           ),
         );
       }
@@ -1100,7 +1102,11 @@ class AsanaTaskAiSuggestionBuilder {
 
     final commencementRaw = _str(raw['commencementStatus']);
     if (commencementRaw != null && commencementRaw.isNotEmpty) {
-      final commencement = _parseCommencementStatus(commencementRaw);
+      var commencement = _parseCommencementStatus(commencementRaw);
+      if (commencement == commencementToBeCommenced &&
+          (proposedStart != null || proposedDue != null)) {
+        commencement = commencementCommenced;
+      }
       if (commencement == null) {
         lines.add(
           AsanaTaskAiSuggestionLine.info(
@@ -1110,13 +1116,14 @@ class AsanaTaskAiSuggestionBuilder {
         );
       } else if (commencement !=
           normalizeCommencementStatus(form.commencementStatus)) {
+        final resolvedCommencement = commencement;
         lines.add(
           AsanaTaskAiSuggestionLine.adopt(
             fieldKey: AsanaTaskAiFieldKey.commencementStatus,
             fieldLabel: 'Commence',
             currentValue: normalizeCommencementStatus(form.commencementStatus),
-            suggestedText: commencement,
-            onAdopt: () => apply.applyCommencementStatus(commencement),
+            suggestedText: resolvedCommencement,
+            onAdopt: () => apply.applyCommencementStatus(resolvedCommencement),
           ),
         );
       }

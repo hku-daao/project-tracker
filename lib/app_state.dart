@@ -39,13 +39,18 @@ class AppState extends ChangeNotifier {
 
   /// `staff.app_id` values from `subordinate.subordinate_id` where `supervisor_id` = current user.
   List<String> _subordinateAppIds = [];
+  List<String> _actualSubordinateAppIds = [];
 
   /// `staff.id` uuids for those subordinates (resolved at login for filters + visibility).
   List<String> _subordinateStaffUuids = [];
+  List<String> _actualSubordinateStaffUuids = [];
 
   /// Revamp step 1: staff + team lookup by login email (Supabase).
   StaffTeamLookupResult? _revampStaffLookup;
   bool _adminViewMode = false;
+  String? _adminViewAsStaffAppId;
+  String? _adminViewAsStaffUuid;
+  String? _adminViewAsStaffName;
 
   StaffTeamLookupResult? get revampStaffLookup => _revampStaffLookup;
 
@@ -61,10 +66,52 @@ class AppState extends ChangeNotifier {
 
   bool get adminViewMode => _adminViewMode && canUseAdminViewMode;
 
+  bool get adminDebugViewAsActive =>
+      adminViewMode && (_adminViewAsStaffAppId?.trim().isNotEmpty == true);
+
+  bool get showAllDataAsAdmin => adminViewMode && !adminDebugViewAsActive;
+
+  String? get adminViewAsStaffAppId =>
+      adminDebugViewAsActive ? _adminViewAsStaffAppId?.trim() : null;
+
+  String? get adminViewAsStaffName =>
+      adminDebugViewAsActive ? _adminViewAsStaffName?.trim() : null;
+
   void setAdminViewMode(bool value) {
     final next = value && canUseAdminViewMode;
     if (_adminViewMode == next) return;
     _adminViewMode = next;
+    if (!next) clearAdminDebugViewAs();
+    notifyListeners();
+  }
+
+  void setAdminDebugViewAs({
+    required String staffAppId,
+    String? staffUuid,
+    String? staffName,
+    List<String> subordinateAppIds = const [],
+    List<String> subordinateStaffUuids = const [],
+  }) {
+    if (!adminViewMode) return;
+    _adminViewAsStaffAppId = staffAppId.trim();
+    _adminViewAsStaffUuid = staffUuid?.trim();
+    _adminViewAsStaffName = staffName?.trim();
+    _subordinateAppIds = List<String>.from(subordinateAppIds);
+    _subordinateStaffUuids = List<String>.from(subordinateStaffUuids);
+    notifyListeners();
+  }
+
+  void clearAdminDebugViewAs() {
+    final changed =
+        _adminViewAsStaffAppId != null ||
+        _adminViewAsStaffUuid != null ||
+        _adminViewAsStaffName != null;
+    _adminViewAsStaffAppId = null;
+    _adminViewAsStaffUuid = null;
+    _adminViewAsStaffName = null;
+    _subordinateAppIds = List<String>.from(_actualSubordinateAppIds);
+    _subordinateStaffUuids = List<String>.from(_actualSubordinateStaffUuids);
+    if (!changed) return;
     notifyListeners();
   }
 
@@ -81,12 +128,18 @@ class AppState extends ChangeNotifier {
 
   /// Resolved staff keys for UI (falls back to revamp email lookup).
   String? get effectiveStaffAppId {
+    final viewAs = adminViewAsStaffAppId;
+    if (viewAs != null && viewAs.isNotEmpty) return viewAs;
     final direct = _userStaffAppId?.trim();
     if (direct != null && direct.isNotEmpty) return direct;
     return _revampStaffLookup?.appId?.trim();
   }
 
   String? get effectiveStaffUuid {
+    if (adminDebugViewAsActive) {
+      final viewAs = _adminViewAsStaffUuid?.trim();
+      if (viewAs != null && viewAs.isNotEmpty) return viewAs;
+    }
     final direct = _userStaffId?.trim();
     if (direct != null && direct.isNotEmpty) return direct;
     return _revampStaffLookup?.staffId?.trim();
@@ -94,6 +147,8 @@ class AppState extends ChangeNotifier {
 
   /// Display name for sidebar avatar (assignee list, then staff lookup, then SSO name).
   String? get currentStaffDisplayName {
+    final viewAsName = adminViewAsStaffName;
+    if (viewAsName != null && viewAsName.isNotEmpty) return viewAsName;
     final id = effectiveStaffAppId?.trim();
     if (id != null && id.isNotEmpty) {
       final fromAssignee = assigneeById(id)?.name.trim();
@@ -147,11 +202,17 @@ class AppState extends ChangeNotifier {
 
   void setSubordinateAppIds(List<String> ids) {
     _subordinateAppIds = List<String>.from(ids);
+    if (!adminDebugViewAsActive) {
+      _actualSubordinateAppIds = List<String>.from(ids);
+    }
     notifyListeners();
   }
 
   void setSubordinateStaffUuids(List<String> uuids) {
     _subordinateStaffUuids = List<String>.from(uuids);
+    if (!adminDebugViewAsActive) {
+      _actualSubordinateStaffUuids = List<String>.from(uuids);
+    }
     notifyListeners();
   }
 
@@ -310,7 +371,7 @@ class AppState extends ChangeNotifier {
   /// **or** the task was created by this user ([taskIsCreatedByCurrentUser]) (assignees may be outside that set).
   List<Task> tasksForTeam(String? teamId) {
     var all = tasks;
-    if (!_tasksLoadedWithVisibilityScope && !adminViewMode) {
+    if (!_tasksLoadedWithVisibilityScope && !showAllDataAsAdmin) {
       if (taskVisibilityLookupKeys.isEmpty) {
         all = [];
       } else {

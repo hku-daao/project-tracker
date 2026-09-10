@@ -10,6 +10,7 @@ import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
+import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
@@ -44,6 +45,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Map<String, List<SingularSubtask>> _subtasksByTask = {};
   final Set<String> _expandedProjectIds = {};
   final Set<String> _expandedTaskIds = {};
+  final Set<String> _mapExpandedTaskIds = {};
   final Set<String> _projectCreatorTeamIds = {};
   final Set<String> _projectPicIds = {};
   final Set<String> _projectStatuses = {};
@@ -267,7 +269,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           project.createByStaffUuid,
           _projectCreatorTeamIds,
         ) &&
-        _passesStaffFilter(project.picStaffUuids, _projectPicIds) &&
+        _passesStaffFilter([project.createByStaffUuid], _projectPicIds) &&
         _passesStatusFilter(projectStatus, _projectStatuses);
   }
 
@@ -602,14 +604,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   Map<String, String> _projectPicDisplayNames(AppState state) {
     final names = <String, String>{};
     for (final project in _visibleProjects(state)) {
-      for (var i = 0; i < project.picStaffUuids.length; i++) {
-        final id = project.picStaffUuids[i].trim();
-        if (id.isEmpty) continue;
-        final display = i < project.picStaffDisplayNames.length
-            ? project.picStaffDisplayNames[i].trim()
-            : '';
-        if (display.isNotEmpty) names[id] = display;
-      }
+      final id = project.createByStaffUuid?.trim();
+      if (id == null || id.isEmpty) continue;
+      final display = project.createByDisplayName?.trim();
+      names[id] = display != null && display.isNotEmpty
+          ? display
+          : _staffName(state, id);
     }
     return names;
   }
@@ -622,9 +622,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   Iterable<String?> _projectPicKeys(AppState state) sync* {
     for (final project in _visibleProjects(state)) {
-      for (final id in project.picStaffUuids) {
-        yield id;
-      }
+      yield project.createByStaffUuid;
     }
   }
 
@@ -731,6 +729,16 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     if (result == null || !mounted) return;
     setState(() {
       apply(result.contains('__all__') ? <String>{} : result);
+    });
+  }
+
+  void _toggleMapTaskSubtasks(String taskId) {
+    final id = taskId.trim();
+    if (id.isEmpty) return;
+    setState(() {
+      if (!_mapExpandedTaskIds.add(id)) {
+        _mapExpandedTaskIds.remove(id);
+      }
     });
   }
 
@@ -949,6 +957,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                               palette: widget.palette,
                               state: state,
                               node: nodes[index],
+                              expandedTaskIds: _mapExpandedTaskIds,
+                              onToggleTaskSubtasks: _toggleMapTaskSubtasks,
                               onOpenProject: widget.onOpenProject,
                               onOpenTask: widget.onOpenTask,
                               onOpenSubtask: widget.onOpenSubtask,
@@ -958,6 +968,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                             palette: widget.palette,
                             state: state,
                             node: standaloneTasks[index - nodes.length],
+                            expandedTaskIds: _mapExpandedTaskIds,
+                            onToggleTaskSubtasks: _toggleMapTaskSubtasks,
                             onOpenTask: widget.onOpenTask,
                             onOpenSubtask: widget.onOpenSubtask,
                           );
@@ -1238,120 +1250,57 @@ class _ProjectTreeDiagram extends StatelessWidget {
     required this.palette,
     required this.state,
     required this.node,
+    required this.expandedTaskIds,
+    required this.onToggleTaskSubtasks,
     this.onOpenProject,
     this.onOpenTask,
     this.onOpenSubtask,
   });
 
   static const double _boxWidth = 174;
-  static const double _boxHeight = 88;
   static const double _horizontalGap = 28;
-  static const double _verticalGap = 70;
+  static const double _levelGap = 42;
   static const double _padding = 22;
+  static const double _toggleHeight = 28;
+  static const double _fontScale = 1.25;
 
   final AsanaLandingPalette palette;
   final AppState state;
   final _ProjectMapNode node;
+  final Set<String> expandedTaskIds;
+  final void Function(String taskId) onToggleTaskSubtasks;
   final void Function(String projectId)? onOpenProject;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
 
   @override
   Widget build(BuildContext context) {
-    final root = _toDiagramNode();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          _measure(root);
-          final contentWidth = root.subtreeWidth + (_padding * 2);
-          final viewportWidth = constraints.maxWidth;
-          final fitsInViewport = contentWidth <= viewportWidth;
-          final width = fitsInViewport ? viewportWidth : contentWidth;
-          if (fitsInViewport) {
-            _place(root, width / 2, _padding, 0);
-          } else {
-            _placeWideRoot(root, viewportWidth / 2, _padding);
-          }
-          final maxDepth = _maxDepth(root);
-          final height =
-              _padding * 2 +
-              _boxHeight +
-              maxDepth * (_boxHeight + _verticalGap);
-          final placed = <_PlacedDiagramNode>[];
-          _collect(root, placed);
-          return ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {
-                PointerDeviceKind.touch,
-                PointerDeviceKind.mouse,
-                PointerDeviceKind.trackpad,
-              },
-            ),
-            child: _InitialHorizontalScrollView(
-              initialOffset: 0,
-              child: SizedBox(
-                width: width,
-                height: height,
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: CustomPaint(
-                        painter: _TreeConnectorPainter(placed, palette),
-                      ),
-                    ),
-                    for (final item in placed)
-                      Positioned(
-                        left: item.x - _boxWidth / 2,
-                        top: item.y,
-                        width: _boxWidth,
-                        height: _boxHeight,
-                        child: _DiagramBox(item: item, palette: palette),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
+    return _GenericTreeDiagram(
+      root: _toDiagramNode(),
+      palette: palette,
+      pinWideRootToViewport: true,
     );
   }
 
   _DiagramNode _toDiagramNode() {
+    final status = node.project.isPaused ? 'Paused' : node.project.status;
     return _DiagramNode(
       type: _DiagramNodeType.project,
       id: node.project.id,
       name: node.project.name,
       pic: _projectPicLabel(node.project),
-      status: node.project.isPaused ? 'Paused' : node.project.status,
+      status: status,
+      detailLabel: AsanaStatusChip.statusStyle(status).$1,
       onTap: () => onOpenProject?.call(node.project.id),
       children: [
         for (final taskNode in node.tasks)
-          _DiagramNode(
-            type: _DiagramNodeType.task,
-            id: taskNode.task.id,
-            name: taskNode.task.name,
-            pic: _staffName(taskNode.task.pic),
-            status: AsanaTaskFilter.taskDisplayStatus(state, taskNode.task),
-            onTap: () => onOpenTask?.call(taskNode.task.id),
-            children: [
-              for (final subtask in taskNode.subtasks)
-                _DiagramNode(
-                  type: _DiagramNodeType.subtask,
-                  id: subtask.id,
-                  name: subtask.subtaskName,
-                  pic: _staffName(subtask.pic),
-                  status: AsanaTaskFilter.subtaskDisplayStatus(
-                    state,
-                    taskNode.task,
-                    subtask,
-                  ),
-                  onTap: () => onOpenSubtask?.call(subtask.id),
-                  children: const [],
-                ),
-            ],
+          _taskDiagramNode(
+            state: state,
+            taskNode: taskNode,
+            expandedTaskIds: expandedTaskIds,
+            onToggleTaskSubtasks: onToggleTaskSubtasks,
+            onOpenTask: onOpenTask,
+            onOpenSubtask: onOpenSubtask,
           ),
       ],
     );
@@ -1368,69 +1317,6 @@ class _ProjectTreeDiagram extends StatelessWidget {
         .where((id) => id.isNotEmpty)
         .join(', ');
   }
-
-  String _staffName(String? id) {
-    final key = id?.trim();
-    if (key == null || key.isEmpty) return '';
-    return state.assigneeById(key)?.name.trim() ?? key;
-  }
-
-  double _measure(_DiagramNode node) {
-    if (node.children.isEmpty) {
-      node.subtreeWidth = _boxWidth;
-      return node.subtreeWidth;
-    }
-    final childWidth = node.children.fold<double>(
-      0,
-      (sum, child) => sum + _measure(child),
-    );
-    final gaps = _horizontalGap * (node.children.length - 1);
-    node.subtreeWidth = childWidth + gaps;
-    if (node.subtreeWidth < _boxWidth) node.subtreeWidth = _boxWidth;
-    return node.subtreeWidth;
-  }
-
-  void _place(_DiagramNode node, double centerX, double top, int depth) {
-    node.x = centerX;
-    node.y = top;
-    var nextLeft = centerX - node.subtreeWidth / 2;
-    for (final child in node.children) {
-      final childCenter = nextLeft + child.subtreeWidth / 2;
-      _place(child, childCenter, top + _boxHeight + _verticalGap, depth + 1);
-      nextLeft += child.subtreeWidth + _horizontalGap;
-    }
-  }
-
-  void _placeWideRoot(_DiagramNode root, double rootCenterX, double top) {
-    root.x = rootCenterX;
-    root.y = top;
-    var nextLeft = _padding;
-    for (final child in root.children) {
-      final childCenter = nextLeft + child.subtreeWidth / 2;
-      _place(child, childCenter, top + _boxHeight + _verticalGap, 1);
-      nextLeft += child.subtreeWidth + _horizontalGap;
-    }
-  }
-
-  int _maxDepth(_DiagramNode node) {
-    if (node.children.isEmpty) return 0;
-    return 1 + node.children.map(_maxDepth).reduce((a, b) => a > b ? a : b);
-  }
-
-  void _collect(_DiagramNode node, List<_PlacedDiagramNode> out) {
-    final placed = _PlacedDiagramNode(
-      node: node,
-      x: node.x,
-      y: node.y,
-      children: node.children
-          .map((child) => Offset(child.x, child.y))
-          .toList(growable: false),
-    );
-    out.add(placed);
-    for (final child in node.children) {
-      _collect(child, out);
-    }
-  }
 }
 
 class _StandaloneTaskTreeDiagram extends StatelessWidget {
@@ -1438,6 +1324,8 @@ class _StandaloneTaskTreeDiagram extends StatelessWidget {
     required this.palette,
     required this.state,
     required this.node,
+    required this.expandedTaskIds,
+    required this.onToggleTaskSubtasks,
     this.onOpenTask,
     this.onOpenSubtask,
   });
@@ -1445,103 +1333,187 @@ class _StandaloneTaskTreeDiagram extends StatelessWidget {
   final AsanaLandingPalette palette;
   final AppState state;
   final _TaskMapNode node;
+  final Set<String> expandedTaskIds;
+  final void Function(String taskId) onToggleTaskSubtasks;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
 
   @override
   Widget build(BuildContext context) {
-    final root = _DiagramNode(
-      type: _DiagramNodeType.task,
-      id: node.task.id,
-      name: node.task.name,
-      pic: _staffName(node.task.pic),
-      status: AsanaTaskFilter.taskDisplayStatus(state, node.task),
-      onTap: () => onOpenTask?.call(node.task.id),
-      children: [
-        for (final subtask in node.subtasks)
-          _DiagramNode(
-            type: _DiagramNodeType.subtask,
-            id: subtask.id,
-            name: subtask.subtaskName,
-            pic: _staffName(subtask.pic),
-            status: AsanaTaskFilter.subtaskDisplayStatus(
-              state,
-              node.task,
-              subtask,
-            ),
-            onTap: () => onOpenSubtask?.call(subtask.id),
-            children: const [],
-          ),
-      ],
+    return _GenericTreeDiagram(
+      root: _taskDiagramNode(
+        state: state,
+        taskNode: node,
+        expandedTaskIds: expandedTaskIds,
+        onToggleTaskSubtasks: onToggleTaskSubtasks,
+        onOpenTask: onOpenTask,
+        onOpenSubtask: onOpenSubtask,
+      ),
+      palette: palette,
     );
-
-    return _GenericTreeDiagram(root: root, palette: palette);
-  }
-
-  String _staffName(String? id) {
-    final key = id?.trim();
-    if (key == null || key.isEmpty) return '';
-    return state.assigneeById(key)?.name.trim() ?? key;
   }
 }
 
+_DiagramNode _taskDiagramNode({
+  required AppState state,
+  required _TaskMapNode taskNode,
+  required Set<String> expandedTaskIds,
+  required void Function(String taskId) onToggleTaskSubtasks,
+  void Function(String taskId)? onOpenTask,
+  void Function(String subtaskId)? onOpenSubtask,
+}) {
+  final hasSubtasks = taskNode.subtasks.isNotEmpty;
+  final expanded = expandedTaskIds.contains(taskNode.task.id);
+  final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, taskNode.task);
+  return _DiagramNode(
+    type: _DiagramNodeType.task,
+    id: taskNode.task.id,
+    name: taskNode.task.name,
+    pic: _staffNameFor(state, taskNode.task.pic),
+    status: taskStatus,
+    detailLabel: _mapBlockDetailLabel(taskStatus, taskNode.task.endDate),
+    onTap: () => onOpenTask?.call(taskNode.task.id),
+    canExpand: hasSubtasks,
+    expanded: expanded,
+    onToggleExpand: hasSubtasks
+        ? () => onToggleTaskSubtasks(taskNode.task.id)
+        : null,
+    children: [
+      if (expanded)
+        for (final subtask in taskNode.subtasks)
+          () {
+            final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
+              state,
+              taskNode.task,
+              subtask,
+            );
+            return _DiagramNode(
+              type: _DiagramNodeType.subtask,
+              id: subtask.id,
+              name: subtask.subtaskName,
+              pic: _staffNameFor(state, subtask.pic),
+              status: subStatus,
+              detailLabel: _mapBlockDetailLabel(subStatus, subtask.dueDate),
+              onTap: () => onOpenSubtask?.call(subtask.id),
+              children: const [],
+            );
+          }(),
+    ],
+  );
+}
+
+String _mapBlockDetailLabel(String status, DateTime? due) {
+  if (status.trim().toLowerCase() == 'incomplete') {
+    return due == null ? '—' : HkTime.formatInstantAsHk(due, 'MMM d, yyyy');
+  }
+  return AsanaStatusChip.statusStyle(status).$1;
+}
+
+String _staffNameFor(AppState state, String? id) {
+  final key = id?.trim();
+  if (key == null || key.isEmpty) return '';
+  return state.assigneeById(key)?.name.trim() ?? key;
+}
+
 class _GenericTreeDiagram extends StatelessWidget {
-  const _GenericTreeDiagram({required this.root, required this.palette});
+  const _GenericTreeDiagram({
+    required this.root,
+    required this.palette,
+    this.pinWideRootToViewport = false,
+  });
+
+  static const double _mobileBreakpoint = 600;
 
   final _DiagramNode root;
   final AsanaLandingPalette palette;
+  final bool pinWideRootToViewport;
 
   @override
   Widget build(BuildContext context) {
+    final horizontal = MediaQuery.sizeOf(context).width < _mobileBreakpoint;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 14),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          _measure(root);
-          final contentWidth =
-              root.subtreeWidth + (_ProjectTreeDiagram._padding * 2);
+          final theme = Theme.of(context).textTheme;
+          _assignBoxHeights(root, theme, horizontal: horizontal);
+          _measure(root, horizontal: horizontal);
+          const padding = _ProjectTreeDiagram._padding;
+          const boxW = _ProjectTreeDiagram._boxWidth;
+          const levelGap = _ProjectTreeDiagram._levelGap;
           final viewportWidth = constraints.maxWidth;
-          final fitsInViewport = contentWidth <= viewportWidth;
-          final width = fitsInViewport ? viewportWidth : contentWidth;
-          final rootCenter = fitsInViewport
-              ? width / 2
-              : _ProjectTreeDiagram._padding + root.subtreeWidth / 2;
-          _place(root, rootCenter, _ProjectTreeDiagram._padding);
-          final initialScrollOffset = fitsInViewport
-              ? 0.0
-              : (rootCenter - viewportWidth / 2)
-                    .clamp(0.0, math.max(0.0, width - viewportWidth))
-                    .toDouble();
-          final maxDepth = _maxDepth(root);
-          final height =
-              _ProjectTreeDiagram._padding * 2 +
-              _ProjectTreeDiagram._boxHeight +
-              maxDepth *
-                  (_ProjectTreeDiagram._boxHeight +
-                      _ProjectTreeDiagram._verticalGap);
+          late final double width;
+          late final double height;
+          late final double initialScrollOffset;
+
+          if (horizontal) {
+            final contentWidth = padding * 2 + _branchWidth(root);
+            width = math.max(contentWidth, viewportWidth);
+            _placeLeftToRight(root, padding, padding);
+            height = _treeBottom(root) + padding;
+            initialScrollOffset = 0;
+          } else {
+            final contentWidth = root.subtreeWidth + padding * 2;
+            final fitsInViewport = contentWidth <= viewportWidth;
+            width = fitsInViewport ? viewportWidth : contentWidth;
+            if (pinWideRootToViewport && !fitsInViewport) {
+              _placeWideRoot(root, viewportWidth / 2, padding);
+              initialScrollOffset = 0;
+            } else {
+              final rootCenter = fitsInViewport
+                  ? width / 2
+                  : padding + root.subtreeWidth / 2;
+              _placeTopToBottom(root, rootCenter, padding);
+              initialScrollOffset = fitsInViewport
+                  ? 0.0
+                  : (rootCenter - viewportWidth / 2)
+                        .clamp(0.0, math.max(0.0, width - viewportWidth))
+                        .toDouble();
+            }
+            height = _treeBottom(root) + padding;
+          }
+
           final placed = <_PlacedDiagramNode>[];
           _collect(root, placed);
-          return _InitialHorizontalScrollView(
-            initialOffset: initialScrollOffset,
-            child: SizedBox(
-              width: width,
-              height: height,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _TreeConnectorPainter(placed, palette),
+          return ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.trackpad,
+              },
+            ),
+            child: _InitialHorizontalScrollView(
+              initialOffset: initialScrollOffset,
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _TreeConnectorPainter(
+                          placed,
+                          palette,
+                          horizontal: horizontal,
+                          levelGap: levelGap,
+                        ),
+                      ),
                     ),
-                  ),
-                  for (final item in placed)
-                    Positioned(
-                      left: item.x - _ProjectTreeDiagram._boxWidth / 2,
-                      top: item.y,
-                      width: _ProjectTreeDiagram._boxWidth,
-                      height: _ProjectTreeDiagram._boxHeight,
-                      child: _DiagramBox(item: item, palette: palette),
-                    ),
-                ],
+                    for (final item in placed)
+                      Positioned(
+                        left: item.x - boxW / 2,
+                        top: item.y,
+                        width: _visualWidth(item.node, horizontal: horizontal),
+                        height: item.height,
+                        child: _DiagramBox(
+                          item: item,
+                          palette: palette,
+                          horizontal: horizontal,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           );
@@ -1550,42 +1522,151 @@ class _GenericTreeDiagram extends StatelessWidget {
     );
   }
 
-  double _measure(_DiagramNode node) {
+  void _assignBoxHeights(
+    _DiagramNode node,
+    TextTheme theme, {
+    required bool horizontal,
+  }) {
+    node.boxHeight = _computeBoxHeight(node, theme, horizontal: horizontal);
+    for (final child in node.children) {
+      _assignBoxHeights(child, theme, horizontal: horizontal);
+    }
+  }
+
+  double _visualWidth(_DiagramNode node, {required bool horizontal}) {
+    final extra = horizontal && node.canExpand
+        ? _ProjectTreeDiagram._toggleHeight
+        : 0;
+    return _ProjectTreeDiagram._boxWidth + extra;
+  }
+
+  double _branchWidth(_DiagramNode node) {
+    final own = _visualWidth(node, horizontal: true);
+    if (node.children.isEmpty) return own;
+    var widestChild = 0.0;
+    for (final child in node.children) {
+      final width = _branchWidth(child);
+      if (width > widestChild) widestChild = width;
+    }
+    return own + _ProjectTreeDiagram._levelGap + widestChild;
+  }
+
+  double _computeBoxHeight(
+    _DiagramNode node,
+    TextTheme theme, {
+    required bool horizontal,
+  }) {
+    const innerWidth = _ProjectTreeDiagram._boxWidth - 16;
+    final nameStyle =
+        asanaTextStyle(
+          theme.bodySmall,
+          fontWeight: FontWeight.w700,
+          fontSize:
+              (theme.bodySmall?.fontSize ?? 12) * _ProjectTreeDiagram._fontScale,
+          height: 1.15,
+        ) ??
+        const TextStyle(fontSize: 15, fontWeight: FontWeight.w700);
+    final metaStyle =
+        asanaTextStyle(
+          theme.labelSmall,
+          fontSize:
+              (theme.labelSmall?.fontSize ?? 11) *
+              _ProjectTreeDiagram._fontScale,
+          height: 1.1,
+        ) ??
+        const TextStyle(fontSize: 14);
+    final name = node.name.trim().isEmpty ? 'Untitled' : node.name.trim();
+    final pic = node.pic.trim().isEmpty ? '—' : node.pic.trim();
+    final nameH = _measureTextHeight(name, nameStyle, innerWidth);
+    final picH = _measureTextHeight(pic, metaStyle, innerWidth);
+    final detailH = _measureTextHeight(node.detailLabel, metaStyle, innerWidth);
+    final toggle = !horizontal && node.canExpand
+        ? _ProjectTreeDiagram._toggleHeight
+        : 0;
+    return 8 + nameH + 5 + picH + detailH + 8 + toggle;
+  }
+
+  double _measureTextHeight(String text, TextStyle style, double maxWidth) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+    return painter.height;
+  }
+
+  double _measure(_DiagramNode node, {required bool horizontal}) {
+    final leafExtent = horizontal
+        ? node.boxHeight
+        : _ProjectTreeDiagram._boxWidth;
     if (node.children.isEmpty) {
-      node.subtreeWidth = _ProjectTreeDiagram._boxWidth;
+      node.subtreeWidth = leafExtent;
       return node.subtreeWidth;
     }
-    final childWidth = node.children.fold<double>(
+    final childSpan = node.children.fold<double>(
       0,
-      (sum, child) => sum + _measure(child),
+      (sum, child) => sum + _measure(child, horizontal: horizontal),
     );
     final gaps =
         _ProjectTreeDiagram._horizontalGap * (node.children.length - 1);
-    node.subtreeWidth = childWidth + gaps;
-    if (node.subtreeWidth < _ProjectTreeDiagram._boxWidth) {
-      node.subtreeWidth = _ProjectTreeDiagram._boxWidth;
-    }
+    node.subtreeWidth = childSpan + gaps;
+    if (node.subtreeWidth < leafExtent) node.subtreeWidth = leafExtent;
     return node.subtreeWidth;
   }
 
-  void _place(_DiagramNode node, double centerX, double top) {
+  void _placeTopToBottom(_DiagramNode node, double centerX, double top) {
     node.x = centerX;
     node.y = top;
     var nextLeft = centerX - node.subtreeWidth / 2;
     for (final child in node.children) {
       final childCenter = nextLeft + child.subtreeWidth / 2;
-      _place(
+      _placeTopToBottom(
         child,
         childCenter,
-        top + _ProjectTreeDiagram._boxHeight + _ProjectTreeDiagram._verticalGap,
+        top + node.boxHeight + _ProjectTreeDiagram._levelGap,
       );
       nextLeft += child.subtreeWidth + _ProjectTreeDiagram._horizontalGap;
     }
   }
 
-  int _maxDepth(_DiagramNode node) {
-    if (node.children.isEmpty) return 0;
-    return 1 + node.children.map(_maxDepth).reduce((a, b) => a > b ? a : b);
+  void _placeWideRoot(_DiagramNode root, double rootCenterX, double top) {
+    root.x = rootCenterX;
+    root.y = top;
+    var nextLeft = _ProjectTreeDiagram._padding;
+    for (final child in root.children) {
+      final childCenter = nextLeft + child.subtreeWidth / 2;
+      _placeTopToBottom(
+        child,
+        childCenter,
+        top + root.boxHeight + _ProjectTreeDiagram._levelGap,
+      );
+      nextLeft += child.subtreeWidth + _ProjectTreeDiagram._horizontalGap;
+    }
+  }
+
+  void _placeLeftToRight(_DiagramNode node, double left, double top) {
+    node.x = left + _ProjectTreeDiagram._boxWidth / 2;
+    node.y = top;
+    var nextTop = top;
+    for (final child in node.children) {
+      _placeLeftToRight(
+        child,
+        left +
+            _visualWidth(node, horizontal: true) +
+            _ProjectTreeDiagram._levelGap,
+        nextTop,
+      );
+      nextTop += child.subtreeWidth + _ProjectTreeDiagram._horizontalGap;
+    }
+  }
+
+  double _treeBottom(_DiagramNode node) {
+    var bottom = node.y + node.boxHeight;
+    for (final child in node.children) {
+      final childBottom = _treeBottom(child);
+      if (childBottom > bottom) bottom = childBottom;
+    }
+    return bottom;
   }
 
   void _collect(_DiagramNode node, List<_PlacedDiagramNode> out) {
@@ -1594,8 +1675,12 @@ class _GenericTreeDiagram extends StatelessWidget {
         node: node,
         x: node.x,
         y: node.y,
+        height: node.boxHeight,
         children: node.children
             .map((child) => Offset(child.x, child.y))
+            .toList(growable: false),
+        childHeights: node.children
+            .map((child) => child.boxHeight)
             .toList(growable: false),
       ),
     );
@@ -1606,77 +1691,131 @@ class _GenericTreeDiagram extends StatelessWidget {
 }
 
 class _DiagramBox extends StatelessWidget {
-  const _DiagramBox({required this.item, required this.palette});
+  const _DiagramBox({
+    required this.item,
+    required this.palette,
+    this.horizontal = false,
+  });
 
   final _PlacedDiagramNode item;
   final AsanaLandingPalette palette;
+  final bool horizontal;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final style = _DiagramBoxStyle.forType(item.node.type, palette);
+    final canExpand = item.node.canExpand;
+    final sideToggle = horizontal && canExpand;
+    final bottomToggle = !horizontal && canExpand;
+    final nameSize =
+        (theme.textTheme.bodySmall?.fontSize ?? 12) *
+        _ProjectTreeDiagram._fontScale;
+    final metaSize =
+        (theme.textTheme.labelSmall?.fontSize ?? 11) *
+        _ProjectTreeDiagram._fontScale;
+    final content = InkWell(
+      onTap: item.node.onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              item.node.name.trim().isEmpty
+                  ? 'Untitled'
+                  : item.node.name.trim(),
+              textAlign: TextAlign.center,
+              softWrap: true,
+              style: asanaTextStyle(
+                theme.textTheme.bodySmall,
+                fontWeight: FontWeight.w700,
+                fontSize: nameSize,
+                color: style.text,
+                height: 1.15,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              item.node.pic.trim().isEmpty ? '—' : item.node.pic.trim(),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: asanaTextStyle(
+                theme.textTheme.labelSmall,
+                fontSize: metaSize,
+                color: style.secondaryText,
+                height: 1.1,
+              ),
+            ),
+            Text(
+              item.node.detailLabel,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: asanaTextStyle(
+                theme.textTheme.labelSmall,
+                fontWeight: FontWeight.w600,
+                fontSize: metaSize,
+                color: style.text,
+                height: 1.1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final toggleIcon = sideToggle
+        ? (item.node.expanded
+              ? Icons.keyboard_arrow_left
+              : Icons.keyboard_arrow_right)
+        : (item.node.expanded
+              ? Icons.keyboard_arrow_up
+              : Icons.keyboard_arrow_down);
+    Widget toggleBar({required bool vertical}) {
+      return Material(
+        color: style.toggleBackground,
+        child: InkWell(
+          onTap: item.node.onToggleExpand,
+          child: SizedBox(
+            width: vertical ? _ProjectTreeDiagram._toggleHeight : double.infinity,
+            height: vertical ? double.infinity : _ProjectTreeDiagram._toggleHeight,
+            child: Icon(toggleIcon, size: 20, color: style.text),
+          ),
+        ),
+      );
+    }
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: item.node.onTap,
-        child: Ink(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: style.background,
-            border: Border.all(color: style.border),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x1A000000),
-                blurRadius: 4,
-                offset: Offset(1, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                item.node.name.trim().isEmpty
-                    ? 'Untitled'
-                    : item.node.name.trim(),
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: asanaTextStyle(
-                  theme.textTheme.bodySmall,
-                  fontWeight: FontWeight.w700,
-                  color: style.text,
-                  height: 1.15,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: style.background,
+          border: Border.all(color: style.border),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1A000000),
+              blurRadius: 4,
+              offset: Offset(1, 2),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(7),
+          child: sideToggle
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: content),
+                    toggleBar(vertical: true),
+                  ],
+                )
+              : Column(
+                  children: [
+                    Expanded(child: content),
+                    if (bottomToggle) toggleBar(vertical: false),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                item.node.pic.trim().isEmpty ? '—' : item.node.pic.trim(),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: asanaTextStyle(
-                  theme.textTheme.labelSmall,
-                  color: style.secondaryText,
-                  height: 1.1,
-                ),
-              ),
-              Text(
-                AsanaStatusChip.statusStyle(item.node.status).$1,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: asanaTextStyle(
-                  theme.textTheme.labelSmall,
-                  fontWeight: FontWeight.w600,
-                  color: style.text,
-                  height: 1.1,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1684,10 +1823,17 @@ class _DiagramBox extends StatelessWidget {
 }
 
 class _TreeConnectorPainter extends CustomPainter {
-  const _TreeConnectorPainter(this.nodes, this.palette);
+  const _TreeConnectorPainter(
+    this.nodes,
+    this.palette, {
+    this.horizontal = false,
+    this.levelGap = _ProjectTreeDiagram._levelGap,
+  });
 
   final List<_PlacedDiagramNode> nodes;
   final AsanaLandingPalette palette;
+  final bool horizontal;
+  final double levelGap;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1696,29 +1842,55 @@ class _TreeConnectorPainter extends CustomPainter {
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
+    const boxW = _ProjectTreeDiagram._boxWidth;
+
     for (final parent in nodes) {
       if (parent.children.isEmpty) continue;
-      final parentBottom = Offset(
-        parent.x,
-        parent.y + _ProjectTreeDiagram._boxHeight,
-      );
-      final junctionY = parentBottom.dy + _ProjectTreeDiagram._verticalGap / 2;
-      canvas.drawLine(parentBottom, Offset(parent.x, junctionY), paint);
-      for (final child in parent.children) {
-        final childTop = Offset(child.dx, child.dy);
-        canvas.drawLine(
-          Offset(parent.x, junctionY),
-          Offset(child.dx, junctionY),
-          paint,
+      if (horizontal) {
+        final parentRight = Offset(
+          parent.x +
+              boxW / 2 +
+              (parent.node.canExpand ? _ProjectTreeDiagram._toggleHeight : 0),
+          parent.y + parent.height / 2,
         );
-        canvas.drawLine(Offset(child.dx, junctionY), childTop, paint);
+        final junctionX = parentRight.dx + levelGap / 2;
+        canvas.drawLine(parentRight, Offset(junctionX, parentRight.dy), paint);
+        for (var i = 0; i < parent.children.length; i++) {
+          final child = parent.children[i];
+          final childH = i < parent.childHeights.length
+              ? parent.childHeights[i]
+              : parent.height;
+          final childLeft = Offset(child.dx - boxW / 2, child.dy + childH / 2);
+          canvas.drawLine(
+            Offset(junctionX, parentRight.dy),
+            Offset(junctionX, childLeft.dy),
+            paint,
+          );
+          canvas.drawLine(Offset(junctionX, childLeft.dy), childLeft, paint);
+        }
+      } else {
+        final parentBottom = Offset(parent.x, parent.y + parent.height);
+        final junctionY = parentBottom.dy + levelGap / 2;
+        canvas.drawLine(parentBottom, Offset(parent.x, junctionY), paint);
+        for (final child in parent.children) {
+          final childTop = Offset(child.dx, child.dy);
+          canvas.drawLine(
+            Offset(parent.x, junctionY),
+            Offset(child.dx, junctionY),
+            paint,
+          );
+          canvas.drawLine(Offset(child.dx, junctionY), childTop, paint);
+        }
       }
     }
   }
 
   @override
   bool shouldRepaint(covariant _TreeConnectorPainter oldDelegate) {
-    return oldDelegate.nodes != nodes || oldDelegate.palette != palette;
+    return oldDelegate.nodes != nodes ||
+        oldDelegate.palette != palette ||
+        oldDelegate.horizontal != horizontal ||
+        oldDelegate.levelGap != levelGap;
   }
 }
 
@@ -1736,6 +1908,9 @@ class _DiagramBoxStyle {
   final Color border;
   final Color text;
   final Color secondaryText;
+
+  Color get toggleBackground =>
+      Color.alphaBlend(Colors.black.withValues(alpha: 0.14), background);
 
   static _DiagramBoxStyle forType(
     _DiagramNodeType type,
@@ -1767,8 +1942,8 @@ class _DiagramBoxStyle {
             accent.withValues(alpha: palette.darkChrome ? 0.13 : 0.12),
             surface,
           ),
-          border: accent.withValues(alpha: 0.30),
-          text: kAsanaTextSecondary,
+          border: accent.withValues(alpha: 0.52),
+          text: kAsanaTextPrimary,
           secondaryText: kAsanaTextSecondary,
         );
     }
@@ -1782,8 +1957,12 @@ class _DiagramNode {
     required this.name,
     required this.pic,
     required this.status,
+    required this.detailLabel,
     required this.onTap,
     required this.children,
+    this.canExpand = false,
+    this.expanded = false,
+    this.onToggleExpand,
   });
 
   final _DiagramNodeType type;
@@ -1791,9 +1970,14 @@ class _DiagramNode {
   final String name;
   final String pic;
   final String status;
+  final String detailLabel;
   final VoidCallback onTap;
   final List<_DiagramNode> children;
+  final bool canExpand;
+  final bool expanded;
+  final VoidCallback? onToggleExpand;
   double subtreeWidth = 0;
+  double boxHeight = 0;
   double x = 0;
   double y = 0;
 }
@@ -1803,13 +1987,17 @@ class _PlacedDiagramNode {
     required this.node,
     required this.x,
     required this.y,
+    required this.height,
     required this.children,
+    required this.childHeights,
   });
 
   final _DiagramNode node;
   final double x;
   final double y;
+  final double height;
   final List<Offset> children;
+  final List<double> childHeights;
 }
 
 class _ProjectMapNode {

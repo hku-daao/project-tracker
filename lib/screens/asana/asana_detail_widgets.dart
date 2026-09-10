@@ -296,7 +296,6 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
           style: text.isEmpty
               ? baseStyle.copyWith(color: kAsanaTextSecondary)
               : baseStyle,
-          maxLines: widget.maxLines,
         ),
       );
     }

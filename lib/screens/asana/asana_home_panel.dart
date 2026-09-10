@@ -172,7 +172,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final dateLine = _formatHeaderDate(today);
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
     final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
-    final adminViewMode = state.adminViewMode;
+    final adminViewMode = state.showAllDataAsAdmin;
     final greetingName = adminViewMode
         ? 'Administrator'
         : _greetingDisplayName(state);
@@ -478,7 +478,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final rows = <_PersonTaskSummary>[];
     final mine = state.effectiveStaffAppId?.trim();
     final myUuid = state.effectiveStaffUuid?.trim();
-    if (state.adminViewMode) {
+    if (state.showAllDataAsAdmin) {
       final staff = List.of(state.assignees)
         ..sort((a, b) => a.name.trim().compareTo(b.name.trim()));
       final seen = <String>{};

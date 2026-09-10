@@ -1213,7 +1213,7 @@ class _AsanaCreateProjectDetailPanelState
                   readOnly: _saving,
                   showOutline: false,
                   maxLines: 8,
-                  minLines: 2,
+                  minLines: 1,
                   style: asanaDetailMultilineValueStyle(context),
                   hintText: 'Please fill in project description',
                 ),

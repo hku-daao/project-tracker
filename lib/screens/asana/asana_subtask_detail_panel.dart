@@ -1155,14 +1155,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       _assigneePickerLoading = false;
       _pickerOffices = data.offices;
       _pickerTeams = data.teams;
-      final parentAssignees = Set<String>.from(
-        _parentTask?.assigneeIds ?? const <String>[],
-      );
-      _pickerStaff = parentAssignees.isEmpty
-          ? data.staff
-          : data.staff
-                .where((s) => parentAssignees.contains(s.assigneeId))
-                .toList();
+      _pickerStaff = data.staff;
       _assigneePickerError = null;
       _publishAssigneeSnapshot();
       setState(() {});
@@ -1474,6 +1467,49 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
   }
 
+  DateTime? _dateOnly(DateTime? value) {
+    if (value == null) return null;
+    return DateUtils.dateOnly(value);
+  }
+
+  Future<bool> _validateParentTaskTimeline() async {
+    final parent = _parentTask;
+    if (parent == null) return true;
+    final parentStart = _dateOnly(parent.startDate);
+    final parentDue = _dateOnly(parent.endDate);
+    final subStart = _dateOnly(_startDate);
+    final subDue = _dateOnly(_dueDate);
+    final startViolated =
+        parentStart != null &&
+        subStart != null &&
+        subStart.isBefore(parentStart);
+    final dueViolated =
+        parentDue != null && subDue != null && subDue.isAfter(parentDue);
+    if (!startViolated && !dueViolated) return true;
+    if (startViolated) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Sub-task start date is invalid',
+        content:
+            'The sub-task start date cannot be earlier than the parent task start date.\n\n'
+            'Parent task start date: ${_date(parentStart)}\n'
+            'Selected sub-task start date: ${_date(subStart)}',
+        palette: widget.palette,
+      );
+      return false;
+    }
+    await showAsanaInfoDialog(
+      context: context,
+      title: 'Sub-task due date is invalid',
+      content:
+          'The sub-task due date cannot be later than the parent task due date.\n\n'
+          'Parent task due date: ${_date(parentDue)}\n'
+          'Selected sub-task due date: ${_date(subDue)}',
+      palette: widget.palette,
+    );
+    return false;
+  }
+
   bool get _toBeCommenced =>
       _localCommencementStatus == commencementToBeCommenced;
 
@@ -1627,7 +1663,6 @@ Priority: ${priorityToDisplayName(p.priority)}
 Complexity: ${p.complexity?.trim().isNotEmpty == true ? p.complexity!.trim() : '(empty)'}
 Start: ${_date(p.startDate)}
 Due: ${_date(p.endDate)}
-Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).join(', ')}
 ''';
   }
 
@@ -1885,6 +1920,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
+    if (canEditDetails && !await _validateParentTaskTimeline()) return;
     setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
@@ -2222,6 +2258,11 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return null;
     }
+    if (canEditDetails && !await _validateParentTaskTimeline()) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      return null;
+    }
 
     final changesForEmail = canEditDetails
         ? _subtaskChangesForEmail(state, s)
@@ -2444,6 +2485,7 @@ Allowable sub-task assignees: ${p.assigneeIds.map((id) => _nameFor(state, id)).j
       );
       return;
     }
+    if (canEditDetails && !await _validateParentTaskTimeline()) return;
     final changesForEmail = canEditDetails
         ? _subtaskChangesForEmail(state, s)
         : <Map<String, String>>[];

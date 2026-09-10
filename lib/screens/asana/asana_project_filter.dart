@@ -115,7 +115,7 @@ class AsanaProjectFilter {
     AppState state,
     Set<String> scopes,
   ) {
-    if (state.adminViewMode) return true;
+    if (state.showAllDataAsAdmin) return true;
 
     final mine = state.effectiveStaffAppId?.trim();
     final visibilityKeys = state.taskVisibilityLookupKeys;
