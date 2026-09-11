@@ -238,6 +238,7 @@ class _AsanaDetailSlidePanelState extends State<AsanaDetailSlidePanel> {
                           widget.onPushCreateTaskForProject,
                       onPushTaskFromProject: widget.onPushTaskFromProject,
                       onTaskCreated: widget.onTaskCreated,
+                      onDiscussionCreated: widget.onDiscussionCreated,
                       onProjectCreated: widget.onProjectCreated,
                       onProjectChanged: widget.onProjectChanged,
                       onSubtaskCreated: widget.onSubtaskCreated,

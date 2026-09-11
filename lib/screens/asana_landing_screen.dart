@@ -5,14 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
-import '../models/staff_for_assignment.dart';
 import '../services/asana_filter_cookie_storage.dart';
-import '../services/database_service.dart';
 import '../services/sso_auth_service.dart';
-import '../services/task_fetch_visibility.dart';
 import '../web_deep_link.dart';
 import '../widgets/project_tracker_logo.dart';
-import 'asana/asana_assignee_picker.dart';
 import 'asana/asana_blocking_loading_overlay.dart';
 import 'asana/asana_filter_widgets.dart';
 import 'asana/asana_archived_panel.dart';
@@ -250,23 +246,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   static const Duration _kDetailSlideDuration = Duration(milliseconds: 300);
   static const double _kSidebarWidth = 240;
   static const String _themeCookieKey = 'asana_landing_theme';
-  static const String _adminViewAsAdminKey = '__admin_view__';
 
   final _searchController = TextEditingController();
-  final LayerLink _adminViewAsAnchorLink = LayerLink();
-  final ValueNotifier<AsanaAssigneePickerSnapshot> _adminViewAsSnapshot =
-      ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
 
   String _selectedNav = 'Home';
   String _themeId = AsanaLandingPalette.asana.id;
   bool? _sidebarOpenOverride;
   double? _lastScreenWidth;
   bool _themeMenuExpanded = false;
-  bool _adminViewAsLoading = false;
-  String? _adminViewAsError;
-  List<OfficeOptionRow> _adminViewAsOffices = [];
-  List<TeamOptionRow> _adminViewAsTeams = [];
-  List<StaffForAssignment> _adminViewAsStaff = [];
   final List<AsanaDetailSelection> _detailStack = [];
   int _detailRefreshToken = 0;
 
@@ -281,148 +268,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
 
   AsanaLandingPalette get _palette => AsanaLandingPalette.byId(_themeId);
 
-  void _publishAdminViewAsSnapshot() {
-    _adminViewAsSnapshot.value = AsanaAssigneePickerSnapshot(
-      loading: _adminViewAsLoading,
-      offices: _adminViewAsOffices,
-      teams: _adminViewAsTeams,
-      staff: [
-        const StaffForAssignment(
-          assigneeId: _adminViewAsAdminKey,
-          name: 'Admin (default)',
-        ),
-        ..._adminViewAsStaff,
-      ],
-      error: _adminViewAsError,
-    );
-  }
-
-  Future<void> _loadAdminViewAsPicker() async {
-    if (_adminViewAsLoading) return;
-    _adminViewAsLoading = true;
-    _adminViewAsError = null;
-    _publishAdminViewAsSnapshot();
-    try {
-      final data = await DatabaseService.fetchStaffAssigneePickerData();
-      if (!mounted) return;
-      _adminViewAsOffices = data.offices;
-      _adminViewAsTeams = data.teams;
-      _adminViewAsStaff = data.staff;
-      _adminViewAsError = null;
-    } catch (e) {
-      if (!mounted) return;
-      _adminViewAsOffices = [];
-      _adminViewAsTeams = [];
-      _adminViewAsStaff = [];
-      _adminViewAsError = e.toString();
-    } finally {
-      if (mounted) {
-        _adminViewAsLoading = false;
-        _publishAdminViewAsSnapshot();
-        setState(() {});
-      }
-    }
-  }
-
-  StaffForAssignment? _adminViewAsStaffById(String id) {
-    final key = id.trim();
-    if (key.isEmpty) return null;
-    for (final staff in _adminViewAsStaff) {
-      if (staff.assigneeId == key) return staff;
-    }
-    return null;
-  }
-
-  Future<void> _applyAdminViewAsSelection(String? staffAppId) async {
-    final state = context.read<AppState>();
-    final selected = staffAppId?.trim();
-    if (selected == null ||
-        selected.isEmpty ||
-        selected == _adminViewAsAdminKey) {
-      state.clearAdminDebugViewAs();
-      await _reloadForAdminViewAsChange(visibility: null, adminAll: true);
-      _dismissAllDetails();
-      return;
-    }
-
-    final staff = _adminViewAsStaffById(selected);
-    final subordinateAppIds =
-        await DatabaseService.fetchSubordinateAppIdsForSupervisor(selected);
-    final visibility = await DatabaseService.enrichTaskFetchVisibility(
-      TaskFetchVisibility(
-        supervisorStaffAppId: selected,
-        supervisorStaffUuid: staff?.staffUuid,
-        subordinateStaffAppIds: subordinateAppIds,
-      ),
-    );
-    if (!mounted) return;
-    state.setAdminDebugViewAs(
-      staffAppId: selected,
-      staffUuid: visibility?.supervisorStaffUuid ?? staff?.staffUuid,
-      staffName: staff?.name,
-      subordinateAppIds: subordinateAppIds,
-      subordinateStaffUuids: visibility?.subordinateStaffUuids ?? const [],
-    );
-    await _reloadForAdminViewAsChange(visibility: visibility, adminAll: false);
-    _dismissAllDetails();
-  }
-
-  Future<void> _reloadForAdminViewAsChange({
-    required TaskFetchVisibility? visibility,
-    required bool adminAll,
-  }) async {
-    AsanaBlockingLoadingOverlay.show(context);
-    try {
-      final state = context.read<AppState>();
-      final taskData = await DatabaseService.fetchTasks(
-        visibility: adminAll ? null : visibility,
-      );
-      if (!mounted) return;
-      state.applyTasks(
-        taskData ?? TasksLoadResult.empty,
-        visibilityScoped: !adminAll && visibility?.isConfigured == true,
-      );
-      final projects = await DatabaseService.fetchAllProjects();
-      if (!mounted) return;
-      state.applyProjects(projects);
-      setState(() => _detailRefreshToken++);
-    } finally {
-      AsanaBlockingLoadingOverlay.hide();
-    }
-  }
-
-  Future<void> _pickAdminViewAs(BuildContext anchorContext) async {
-    final state = context.read<AppState>();
-    if (!state.adminViewMode) return;
-    if (!_adminViewAsSnapshot.value.hasData || _adminViewAsError != null) {
-      await _loadAdminViewAsPicker();
-    }
-    if (!mounted || !_adminViewAsSnapshot.value.hasData) {
-      final err = _adminViewAsError?.trim();
-      await showAsanaInfoDialog(
-        context: context,
-        title: 'Could not load staff',
-        content: err != null && err.isNotEmpty
-            ? err
-            : 'Please try again in a moment.',
-        palette: _palette,
-      );
-      return;
-    }
-    await showAsanaAssigneePicker(
-      anchorLink: _adminViewAsAnchorLink,
-      anchorContext: anchorContext,
-      snapshot: _adminViewAsSnapshot,
-      selectedIds: {state.adminViewAsStaffAppId ?? _adminViewAsAdminKey},
-      singleSelect: true,
-      directListOnly: true,
-      onSelectionChanged: (ids) {
-        final selected = ids.isEmpty ? _adminViewAsAdminKey : ids.first;
-        _applyAdminViewAsSelection(selected);
-      },
-    );
-  }
-
   void _showNavigationLoadingUntilNextFrame() {
     AsanaBlockingLoadingOverlay.show(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -430,72 +275,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         AsanaBlockingLoadingOverlay.hide();
       });
     });
-  }
-
-  Widget _buildAdminViewAsButton({
-    required AppState state,
-    required AsanaLandingPalette palette,
-    required bool compact,
-  }) {
-    final viewingAs = state.adminViewAsStaffName?.trim();
-    final label = viewingAs != null && viewingAs.isNotEmpty
-        ? 'View: $viewingAs'
-        : 'View: Admin';
-    final fg = palette.onBanner;
-    return CompositedTransformTarget(
-      link: _adminViewAsAnchorLink,
-      child: Builder(
-        builder: (buttonContext) => Tooltip(
-          message: 'Debug view as user',
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: () => _pickAdminViewAs(buttonContext),
-              child: Container(
-                constraints: BoxConstraints(
-                  minWidth: compact ? 148 : 240,
-                  maxWidth: compact ? 180 : 320,
-                ),
-                padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 8 : 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: fg.withValues(alpha: 0.32)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.manage_accounts_outlined, size: 16, color: fg),
-                    if (!compact) ...[
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          label,
-                          style: asanaTextStyle(
-                            Theme.of(context).textTheme.labelMedium,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: fg,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 2),
-                    Icon(Icons.arrow_drop_down, size: 18, color: fg),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildMainContent({
@@ -596,8 +375,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool get _searchAppliesToSelectedNav {
     return _selectedNav == 'All Tasks & Sub-tasks' ||
         _selectedNav == 'Tasks' ||
-        _selectedNav == 'Projects' ||
-        _selectedNav == 'Map';
+        _selectedNav == 'Projects';
   }
 
   /// One slide host for the whole open/close cycle (inner task panel keeps its own key).
@@ -788,7 +566,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   @override
   void dispose() {
     AsanaBlockingLoadingOverlay.hideAll();
-    _adminViewAsSnapshot.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -1013,14 +790,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 _AsanaBannerLogo(height: titleFontSize * 1.6),
-                                if (adminViewMode) ...[
-                                  SizedBox(width: compactBanner ? 6 : 8),
-                                  _buildAdminViewAsButton(
-                                    state: context.watch<AppState>(),
-                                    palette: palette,
-                                    compact: compactBanner,
-                                  ),
-                                ],
                                 SizedBox(width: compactBanner ? 6 : 8),
                                 Text(
                                   compactBanner

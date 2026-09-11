@@ -1362,7 +1362,6 @@ class _TableHeaderRow extends StatelessWidget {
             label: 'Priority',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1370,7 +1369,6 @@ class _TableHeaderRow extends StatelessWidget {
             label: 'Status',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1378,7 +1376,6 @@ class _TableHeaderRow extends StatelessWidget {
             label: 'Commence',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1386,7 +1383,6 @@ class _TableHeaderRow extends StatelessWidget {
             label: 'Submission',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
         ],
       ),
@@ -1674,7 +1670,6 @@ class _SubtaskSectionHeader extends StatelessWidget {
             label: 'Priority',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1682,7 +1677,6 @@ class _SubtaskSectionHeader extends StatelessWidget {
             label: 'Status',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1690,7 +1684,6 @@ class _SubtaskSectionHeader extends StatelessWidget {
             label: 'Commence',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
@@ -1698,7 +1691,6 @@ class _SubtaskSectionHeader extends StatelessWidget {
             label: 'Submission',
             style: style,
             rowHeight: _TaskTableLayout.singleLineExtent,
-            alignment: Alignment.center,
           ),
         ],
       ),
