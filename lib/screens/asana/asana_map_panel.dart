@@ -1415,6 +1415,28 @@ String _staffNameFor(AppState state, String? id) {
   return state.assigneeById(key)?.name.trim() ?? key;
 }
 
+TextStyle _mapDiagramNameStyle(TextTheme theme) {
+  return asanaTextStyle(
+        theme.bodySmall,
+        fontWeight: FontWeight.w700,
+        fontSize:
+            (theme.bodySmall?.fontSize ?? 12) * _ProjectTreeDiagram._fontScale,
+        height: 1.15,
+      ) ??
+      const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, height: 1.15);
+}
+
+TextStyle _mapDiagramMetaStyle(TextTheme theme, {FontWeight? fontWeight}) {
+  return asanaTextStyle(
+        theme.labelSmall,
+        fontWeight: fontWeight,
+        fontSize:
+            (theme.labelSmall?.fontSize ?? 11) * _ProjectTreeDiagram._fontScale,
+        height: 1.1,
+      ) ??
+      TextStyle(fontSize: 14, fontWeight: fontWeight, height: 1.1);
+}
+
 class _GenericTreeDiagram extends StatelessWidget {
   const _GenericTreeDiagram({
     required this.root,
@@ -1423,6 +1445,7 @@ class _GenericTreeDiagram extends StatelessWidget {
   });
 
   static const double _mobileBreakpoint = 600;
+  static const double _heightSafetyPad = 10;
 
   final _DiagramNode root;
   final AsanaLandingPalette palette;
@@ -1436,7 +1459,13 @@ class _GenericTreeDiagram extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final theme = Theme.of(context).textTheme;
-          _assignBoxHeights(root, theme, horizontal: horizontal);
+          final textScaler = MediaQuery.textScalerOf(context);
+          _assignBoxHeights(
+            root,
+            theme,
+            horizontal: horizontal,
+            textScaler: textScaler,
+          );
           _measure(root, horizontal: horizontal);
           const padding = _ProjectTreeDiagram._padding;
           const boxW = _ProjectTreeDiagram._boxWidth;
@@ -1526,10 +1555,21 @@ class _GenericTreeDiagram extends StatelessWidget {
     _DiagramNode node,
     TextTheme theme, {
     required bool horizontal,
+    required TextScaler textScaler,
   }) {
-    node.boxHeight = _computeBoxHeight(node, theme, horizontal: horizontal);
+    node.boxHeight = _computeBoxHeight(
+      node,
+      theme,
+      horizontal: horizontal,
+      textScaler: textScaler,
+    );
     for (final child in node.children) {
-      _assignBoxHeights(child, theme, horizontal: horizontal);
+      _assignBoxHeights(
+        child,
+        theme,
+        horizontal: horizontal,
+        textScaler: textScaler,
+      );
     }
   }
 
@@ -1555,44 +1595,55 @@ class _GenericTreeDiagram extends StatelessWidget {
     _DiagramNode node,
     TextTheme theme, {
     required bool horizontal,
+    required TextScaler textScaler,
   }) {
     const innerWidth = _ProjectTreeDiagram._boxWidth - 16;
-    final nameStyle =
-        asanaTextStyle(
-          theme.bodySmall,
-          fontWeight: FontWeight.w700,
-          fontSize:
-              (theme.bodySmall?.fontSize ?? 12) * _ProjectTreeDiagram._fontScale,
-          height: 1.15,
-        ) ??
-        const TextStyle(fontSize: 15, fontWeight: FontWeight.w700);
-    final metaStyle =
-        asanaTextStyle(
-          theme.labelSmall,
-          fontSize:
-              (theme.labelSmall?.fontSize ?? 11) *
-              _ProjectTreeDiagram._fontScale,
-          height: 1.1,
-        ) ??
-        const TextStyle(fontSize: 14);
     final name = node.name.trim().isEmpty ? 'Untitled' : node.name.trim();
     final pic = node.pic.trim().isEmpty ? '—' : node.pic.trim();
-    final nameH = _measureTextHeight(name, nameStyle, innerWidth);
-    final picH = _measureTextHeight(pic, metaStyle, innerWidth);
-    final detailH = _measureTextHeight(node.detailLabel, metaStyle, innerWidth);
+    final nameH = _measureTextHeight(
+      name,
+      _mapDiagramNameStyle(theme),
+      innerWidth,
+      textScaler,
+    );
+    final picH = _measureTextHeight(
+      pic,
+      _mapDiagramMetaStyle(theme),
+      innerWidth,
+      textScaler,
+    );
+    final detailH = _measureTextHeight(
+      node.detailLabel,
+      _mapDiagramMetaStyle(theme, fontWeight: FontWeight.w600),
+      innerWidth,
+      textScaler,
+    );
     final toggle = !horizontal && node.canExpand
         ? _ProjectTreeDiagram._toggleHeight
         : 0;
-    return 8 + nameH + 5 + picH + detailH + 8 + toggle;
+    return 8 +
+        nameH +
+        5 +
+        picH +
+        detailH +
+        8 +
+        toggle +
+        _GenericTreeDiagram._heightSafetyPad;
   }
 
-  double _measureTextHeight(String text, TextStyle style, double maxWidth) {
+  double _measureTextHeight(
+    String text,
+    TextStyle style,
+    double maxWidth,
+    TextScaler textScaler,
+  ) {
     final painter = TextPainter(
       text: TextSpan(text: text, style: style),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
+      textScaler: textScaler,
     )..layout(maxWidth: maxWidth);
-    return painter.height;
+    return painter.height.ceilToDouble();
   }
 
   double _measure(_DiagramNode node, {required bool horizontal}) {
@@ -1708,18 +1759,14 @@ class _DiagramBox extends StatelessWidget {
     final canExpand = item.node.canExpand;
     final sideToggle = horizontal && canExpand;
     final bottomToggle = !horizontal && canExpand;
-    final nameSize =
-        (theme.textTheme.bodySmall?.fontSize ?? 12) *
-        _ProjectTreeDiagram._fontScale;
-    final metaSize =
-        (theme.textTheme.labelSmall?.fontSize ?? 11) *
-        _ProjectTreeDiagram._fontScale;
+    final textTheme = theme.textTheme;
     final content = InkWell(
       onTap: item.node.onTap,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
               item.node.name.trim().isEmpty
@@ -1727,39 +1774,30 @@ class _DiagramBox extends StatelessWidget {
                   : item.node.name.trim(),
               textAlign: TextAlign.center,
               softWrap: true,
-              style: asanaTextStyle(
-                theme.textTheme.bodySmall,
-                fontWeight: FontWeight.w700,
-                fontSize: nameSize,
-                color: style.text,
-                height: 1.15,
-              ),
+              overflow: TextOverflow.visible,
+              style: _mapDiagramNameStyle(
+                textTheme,
+              ).copyWith(color: style.text),
             ),
             const SizedBox(height: 5),
             Text(
               item.node.pic.trim().isEmpty ? '—' : item.node.pic.trim(),
               textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: asanaTextStyle(
-                theme.textTheme.labelSmall,
-                fontSize: metaSize,
-                color: style.secondaryText,
-                height: 1.1,
-              ),
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: _mapDiagramMetaStyle(
+                textTheme,
+              ).copyWith(color: style.secondaryText),
             ),
             Text(
               item.node.detailLabel,
               textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: asanaTextStyle(
-                theme.textTheme.labelSmall,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: _mapDiagramMetaStyle(
+                textTheme,
                 fontWeight: FontWeight.w600,
-                fontSize: metaSize,
-                color: style.text,
-                height: 1.1,
-              ),
+              ).copyWith(color: style.text),
             ),
           ],
         ),
@@ -1778,13 +1816,18 @@ class _DiagramBox extends StatelessWidget {
         child: InkWell(
           onTap: item.node.onToggleExpand,
           child: SizedBox(
-            width: vertical ? _ProjectTreeDiagram._toggleHeight : double.infinity,
-            height: vertical ? double.infinity : _ProjectTreeDiagram._toggleHeight,
+            width: vertical
+                ? _ProjectTreeDiagram._toggleHeight
+                : double.infinity,
+            height: vertical
+                ? double.infinity
+                : _ProjectTreeDiagram._toggleHeight,
             child: Icon(toggleIcon, size: 20, color: style.text),
           ),
         ),
       );
     }
+
     return Material(
       color: Colors.transparent,
       child: Ink(

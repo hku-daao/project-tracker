@@ -3576,14 +3576,19 @@ class _PostIconActionCount extends StatelessWidget {
 }
 
 String _date(DateTime? value) {
-  if (value != null) {
-    final diff = DateTime.now().difference(value.toLocal());
-    if (!diff.isNegative && diff.inHours < 24) {
-      final hours = diff.inHours <= 0 ? 1 : diff.inHours;
-      return hours == 1 ? '1 hour' : '$hours hours';
-    }
+  if (value == null) return '—';
+  final postedDay = HkTime.formatInstantAsHk(value, 'yyyy-MM-dd');
+  if (postedDay != HkTime.todayDateOnlyForDb()) {
+    return postedDay;
   }
-  return HkTime.formatInstantAsHk(value, 'yyyy-MM-dd');
+  final diff = DateTime.now().difference(value.toLocal());
+  final elapsed = diff.isNegative ? Duration.zero : diff;
+  if (elapsed.inHours >= 1) {
+    final hours = elapsed.inHours;
+    return hours == 1 ? '1 hour' : '$hours hours';
+  }
+  final minutes = elapsed.inMinutes;
+  return minutes == 1 ? '1 minute' : '$minutes minutes';
 }
 
 String _initialsForName(String name) {

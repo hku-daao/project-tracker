@@ -17,6 +17,7 @@ import '../asana_landing_screen.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_task_filter.dart';
+import 'asana_name_freshness.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
@@ -641,6 +642,12 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                     submission: isSub
                                         ? sub.submission
                                         : row.task.submission,
+                                    createdAt: isSub
+                                        ? sub.createDate
+                                        : row.task.createdAt,
+                                    updatedAt: isSub
+                                        ? sub.updateDate
+                                        : row.task.updateDate,
                                   ),
                                 ],
                               );
@@ -1439,6 +1446,8 @@ class _ExpandableTaskTableRow extends StatelessWidget {
             status: AsanaTaskFilter.taskDisplayStatus(appState, task),
             commencementStatus: task.commencementStatus,
             submission: task.submission,
+            createdAt: task.createdAt,
+            updatedAt: task.updateDate,
             onArchiveTask: onArchiveTask,
             expandControl: hasSubs
                 ? _ExpandChevron(expanded: expanded, onPressed: onToggleExpand)
@@ -1580,6 +1589,8 @@ class _SubtaskDataRow extends StatelessWidget {
           ),
           commencementStatus: subtask.commencementStatus,
           submission: subtask.submission,
+          createdAt: subtask.createDate,
+          updatedAt: subtask.updateDate,
           indentSubtaskBadge: true,
         ),
       ],
@@ -1740,6 +1751,8 @@ class _ItemTableRow extends StatelessWidget {
     required this.status,
     required this.commencementStatus,
     required this.submission,
+    this.createdAt,
+    this.updatedAt,
     this.onArchiveTask,
     this.expandControl,
     this.indentSubtaskBadge = false,
@@ -1760,6 +1773,8 @@ class _ItemTableRow extends StatelessWidget {
   final String status;
   final String commencementStatus;
   final String? submission;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final VoidCallback? onArchiveTask;
 
   /// Expand/collapse control shown in the fixed name gutter (tasks with sub-tasks).
@@ -1833,11 +1848,12 @@ class _ItemTableRow extends StatelessWidget {
                         ),
                       ),
                       Expanded(
-                        child: Text(
-                          name,
+                        child: AsanaNameWithFreshness(
+                          name: name,
                           style: nameStyle,
+                          createdAt: createdAt,
+                          updatedAt: updatedAt,
                           maxLines: isSubtask ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
                           softWrap: false,
                         ),
                       ),
@@ -2034,11 +2050,16 @@ class _FlatMobileRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      name,
+                    AsanaNameWithFreshness(
+                      name: name,
                       style: nameStyle,
+                      createdAt: isSubtask
+                          ? subtask!.createDate
+                          : task.createdAt,
+                      updatedAt: isSubtask
+                          ? subtask!.updateDate
+                          : task.updateDate,
                       maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 5),
                     Text(metaLine, style: valueStyle),

@@ -16,6 +16,7 @@ import 'asana_blocking_loading_overlay.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
 import 'asana_task_filter.dart';
+import 'asana_name_freshness.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
@@ -1411,13 +1412,13 @@ class _ProjectTaskDataRow extends StatelessWidget {
                             ),
                           ),
                           Expanded(
-                            child: Text(
-                              task.name.trim().isEmpty
+                            child: AsanaNameWithFreshness(
+                              name: task.name.trim().isEmpty
                                   ? '(Unnamed task)'
                                   : task.name.trim(),
                               style: nameStyle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              createdAt: task.createdAt,
+                              updatedAt: task.updateDate,
                             ),
                           ),
                         ],
@@ -1691,13 +1692,13 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
                             child: const SizedBox.shrink(),
                           ),
                           Expanded(
-                            child: Text(
-                              subtask.subtaskName.trim().isEmpty
+                            child: AsanaNameWithFreshness(
+                              name: subtask.subtaskName.trim().isEmpty
                                   ? '(Unnamed sub-task)'
                                   : subtask.subtaskName.trim(),
                               style: nameStyle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              createdAt: subtask.createDate,
+                              updatedAt: subtask.updateDate,
                             ),
                           ),
                         ],
@@ -1847,11 +1848,11 @@ class _ProjectTableRow extends StatelessWidget {
                         ),
                       ),
                       Expanded(
-                        child: Text(
-                          project.name,
+                        child: AsanaNameWithFreshness(
+                          name: project.name,
                           style: nameStyle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          createdAt: project.createDate,
+                          updatedAt: project.updateDate,
                         ),
                       ),
                     ],
@@ -2018,11 +2019,12 @@ class _ProjectMobileRow extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(
-                          name,
+                        AsanaNameWithFreshness(
+                          name: name,
                           style: nameStyle,
+                          createdAt: project.createDate,
+                          updatedAt: project.updateDate,
                           maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 5),
                         Text(
@@ -2242,11 +2244,12 @@ class _ProjectMobileTaskRow extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(
-                          name,
+                        AsanaNameWithFreshness(
+                          name: name,
                           style: nameStyle,
+                          createdAt: task.createdAt,
+                          updatedAt: task.updateDate,
                           maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 5),
                         Text(metaLine, style: valueStyle),
@@ -2371,11 +2374,12 @@ class _ProjectMobileSubtaskRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      name,
+                    AsanaNameWithFreshness(
+                      name: name,
                       style: nameStyle,
+                      createdAt: subtask.createDate,
+                      updatedAt: subtask.updateDate,
                       maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 5),
                     Text(metaLine, style: valueStyle),
