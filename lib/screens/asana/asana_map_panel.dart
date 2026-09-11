@@ -12,6 +12,7 @@ import '../../models/task.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_due_badge.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
 import 'asana_task_filter.dart';
@@ -1371,7 +1372,13 @@ _DiagramNode _taskDiagramNode({
     name: taskNode.task.name,
     pic: _staffNameFor(state, taskNode.task.pic),
     status: taskStatus,
-    detailLabel: _mapBlockDetailLabel(taskStatus, taskNode.task.endDate),
+    detailLabel: _mapBlockDetailLabel(
+      taskStatus,
+      taskNode.task.endDate,
+      taskNode.task.submission,
+    ),
+    dueDate: taskNode.task.endDate,
+    submission: taskNode.task.submission,
     onTap: () => onOpenTask?.call(taskNode.task.id),
     canExpand: hasSubtasks,
     expanded: expanded,
@@ -1393,7 +1400,13 @@ _DiagramNode _taskDiagramNode({
               name: subtask.subtaskName,
               pic: _staffNameFor(state, subtask.pic),
               status: subStatus,
-              detailLabel: _mapBlockDetailLabel(subStatus, subtask.dueDate),
+              detailLabel: _mapBlockDetailLabel(
+                subStatus,
+                subtask.dueDate,
+                subtask.submission,
+              ),
+              dueDate: subtask.dueDate,
+              submission: subtask.submission,
               onTap: () => onOpenSubtask?.call(subtask.id),
               children: const [],
             );
@@ -1402,7 +1415,10 @@ _DiagramNode _taskDiagramNode({
   );
 }
 
-String _mapBlockDetailLabel(String status, DateTime? due) {
+String _mapBlockDetailLabel(String status, DateTime? due, String? submission) {
+  if ((submission ?? '').trim().toLowerCase() == 'submitted') {
+    return 'Submitted';
+  }
   if (status.trim().toLowerCase() == 'incomplete') {
     return due == null ? '—' : HkTime.formatInstantAsHk(due, 'MMM d, yyyy');
   }
@@ -1828,7 +1844,14 @@ class _DiagramBox extends StatelessWidget {
       );
     }
 
-    return Material(
+    final dueBadge = item.node.type == _DiagramNodeType.project
+        ? null
+        : AsanaDueBadge.labelFor(
+            due: item.node.dueDate,
+            status: item.node.status,
+            submission: item.node.submission,
+          );
+    final box = Material(
       color: Colors.transparent,
       child: Ink(
         decoration: BoxDecoration(
@@ -1861,6 +1884,21 @@ class _DiagramBox extends StatelessWidget {
                 ),
         ),
       ),
+    );
+    if (dueBadge == null) return box;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        box,
+        Positioned(
+          top: -3,
+          right: 0,
+          child: FractionalTranslation(
+            translation: const Offset(1 / 3, 0),
+            child: AsanaDueBadge(label: dueBadge),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2003,6 +2041,8 @@ class _DiagramNode {
     required this.detailLabel,
     required this.onTap,
     required this.children,
+    this.dueDate,
+    this.submission,
     this.canExpand = false,
     this.expanded = false,
     this.onToggleExpand,
@@ -2014,6 +2054,8 @@ class _DiagramNode {
   final String pic;
   final String status;
   final String detailLabel;
+  final DateTime? dueDate;
+  final String? submission;
   final VoidCallback onTap;
   final List<_DiagramNode> children;
   final bool canExpand;

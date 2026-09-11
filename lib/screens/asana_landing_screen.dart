@@ -5,10 +5,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
+import '../config/postgrest_config.dart';
+import '../models/staff_for_assignment.dart';
 import '../services/asana_filter_cookie_storage.dart';
+import '../services/database_service.dart';
 import '../services/sso_auth_service.dart';
+import '../services/task_fetch_visibility.dart';
 import '../web_deep_link.dart';
 import '../widgets/project_tracker_logo.dart';
+import 'asana/asana_assignee_picker.dart';
 import 'asana/asana_blocking_loading_overlay.dart';
 import 'asana/asana_filter_widgets.dart';
 import 'asana/asana_archived_panel.dart';
@@ -84,7 +89,21 @@ class AsanaLandingPalette {
   final AsanaTableColors tableColors;
 
   /// Home "People" metric chip (background, foreground).
-  (Color bg, Color fg) homeMetricStyle(String metric) {
+  (Color bg, Color fg) homeMetricStyle(String metric, {bool subtask = false}) {
+    if (subtask) {
+      switch (metric) {
+        case 'overdue':
+          return (const Color(0xFFFFF3E0), const Color(0xFFE65100));
+        case 'completed':
+          return (const Color(0xFFE0F2F1), const Color(0xFF00695C));
+        case 'upcoming':
+          return (const Color(0xFFEDE7F6), const Color(0xFF5E35B1));
+        case 'ongoing':
+        case 'incomplete':
+        default:
+          return (const Color(0xFFE3F2FD), const Color(0xFF1565C0));
+      }
+    }
     switch (metric) {
       case 'overdue':
         return (const Color(0xFFFCE4E4), const Color(0xFFF06A6A));
@@ -246,8 +265,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   static const Duration _kDetailSlideDuration = Duration(milliseconds: 300);
   static const double _kSidebarWidth = 240;
   static const String _themeCookieKey = 'asana_landing_theme';
+  static const String _adminViewAsAdminKey = '__admin_view__';
 
   final _searchController = TextEditingController();
+  final LayerLink _adminViewAsAnchorLink = LayerLink();
+  final ValueNotifier<AsanaAssigneePickerSnapshot> _adminViewAsSnapshot =
+      ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
+  List<StaffForAssignment> _adminViewAsStaff = const [];
+  bool _adminViewAsLoading = false;
 
   String _selectedNav = 'Home';
   String _themeId = AsanaLandingPalette.asana.id;
@@ -267,6 +292,198 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   ];
 
   AsanaLandingPalette get _palette => AsanaLandingPalette.byId(_themeId);
+
+  void _publishAdminViewAsSnapshot() {
+    final adminOption = const StaffForAssignment(
+      assigneeId: _adminViewAsAdminKey,
+      name: 'Admin (default)',
+    );
+    _adminViewAsSnapshot.value = AsanaAssigneePickerSnapshot(
+      loading: _adminViewAsLoading,
+      staff: [adminOption, ..._adminViewAsStaff],
+    );
+  }
+
+  Future<void> _loadAdminViewAsStaff() async {
+    if (_adminViewAsLoading) return;
+    setState(() => _adminViewAsLoading = true);
+    _publishAdminViewAsSnapshot();
+    try {
+      final data = await DatabaseService.fetchStaffAssigneePickerData();
+      if (!mounted) return;
+      final staff = List<StaffForAssignment>.from(data.staff)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      setState(() => _adminViewAsStaff = staff);
+    } catch (e) {
+      debugPrint('Admin view-as staff load failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _adminViewAsLoading = false);
+        _publishAdminViewAsSnapshot();
+      }
+    }
+  }
+
+  Future<void> _openAdminViewAsPicker(BuildContext anchorContext) async {
+    if (_adminViewAsStaff.isEmpty && !_adminViewAsLoading) {
+      await _loadAdminViewAsStaff();
+    }
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    final selected = <String>{
+      state.adminViewAsStaffAppId ?? _adminViewAsAdminKey,
+    };
+    await showAsanaAssigneePicker(
+      anchorLink: _adminViewAsAnchorLink,
+      anchorContext: anchorContext,
+      snapshot: _adminViewAsSnapshot,
+      selectedIds: selected,
+      singleSelect: true,
+      directListOnly: true,
+      onSelectionChanged: (ids) {
+        final next = ids.isEmpty ? null : ids.first;
+        _applyAdminViewAsSelection(next);
+      },
+    );
+  }
+
+  Future<void> _applyAdminViewAsSelection(String? selected) async {
+    final state = context.read<AppState>();
+    if (selected == null ||
+        selected.isEmpty ||
+        selected == _adminViewAsAdminKey) {
+      state.clearAdminDebugViewAs();
+      await _reloadForAdminViewAsChange(visibility: null, adminAll: true);
+      _dismissAllDetails();
+      return;
+    }
+    StaffForAssignment? staff;
+    for (final row in _adminViewAsStaff) {
+      if (row.assigneeId == selected) {
+        staff = row;
+        break;
+      }
+    }
+    if (staff == null) return;
+    final subIds = await DatabaseService.fetchSubordinateAppIdsForSupervisor(
+      staff.assigneeId,
+    );
+    final visibility =
+        await DatabaseService.enrichTaskFetchVisibility(
+          TaskFetchVisibility(
+            supervisorStaffAppId: staff.assigneeId,
+            supervisorStaffUuid: staff.staffUuid,
+            subordinateStaffAppIds: subIds,
+          ),
+        ) ??
+        TaskFetchVisibility(
+          supervisorStaffAppId: staff.assigneeId,
+          supervisorStaffUuid: staff.staffUuid,
+          subordinateStaffAppIds: subIds,
+        );
+    if (!mounted) return;
+    state.setAdminDebugViewAs(
+      staffAppId: staff.assigneeId,
+      staffUuid: visibility.supervisorStaffUuid ?? staff.staffUuid,
+      staffName: staff.name,
+      subordinateAppIds: visibility.subordinateStaffAppIds,
+      subordinateStaffUuids: visibility.subordinateStaffUuids,
+    );
+    await _reloadForAdminViewAsChange(visibility: visibility, adminAll: false);
+    _dismissAllDetails();
+  }
+
+  Future<void> _reloadForAdminViewAsChange({
+    required TaskFetchVisibility? visibility,
+    required bool adminAll,
+  }) async {
+    if (!PostgrestConfig.isConfigured) {
+      setState(() => _detailRefreshToken++);
+      return;
+    }
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final state = context.read<AppState>();
+      final taskData = await DatabaseService.fetchTasks(
+        visibility: adminAll ? null : visibility,
+      );
+      if (!mounted) return;
+      state.applyTasks(
+        taskData ?? TasksLoadResult.empty,
+        visibilityScoped:
+            !adminAll && visibility != null && visibility.isConfigured,
+      );
+      final projects = await DatabaseService.fetchAllProjects();
+      if (!mounted) return;
+      state.applyProjects(projects);
+      setState(() => _detailRefreshToken++);
+    } catch (e) {
+      debugPrint('Admin view-as reload failed: $e');
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+    }
+  }
+
+  Widget _buildAdminViewAsButton(AsanaLandingPalette palette) {
+    final state = context.watch<AppState>();
+    final label = state.adminViewAsStaffName?.trim().isNotEmpty == true
+        ? state.adminViewAsStaffName!.trim()
+        : 'Admin (default)';
+    return CompositedTransformTarget(
+      link: _adminViewAsAnchorLink,
+      child: Builder(
+        builder: (anchorContext) {
+          return Material(
+            color: palette.searchField,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _openAdminViewAsPicker(anchorContext),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 188, maxWidth: 260),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.person_search_outlined,
+                        size: 16,
+                        color: palette.onBanner,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: asanaTextStyle(
+                            Theme.of(anchorContext).textTheme.bodySmall,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: palette.onBanner,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: palette.onBanner,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   void _showNavigationLoadingUntilNextFrame() {
     AsanaBlockingLoadingOverlay.show(context);
@@ -511,6 +728,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       if (kIsWeb) {
         _syncWebLocationToDetailStack();
       }
+      if (mounted && context.read<AppState>().adminViewMode) {
+        _loadAdminViewAsStaff();
+      }
     });
   }
 
@@ -567,6 +787,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   void dispose() {
     AsanaBlockingLoadingOverlay.hideAll();
     _searchController.dispose();
+    _adminViewAsSnapshot.dispose();
     super.dispose();
   }
 
@@ -774,6 +995,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                               : const SizedBox.shrink(),
                         ),
                       ),
+                      if (adminViewMode) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _buildAdminViewAsButton(palette),
+                        ),
+                      ],
                       Padding(
                         padding: const EdgeInsets.only(left: 8, right: 12),
                         child: Padding(

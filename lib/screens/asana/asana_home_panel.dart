@@ -490,9 +490,15 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
             name: assignee.name.trim().isNotEmpty
                 ? assignee.name.trim()
                 : appId,
-            counts: _countsForStaff(
+            taskCounts: _taskCountsForStaff(
               state,
               tasks,
+              today,
+              appId,
+              appId == mine ? myUuid : null,
+            ),
+            subtaskCounts: _subtaskCountsForStaff(
+              state,
               subtasksByTaskId,
               today,
               appId,
@@ -509,9 +515,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       rows.add(
         _PersonTaskSummary(
           name: me?.name.trim().isNotEmpty == true ? me!.name.trim() : mine,
-          counts: _countsForStaff(
+          taskCounts: _taskCountsForStaff(state, tasks, today, mine, myUuid),
+          subtaskCounts: _subtaskCountsForStaff(
             state,
-            tasks,
             subtasksByTaskId,
             today,
             mine,
@@ -540,9 +546,15 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       rows.add(
         _PersonTaskSummary(
           name: a?.name.trim().isNotEmpty == true ? a!.name.trim() : appId,
-          counts: _countsForStaff(
+          taskCounts: _taskCountsForStaff(
             state,
             tasks,
+            today,
+            appId,
+            staffUuid,
+          ),
+          subtaskCounts: _subtaskCountsForStaff(
+            state,
             subtasksByTaskId,
             today,
             appId,
@@ -577,10 +589,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     return false;
   }
 
-  static _TaskCounts _countsForStaff(
+  static _TaskCounts _taskCountsForStaff(
     AppState state,
     List<Task> tasks,
-    Map<String, List<SingularSubtask>> subtasksByTaskId,
     DateTime today,
     String appId,
     String? staffUuid,
@@ -605,6 +616,25 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         incomplete++;
       }
     }
+    return _TaskCounts(
+      overdue: overdue,
+      incomplete: incomplete,
+      completed: completed,
+      upcoming: upcoming,
+    );
+  }
+
+  static _TaskCounts _subtaskCountsForStaff(
+    AppState state,
+    Map<String, List<SingularSubtask>> subtasksByTaskId,
+    DateTime today,
+    String appId,
+    String? staffUuid,
+  ) {
+    var overdue = 0;
+    var incomplete = 0;
+    var completed = 0;
+    var upcoming = 0;
     for (final subtasks in subtasksByTaskId.values) {
       for (final s in subtasks) {
         if (!_subtaskMatchesStaff(state, s, appId, staffUuid)) continue;
@@ -692,12 +722,14 @@ class _TaskCounts {
 class _PersonTaskSummary {
   const _PersonTaskSummary({
     required this.name,
-    required this.counts,
+    required this.taskCounts,
+    required this.subtaskCounts,
     this.isSelf = false,
   });
 
   final String name;
-  final _TaskCounts counts;
+  final _TaskCounts taskCounts;
+  final _TaskCounts subtaskCounts;
   final bool isSelf;
 }
 
@@ -1257,86 +1289,89 @@ class _HomePeopleRow extends StatelessWidget {
     final nameStyle = asanaTableRowNameStyle(
       context,
     )?.copyWith(fontWeight: summary.isSelf ? FontWeight.w700 : FontWeight.w600);
-    final c = summary.counts;
-    final chips = [
-      _HomeMetricChip(
-        palette: palette,
-        count: c.overdue,
-        label: 'overdue',
-        metric: 'overdue',
-        useAcronym: useMetricAcronym,
-      ),
-      _HomeMetricChip(
-        palette: palette,
-        count: c.incomplete,
-        label: 'ongoing',
-        metric: 'ongoing',
-        useAcronym: useMetricAcronym,
-      ),
-      _HomeMetricChip(
-        palette: palette,
-        count: c.completed,
-        label: 'completed',
-        metric: 'completed',
-        useAcronym: useMetricAcronym,
-      ),
-      _HomeMetricChip(
-        palette: palette,
-        count: c.upcoming,
-        label: 'upcoming',
-        metric: 'upcoming',
-        useAcronym: useMetricAcronym,
-      ),
-    ];
-
-    final metrics = Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [chips[0], const SizedBox(width: 6), chips[1]],
-        ),
-        const SizedBox(height: 6),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [chips[2], const SizedBox(width: 6), chips[3]],
-        ),
-      ],
-    );
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (useMetricAcronym)
-            SizedBox(
-              width: AsanaHomePanel._homePeopleNameMinWidth,
-              child: Text(
-                summary.name,
-                style: nameStyle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            )
-          else
-            Expanded(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minWidth: AsanaHomePanel._homePeopleNameMinWidth,
-                ),
-                child: Text(
-                  summary.name,
-                  style: nameStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+          Expanded(
+            child: Text(
+              summary.name,
+              style: nameStyle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-          const SizedBox(width: 8),
-          metrics,
+          ),
+          const SizedBox(width: 12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _countBlock('Tasks', summary.taskCounts, forSubtasks: false),
+                const SizedBox(width: 10),
+                _countBlock(
+                  'Sub-tasks',
+                  summary.subtaskCounts,
+                  forSubtasks: true,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _countBlock(
+    String heading,
+    _TaskCounts c, {
+    required bool forSubtasks,
+  }) {
+    Widget chip(int count, String label, String metric) {
+      return _HomeMetricChip(
+        palette: palette,
+        count: count,
+        label: label,
+        metric: metric,
+        useAcronym: useMetricAcronym,
+        forSubtasks: forSubtasks,
+      );
+    }
+
+    Widget pair(Widget left, Widget right) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [left, const SizedBox(width: 6), right],
+      );
+    }
+
+    const headingColor = kAsanaTextSecondary;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          heading,
+          style: asanaTextStyle(
+            const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+            color: headingColor,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(height: 4),
+        pair(
+          chip(c.overdue, 'overdue', 'overdue'),
+          chip(c.incomplete, 'ongoing', 'ongoing'),
+        ),
+        const SizedBox(height: 6),
+        pair(
+          chip(c.completed, 'completed', 'completed'),
+          chip(c.upcoming, 'upcoming', 'upcoming'),
+        ),
+      ],
     );
   }
 }
@@ -1348,6 +1383,7 @@ class _HomeMetricChip extends StatelessWidget {
     required this.label,
     required this.metric,
     this.useAcronym = false,
+    this.forSubtasks = false,
   });
 
   final AsanaLandingPalette palette;
@@ -1355,6 +1391,7 @@ class _HomeMetricChip extends StatelessWidget {
   final String label;
   final String metric;
   final bool useAcronym;
+  final bool forSubtasks;
 
   static String _displayLabel(String label, bool acronym) {
     if (!acronym) return label;
@@ -1374,7 +1411,7 @@ class _HomeMetricChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg) = palette.homeMetricStyle(metric);
+    final (bg, fg) = palette.homeMetricStyle(metric, subtask: forSubtasks);
     final shown = _displayLabel(label, useAcronym);
     final chip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1384,6 +1421,8 @@ class _HomeMetricChip extends StatelessWidget {
       ),
       child: Text(
         '$count $shown',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: asanaTextStyle(
           Theme.of(context).textTheme.bodySmall,
           fontSize: 12,
