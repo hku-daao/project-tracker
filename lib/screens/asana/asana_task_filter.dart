@@ -292,6 +292,40 @@ class AsanaTaskFilter {
     return false;
   }
 
+  /// All tasks & sub-tasks: show a sub-task if this person (or a subordinate)
+  /// is PIC or an assignee on that sub-task. Admin default view sees all.
+  static bool _subtaskAssignedInScope(AppState state, SingularSubtask s) {
+    if (state.showAllDataAsAdmin) return true;
+    if (state.visibilityKeysInclude(s.pic)) return true;
+    for (final id in s.assigneeIds) {
+      if (state.visibilityKeysInclude(id)) return true;
+    }
+    return false;
+  }
+
+  static bool _taskOnParentInScope(AppState state, Task t) {
+    if (state.showAllDataAsAdmin) return true;
+    return _taskAssignedToCurrentUser(state, t) ||
+        state.taskIsCreatedByCurrentUser(t);
+  }
+
+  /// Parents loaded only because of a sub-task assignment, so those rows can
+  /// be flattened even when the parent itself is outside phase-1 filters.
+  static List<Task> mergeExtraParentsForFlatView(
+    List<Task> active,
+    AppState state,
+  ) {
+    final extra = state.taskIdsVisibleViaSubtask;
+    if (extra.isEmpty) return active;
+    final byId = {for (final t in active) t.id: t};
+    for (final t in state.tasks) {
+      if (!t.isSingularTableRow) continue;
+      if (!extra.contains(t.id)) continue;
+      byId.putIfAbsent(t.id, () => t);
+    }
+    return byId.values.toList();
+  }
+
   static bool _keyMatches(String? value, Iterable<String> selected) {
     final v = value?.trim();
     if (v == null || v.isEmpty) return false;
@@ -1000,9 +1034,11 @@ class AsanaTaskFilter {
 
     for (final t in activeTasks) {
       if (!t.isSingularTableRow) continue;
+      final taskOnParent = _taskOnParentInScope(state, t);
       final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
       final subs = grouped[t.id] ?? [];
       final subsFiltered = subs
+          .where((s) => _subtaskAssignedInScope(state, s))
           .where((s) => _subtaskPassesStatusChips(state, t, s, filters))
           .toList();
       final subsRoleFiltered = subsFiltered
@@ -1018,6 +1054,7 @@ class AsanaTaskFilter {
           : <SingularSubtask>[];
 
       void addTaskIfAllowed() {
+        if (!taskOnParent) return;
         if (!_rowPassesCommencement(t, null, filters)) return;
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(AsanaFlatRow.task(t));
@@ -1026,6 +1063,7 @@ class AsanaTaskFilter {
 
       void addSubsInRange(List<SingularSubtask> list) {
         for (final s in list) {
+          if (!_subtaskAssignedInScope(state, s)) continue;
           if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
           if (!_rowPassesCommencement(t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
@@ -1088,6 +1126,7 @@ class AsanaTaskFilter {
         addTaskIfAllowed();
       }
       for (final s in subsNonDeleted) {
+        if (!_subtaskAssignedInScope(state, s)) continue;
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
@@ -1096,6 +1135,7 @@ class AsanaTaskFilter {
         out.add(AsanaFlatRow.subtask(t, s));
       }
       for (final s in subsDeleted) {
+        if (!_subtaskAssignedInScope(state, s)) continue;
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
@@ -1172,11 +1212,14 @@ class AsanaTaskFilter {
         if (!t.isSingularTableRow) continue;
         if (_hideIncompleteParentWhenCompletedOnly(t, filters)) continue;
         final taskPassesRole = _rowPassesRoleFilters(state, t, null, filters);
-        if (taskPassesRole && _rowPassesCommencement(t, null, filters)) {
+        if (_taskOnParentInScope(state, t) &&
+            taskPassesRole &&
+            _rowPassesCommencement(t, null, filters)) {
           out.add(AsanaFlatRow.task(t));
         }
         final subs = grouped[t.id] ?? [];
         for (final s in subs) {
+          if (!_subtaskAssignedInScope(state, s)) continue;
           if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
           if (!_rowPassesCommencement(t, s, filters)) continue;
           if (!_subtaskPassesStatusChips(state, t, s, filters)) continue;

@@ -12,7 +12,8 @@ class TaskFetchVisibility {
   final List<String> subordinateStaffAppIds;
   final List<String> subordinateStaffUuids;
 
-  /// All keys used in `task.create_by` and `assignee_01`…`assignee_10` (uuid + app_id).
+  /// All keys used in `task`/`subtask` `create_by`, `pic`, and `assignee_01`…`assignee_10`
+  /// (uuid + app_id).
   Set<String> get lookupKeys {
     final out = <String>{};
     void add(String? v) {

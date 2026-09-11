@@ -102,7 +102,14 @@ class InlineAttachmentRow {
 class TasksLoadResult {
   final List<Task> tasks;
 
-  const TasksLoadResult({required this.tasks});
+  /// Parent `task.id`s included because the user (or a subordinate) is an
+  /// assignee or PIC on a child `subtask`, even if they are not on the parent.
+  final Set<String> taskIdsVisibleViaSubtask;
+
+  const TasksLoadResult({
+    required this.tasks,
+    this.taskIdsVisibleViaSubtask = const {},
+  });
 
   static const empty = TasksLoadResult(tasks: []);
 }
@@ -2415,14 +2422,64 @@ class DatabaseService {
     );
   }
 
-  /// Merges singular `task` rows visible to [visibility] (creator or assignee).
-  static Future<List<Map<String, dynamic>>> _fetchSingularTaskRowsForVisibility(
+  /// Parent `task_id`s where [visibility] matches `subtask` PIC or assignee slots.
+  static Future<Set<String>> _taskIdsAssignedOnSubtasks(
+    PostgrestClient db,
+    TaskFetchVisibility visibility,
+  ) async {
+    final keys = visibility.lookupKeys.toList();
+    if (keys.isEmpty) return {};
+
+    final ids = <String>{};
+    void absorb(dynamic res) {
+      for (final raw in (res as List)) {
+        final id = (raw as Map)['task_id']?.toString().trim();
+        if (id != null && id.isNotEmpty) ids.add(id);
+      }
+    }
+
+    Future<void> runQuery(
+      String label,
+      Future<dynamic> Function() query,
+    ) async {
+      try {
+        absorb(await query());
+      } catch (e, st) {
+        debugPrint('_taskIdsAssignedOnSubtasks ($label): $e\n$st');
+      }
+    }
+
+    final futures = <Future<void>>[
+      runQuery(
+        'pic',
+        () => db.from('subtask').select('task_id').inFilter('pic', keys),
+      ),
+    ];
+    for (var i = 1; i <= 10; i++) {
+      final col = 'assignee_${i.toString().padLeft(2, '0')}';
+      futures.add(
+        runQuery(
+          col,
+          () => db.from('subtask').select('task_id').inFilter(col, keys),
+        ),
+      );
+    }
+    await Future.wait(futures);
+    return ids;
+  }
+
+  /// Merges singular `task` rows visible to [visibility] (creator, assignee,
+  /// or parent of a sub-task they are assigned to / PIC of).
+  static Future<({List<Map<String, dynamic>> rows, Set<String> viaSubtask})>
+  _fetchSingularTaskRowsForVisibility(
     PostgrestClient db,
     TaskFetchVisibility visibility,
   ) async {
     final assigneeUuids = visibility.staffUuidsForAssigneeFilter.toList();
     final createByKeys = visibility.staffKeysForCreateByFilter.toList();
-    if (assigneeUuids.isEmpty && createByKeys.isEmpty) return [];
+    if (assigneeUuids.isEmpty && createByKeys.isEmpty) {
+      return (rows: <Map<String, dynamic>>[], viaSubtask: <String>{});
+    }
 
     final byId = <String, Map<String, dynamic>>{};
 
@@ -2470,6 +2527,17 @@ class DatabaseService {
 
     await Future.wait(futures);
 
+    final viaSubtask = await _taskIdsAssignedOnSubtasks(db, visibility);
+    final missing = viaSubtask.where((id) => !byId.containsKey(id)).toList();
+    const chunkSize = 80;
+    for (var i = 0; i < missing.length; i += chunkSize) {
+      final chunk = missing.sublist(i, min(i + chunkSize, missing.length));
+      await runQuery(
+        'subtask_parent_tasks',
+        () => db.from('task').select().inFilter('id', chunk),
+      );
+    }
+
     final rows = byId.values.toList();
     rows.sort((a, b) {
       final ad = _parseDateTime(a['created_at'] ?? a['create_date']);
@@ -2478,9 +2546,10 @@ class DatabaseService {
     });
     debugPrint(
       '_fetchSingularTaskRowsForVisibility: ${rows.length} tasks '
-      '(create_by keys=${createByKeys.length}, assignee uuids=${assigneeUuids.length})',
+      '(create_by keys=${createByKeys.length}, assignee uuids=${assigneeUuids.length}, '
+      'via subtask=${viaSubtask.length})',
     );
-    return rows;
+    return (rows: rows, viaSubtask: viaSubtask);
   }
 
   /// Rows in [subordinate] where [supervisor_id] is the supervisor's `staff.app_id`.
@@ -2510,7 +2579,8 @@ class DatabaseService {
   ///
   /// When [visibility] is set, only singular `task` rows are fetched where
   /// `create_by` or any `assignee_01`…`assignee_10` matches the supervisor or
-  /// a subordinate (`staff.app_id` or `staff.id`). Legacy plural `tasks` is skipped.
+  /// a subordinate (`staff.app_id` or `staff.id`), or the person is PIC /
+  /// assignee on a child `subtask`. Legacy plural `tasks` is skipped.
   static Future<TasksLoadResult?> fetchTasks({
     TaskFetchVisibility? visibility,
   }) async {
@@ -2532,13 +2602,16 @@ class DatabaseService {
       } catch (_) {}
       final db = PostgrestClient.instance;
       final singularTasks = <Task>[];
+      var viaSubtask = <String>{};
       try {
         dynamic singularRes;
         if (scoped) {
-          singularRes = await _fetchSingularTaskRowsForVisibility(
+          final scopedRows = await _fetchSingularTaskRowsForVisibility(
             db,
             visibility,
           );
+          singularRes = scopedRows.rows;
+          viaSubtask = scopedRows.viaSubtask;
         } else {
           try {
             singularRes = await db
@@ -2604,7 +2677,10 @@ class DatabaseService {
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       debugPrint('fetchTasks: returning ${merged.length} tasks to AppState');
-      return TasksLoadResult(tasks: merged);
+      return TasksLoadResult(
+        tasks: merged,
+        taskIdsVisibleViaSubtask: viaSubtask,
+      );
     } catch (e, st) {
       debugPrint('fetchTasks failed: $e\n$st');
       return TasksLoadResult.empty;

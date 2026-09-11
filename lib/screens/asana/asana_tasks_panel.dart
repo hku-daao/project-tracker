@@ -139,11 +139,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
         _filters,
         searchQuery: widget.searchQuery,
       );
-      final prefetchIds = AsanaTaskFilter.subtaskPrefetchTaskIds(
-        phase1,
-        state,
-        _filters,
-      );
+      final prefetchIds = <String>{
+        ...AsanaTaskFilter.subtaskPrefetchTaskIds(phase1, state, _filters),
+        if (widget.flatTasksAndSubtasks) ...state.taskIdsVisibleViaSubtask,
+      }.toList();
 
       Map<String, List<SingularSubtask>> grouped = {};
       if (prefetchIds.isNotEmpty) {
@@ -159,12 +158,15 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
 
       if (!mounted || gen != _listGeneration) return;
 
-      final active = AsanaTaskFilter.enrichActiveTasks(
+      var active = AsanaTaskFilter.enrichActiveTasks(
         phase1,
         state,
         _filters,
         grouped,
       );
+      if (widget.flatTasksAndSubtasks) {
+        active = AsanaTaskFilter.mergeExtraParentsForFlatView(active, state);
+      }
       final tasks = widget.flatTasksAndSubtasks
           ? <Task>[]
           : AsanaTaskFilter.applyTasksTabRows(

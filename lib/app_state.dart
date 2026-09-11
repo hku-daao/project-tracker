@@ -335,12 +335,28 @@ class AppState extends ChangeNotifier {
 
   bool get tasksLoadedWithVisibilityScope => _tasksLoadedWithVisibilityScope;
 
+  /// Parent tasks loaded because the user (or a subordinate) is on a child sub-task.
+  final Set<String> _taskIdsVisibleViaSubtask = {};
+
+  Set<String> get taskIdsVisibleViaSubtask =>
+      Set.unmodifiable(_taskIdsVisibleViaSubtask);
+
   /// Replace tasks from the database after fetch.
   void applyTasks(TasksLoadResult result, {bool visibilityScoped = false}) {
     _tasksLoadedWithVisibilityScope = visibilityScoped;
     _tasks.clear();
     _tasks.addAll(result.tasks);
+    _taskIdsVisibleViaSubtask
+      ..clear()
+      ..addAll(result.taskIdsVisibleViaSubtask);
     notifyListeners();
+  }
+
+  /// True when [key] is the current user or a subordinate (`staff.app_id` or uuid).
+  bool visibilityKeysInclude(String? key) {
+    final k = key?.trim();
+    if (k == null || k.isEmpty) return false;
+    return _visibilityKeyMatches(k, taskVisibilityLookupKeys);
   }
 
   List<Task> get tasks {
