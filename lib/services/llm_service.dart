@@ -117,7 +117,7 @@ Schema:
   "comment": "comment body for the Comments field (posted when the user saves), or null",
   "projectName": "exact name from available projects list, or null",
   "assigneeNames": ["names from available staff list"] or [],
-  "picName": "one staff name (must be in assigneeNames if assignees set), or null",
+  "picName": "one staff name, or null",
   "priority": "Standard" or "URGENT" or null,
   "commencementStatus": "Commenced" or "To be commenced" or null,
   "complexity": "Low" or "Medium" or "High",
@@ -143,9 +143,9 @@ Rules:
 - Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - comment: text for the Comments field (a draft posted when the user saves the task). When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
 - Use assignee and project names only from the provided staff/projects lists.
-- Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
-- PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them (e.g. "add A and B as assignees, C as PIC" → assigneeNames: A, B, C and picName: C).
-- picName must match someone in assigneeNames when both are set.
+- Assignees: when the user adds or removes people, set assigneeNames to the full resulting visible assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain). Never include the PIC in assigneeNames.
+- If the user mentions exactly one person as assignee / owner / responsible / PIC, set picName to that person and leave assigneeNames empty or omit it. Do not also suggest that person as an assignee.
+- If the user mentions two or more people, put the PIC (named PIC, or the first person if they named one owner) in picName only. Put the other people in assigneeNames. Example: "assign A and B, C as PIC" → assigneeNames: A, B and picName: C. Example: "assign Ken" → picName: Ken and assigneeNames: [].
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
 - Relative dates such as "today", "tomorrow", "next week", "next Monday", or weekdays MUST be calculated from "Today (Hong Kong)" and the relative date reference in the context, not from existing form dates.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
@@ -200,7 +200,7 @@ Schema:
   "comment": "comment body for the Comments field (posted when the user saves), or null",
   "status": "Not started" or "In progress" or "Completed" or null,
   "assigneeNames": ["names from available staff list"] or [],
-  "picNames": ["names from available staff list, must be assignees"] or [],
+  "picNames": ["names from available staff list"] or [],
   "startDate": "YYYY-MM-DD" or null,
   "dueDate": "YYYY-MM-DD" or null,
   "websiteLinks": [
@@ -214,8 +214,9 @@ Rules:
 - For optional structured fields (status, assigneeNames, picNames, startDate, dueDate, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
 - Avoid echoing unchanged values: compare each field to "Current project form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - Use assignee and PIC names only from the provided staff list.
-- assigneeNames: full resulting assignee list when the user changes assignees.
-- picNames: PIC(s) must be chosen from assigneeNames. When one assignee, they are usually PIC too.
+- assigneeNames: full resulting visible assignee list when the user changes assignees. Never include PIC names in assigneeNames.
+- If the user mentions exactly one person as assignee / owner / responsible / PIC, set picNames to that person only and leave assigneeNames empty or omit it. Do not also suggest that person as an assignee.
+- If the user mentions two or more people, put PIC(s) in picNames only and the other people in assigneeNames.
 - Dates must be YYYY-MM-DD. startDate must be on or before dueDate when both are set.
 - status must be exactly one of: Not started, In progress, Completed.
 - comment: text for the Comments field. When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
@@ -322,7 +323,7 @@ Schema:
   "name": "string or null",
   "description": "sub-task description/details, or null",
   "assigneeNames": ["names from available sub-task assignees list"] or [],
-  "picName": "one staff name (must be in assigneeNames if assignees set), or null",
+  "picName": "one staff name, or null",
   "priority": "Standard" or "URGENT" or null,
   "commencementStatus": "Commenced" or "To be commenced" or null,
   "complexity": "Low" or "Medium" or "High",
@@ -349,8 +350,9 @@ Rules:
 - Avoid echoing unchanged values: compare each field to "Current form values" in context. If a suggested value would be identical, improve/expand it when reasonable; otherwise omit that specific field.
 - The description should be useful execution detail, not just a repeat of the name.
 - Use assignee and PIC names only from the available staff list in context. Sub-task assignees may be anyone on that staff list, not only parent-task assignees.
-- Assignees: when the user adds or removes people, set assigneeNames to the full resulting assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain).
-- PIC: the PIC must always be one of the assignees. If the user sets or changes PIC to someone, include that person in assigneeNames even if the user did not say "assignee" for them.
+- Assignees: when the user adds or removes people, set assigneeNames to the full resulting visible assignee list (start from current assignees in context, apply add/remove, then list everyone who should remain). Never include the PIC in assigneeNames.
+- If the user mentions exactly one person as assignee / owner / responsible / PIC, set picName to that person and leave assigneeNames empty or omit it. Do not also suggest that person as an assignee.
+- If the user mentions two or more people, put the PIC in picName only and the other people in assigneeNames.
 - Dates must be YYYY-MM-DD. If the user gives a range, set startDate and dueDate accordingly.
 - Relative dates such as "today", "tomorrow", "next week", "next Monday", or weekdays MUST be calculated from "Today (Hong Kong)" and the relative date reference in the context, not from the current form's existing start/due dates.
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.

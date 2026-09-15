@@ -472,8 +472,8 @@ class AsanaSubtaskAiSuggestionBuilder {
       final names = AsanaTaskAiSuggestionBuilder._stringList(
         raw['assigneeNames'],
       );
+      var resolvedFromPrompt = <String>{};
       if (names.isNotEmpty) {
-        final resolved = <String>{};
         final missing = <String>[];
         for (final n in names) {
           final ids = AsanaTaskAiSuggestionBuilder._matchStaffIds(
@@ -483,7 +483,7 @@ class AsanaSubtaskAiSuggestionBuilder {
           if (ids.isEmpty) {
             missing.add(n);
           } else {
-            resolved.addAll(ids);
+            resolvedFromPrompt.addAll(ids);
           }
         }
         if (missing.isNotEmpty) {
@@ -494,8 +494,8 @@ class AsanaSubtaskAiSuggestionBuilder {
             ),
           );
         }
-        if (resolved.isNotEmpty) {
-          workingAssignees = resolved;
+        if (resolvedFromPrompt.isNotEmpty) {
+          workingAssignees = resolvedFromPrompt;
         }
       }
 
@@ -523,8 +523,18 @@ class AsanaSubtaskAiSuggestionBuilder {
           );
         } else {
           proposedPicId = picIds.single;
-          workingAssignees = {...workingAssignees, proposedPicId};
         }
+      }
+
+      if (AsanaTaskAiSuggestionBuilder.singleNamedAssigneeIsPicOnly(
+        resolvedAssignees: resolvedFromPrompt,
+        proposedPicId: proposedPicId,
+        assigneeNamesProvided: names.isNotEmpty,
+      )) {
+        proposedPicId ??= resolvedFromPrompt.single;
+        workingAssignees = Set<String>.from(form.selectedAssigneeIds);
+      } else if (proposedPicId != null) {
+        workingAssignees = {...workingAssignees}..remove(proposedPicId);
       }
 
       if (!AsanaTaskAiSuggestionBuilder._sameIdSet(
@@ -599,10 +609,9 @@ class AsanaSubtaskAiSuggestionBuilder {
     if (applyCommencementStatus != null &&
         commencementRaw != null &&
         commencementRaw.isNotEmpty) {
-      var commencement =
-          AsanaTaskAiSuggestionBuilder._parseCommencementStatus(
-            commencementRaw,
-          );
+      var commencement = AsanaTaskAiSuggestionBuilder._parseCommencementStatus(
+        commencementRaw,
+      );
       if (commencement == commencementToBeCommenced &&
           (proposedStart != null || proposedDue != null)) {
         commencement = commencementCommenced;
@@ -996,15 +1005,15 @@ class AsanaTaskAiSuggestionBuilder {
     if (form.canSuggestAssignees) {
       var workingAssignees = Set<String>.from(form.selectedAssigneeIds);
       final names = _stringList(raw['assigneeNames']);
+      var resolvedFromPrompt = <String>{};
       if (names.isNotEmpty) {
-        final resolved = <String>{};
         final missing = <String>[];
         for (final n in names) {
           final ids = _matchStaffIds(n, form.staff);
           if (ids.isEmpty) {
             missing.add(n);
           } else {
-            resolved.addAll(ids);
+            resolvedFromPrompt.addAll(ids);
           }
         }
         if (missing.isNotEmpty) {
@@ -1015,8 +1024,8 @@ class AsanaTaskAiSuggestionBuilder {
             ),
           );
         }
-        if (resolved.isNotEmpty) {
-          workingAssignees = resolved;
+        if (resolvedFromPrompt.isNotEmpty) {
+          workingAssignees = resolvedFromPrompt;
         }
       }
 
@@ -1041,8 +1050,18 @@ class AsanaTaskAiSuggestionBuilder {
           );
         } else {
           proposedPicId = picIds.single;
-          workingAssignees = {...workingAssignees, proposedPicId};
         }
+      }
+
+      if (singleNamedAssigneeIsPicOnly(
+        resolvedAssignees: resolvedFromPrompt,
+        proposedPicId: proposedPicId,
+        assigneeNamesProvided: names.isNotEmpty,
+      )) {
+        proposedPicId ??= resolvedFromPrompt.single;
+        workingAssignees = Set<String>.from(form.selectedAssigneeIds);
+      } else if (proposedPicId != null) {
+        workingAssignees = {...workingAssignees}..remove(proposedPicId);
       }
 
       if (!_sameIdSet(workingAssignees, form.selectedAssigneeIds)) {
@@ -1254,6 +1273,20 @@ class AsanaTaskAiSuggestionBuilder {
         .map((e) => e?.toString().trim() ?? '')
         .where((s) => s.isNotEmpty)
         .toList();
+  }
+
+  /// One named assignee in the prompt → PIC only, not a visible assignee.
+  static bool singleNamedAssigneeIsPicOnly({
+    required Set<String> resolvedAssignees,
+    required String? proposedPicId,
+    required bool assigneeNamesProvided,
+  }) {
+    if (!assigneeNamesProvided) return false;
+    if (resolvedAssignees.length != 1) return false;
+    if (proposedPicId != null && proposedPicId != resolvedAssignees.single) {
+      return false;
+    }
+    return true;
   }
 
   static String? _matchProjectId(

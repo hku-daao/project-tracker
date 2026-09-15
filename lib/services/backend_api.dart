@@ -96,35 +96,6 @@ class BackendApi {
     }
   }
 
-  /// Emails each project assignee (`assignee_01`–`assignee_20`) after project creation.
-  /// Server: `POST /api/notify/project-assigned` (`handleNotifyProjectAssigned`).
-  Future<String?> notifyProjectAssigned({
-    required String idToken,
-    required String projectId,
-  }) async {
-    try {
-      final response = await http
-          .post(
-            url('/api/notify/project-assigned'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'projectId': projectId}),
-          )
-          .timeout(const Duration(seconds: 45));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
   /// Emails project assignees after project detail columns change (`POST /api/notify/project-updated`).
   ///
   /// [changes]: `{ 'field': 'projectName'|'description'|'assignees'|'pic'|'status'|'startDate'|'endDate', 'value': '...' }`.

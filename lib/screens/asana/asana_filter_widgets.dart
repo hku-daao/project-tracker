@@ -647,6 +647,77 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
   );
 }
 
+/// Anchored year + month grid. First tap is start month, second tap is end month.
+Future<AsanaMonthRangePick?> showAsanaAnchoredMonthRangePicker({
+  required BuildContext anchorContext,
+  DateTime? startMonth,
+  DateTime? endMonth,
+  String helpText = 'Project month range',
+}) async {
+  final box = anchorContext.findRenderObject() as RenderBox?;
+  if (box == null || !box.hasSize) return null;
+
+  final offset = box.localToGlobal(Offset.zero);
+  final size = box.size;
+  final screen = MediaQuery.sizeOf(anchorContext);
+  const panelWidth = 320.0;
+  const panelHeight = 360.0;
+  final accent = Theme.of(anchorContext).colorScheme.primary;
+  final pickerTheme = Theme.of(anchorContext).copyWith(
+    colorScheme: Theme.of(
+      anchorContext,
+    ).colorScheme.copyWith(primary: accent, onPrimary: Colors.white),
+  );
+  var left = offset.dx;
+  if (left + panelWidth > screen.width - 8) {
+    left = screen.width - panelWidth - 8;
+  }
+  if (left < 8) left = 8;
+  var top = offset.dy + size.height + 4;
+  if (top + panelHeight > screen.height - 8) {
+    top = offset.dy - panelHeight - 4;
+  }
+  if (top < 8) top = 8;
+
+  return showGeneralDialog<AsanaMonthRangePick>(
+    context: anchorContext,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black26,
+    transitionDuration: Duration.zero,
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      return Stack(
+        children: [
+          Positioned(
+            left: left,
+            top: top,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              color: pickerTheme.colorScheme.surface,
+              child: Theme(
+                data: pickerTheme,
+                child: SizedBox(
+                  width: panelWidth,
+                  child: AsanaMonthRangePickerPanel(
+                    initialStartMonth: startMonth,
+                    initialEndMonth: endMonth,
+                    firstDate: DateTime(2025, 1, 1),
+                    lastDate: DateTime(2031, 12, 1),
+                    accentColor: accent,
+                    helpText: helpText,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
 /// Anchored single-date calendar for fields that should not imply a range.
 Future<DateTime?> showAsanaAnchoredSingleDatePicker({
   required BuildContext anchorContext,

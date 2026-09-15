@@ -158,15 +158,15 @@ class AsanaProjectAiSuggestionBuilder {
     }
 
     final names = _stringList(raw['assigneeNames']);
+    final resolvedAssignees = <String>{};
     if (names.isNotEmpty) {
-      final resolved = <String>{};
       final missing = <String>[];
       for (final n in names) {
         final ids = _matchStaffIds(n, form.staff);
         if (ids.isEmpty) {
           missing.add(n);
         } else {
-          resolved.addAll(ids);
+          resolvedAssignees.addAll(ids);
         }
       }
       if (missing.isNotEmpty) {
@@ -174,21 +174,6 @@ class AsanaProjectAiSuggestionBuilder {
           AsanaTaskAiSuggestionLine.info(
             'Could not match assignee(s): ${missing.join(', ')}',
             fieldKey: AsanaTaskAiFieldKey.assignees,
-          ),
-        );
-      }
-      if (resolved.isNotEmpty &&
-          !_sameIdSet(resolved, form.selectedAssigneeIds)) {
-        final label = _staffNamesForIds(resolved.toList(), form.staff);
-        lines.add(
-          AsanaTaskAiSuggestionLine.adopt(
-            fieldKey: AsanaTaskAiFieldKey.assignees,
-            fieldLabel: 'Assignees',
-            currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
-              form.assigneesLabel,
-            ),
-            suggestedText: label,
-            onAdopt: () => apply.applyAssignees(resolved),
           ),
         );
       }
@@ -215,15 +200,15 @@ class AsanaProjectAiSuggestionBuilder {
     }
 
     final picNames = _stringList(raw['picNames']);
+    final resolvedPics = <String>{};
     if (picNames.isNotEmpty) {
-      final resolved = <String>{};
       final missing = <String>[];
       for (final n in picNames) {
         final ids = _matchStaffIds(n, form.staff);
         if (ids.isEmpty) {
           missing.add(n);
         } else {
-          resolved.addAll(ids);
+          resolvedPics.addAll(ids);
         }
       }
       if (missing.isNotEmpty) {
@@ -234,21 +219,50 @@ class AsanaProjectAiSuggestionBuilder {
           ),
         );
       }
-      if (resolved.isNotEmpty &&
-          !_sameIdSet(resolved, form.selectedPicAssigneeIds)) {
-        final label = _staffNamesForIds(resolved.toList(), form.staff);
-        lines.add(
-          AsanaTaskAiSuggestionLine.adopt(
-            fieldKey: AsanaTaskAiFieldKey.pic,
-            fieldLabel: 'PIC',
-            currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
-              form.picLabel,
-            ),
-            suggestedText: label,
-            onAdopt: () => apply.applyPic(resolved),
+    }
+
+    var visibleAssignees = Set<String>.from(resolvedAssignees);
+    var suggestedPics = Set<String>.from(resolvedPics);
+    if (AsanaTaskAiSuggestionBuilder.singleNamedAssigneeIsPicOnly(
+      resolvedAssignees: resolvedAssignees,
+      proposedPicId: suggestedPics.length == 1 ? suggestedPics.single : null,
+      assigneeNamesProvided: names.isNotEmpty,
+    )) {
+      suggestedPics = {resolvedAssignees.single};
+      visibleAssignees = <String>{};
+    } else {
+      visibleAssignees.removeAll(suggestedPics);
+    }
+
+    if (names.isNotEmpty &&
+        visibleAssignees.isNotEmpty &&
+        !_sameIdSet(visibleAssignees, form.selectedAssigneeIds)) {
+      final label = _staffNamesForIds(visibleAssignees.toList(), form.staff);
+      lines.add(
+        AsanaTaskAiSuggestionLine.adopt(
+          fieldKey: AsanaTaskAiFieldKey.assignees,
+          fieldLabel: 'Assignees',
+          currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
+            form.assigneesLabel,
           ),
-        );
-      }
+          suggestedText: label,
+          onAdopt: () => apply.applyAssignees(visibleAssignees),
+        ),
+      );
+    }
+
+    if (suggestedPics.isNotEmpty &&
+        !_sameIdSet(suggestedPics, form.selectedPicAssigneeIds)) {
+      final label = _staffNamesForIds(suggestedPics.toList(), form.staff);
+      lines.add(
+        AsanaTaskAiSuggestionLine.adopt(
+          fieldKey: AsanaTaskAiFieldKey.pic,
+          fieldLabel: 'PIC',
+          currentValue: AsanaTaskAiSuggestionLine.displayCurrent(form.picLabel),
+          suggestedText: label,
+          onAdopt: () => apply.applyPic(suggestedPics),
+        ),
+      );
     }
 
     final status = _str(raw['status']);

@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
@@ -7,6 +11,7 @@ import '../../models/singular_subtask.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
+import '../../utils/hk_time.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_theme.dart';
@@ -192,6 +197,45 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     final pic = s.pic?.trim();
     if (pic != null && pic.isNotEmpty) return [pic];
     return s.assigneeIds;
+  }
+
+  Iterable<String?> _officeKeysForCreatedItem({
+    required String? creatorKey,
+    required Iterable<String?> ownerKeys,
+  }) {
+    final creator = creatorKey?.trim();
+    if (creator != null && creator.isNotEmpty) return [creator];
+    return ownerKeys;
+  }
+
+  List<DateTime?> _createdDatesForOffice(String officeLabel, AppState state) {
+    final out = <DateTime?>[];
+    for (final t in state.tasks.where((t) => !_taskDeleted(t))) {
+      if (_belongsToOffice(
+        _officeKeysForCreatedItem(
+          creatorKey: t.createByAssigneeKey,
+          ownerKeys: _taskOwnerKeys(t),
+        ),
+        officeLabel,
+      )) {
+        out.add(t.createdAt);
+      }
+    }
+    for (final s
+        in _subtasksByTaskId.values
+            .expand((list) => list)
+            .where((s) => !_subtaskDeleted(s))) {
+      if (_belongsToOffice(
+        _officeKeysForCreatedItem(
+          creatorKey: s.createByStaffId,
+          ownerKeys: _subtaskOwnerKeys(s),
+        ),
+        officeLabel,
+      )) {
+        out.add(s.createDate);
+      }
+    }
+    return out;
   }
 
   _PerformanceMetrics _metricsFor(String officeLabel, AppState state) {
@@ -492,12 +536,19 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
         children: [
-          if (widget.viewMode == AsanaPerformanceViewMode.group)
+          if (widget.viewMode == AsanaPerformanceViewMode.group) ...[
             _OfficePerformanceSection(
               daao: daao,
               cpao: cpao,
               palette: widget.palette,
             ),
+            const SizedBox(height: 18),
+            _CreatedVolumeSection(
+              daaoDates: _createdDatesForOffice('DAAO', state),
+              cpaoDates: _createdDatesForOffice('CPAO', state),
+              palette: widget.palette,
+            ),
+          ],
           if (widget.viewMode == AsanaPerformanceViewMode.individual)
             _IndividualPerformanceBlock(
               performance: individual,
@@ -1819,6 +1870,621 @@ class _PerformanceInfoButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+enum _CreatedChartGrain { month, week, day }
+
+class _CreatedVolumePoint {
+  const _CreatedVolumePoint({
+    required this.label,
+    required this.daao,
+    required this.cpao,
+  });
+
+  final String label;
+  final int daao;
+  final int cpao;
+}
+
+DateTime? _hkDateOnly(DateTime? stored) {
+  if (stored == null) return null;
+  final hk = stored.toUtc().add(const Duration(hours: 8));
+  return DateTime(hk.year, hk.month, hk.day);
+}
+
+DateTime _weekStartMonday(DateTime d) {
+  return DateTime(
+    d.year,
+    d.month,
+    d.day,
+  ).subtract(Duration(days: d.weekday - DateTime.monday));
+}
+
+DateTime _alignCreatedGrainStart(DateTime d, _CreatedChartGrain grain) {
+  switch (grain) {
+    case _CreatedChartGrain.month:
+      return DateTime(d.year, d.month, 1);
+    case _CreatedChartGrain.week:
+      return _weekStartMonday(d);
+    case _CreatedChartGrain.day:
+      return DateTime(d.year, d.month, d.day);
+  }
+}
+
+DateTime _createdGrainNext(DateTime d, _CreatedChartGrain grain) {
+  switch (grain) {
+    case _CreatedChartGrain.month:
+      return DateTime(d.year, d.month + 1, 1);
+    case _CreatedChartGrain.week:
+      return d.add(const Duration(days: 7));
+    case _CreatedChartGrain.day:
+      return d.add(const Duration(days: 1));
+  }
+}
+
+String _createdGrainKey(DateTime d, _CreatedChartGrain grain) {
+  final a = _alignCreatedGrainStart(d, grain);
+  switch (grain) {
+    case _CreatedChartGrain.month:
+      return '${a.year}-${a.month.toString().padLeft(2, '0')}';
+    case _CreatedChartGrain.week:
+    case _CreatedChartGrain.day:
+      return '${a.year}-${a.month.toString().padLeft(2, '0')}-${a.day.toString().padLeft(2, '0')}';
+  }
+}
+
+String _createdGrainLabel(DateTime d, _CreatedChartGrain grain) {
+  final a = _alignCreatedGrainStart(d, grain);
+  switch (grain) {
+    case _CreatedChartGrain.month:
+      return DateFormat('MMM yyyy').format(a);
+    case _CreatedChartGrain.week:
+      return 'Week of ${DateFormat('MMM d, yyyy').format(a)}';
+    case _CreatedChartGrain.day:
+      return DateFormat('MMM d, yyyy').format(a);
+  }
+}
+
+List<DateTime> _createdGrainSteps(
+  DateTime start,
+  DateTime end,
+  _CreatedChartGrain grain,
+) {
+  var cursor = _alignCreatedGrainStart(start, grain);
+  final last = _alignCreatedGrainStart(end, grain);
+  final out = <DateTime>[];
+  while (!cursor.isAfter(last)) {
+    out.add(cursor);
+    cursor = _createdGrainNext(cursor, grain);
+  }
+  return out;
+}
+
+List<_CreatedVolumePoint> _createdVolumePoints({
+  required List<DateTime?> daaoDates,
+  required List<DateTime?> cpaoDates,
+  required _CreatedChartGrain grain,
+  required DateTime rangeStart,
+  required DateTime rangeEnd,
+}) {
+  final start = _alignCreatedGrainStart(rangeStart, grain);
+  final last = _alignCreatedGrainStart(rangeEnd, grain);
+  final daaoCounts = <String, int>{};
+  final cpaoCounts = <String, int>{};
+  final keys = <String>[];
+  final labels = <String, String>{};
+  for (final cursor in _createdGrainSteps(start, last, grain)) {
+    final key = _createdGrainKey(cursor, grain);
+    keys.add(key);
+    labels[key] = switch (grain) {
+      _CreatedChartGrain.month => DateFormat('MMM yyyy').format(cursor),
+      _CreatedChartGrain.week ||
+      _CreatedChartGrain.day => DateFormat('MMM d').format(cursor),
+    };
+    daaoCounts[key] = 0;
+    cpaoCounts[key] = 0;
+  }
+
+  void tally(List<DateTime?> dates, Map<String, int> into) {
+    for (final raw in dates) {
+      final d = _hkDateOnly(raw);
+      if (d == null) continue;
+      final key = _createdGrainKey(d, grain);
+      if (!into.containsKey(key)) continue;
+      into[key] = (into[key] ?? 0) + 1;
+    }
+  }
+
+  tally(daaoDates, daaoCounts);
+  tally(cpaoDates, cpaoCounts);
+  return [
+    for (final key in keys)
+      _CreatedVolumePoint(
+        label: labels[key] ?? key,
+        daao: daaoCounts[key] ?? 0,
+        cpao: cpaoCounts[key] ?? 0,
+      ),
+  ];
+}
+
+class _CreatedVolumeSection extends StatefulWidget {
+  const _CreatedVolumeSection({
+    required this.daaoDates,
+    required this.cpaoDates,
+    required this.palette,
+  });
+
+  final List<DateTime?> daaoDates;
+  final List<DateTime?> cpaoDates;
+  final AsanaLandingPalette palette;
+
+  @override
+  State<_CreatedVolumeSection> createState() => _CreatedVolumeSectionState();
+}
+
+class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
+  _CreatedChartGrain _grain = _CreatedChartGrain.month;
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
+
+  DateTime get _today => HkTime.todayDateOnlyHk();
+
+  DateTime get _dataStart {
+    DateTime? min;
+    for (final raw in [...widget.daaoDates, ...widget.cpaoDates]) {
+      final d = _hkDateOnly(raw);
+      if (d == null) continue;
+      if (min == null || d.isBefore(min)) min = d;
+    }
+    return min ?? DateTime(_today.year, _today.month, 1);
+  }
+
+  DateTime get _boundStart => _alignCreatedGrainStart(_dataStart, _grain);
+  DateTime get _boundEnd => _alignCreatedGrainStart(_today, _grain);
+
+  DateTime get _effectiveStart {
+    final raw = _rangeStart ?? _boundStart;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isBefore(_boundStart)) return _boundStart;
+    if (aligned.isAfter(_boundEnd)) return _boundEnd;
+    return aligned;
+  }
+
+  DateTime get _effectiveEnd {
+    final raw = _rangeEnd ?? _boundEnd;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isAfter(_boundEnd)) return _boundEnd;
+    if (aligned.isBefore(_effectiveStart)) return _effectiveStart;
+    return aligned;
+  }
+
+  Future<void> _pickBound({required bool isStart}) async {
+    final steps = _createdGrainSteps(_boundStart, _boundEnd, _grain);
+    if (steps.isEmpty) return;
+    if (_grain == _CreatedChartGrain.day) {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: isStart ? _effectiveStart : _effectiveEnd,
+        firstDate: _boundStart,
+        lastDate: _boundEnd,
+      );
+      if (picked == null || !mounted) return;
+      _applyBound(picked, isStart: isStart);
+      return;
+    }
+    final selected = await showDialog<DateTime>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(isStart ? 'From' : 'To'),
+          content: SizedBox(
+            width: 360,
+            child: SingleChildScrollView(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final step in steps)
+                    ChoiceChip(
+                      label: Text(
+                        _grain == _CreatedChartGrain.month
+                            ? DateFormat('MMM yyyy').format(step)
+                            : DateFormat('MMM d, yyyy').format(step),
+                      ),
+                      selected:
+                          _createdGrainKey(step, _grain) ==
+                          _createdGrainKey(
+                            isStart ? _effectiveStart : _effectiveEnd,
+                            _grain,
+                          ),
+                      onSelected: (_) => Navigator.of(context).pop(step),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    _applyBound(selected, isStart: isStart);
+  }
+
+  void _applyBound(DateTime picked, {required bool isStart}) {
+    setState(() {
+      var start = isStart ? picked : _effectiveStart;
+      var end = isStart ? _effectiveEnd : picked;
+      if (start.isAfter(end)) {
+        final tmp = start;
+        start = end;
+        end = tmp;
+      }
+      _rangeStart = start;
+      _rangeEnd = end;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final points = _createdVolumePoints(
+      daaoDates: widget.daaoDates,
+      cpaoDates: widget.cpaoDates,
+      grain: _grain,
+      rangeStart: _effectiveStart,
+      rangeEnd: _effectiveEnd,
+    );
+    const daaoColor = Color(0xFFF06A6A);
+    const cpaoColor = Color(0xFF1565C0);
+    return Material(
+      color: widget.palette.listSurface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final wrap = constraints.maxWidth < 720;
+                final title = Text(
+                  'Created tasks and sub-tasks',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.titleLarge,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: kAsanaTextPrimary,
+                  ),
+                );
+                final toggle = _CreatedGrainToggle(
+                  grain: _grain,
+                  onChanged: (value) => setState(() => _grain = value),
+                  palette: widget.palette,
+                );
+                if (wrap) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [title, const SizedBox(height: 12), toggle],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: title),
+                    toggle,
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'From',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(
+                  label: _createdGrainLabel(_effectiveStart, _grain),
+                  onPressed: () => _pickBound(isStart: true),
+                ),
+                Text(
+                  'To',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(
+                  label: _createdGrainLabel(_effectiveEnd, _grain),
+                  onPressed: () => _pickBound(isStart: false),
+                ),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _rangeStart = null;
+                    _rangeEnd = null;
+                  }),
+                  child: const Text('All'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _ChartLegendDot(color: daaoColor, label: 'DAAO'),
+                const SizedBox(width: 16),
+                _ChartLegendDot(color: cpaoColor, label: 'CPAO'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 260,
+              width: double.infinity,
+              child: _TwoLineChart(
+                points: points,
+                daaoColor: daaoColor,
+                cpaoColor: cpaoColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CreatedRangeButton extends StatelessWidget {
+  const _CreatedRangeButton({required this.label, required this.onPressed});
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        visualDensity: VisualDensity.compact,
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+class _CreatedGrainToggle extends StatelessWidget {
+  const _CreatedGrainToggle({
+    required this.grain,
+    required this.onChanged,
+    required this.palette,
+  });
+
+  final _CreatedChartGrain grain;
+  final ValueChanged<_CreatedChartGrain> onChanged;
+  final AsanaLandingPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget button(_CreatedChartGrain value, String label) {
+      final selected = grain == value;
+      return Padding(
+        padding: const EdgeInsets.only(left: 6),
+        child: Material(
+          color: selected ? palette.accent : palette.panelBackground,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => onChanged(value),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              child: Text(
+                label,
+                style: asanaTextStyle(
+                  Theme.of(context).textTheme.labelLarge,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? palette.onBanner : kAsanaTextPrimary,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button(_CreatedChartGrain.month, 'Month'),
+        button(_CreatedChartGrain.week, 'Week'),
+        button(_CreatedChartGrain.day, 'Day'),
+      ],
+    );
+  }
+}
+
+class _ChartLegendDot extends StatelessWidget {
+  const _ChartLegendDot({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: asanaTextStyle(
+            Theme.of(context).textTheme.bodySmall,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: kAsanaTextSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TwoLineChart extends StatelessWidget {
+  const _TwoLineChart({
+    required this.points,
+    required this.daaoColor,
+    required this.cpaoColor,
+  });
+
+  final List<_CreatedVolumePoint> points;
+  final Color daaoColor;
+  final Color cpaoColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _TwoLineChartPainter(
+        points: points,
+        daaoColor: daaoColor,
+        cpaoColor: cpaoColor,
+        labelStyle: asanaTextStyle(
+          Theme.of(context).textTheme.bodySmall,
+          fontSize: 10,
+          color: kAsanaTextSecondary,
+        )!,
+      ),
+    );
+  }
+}
+
+class _TwoLineChartPainter extends CustomPainter {
+  _TwoLineChartPainter({
+    required this.points,
+    required this.daaoColor,
+    required this.cpaoColor,
+    required this.labelStyle,
+  });
+
+  final List<_CreatedVolumePoint> points;
+  final Color daaoColor;
+  final Color cpaoColor;
+  final TextStyle labelStyle;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty) return;
+    const left = 36.0;
+    const right = 8.0;
+    const top = 12.0;
+    const bottom = 32.0;
+    final plot = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
+    if (plot.width <= 0 || plot.height <= 0) return;
+
+    final maxY = math.max(
+      1,
+      points.fold<int>(0, (m, p) => math.max(m, math.max(p.daao, p.cpao))),
+    );
+    final axis = Paint()
+      ..color = const Color(0xFFD5D8DC)
+      ..strokeWidth = 1;
+    canvas.drawLine(plot.bottomLeft, plot.bottomRight, axis);
+    canvas.drawLine(plot.topLeft, plot.bottomLeft, axis);
+
+    final grid = Paint()
+      ..color = const Color(0xFFECEFF1)
+      ..strokeWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      final y = plot.bottom - plot.height * (i / 4);
+      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
+      final value = (maxY * i / 4).round();
+      final tp = TextPainter(
+        text: TextSpan(text: '$value', style: labelStyle),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(plot.left - tp.width - 6, y - tp.height / 2));
+    }
+
+    Offset pointFor(int index, int value) {
+      final x = points.length == 1
+          ? plot.left + plot.width / 2
+          : plot.left + plot.width * (index / (points.length - 1));
+      final y = plot.bottom - plot.height * (value / maxY);
+      return Offset(x, y);
+    }
+
+    void drawSeries(Color color, int Function(_CreatedVolumePoint) pick) {
+      final line = Paint()
+        ..color = color
+        ..strokeWidth = 2.2
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round;
+      final path = Path();
+      for (var i = 0; i < points.length; i++) {
+        final p = pointFor(i, pick(points[i]));
+        if (i == 0) {
+          path.moveTo(p.dx, p.dy);
+        } else {
+          path.lineTo(p.dx, p.dy);
+        }
+      }
+      canvas.drawPath(path, line);
+      final dot = Paint()..color = color;
+      if (points.length <= 16) {
+        for (var i = 0; i < points.length; i++) {
+          canvas.drawCircle(pointFor(i, pick(points[i])), 3.2, dot);
+        }
+      }
+    }
+
+    drawSeries(daaoColor, (p) => p.daao);
+    drawSeries(cpaoColor, (p) => p.cpao);
+
+    final labelEvery = points.length > 12 ? (points.length / 6).ceil() : 1;
+    for (var i = 0; i < points.length; i++) {
+      if (i != 0 && i != points.length - 1 && i % labelEvery != 0) continue;
+      final tp = TextPainter(
+        text: TextSpan(text: points[i].label, style: labelStyle),
+        textDirection: ui.TextDirection.ltr,
+      )..layout(maxWidth: 72);
+      final x = pointFor(i, 0).dx - tp.width / 2;
+      tp.paint(
+        canvas,
+        Offset(x.clamp(plot.left, plot.right - tp.width), plot.bottom + 8),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TwoLineChartPainter oldDelegate) {
+    return oldDelegate.points != points ||
+        oldDelegate.daaoColor != daaoColor ||
+        oldDelegate.cpaoColor != cpaoColor;
   }
 }
 

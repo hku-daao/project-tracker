@@ -582,6 +582,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         palette: palette,
         searchQuery: searchQuery,
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
+        onOpenSubtask: (id) =>
+            _openRootDetail(AsanaDetailSelection.subtask(id)),
         onOpenProject: (id) =>
             _openRootDetail(AsanaDetailSelection.project(id)),
       );
