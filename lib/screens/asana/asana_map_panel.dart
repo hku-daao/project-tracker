@@ -48,6 +48,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Set<String> _expandedTaskIds = {};
   final Set<String> _mapExpandedTaskIds = {};
   final Set<String> _projectCreatorTeamIds = {};
+  final Set<String> _projectCreatorIds = {};
   final Set<String> _projectPicIds = {};
   final Set<String> _projectStatuses = {};
   final Set<String> _taskCreatorTeamIds = {};
@@ -254,6 +255,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool get _hasProjectFilters =>
       _projectCreatorTeamIds.isNotEmpty ||
+      _projectCreatorIds.isNotEmpty ||
       _projectPicIds.isNotEmpty ||
       _projectStatuses.isNotEmpty ||
       _projectStartMonth != null ||
@@ -274,7 +276,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           project.createByStaffUuid,
           _projectCreatorTeamIds,
         ) &&
-        _passesStaffFilter([project.createByStaffUuid], _projectPicIds) &&
+        _passesStaffFilter([project.createByStaffUuid], _projectCreatorIds) &&
+        _passesStaffFilter(project.picStaffUuids, _projectPicIds) &&
         _passesStatusFilter(projectStatus, _projectStatuses) &&
         _passesProjectStartFilters(project);
   }
@@ -318,7 +321,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       anchorContext: anchorContext,
       startMonth: _projectStartMonth,
       endMonth: _projectEndMonth,
-      helpText: 'Project month range',
+      helpText: 'Project start month range',
     );
     if (!mounted || picked == null) return;
     setState(() {
@@ -661,7 +664,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     ];
   }
 
-  Map<String, String> _projectPicDisplayNames(AppState state) {
+  Map<String, String> _projectCreatorDisplayNames(AppState state) {
     final names = <String, String>{};
     for (final project in _visibleProjects(state)) {
       final id = project.createByStaffUuid?.trim();
@@ -674,6 +677,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     return names;
   }
 
+  Map<String, String> _projectPicDisplayNames(AppState state) {
+    final names = <String, String>{};
+    for (final project in _visibleProjects(state)) {
+      for (var i = 0; i < project.picStaffUuids.length; i++) {
+        final id = project.picStaffUuids[i].trim();
+        if (id.isEmpty) continue;
+        final display = i < project.picStaffDisplayNames.length
+            ? project.picStaffDisplayNames[i].trim()
+            : '';
+        names[id] = display.isNotEmpty ? display : _staffName(state, id);
+      }
+    }
+    return names;
+  }
+
   Iterable<String?> _projectCreatorKeys(AppState state) sync* {
     for (final project in _visibleProjects(state)) {
       yield project.createByStaffUuid;
@@ -682,7 +700,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   Iterable<String?> _projectPicKeys(AppState state) sync* {
     for (final project in _visibleProjects(state)) {
-      yield project.createByStaffUuid;
+      for (final id in project.picStaffUuids) {
+        yield id;
+      }
     }
   }
 
@@ -870,6 +890,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             onClearAll: () {
               setState(() {
                 _projectCreatorTeamIds.clear();
+                _projectCreatorIds.clear();
                 _projectPicIds.clear();
                 _projectStatuses.clear();
                 _taskCreatorTeamIds.clear();
@@ -916,6 +937,26 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 ),
               ),
               AsanaFilterDropdown(
+                title: 'PIC Creator',
+                value: _filterLabel(_projectCreatorIds, (id) {
+                  final names = _projectCreatorDisplayNames(state);
+                  return names[id] ?? _staffName(state, id);
+                }),
+                buttonWidth: 140,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(
+                    state,
+                    _projectCreatorKeys(state),
+                    displayNames: _projectCreatorDisplayNames(state),
+                  ),
+                  selected: _projectCreatorIds,
+                  apply: (value) => _projectCreatorIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
                 title: 'Project Status',
                 value: _filterLabel(_projectStatuses, _statusLabelFor),
                 buttonWidth: 118,
@@ -929,15 +970,15 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 ),
               ),
               AsanaFilterDropdown(
-                title: 'Project Start From',
+                title: 'Project Started From',
                 value: _projectMonthFilterLabel(_projectStartMonth),
-                buttonWidth: 118,
+                buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
               ),
               AsanaFilterDropdown(
-                title: 'Project End At',
+                title: 'Project Started To',
                 value: _projectMonthFilterLabel(_projectEndMonth),
-                buttonWidth: 118,
+                buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
               ),
               AsanaFilterDropdown(

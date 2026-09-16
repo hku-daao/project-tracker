@@ -362,9 +362,12 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                 onPressed: _showPicMenu,
               ),
               AsanaFilterDropdown(
-                title: 'Due date',
+                title: 'Due Date',
                 value: _dueDateLabel(),
-                buttonWidth: 168,
+                buttonWidth: asanaDueDateFilterButtonWidth(
+                  _filters.createDateStart,
+                  _filters.createDateEnd,
+                ),
                 onPressed: _showDueDateRangePicker,
               ),
               AsanaFilterDropdown(
@@ -594,18 +597,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   String _picLabel(AppState state) =>
       _staffFilterLabel(state, _filters.picStaffIds);
 
-  String _dueDateLabel() {
-    final s = _filters.createDateStart;
-    final e = _filters.createDateEnd;
-    if (s == null && e == null) return 'All';
-    if (s != null && e != null) {
-      return '${HkTime.formatInstantAsHk(s, 'MMM d')} – ${HkTime.formatInstantAsHk(e, 'MMM d')}';
-    }
-    if (s != null) {
-      return 'From ${HkTime.formatInstantAsHk(s, 'MMM d')}';
-    }
-    return 'To ${HkTime.formatInstantAsHk(e!, 'MMM d')}';
-  }
+  String _dueDateLabel() => asanaDueDateRangeFilterLabel(
+    _filters.createDateStart,
+    _filters.createDateEnd,
+  );
 
   List<AsanaFilterCheckboxOption> _staffOptions(
     AppState state,

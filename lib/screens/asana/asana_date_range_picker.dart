@@ -440,7 +440,7 @@ class AsanaMonthRangePickerPanel extends StatefulWidget {
     required this.accentColor,
     this.initialStartMonth,
     this.initialEndMonth,
-    this.helpText = 'Project month range',
+    this.helpText = 'Project start month range',
   });
 
   final DateTime firstDate;
@@ -580,9 +580,9 @@ class _AsanaMonthRangePickerPanelState
           child: Text(
             _endMonth == null
                 ? (_startMonth == null
-                      ? 'Select start month, then end month'
-                      : 'Select end month')
-                : '${_monthLabel(_startMonth!)} – ${_monthLabel(_endMonth!)}',
+                      ? 'First tap: earliest project start month.\nSecond tap: latest project start month.'
+                      : 'Now choose the latest project start month')
+                : 'Project started ${_monthLabel(_startMonth!)} – ${_monthLabel(_endMonth!)}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: _startMonth == null ? kAsanaTextSecondary : accent,
               fontWeight: FontWeight.w600,

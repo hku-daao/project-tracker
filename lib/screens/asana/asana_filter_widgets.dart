@@ -15,6 +15,26 @@ import 'asana_theme.dart';
 DateTime asanaDateOnlyFromPicker(DateTime d) =>
     DateTime(d.year, d.month, d.day);
 
+/// Longest due-range label: "Sep 28, 2026 - Oct 31, 2026" (Inter bodySmall).
+/// Chrome = 8+4 padding, 20 icon, 2 border, 8 slack.
+const double kAsanaDueDateRangeButtonWidth = 232;
+const double kAsanaDueDateAllButtonWidth = 68;
+
+double asanaDueDateFilterButtonWidth(DateTime? start, DateTime? end) {
+  if (start == null && end == null) return kAsanaDueDateAllButtonWidth;
+  return kAsanaDueDateRangeButtonWidth;
+}
+
+String asanaDueDateRangeFilterLabel(DateTime? start, DateTime? end) {
+  if (start == null && end == null) return 'All';
+  String fmt(DateTime d) => HkTime.formatInstantAsHk(d, 'MMM d, yyyy');
+  if (start != null && end != null) {
+    return '${fmt(start)} - ${fmt(end)}';
+  }
+  if (start != null) return 'From ${fmt(start)}';
+  return 'To ${fmt(end!)}';
+}
+
 /// Filter control with a label above the current value (Asana-style toolbar).
 class AsanaFilterDropdown extends StatelessWidget {
   const AsanaFilterDropdown({
@@ -652,7 +672,7 @@ Future<AsanaMonthRangePick?> showAsanaAnchoredMonthRangePicker({
   required BuildContext anchorContext,
   DateTime? startMonth,
   DateTime? endMonth,
-  String helpText = 'Project month range',
+  String helpText = 'Project start month range',
 }) async {
   final box = anchorContext.findRenderObject() as RenderBox?;
   if (box == null || !box.hasSize) return null;

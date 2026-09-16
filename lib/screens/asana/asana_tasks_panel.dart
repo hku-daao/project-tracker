@@ -118,6 +118,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     if (cookieData != null && mounted) {
       setState(() => _filters.applyCookieJson(cookieData));
     }
+    _filters.overdueOptions.clear();
     if (!mounted) return;
     setState(() => _filtersReady = true);
     _rebuildTaskList();
@@ -415,9 +416,12 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                 onPressed: _showPicMenu,
               ),
               AsanaFilterDropdown(
-                title: 'Due date',
+                title: 'Due Date',
                 value: _dueDateLabel(),
-                buttonWidth: 168,
+                buttonWidth: asanaDueDateFilterButtonWidth(
+                  _filters.createDateStart,
+                  _filters.createDateEnd,
+                ),
                 onPressed: _showDueDateRangePicker,
               ),
               AsanaFilterDropdown(
@@ -425,11 +429,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                 value: _sortLabel(),
                 buttonWidth: 136,
                 onPressed: _showSortMenu,
-              ),
-              AsanaFilterDropdown(
-                title: 'Overdue',
-                value: _overdueLabel(),
-                onPressed: _showOverdueMenu,
               ),
             ],
           ),
@@ -801,21 +800,10 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   String _picLabel(AppState state) =>
       _staffFilterLabel(state, _filters.picStaffIds);
 
-  String _dueDateLabel() {
-    final s = _filters.createDateStart;
-    final e = _filters.createDateEnd;
-    if (s == null && e == null) return 'All';
-    if (s != null && e != null) {
-      return '${HkTime.formatInstantAsHk(s, 'MMM d')} – ${HkTime.formatInstantAsHk(e, 'MMM d')}';
-    }
-    if (s != null) {
-      return 'From ${HkTime.formatInstantAsHk(s, 'MMM d')}';
-    }
-    return 'To ${HkTime.formatInstantAsHk(e!, 'MMM d')}';
-  }
-
-  String _overdueLabel() =>
-      _filters.overdueOptions.contains('overdue') ? 'Overdue only' : 'All';
+  String _dueDateLabel() => asanaDueDateRangeFilterLabel(
+    _filters.createDateStart,
+    _filters.createDateEnd,
+  );
 
   List<AsanaFilterCheckboxOption> _staffOptions(
     AppState state,
@@ -1099,22 +1087,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     );
     if (selection != null) {
       setState(() => _filters.submissions = selection);
-      _onFiltersChanged();
-    }
-  }
-
-  Future<void> _showOverdueMenu(BuildContext buttonContext) async {
-    const allKey = 'all';
-    final selection = await showAsanaCheckboxFilterPanel(
-      anchorContext: buttonContext,
-      options: const [
-        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
-        AsanaFilterCheckboxOption(key: 'overdue', label: 'Overdue only'),
-      ],
-      initialSelection: _filters.overdueOptions,
-    );
-    if (selection != null) {
-      setState(() => _filters.overdueOptions = selection);
       _onFiltersChanged();
     }
   }
