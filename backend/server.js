@@ -55,6 +55,7 @@ const TASK_UPDATE_NOTIFY_FIELD_LABELS = {
   complexity: 'Complexity',
   status: 'Status',
   commencementStatus: 'Commence',
+  commencementNote: 'Commencement note',
   startDate: 'Start date',
   dueDate: 'Due date',
   submission: 'Submission',
@@ -84,6 +85,7 @@ const SUBTASK_UPDATE_NOTIFY_FIELD_LABELS = {
   complexity: 'Complexity',
   status: 'Status',
   commencementStatus: 'Commence',
+  commencementNote: 'Commencement note',
   startDate: 'Start date',
   dueDate: 'Due date',
   submission: 'Submission',
@@ -1109,6 +1111,19 @@ function workflowCompositeChangeMap(rawChanges) {
   return map;
 }
 
+function isToBeCommencedStatus(value) {
+  return String(value || '').trim().toLowerCase() === 'to be commenced';
+}
+
+function shouldShowCommencementNote(status, changeMap) {
+  if (isToBeCommencedStatus(status)) return true;
+  if (changeMap?.get('commencementNote')) return true;
+  const statusChange = changeMap?.get('commencementStatus');
+  if (!statusChange) return false;
+  return isToBeCommencedStatus(statusChange.oldValue) ||
+    isToBeCommencedStatus(statusChange.newValue);
+}
+
 function changedValueHtml(change, currentValue) {
   if (!change) return escapeHtml(emailPlainValue(currentValue));
   return `<strong><span style="color:#B00020;">${escapeHtml(emailPlainValue(change.oldValue))}</span></strong> -&gt; <strong><span style="color:#188038;">${escapeHtml(emailPlainValue(change.newValue))}</span></strong>`;
@@ -1213,6 +1228,75 @@ function eventSubtaskLinkHtml(subtaskId) {
 
 function eventSubtaskLinkText(subtaskId) {
   return `Subtask link: ${subtaskWebAppUrl(subtaskId)}`;
+}
+
+function parseNotifyIdList(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((id) => String(id || '').trim()).filter(Boolean))];
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+function stripOccurrenceNamePrefix(name) {
+  const raw = String(name || '').trim();
+  const stripped = raw.replace(/^\[[^\]]+\]\s*/, '').trim();
+  return stripped || raw || '(no title)';
+}
+
+function sortOccurrenceRows(rows) {
+  return [...rows].sort((a, b) => {
+    const aKey = String(a.start_date || '');
+    const bKey = String(b.start_date || '');
+    if (aKey !== bKey) return aKey.localeCompare(bKey);
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
+
+function omitEmailDetailLines(lines, labels) {
+  const skip = new Set(labels.map((label) => String(label).trim().toLowerCase()));
+  const keep = (block, sep) =>
+    String(block || '')
+      .split(sep)
+      .filter((part) => {
+        const firstLine = String(part).split('\n')[0] || '';
+        const plain = firstLine.replace(/<[^>]+>/g, '').trim();
+        const label = plain.split(':')[0].trim().toLowerCase();
+        return label && !skip.has(label);
+      })
+      .join(sep);
+  return {
+    html: keep(lines?.html, '<br><br>'),
+    text: keep(lines?.text, '\n\n'),
+  };
+}
+
+function parseRecurrenceEmailFields(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const label = String(row.label || row.field || '').trim();
+    const value = String(row.value ?? '').trim();
+    if (!label || !value) continue;
+    if (label.length > 80 || value.length > 4000) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label, value });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+function recurrenceFieldsLines(fields) {
+  return {
+    html: fields.map((f) => detailLineHtml(f.label, escapeHtml(f.value))).join('<br><br>'),
+    text: fields.map((f) => detailLineText(f.label, f.value)).join('\n\n'),
+  };
 }
 
 function projectTrackerEmailFooterHtml() {
@@ -1339,6 +1423,13 @@ async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = 
     ['Complexity', changedValueHtml(changeMap.get('complexity'), taskRow.complexity), changedValueText(changeMap.get('complexity'), taskRow.complexity)],
     ['Status', changedValueHtml(changeMap.get('status'), taskRow.status), changedValueText(changeMap.get('status'), taskRow.status)],
     ['Commence', changedValueHtml(changeMap.get('commencementStatus'), taskRow.commencement_status), changedValueText(changeMap.get('commencementStatus'), taskRow.commencement_status)],
+    ...(shouldShowCommencementNote(taskRow.commencement_status, changeMap)
+      ? [[
+          'Commencement note',
+          changedValueHtml(changeMap.get('commencementNote'), taskRow.commencement_note),
+          changedValueText(changeMap.get('commencementNote'), taskRow.commencement_note),
+        ]]
+      : []),
     ['Start date', changedDateHtml(changeMap.get('startDate'), taskRow.start_date), changedDateText(changeMap.get('startDate'), taskRow.start_date)],
     ['Due date', changedDateHtml(changeMap.get('dueDate'), taskRow.due_date), changedDateText(changeMap.get('dueDate'), taskRow.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), taskRow.submission), changedValueText(changeMap.get('submission'), taskRow.submission)],
@@ -1388,6 +1479,13 @@ async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {
     ['Complexity', changedValueHtml(changeMap.get('complexity'), row.complexity), changedValueText(changeMap.get('complexity'), row.complexity)],
     ['Status', changedValueHtml(changeMap.get('status'), row.status), changedValueText(changeMap.get('status'), row.status)],
     ['Commence', changedValueHtml(changeMap.get('commencementStatus'), row.commencement_status), changedValueText(changeMap.get('commencementStatus'), row.commencement_status)],
+    ...(shouldShowCommencementNote(row.commencement_status, changeMap)
+      ? [[
+          'Commencement note',
+          changedValueHtml(changeMap.get('commencementNote'), row.commencement_note),
+          changedValueText(changeMap.get('commencementNote'), row.commencement_note),
+        ]]
+      : []),
     ['Start date', changedDateHtml(changeMap.get('startDate'), row.start_date), changedDateText(changeMap.get('startDate'), row.start_date)],
     ['Due date', changedDateHtml(changeMap.get('dueDate'), row.due_date), changedDateText(changeMap.get('dueDate'), row.due_date)],
     ['Submission', changedValueHtml(changeMap.get('submission'), row.submission), changedValueText(changeMap.get('submission'), row.submission)],
@@ -5657,6 +5755,192 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
+ * POST { taskIds, seriesName? } or { subtaskIds, seriesName? } — creator only.
+ * One assignment email per assignee for a recurring create series.
+ */
+async function handleNotifyRecurringAssigned(req, res, kind) {
+  const isTask = kind === 'task';
+  const itemLabel = isTask ? 'task' : 'subtask';
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const ids = parseNotifyIdList(
+      isTask ? (body.taskIds || body.taskId) : (body.subtaskIds || body.subtaskId),
+    );
+    if (ids.length === 0) {
+      sendJson(req, res, 400, { error: `${itemLabel}Ids required` });
+      return;
+    }
+    const { data: rows, error: qErr } = await db
+      .from(isTask ? 'task' : 'subtask')
+      .select('*')
+      .in('id', ids);
+    if (qErr || !rows?.length) {
+      sendJson(req, res, 404, { error: isTask ? 'Tasks not found' : 'Sub-tasks not found' });
+      return;
+    }
+    const byId = new Map(rows.map((row) => [String(row.id), row]));
+    const ordered = sortOccurrenceRows(ids.map((id) => byId.get(id)).filter(Boolean));
+    if (ordered.length === 0) {
+      sendJson(req, res, 404, { error: isTask ? 'Tasks not found' : 'Sub-tasks not found' });
+      return;
+    }
+    const first = ordered[0];
+    const creatorId = first.create_by?.toString().trim();
+    if (!creatorId) {
+      sendJson(req, res, 400, { error: `${isTask ? 'Task' : 'Sub-task'} has no create_by` });
+      return;
+    }
+    if (ordered.some((row) => String(row.create_by || '').trim() !== creatorId)) {
+      sendJson(req, res, 400, { error: 'Recurring items must share the same creator' });
+      return;
+    }
+    const { data: creatorStaff, error: cErr } = await db
+      .from('staff')
+      .select('id, name, email')
+      .eq('id', creatorId)
+      .maybeSingle();
+    if (cErr || !creatorStaff) {
+      sendJson(req, res, 400, { error: 'Creator staff not found' });
+      return;
+    }
+    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const sessionEmail = (session.email || '').trim().toLowerCase();
+    if (!creatorEmail || creatorEmail !== sessionEmail) {
+      sendJson(req, res, 403, {
+        error: `Only the ${itemLabel} creator (staff email must match signed-in user) can send assignment emails`,
+      });
+      return;
+    }
+    const firstName = isTask
+      ? ((first.task_name || '').toString().trim() || '(no title)')
+      : ((first.subtask_name || '').toString().trim() || '(no title)');
+    const seriesName =
+      String(body.seriesName || '').trim() || stripOccurrenceNamePrefix(firstName);
+    const sharedRow = isTask
+      ? { ...first, task_name: seriesName }
+      : { ...first, subtask_name: seriesName };
+    const sharedLines = omitEmailDetailLines(
+      isTask
+        ? await buildTaskUpdateDetailLines(db, sharedRow, new Map())
+        : await buildSubtaskUpdateDetailLines(db, sharedRow, new Map()),
+      ['Start date', 'Due date'],
+    );
+    const recurrenceLines = recurrenceFieldsLines(
+      parseRecurrenceEmailFields(body.recurrenceFields),
+    );
+    const recurrenceHtml = recurrenceLines.html
+      ? `<br><br>${recurrenceLines.html}`
+      : '';
+    const recurrenceText = recurrenceLines.text
+      ? `\n\n${recurrenceLines.text}`
+      : '';
+    const intro = `This email is to inform you that a recurring ${itemLabel} has been created and assigned to you.`;
+    const subjectKind = isTask ? 'Tasks' : 'Subtasks';
+    const subject = `[Project Tracker] New Recurring ${subjectKind} Assigned: ${mailSubjectSingleLine(seriesName)}`;
+    const firstLinkHtml = isTask ? eventTaskLinkHtml(first.id) : eventSubtaskLinkHtml(first.id);
+    const firstLinkText = isTask ? eventTaskLinkText(first.id) : eventSubtaskLinkText(first.id);
+    const assigneeUuids = isTask
+      ? collectTaskAssigneeStaffIds(first)
+      : collectSubtaskAssigneeStaffIds(first);
+    const results = [];
+    const seenEmails = new Set();
+    const creatorNorm = creatorId.toLowerCase();
+
+    for (const staffUuid of assigneeUuids) {
+      if (String(staffUuid).trim().toLowerCase() === creatorNorm) {
+        results.push({
+          staffId: staffUuid,
+          ok: true,
+          skipped: `${itemLabel} creator is excluded from ${itemLabel} creation email`,
+        });
+        continue;
+      }
+      const { data: s } = await fetchStaffRowForCreateBy(db, staffUuid);
+      const to = (
+        (await resolveStaffEmailForNotifications(db, s)) ||
+        (s?.email || '').trim()
+      ).trim().toLowerCase();
+      if (!to) {
+        results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
+        continue;
+      }
+      if (seenEmails.has(to)) continue;
+      seenEmails.add(to);
+      const recipientName = (s?.name || '').trim() || to;
+      const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
+${escapeHtml(intro)}<br><br>
+${sharedLines.html}${recurrenceHtml}<br><br>
+Please review the recurring ${itemLabel} in Project Tracker. ${firstLinkHtml}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+      const text = `Dear ${recipientName},
+
+${intro}
+
+${sharedLines.text}${recurrenceText}
+
+Please review the recurring ${itemLabel} in Project Tracker. ${firstLinkText}
+
+${projectTrackerEmailFooterText()}`;
+      const r = await sendNotificationEmail({
+        to,
+        subject,
+        text,
+        html,
+        from: NOTIFICATION_EMAIL_FROM,
+        replyTo: creatorEmail,
+      });
+      results.push({
+        to,
+        ok: r.ok,
+        messageId: r.ok ? r.id : null,
+        error: r.ok ? null : r.error,
+        detail: r.ok ? null : r.detail,
+      });
+    }
+
+    sendJson(req, res, 200, {
+      ok: true,
+      [isTask ? 'taskIds' : 'subtaskIds']: ordered.map((row) => row.id),
+      seriesName,
+      recipients: results.length,
+      results,
+    });
+  } catch (e) {
+    console.error(`handleNotifyRecurring${isTask ? 'Tasks' : 'Subtasks'}Assigned:`, e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
+async function handleNotifyRecurringTasksAssigned(req, res) {
+  await handleNotifyRecurringAssigned(req, res, 'task');
+}
+
+async function handleNotifyRecurringSubtasksAssigned(req, res) {
+  await handleNotifyRecurringAssigned(req, res, 'subtask');
+}
+
+/**
  * POST { commentId } — comment author only; emails task creator (`create_by`) only when they are
  * not the comment author (no self-email when creator comments).
  */
@@ -8443,6 +8727,14 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/notify/subtask-assigned' && req.method === 'POST') {
     await handleNotifySubtaskAssigned(req, res);
+    return;
+  }
+  if (path === '/api/notify/recurring-tasks-assigned' && req.method === 'POST') {
+    await handleNotifyRecurringTasksAssigned(req, res);
+    return;
+  }
+  if (path === '/api/notify/recurring-subtasks-assigned' && req.method === 'POST') {
+    await handleNotifyRecurringSubtasksAssigned(req, res);
     return;
   }
   if (path === '/api/notify/project-updated' && req.method === 'POST') {

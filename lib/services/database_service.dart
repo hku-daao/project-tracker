@@ -638,6 +638,8 @@ class DatabaseService {
     /// When true, sets `change_due_reason` (null clears).
     bool updateChangeDueReason = false,
     String? changeDueReason,
+    bool updateCommencementNote = false,
+    String? commencementNote,
     bool updatePauseStatus = false,
     String? pauseStatus,
 
@@ -708,6 +710,10 @@ class DatabaseService {
       if (updateChangeDueReason) {
         final t = changeDueReason?.trim();
         map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
+      }
+      if (updateCommencementNote) {
+        final t = commencementNote?.trim();
+        map['commencement_note'] = (t == null || t.isEmpty) ? null : t;
       }
       if (updatePauseStatus) {
         final t = pauseStatus?.trim();
@@ -1321,6 +1327,7 @@ class DatabaseService {
       archivedAt: _parseDateTimeNullable(row['archived_at']),
       archivedByStaffId: _nullableTrimmedString(row['archived_by']),
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
+      commencementNote: _nullableTrimmedString(row['commencement_note']),
       pauseStatus: _nullableTrimmedString(row['pause_status']) ?? 'Not Paused',
       overdueDay: _flexIntFromRow(row['overdue_day']),
       overdue: _overdueYnFromRow(row['overdue']),
@@ -2819,6 +2826,9 @@ class DatabaseService {
     /// When due span exceeds policy for priority.
     String? changeDueReason,
 
+    /// Optional note when commencement is To be commenced.
+    String? commencementNote,
+
     /// Optional [`project.id`] (uuid).
     String? projectId,
   }) async {
@@ -2883,6 +2893,10 @@ class DatabaseService {
       final cdr = changeDueReason?.trim();
       if (cdr != null && cdr.isNotEmpty) {
         map['change_due_reason'] = cdr;
+      }
+      final cnote = commencementNote?.trim();
+      if (cnote != null && cnote.isNotEmpty) {
+        map['commencement_note'] = cnote;
       }
       final res = await PostgrestClient.instance
           .from('task')
@@ -3194,6 +3208,7 @@ class DatabaseService {
       lastUpdated: _parseDateTimeNullable(row['last_updated']),
       updateByStaffName: _updateByDisplayName(row, staffUuidToName),
       changeDueReason: _nullableTrimmedString(row['change_due_reason']),
+      commencementNote: _nullableTrimmedString(row['commencement_note']),
       pauseStatus: _nullableTrimmedString(row['pause_status']) ?? 'Not Paused',
       overdueDay: _flexIntFromRow(row['overdue_day']),
       overdue: _overdueYnFromRow(row['overdue']),
@@ -3600,6 +3615,7 @@ class DatabaseService {
     String? creatorStaffLookupKey,
     String? initialComment,
     String? changeDueReason,
+    String? commencementNote,
     String? status,
     String commencementStatus = 'Commenced',
     String? pauseStatus,
@@ -3666,6 +3682,10 @@ class DatabaseService {
       if (cdr != null && cdr.isNotEmpty) {
         map['change_due_reason'] = cdr;
       }
+      final cnote = commencementNote?.trim();
+      if (cnote != null && cnote.isNotEmpty) {
+        map['commencement_note'] = cnote;
+      }
       final pr = pauseStatus?.trim();
       if (pr != null && pr.isNotEmpty) {
         map['pause_status'] = pr == 'Paused' ? 'Paused' : 'Not Paused';
@@ -3719,6 +3739,8 @@ class DatabaseService {
     /// When true, sets `change_due_reason` (null clears).
     bool updateChangeDueReason = false,
     String? changeDueReason,
+    bool updateCommencementNote = false,
+    String? commencementNote,
     bool updatePauseStatus = false,
     String? pauseStatus,
 
@@ -3784,6 +3806,10 @@ class DatabaseService {
       if (updateChangeDueReason) {
         final t = changeDueReason?.trim();
         map['change_due_reason'] = (t == null || t.isEmpty) ? null : t;
+      }
+      if (updateCommencementNote) {
+        final t = commencementNote?.trim();
+        map['commencement_note'] = (t == null || t.isEmpty) ? null : t;
       }
       if (updatePauseStatus) {
         final t = pauseStatus?.trim();

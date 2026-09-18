@@ -15,6 +15,7 @@ class AsanaDateRangePickerPanel extends StatefulWidget {
     required this.accentColor,
     this.initialRange,
     this.helpText = 'Due date range',
+    this.allowClear = false,
   });
 
   final DateTime firstDate;
@@ -22,6 +23,7 @@ class AsanaDateRangePickerPanel extends StatefulWidget {
   final Color accentColor;
   final DateTimeRange? initialRange;
   final String helpText;
+  final bool allowClear;
 
   @override
   State<AsanaDateRangePickerPanel> createState() =>
@@ -252,8 +254,14 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              if (widget.allowClear)
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(context, const AsanaDateRangePick.clear()),
+                  child: const Text('Clear'),
+                ),
+              const Spacer(),
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 style: TextButton.styleFrom(
@@ -267,7 +275,16 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
               FilledButton(
                 onPressed: _rangeStart == null
                     ? null
-                    : () => Navigator.pop(context, _buildResult()),
+                    : () {
+                        final range = _buildResult();
+                        if (range == null) return;
+                        Navigator.pop(
+                          context,
+                          widget.allowClear
+                              ? AsanaDateRangePick.apply(range)
+                              : range,
+                        );
+                      },
                 style: FilledButton.styleFrom(
                   backgroundColor: accent,
                   foregroundColor: Colors.white,
@@ -287,6 +304,238 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
 
   String _formatDay(DateTime d) =>
       MaterialLocalizations.of(context).formatShortDate(d);
+}
+
+/// Year + month dropdowns and a day grid. Used for single-date fields so month
+/// can be chosen directly (Material [CalendarDatePicker] only exposes year).
+class AsanaSingleDatePickerPanel extends StatefulWidget {
+  const AsanaSingleDatePickerPanel({
+    super.key,
+    required this.firstDate,
+    required this.lastDate,
+    required this.accentColor,
+    required this.initialDate,
+    this.helpText = 'Select date',
+  });
+
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final Color accentColor;
+  final DateTime initialDate;
+  final String helpText;
+
+  @override
+  State<AsanaSingleDatePickerPanel> createState() =>
+      _AsanaSingleDatePickerPanelState();
+}
+
+class _AsanaSingleDatePickerPanelState extends State<AsanaSingleDatePickerPanel> {
+  late DateTime _selected;
+  late int _displayYear;
+  late int _displayMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = _dateOnly(widget.initialDate);
+    _displayYear = _selected.year;
+    _displayMonth = _selected.month;
+  }
+
+  DateTime get _first => _dateOnly(widget.firstDate);
+  DateTime get _last => _dateOnly(widget.lastDate);
+
+  Iterable<int> get _yearOptions =>
+      List.generate(_last.year - _first.year + 1, (i) => _first.year + i);
+
+  bool _dayEnabled(DateTime day) =>
+      !day.isBefore(_first) && !day.isAfter(_last);
+
+  bool _isSelected(DateTime day) =>
+      day.year == _selected.year &&
+      day.month == _selected.month &&
+      day.day == _selected.day;
+
+  void _setDisplayMonth(int year, int month) {
+    setState(() {
+      _displayYear = year;
+      _displayMonth = month;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = widget.accentColor;
+    final dropdownTheme = theme.copyWith(
+      canvasColor: theme.colorScheme.surface,
+      colorScheme: theme.colorScheme.copyWith(
+        surface: theme.colorScheme.surface,
+        primary: accent,
+      ),
+    );
+    final today = HkTime.todayDateOnlyHk();
+    final monthLabel = MaterialLocalizations.of(
+      context,
+    ).formatMonthYear(DateTime(_displayYear, _displayMonth));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.helpText,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                tooltip: 'Close',
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: Theme(
+                    data: dropdownTheme,
+                    child: DropdownButton<int>(
+                      dropdownColor: theme.colorScheme.surface,
+                      isExpanded: true,
+                      value: _displayYear,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: kAsanaTextPrimary,
+                      ),
+                      items: _yearOptions
+                          .map(
+                            (y) =>
+                                DropdownMenuItem(value: y, child: Text('$y')),
+                          )
+                          .toList(),
+                      onChanged: (y) {
+                        if (y == null) return;
+                        _setDisplayMonth(y, _displayMonth);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: Theme(
+                    data: dropdownTheme,
+                    child: DropdownButton<int>(
+                      dropdownColor: theme.colorScheme.surface,
+                      isExpanded: true,
+                      value: _displayMonth,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: kAsanaTextPrimary,
+                      ),
+                      items: List.generate(12, (i) {
+                        final m = i + 1;
+                        final monthName = DateFormat.MMM().format(
+                          DateTime(2000, m),
+                        );
+                        return DropdownMenuItem(
+                          value: m,
+                          child: Text(monthName),
+                        );
+                      }),
+                      onChanged: (m) {
+                        if (m == null) return;
+                        _setDisplayMonth(_displayYear, m);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Text(
+            monthLabel,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: kAsanaTextSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _MonthDayGrid(
+            year: _displayYear,
+            month: _displayMonth,
+            accentColor: accent,
+            today: today,
+            firstDate: _first,
+            lastDate: _last,
+            isRangeStart: _isSelected,
+            isRangeEnd: _isSelected,
+            inRange: _isSelected,
+            dayEnabled: _dayEnabled,
+            onDayTap: (day) => setState(() => _selected = day),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Text(
+            MaterialLocalizations.of(context).formatShortDate(_selected),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: accent,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, _selected),
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _MonthDayGrid extends StatelessWidget {
@@ -416,6 +665,15 @@ class _MonthDayGrid extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Result from a filter date-range calendar: apply a range or clear it.
+class AsanaDateRangePick {
+  const AsanaDateRangePick.apply(this.range) : cleared = false;
+  const AsanaDateRangePick.clear() : range = null, cleared = true;
+
+  final DateTimeRange? range;
+  final bool cleared;
 }
 
 DateTime asanaFirstDayOfMonth(DateTime d) => DateTime(d.year, d.month, 1);

@@ -193,7 +193,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         out.add(_HomeWorkItem.subtask(s, parent: t));
       }
     }
-    out.sort(_sortWorkByDue);
+    out.sort(_sortWorkByDueDescending);
     return out;
   }
 
@@ -242,7 +242,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         }
       }
     }
-    out.sort(_sortWorkByDue);
+    out.sort(_sortWorkByDueDescending);
     return out;
   }
 
@@ -268,7 +268,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         }
       }
     }
-    out.sort(_sortWorkByDue);
+    out.sort(_sortWorkByDueDescending);
     return out;
   }
 
@@ -302,16 +302,6 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       }
       return AsanaTaskFilter.taskSearchMatches(state, item.task, tokens);
     }).toList();
-  }
-
-  static int _sortWorkByDue(_HomeWorkItem a, _HomeWorkItem b) {
-    final ae = a.dueDate;
-    final be = b.dueDate;
-    if (ae == null && be == null) return a.name.compareTo(b.name);
-    if (ae == null) return 1;
-    if (be == null) return -1;
-    final c = ae.compareTo(be);
-    return c != 0 ? c : a.name.compareTo(b.name);
   }
 
   static int _sortWorkByDueDescending(_HomeWorkItem a, _HomeWorkItem b) {

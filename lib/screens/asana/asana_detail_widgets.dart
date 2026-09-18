@@ -55,6 +55,8 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
     this.labelTrailing,
     this.labelWidth = kAsanaDetailLabelColumnWidth,
     this.bottomPadding = 10,
+    this.crossAxisAlignment = CrossAxisAlignment.center,
+    this.labelMaxLines = 1,
   });
 
   final String label;
@@ -62,6 +64,8 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
   final Widget? labelTrailing;
   final double labelWidth;
   final double bottomPadding;
+  final CrossAxisAlignment crossAxisAlignment;
+  final int labelMaxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -71,17 +75,21 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPadding),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: crossAxisAlignment,
         children: [
           SizedBox(
             width: effectiveLabelWidth,
-            child: labelTrailing == null
+            child: Padding(
+              padding: crossAxisAlignment == CrossAxisAlignment.start
+                  ? const EdgeInsets.only(top: 8)
+                  : EdgeInsets.zero,
+              child: labelTrailing == null
                 ? Text(
                     label,
                     style: asanaDetailLabelStyle(context),
-                    maxLines: 1,
+                    maxLines: labelMaxLines,
                     overflow: TextOverflow.ellipsis,
-                    softWrap: false,
+                    softWrap: labelMaxLines > 1,
                   )
                 : Row(
                     mainAxisSize: MainAxisSize.min,
@@ -100,6 +108,7 @@ class AsanaDetailTwoColumnRow extends StatelessWidget {
                       labelTrailing!,
                     ],
                   ),
+            ),
           ),
           Expanded(child: child),
         ],

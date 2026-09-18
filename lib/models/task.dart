@@ -10,6 +10,7 @@ const Map<TaskStatus, String> taskStatusDisplayNames = {
 /// Low-level task (Planner-style) assigned by Directors to Responsible Officers.
 class Task {
   static const Object _unsetChangeDueReason = Object();
+  static const Object _unsetCommencementNote = Object();
 
   final String id;
 
@@ -69,6 +70,9 @@ class Task {
   /// When start→due span exceeds policy for priority (`task.change_due_reason`).
   final String? changeDueReason;
 
+  /// Optional note when [commencementStatus] is `To be commenced`.
+  final String? commencementNote;
+
   /// `Paused` | `Not Paused`; parent project pause is computed separately.
   final String pauseStatus;
 
@@ -119,6 +123,7 @@ class Task {
     this.archivedAt,
     this.archivedByStaffId,
     this.changeDueReason,
+    this.commencementNote,
     this.pauseStatus = 'Not Paused',
     this.overdueDay = 0,
     this.overdue = 'No',
@@ -160,6 +165,7 @@ class Task {
     String? archivedByStaffId,
     bool clearArchivedByStaffId = false,
     Object? changeDueReason = _unsetChangeDueReason,
+    Object? commencementNote = _unsetCommencementNote,
     String? pauseStatus,
     int? overdueDay,
     String? overdue,
@@ -202,6 +208,9 @@ class Task {
       changeDueReason: identical(changeDueReason, _unsetChangeDueReason)
           ? this.changeDueReason
           : changeDueReason as String?,
+      commencementNote: identical(commencementNote, _unsetCommencementNote)
+          ? this.commencementNote
+          : commencementNote as String?,
       pauseStatus: pauseStatus ?? this.pauseStatus,
       overdueDay: overdueDay ?? this.overdueDay,
       overdue: overdue ?? this.overdue,

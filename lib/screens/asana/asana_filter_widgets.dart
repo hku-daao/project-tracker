@@ -667,6 +667,89 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
   );
 }
 
+/// Filter calendar: first and second tap choose a date range. Clear resets it.
+Future<AsanaDateRangePick?> showAsanaAnchoredFilterDateRangePicker({
+  required BuildContext anchorContext,
+  DateTime? start,
+  DateTime? end,
+  String helpText = 'Date range',
+}) async {
+  final box = anchorContext.findRenderObject() as RenderBox?;
+  if (box == null || !box.hasSize) return null;
+
+  DateTimeRange? initialRange;
+  if (start != null || end != null) {
+    final now = HkTime.todayDateOnlyHk();
+    final initialStart = start ?? end ?? now;
+    final initialEnd = end ?? start ?? now;
+    initialRange = DateTimeRange(
+      start: initialStart.isBefore(initialEnd) ? initialStart : initialEnd,
+      end: initialEnd.isBefore(initialStart) ? initialStart : initialEnd,
+    );
+  }
+
+  final offset = box.localToGlobal(Offset.zero);
+  final size = box.size;
+  final screen = MediaQuery.sizeOf(anchorContext);
+  const panelWidth = 380.0;
+  const panelHeight = 420.0;
+  final accent = Theme.of(anchorContext).colorScheme.primary;
+  final pickerTheme = Theme.of(anchorContext).copyWith(
+    colorScheme: Theme.of(
+      anchorContext,
+    ).colorScheme.copyWith(primary: accent, onPrimary: Colors.white),
+  );
+  var left = offset.dx;
+  if (left + panelWidth > screen.width - 8) {
+    left = screen.width - panelWidth - 8;
+  }
+  if (left < 8) left = 8;
+  var top = offset.dy + size.height + 4;
+  if (top + panelHeight > screen.height - 8) {
+    top = offset.dy - panelHeight - 4;
+  }
+  if (top < 8) top = 8;
+
+  final now = HkTime.todayDateOnlyHk();
+  return showGeneralDialog<AsanaDateRangePick>(
+    context: anchorContext,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black26,
+    transitionDuration: Duration.zero,
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      return Stack(
+        children: [
+          Positioned(
+            left: left,
+            top: top,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              color: pickerTheme.colorScheme.surface,
+              child: Theme(
+                data: pickerTheme,
+                child: SizedBox(
+                  width: panelWidth,
+                  child: AsanaDateRangePickerPanel(
+                    initialRange: initialRange,
+                    firstDate: now.subtract(const Duration(days: 365 * 10)),
+                    lastDate: now.add(const Duration(days: 365 * 5)),
+                    accentColor: accent,
+                    helpText: helpText,
+                    allowClear: true,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
 /// Anchored year + month grid. First tap is start month, second tap is end month.
 Future<AsanaMonthRangePick?> showAsanaAnchoredMonthRangePicker({
   required BuildContext anchorContext,
@@ -794,20 +877,15 @@ Future<DateTime?> showAsanaAnchoredSingleDatePicker({
                 data: pickerTheme,
                 child: SizedBox(
                   width: panelWidth,
-                  child: CalendarDatePicker(
+                  child: AsanaSingleDatePickerPanel(
                     initialDate:
                         initial.isBefore(firstDate) || initial.isAfter(lastDate)
                         ? now
                         : initial,
                     firstDate: firstDate,
                     lastDate: lastDate,
-                    currentDate: now,
-                    onDateChanged: (date) {
-                      Navigator.pop(
-                        dialogContext,
-                        asanaDateOnlyFromPicker(date),
-                      );
-                    },
+                    accentColor: accent,
+                    helpText: helpText,
                   ),
                 ),
               ),

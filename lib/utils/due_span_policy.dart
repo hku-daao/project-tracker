@@ -5,6 +5,20 @@ import '../priority.dart';
 int allowedWorkingDaysAfterStartForPriority(int priority) =>
     priority == priorityUrgent ? 1 : 3;
 
+/// Working days required to finish, **including** the start date.
+/// Standard = 4, Urgent = 2 (same as [allowedWorkingDaysAfterStartForPriority] + 1).
+int workingDaysInclusiveForPriority(int priority) =>
+    allowedWorkingDaysAfterStartForPriority(priority) + 1;
+
+DateTime dueDateFromInclusiveWorkingDays(
+  DateTime start,
+  int workingDaysInclusive, {
+  Set<String> calendarHolidayYmdSkip = const {},
+}) {
+  final extra = workingDaysInclusive < 1 ? 0 : workingDaysInclusive - 1;
+  return HkTime.addBusinessDaysAfter(start, extra, calendarHolidayYmdSkip);
+}
+
 /// True when [due] (date-only) is strictly after `start + N` business days, where
 /// N follows the same rule as default due ([HkTime.addBusinessDaysAfter]).
 ///

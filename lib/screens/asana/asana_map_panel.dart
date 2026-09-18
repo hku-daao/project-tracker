@@ -57,6 +57,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Set<String> _subtaskStatuses = {};
   DateTime? _projectStartMonth;
   DateTime? _projectEndMonth;
+  DateTime? _taskCompletedStart;
+  DateTime? _taskCompletedEnd;
+  DateTime? _subtaskCompletedStart;
+  DateTime? _subtaskCompletedEnd;
   String _sortKey = 'due_asc';
   String _dataSig = '';
   int _loadGeneration = 0;
@@ -177,12 +181,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               _matches(subPic, query) ||
               _matches(subStatus, query);
           final subOwnMatches =
-              (_subtaskStatuses.isNotEmpty || query.isNotEmpty) &&
-              _passesSubtaskFilters(subStatus) &&
+              (_hasSubtaskFilters || query.isNotEmpty) &&
+              _passesSubtaskFilters(subtask, subStatus) &&
               _passesSearch(subMatches, query);
           if (subOwnMatches ||
               (projectOwnMatches && !_hasTaskOrSubtaskFilters) ||
-              (taskOwnMatches && _subtaskStatuses.isEmpty)) {
+              (taskOwnMatches && !_hasSubtaskFilters)) {
             subtaskNodes.add(subtask);
           }
         }
@@ -237,10 +241,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             _matches(subPic, query) ||
             _matches(subStatus, query);
         final subOwnMatches =
-            (_subtaskStatuses.isNotEmpty || query.isNotEmpty) &&
-            _passesSubtaskFilters(subStatus) &&
+            (_hasSubtaskFilters || query.isNotEmpty) &&
+            _passesSubtaskFilters(subtask, subStatus) &&
             _passesSearch(subMatches, query);
-        if (subOwnMatches || (taskOwnMatches && _subtaskStatuses.isEmpty)) {
+        if (subOwnMatches || (taskOwnMatches && !_hasSubtaskFilters)) {
           subtaskNodes.add(subtask);
         }
       }
@@ -265,7 +269,18 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _taskCreatorTeamIds.isNotEmpty ||
       _taskPicIds.isNotEmpty ||
       _taskStatuses.isNotEmpty ||
-      _subtaskStatuses.isNotEmpty;
+      _subtaskStatuses.isNotEmpty ||
+      _taskCompletedDateEngaged ||
+      _subtaskCompletedDateEngaged;
+
+  bool get _hasSubtaskFilters =>
+      _subtaskStatuses.isNotEmpty || _subtaskCompletedDateEngaged;
+
+  bool get _taskCompletedDateEngaged =>
+      _taskCompletedStart != null || _taskCompletedEnd != null;
+
+  bool get _subtaskCompletedDateEngaged =>
+      _subtaskCompletedStart != null || _subtaskCompletedEnd != null;
 
   bool _passesSearch(bool matches, String query) => query.isEmpty || matches;
 
@@ -316,6 +331,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     );
   }
 
+  String _completedDateFilterLabel(DateTime? value) {
+    if (value == null) return 'All';
+    return HkTime.formatInstantAsHk(value, 'MMM d, yyyy');
+  }
+
   Future<void> _pickProjectMonthRange(BuildContext anchorContext) async {
     final picked = await showAsanaAnchoredMonthRangePicker(
       anchorContext: anchorContext,
@@ -336,6 +356,32 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     });
   }
 
+  Future<void> _pickCompletedDateRange({
+    required BuildContext anchorContext,
+    required DateTime? start,
+    required DateTime? end,
+    required String helpText,
+    required void Function(DateTime? start, DateTime? end) apply,
+  }) async {
+    final picked = await showAsanaAnchoredFilterDateRangePicker(
+      anchorContext: anchorContext,
+      start: start,
+      end: end,
+      helpText: helpText,
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      if (picked.cleared || picked.range == null) {
+        apply(null, null);
+        return;
+      }
+      apply(
+        asanaDateOnlyFromPicker(picked.range!.start),
+        asanaDateOnlyFromPicker(picked.range!.end),
+      );
+    });
+  }
+
   bool _passesTaskFilters(AppState state, Task task, String taskStatus) {
     return _passesTeamFilter(
           state,
@@ -343,11 +389,36 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           _taskCreatorTeamIds,
         ) &&
         _passesStaffFilter([task.pic], _taskPicIds) &&
-        _passesStatusFilter(taskStatus, _taskStatuses);
+        _passesStatusFilter(taskStatus, _taskStatuses) &&
+        _passesCompletionDateRange(
+          task.completionDate,
+          _taskCompletedStart,
+          _taskCompletedEnd,
+        );
   }
 
-  bool _passesSubtaskFilters(String status) {
-    return _passesStatusFilter(status, _subtaskStatuses);
+  bool _passesSubtaskFilters(SingularSubtask subtask, String status) {
+    return _passesStatusFilter(status, _subtaskStatuses) &&
+        _passesCompletionDateRange(
+          subtask.completionDate,
+          _subtaskCompletedStart,
+          _subtaskCompletedEnd,
+        );
+  }
+
+  bool _passesCompletionDateRange(
+    DateTime? completionDate,
+    DateTime? rangeStart,
+    DateTime? rangeEnd,
+  ) {
+    if (rangeStart == null && rangeEnd == null) return true;
+    final day = _hkDateOnly(completionDate);
+    if (day == null) return false;
+    final start = _hkDateOnly(rangeStart);
+    final end = _hkDateOnly(rangeEnd);
+    if (start != null && day.isBefore(start)) return false;
+    if (end != null && day.isAfter(end)) return false;
+    return true;
   }
 
   bool _passesTeamFilter(
@@ -899,6 +970,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 _subtaskStatuses.clear();
                 _projectStartMonth = null;
                 _projectEndMonth = null;
+                _taskCompletedStart = null;
+                _taskCompletedEnd = null;
+                _subtaskCompletedStart = null;
+                _subtaskCompletedEnd = null;
                 _sortKey = 'due_asc';
               });
             },
@@ -1021,6 +1096,36 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 ),
               ),
               AsanaFilterDropdown(
+                title: 'Task Completed From',
+                value: _completedDateFilterLabel(_taskCompletedStart),
+                buttonWidth: 148,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _taskCompletedStart,
+                  end: _taskCompletedEnd,
+                  helpText: 'Task completed date range',
+                  apply: (start, end) {
+                    _taskCompletedStart = start;
+                    _taskCompletedEnd = end;
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Task Completed To',
+                value: _completedDateFilterLabel(_taskCompletedEnd),
+                buttonWidth: 148,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _taskCompletedStart,
+                  end: _taskCompletedEnd,
+                  helpText: 'Task completed date range',
+                  apply: (start, end) {
+                    _taskCompletedStart = start;
+                    _taskCompletedEnd = end;
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
                 title: 'Subtask Status',
                 value: _filterLabel(_subtaskStatuses, _statusLabelFor),
                 buttonWidth: 118,
@@ -1031,6 +1136,36 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (value) => _subtaskStatuses
                     ..clear()
                     ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Subtask Completed From',
+                value: _completedDateFilterLabel(_subtaskCompletedStart),
+                buttonWidth: 148,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _subtaskCompletedStart,
+                  end: _subtaskCompletedEnd,
+                  helpText: 'Subtask completed date range',
+                  apply: (start, end) {
+                    _subtaskCompletedStart = start;
+                    _subtaskCompletedEnd = end;
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Subtask Completed To',
+                value: _completedDateFilterLabel(_subtaskCompletedEnd),
+                buttonWidth: 148,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _subtaskCompletedStart,
+                  end: _subtaskCompletedEnd,
+                  helpText: 'Subtask completed date range',
+                  apply: (start, end) {
+                    _subtaskCompletedStart = start;
+                    _subtaskCompletedEnd = end;
+                  },
                 ),
               ),
               AsanaFilterDropdown(

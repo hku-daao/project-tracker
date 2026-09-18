@@ -67,6 +67,87 @@ class BackendApi {
     }
   }
 
+  /// One email per assignee after a recurring task series is created.
+  Future<String?> notifyRecurringTasksAssigned({
+    required String idToken,
+    required List<String> taskIds,
+    String? seriesName,
+    List<Map<String, String>>? recurrenceFields,
+  }) async {
+    try {
+      final ids = taskIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toList();
+      if (ids.isEmpty) return 'taskIds required';
+      final payload = <String, dynamic>{'taskIds': ids};
+      final name = seriesName?.trim();
+      if (name != null && name.isNotEmpty) {
+        payload['seriesName'] = name;
+      }
+      if (recurrenceFields != null && recurrenceFields.isNotEmpty) {
+        payload['recurrenceFields'] = recurrenceFields;
+      }
+      final response = await http
+          .post(
+            url('/api/notify/recurring-tasks-assigned'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
+      } catch (_) {
+        return 'HTTP ${response.statusCode}';
+      }
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// One email per assignee after a recurring subtask series is created.
+  Future<String?> notifyRecurringSubtasksAssigned({
+    required String idToken,
+    required List<String> subtaskIds,
+    String? seriesName,
+    List<Map<String, String>>? recurrenceFields,
+  }) async {
+    try {
+      final ids =
+          subtaskIds.map((id) => id.trim()).where((id) => id.isNotEmpty).toList();
+      if (ids.isEmpty) return 'subtaskIds required';
+      final payload = <String, dynamic>{'subtaskIds': ids};
+      final name = seriesName?.trim();
+      if (name != null && name.isNotEmpty) {
+        payload['seriesName'] = name;
+      }
+      if (recurrenceFields != null && recurrenceFields.isNotEmpty) {
+        payload['recurrenceFields'] = recurrenceFields;
+      }
+      final response = await http
+          .post(
+            url('/api/notify/recurring-subtasks-assigned'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) return null;
+      try {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
+      } catch (_) {
+        return 'HTTP ${response.statusCode}';
+      }
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Emails each assignee (assignee_01..10) after task creation.
   /// Server returns `{ ok: true, skipped: true }` when email sending is disabled.
   Future<String?> notifyTaskAssigned({

@@ -35,6 +35,7 @@ import 'asana_detail_widgets.dart';
 import 'asana_theme.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
+import 'asana_recurrence.dart';
 import 'asana_value_chips.dart';
 
 class AsanaTaskDetailPanel extends StatefulWidget {
@@ -121,7 +122,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _reasonController = TextEditingController();
+  final _commencementNoteController = TextEditingController();
   final _commentController = TextEditingController();
+  bool _recurrenceExpanded = false;
+  bool _recurrenceSeeded = false;
+  AsanaRecurrenceDraft _recurrence = AsanaRecurrenceDraft.seeded();
 
   List<SingularSubtask> _subtasks = [];
   List<SingularCommentRowDisplay> _comments = [];
@@ -211,6 +216,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _nameController.dispose();
     _descController.dispose();
     _reasonController.dispose();
+    _commencementNoteController.dispose();
     _commentController.dispose();
     _disposePostedCommentControllers();
     _taskAi?.dispose();
@@ -371,7 +377,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _nameController.clear();
     _descController.clear();
     _reasonController.clear();
+    _commencementNoteController.clear();
     _commentController.clear();
+    _recurrenceExpanded = false;
+    _recurrenceSeeded = false;
+    _recurrence = AsanaRecurrenceDraft.seeded();
     _clearInlineImageDrafts();
     _localPriority = priorityStandard;
     _localComplexity = null;
@@ -752,6 +762,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _nameController.text = task.name;
     _descController.text = stripInlineImageMarkers(task.description);
     _reasonController.text = task.changeDueReason ?? '';
+    _commencementNoteController.text = task.commencementNote ?? '';
     _localPriority = task.priority;
     _localComplexity = task.complexity;
     _localCommencementStatus = normalizeCommencementStatus(
@@ -1277,6 +1288,35 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
   }
 
+  Future<void> _notifyCreateAssignmentEmails({
+    required List<String> createdIds,
+    required String seriesName,
+  }) async {
+    if (createdIds.isEmpty) return;
+    if (_recurrenceActive) {
+      await _notifyEmail(
+        'Recurring task assignment email',
+        (token) => BackendApi().notifyRecurringTasksAssigned(
+          idToken: token,
+          taskIds: createdIds,
+          seriesName: seriesName,
+          recurrenceFields: asanaRecurrenceEmailFields(
+            _recurrence,
+            reason: _reasonController.text.trim(),
+          ),
+        ),
+      );
+      return;
+    }
+    await _notifyEmail(
+      'Task assignment email',
+      (token) => BackendApi().notifyTaskAssigned(
+        idToken: token,
+        taskId: createdIds.first,
+      ),
+    );
+  }
+
   String _namesFor(AppState state, Iterable<String> ids) {
     return ids
         .map((id) => _nameFor(state, id))
@@ -1354,6 +1394,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       'commencementStatus',
       normalizeCommencementStatus(task.commencementStatus),
       _localCommencementStatus,
+    );
+    _addChange(
+      changes,
+      'commencementNote',
+      (task.commencementNote ?? '').trim(),
+      (_toBeCommenced ? _commencementNoteController.text : '').trim(),
     );
     _addChange(
       changes,
@@ -1594,6 +1640,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _needsChangeDueReason() {
+    if (_recurrenceActive) {
+      return _recurrence.clampedWorkingDays >
+          workingDaysInclusiveForPriority(_localPriority);
+    }
     if (_startDate == null || _dueDate == null) return false;
     return dueDateExceedsPolicyForPriority(
       _startDate,
@@ -1605,6 +1655,106 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   bool get _toBeCommenced =>
       _localCommencementStatus == commencementToBeCommenced;
+
+  bool get _recurrenceActive =>
+      widget.createMode && _recurrenceExpanded && !_toBeCommenced;
+
+  String? _commencementNoteForSave() {
+    if (!_toBeCommenced) return null;
+    final t = _commencementNoteController.text.trim();
+    return t.isEmpty ? null : t;
+  }
+
+  List<({DateTime? start, DateTime? due, String name})> _createOccurrencePlans(
+    String baseName,
+  ) {
+    if (!_recurrenceActive) {
+      return [(start: _startDate, due: _dueDate, name: baseName)];
+    }
+    final starts = _recurrence.occurrenceStartDates();
+    return [
+      for (final start in starts)
+        (
+          start: start,
+          due: dueDateFromInclusiveWorkingDays(
+            start,
+            _recurrence.clampedWorkingDays,
+            calendarHolidayYmdSkip: _holidaySkipYmd,
+          ),
+          name: asanaRecurringPrefixedName(baseName, start),
+        ),
+    ];
+  }
+
+  void _toggleRecurrence() {
+    setState(() {
+      _recurrenceExpanded = !_recurrenceExpanded;
+      if (_recurrenceExpanded && !_recurrenceSeeded) {
+        _recurrence = AsanaRecurrenceDraft.seeded(
+          start: _startDate,
+          workingDaysInclusive: workingDaysInclusiveForPriority(_localPriority),
+        );
+        _recurrenceSeeded = true;
+      }
+    });
+  }
+
+  Future<void> _pickRecurrenceStartAt(BuildContext anchorContext) async {
+    final picked = await showAsanaAnchoredSingleDatePicker(
+      anchorContext: anchorContext,
+      initialDate: _recurrence.rangeStart,
+      helpText: 'Start at',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _recurrence.rangeStart = picked;
+      if (_recurrence.rangeEnd.isBefore(picked)) {
+        _recurrence.rangeEnd = picked;
+      }
+    });
+  }
+
+  Future<void> _pickRecurrenceEndBy(BuildContext anchorContext) async {
+    final picked = await showAsanaAnchoredSingleDatePicker(
+      anchorContext: anchorContext,
+      initialDate: _recurrence.rangeEnd,
+      helpText: 'End by',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _recurrence.rangeEnd = picked);
+  }
+
+  Widget _commencementNoteSection({required bool canEdit}) {
+    final hasNote = _commencementNoteController.text.trim().isNotEmpty;
+    if (!_toBeCommenced && !(!canEdit && hasNote)) {
+      return const SizedBox.shrink();
+    }
+    if (!canEdit) {
+      return AsanaDetailTwoColumnRow(
+        label: 'Commencement note',
+        crossAxisAlignment: CrossAxisAlignment.start,
+        labelMaxLines: 2,
+        child: AsanaDetailPlainValue(
+          text: _commencementNoteController.text.trim(),
+        ),
+      );
+    }
+    return AsanaDetailTwoColumnRow(
+      label: 'Commencement note',
+      crossAxisAlignment: CrossAxisAlignment.start,
+      labelMaxLines: 2,
+      child: AsanaHoverTextField(
+        controller: _commencementNoteController,
+        canEdit: canEdit,
+        readOnly: _saving,
+        showOutline: true,
+        maxLines: 4,
+        minLines: 2,
+        hintText: 'Optional notes about commencement',
+        style: asanaDetailMultilineValueStyle(context),
+      ),
+    );
+  }
 
   void _restoreDefaultDatesIfMissing() {
     _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
@@ -1669,6 +1819,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       _localPriority = choice;
       if (widget.createMode && !_toBeCommenced) {
         _dueDate = _defaultDueForPriority(choice);
+      }
+      if (_recurrenceExpanded) {
+        _recurrence.workingDaysInclusive = workingDaysInclusiveForPriority(
+          choice,
+        );
       }
     });
   }
@@ -2155,102 +2310,132 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       return;
     }
+    final plans = _createOccurrencePlans(name);
+    if (_recurrenceActive && plans.isEmpty) {
+      await _showInfo(
+        'No recurring dates',
+        'No start dates match this pattern for the selected Start at / End settings. Adjust the pattern or range.',
+      );
+      return;
+    }
     if (mounted) setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
       final slots = await DatabaseService.assigneeSlotsForTask(directorIds);
-      final ins = await DatabaseService.insertTaskTableRow(
-        taskName: name,
-        assignees: slots,
-        description: stripInlineImageMarkers(_descController.text).isEmpty
-            ? null
-            : stripInlineImageMarkers(_descController.text),
-        priority: priorityToDisplayName(_localPriority),
-        complexity: complexity,
-        commencementStatus: _localCommencementStatus,
-        startDate: _startDate,
-        dueDate: _dueDate,
-        creatorStaffLookupKey: state.userStaffAppId,
-        picStaffLookupKey: picKey,
-        changeDueReason: _needsChangeDueReason()
-            ? _reasonController.text.trim()
-            : null,
-        projectId: _selectedProjectId,
-      );
-      if (ins.error != null && mounted) {
-        await _showInfo('Could not create task', ins.error!);
-        return;
-      }
-      final newId = ins.taskId;
-      if (newId == null || newId.isEmpty) return;
-      _taskAi?.attachCreatedEntityId(newId);
-      _taskAi?.clearAllSuggestions();
-      final uploadErr = await _uploadPendingCreateAttachments(
-        newId,
-        state,
-        picKey,
-      );
-      if (uploadErr != null && mounted) {
-        await _showInfo('Attachment upload failed', uploadErr);
-        return;
-      }
-      final comment = stripInlineImageMarkers(_commentController.text);
-      String? draftCommentId;
-      if (comment.isNotEmpty ||
-          _hasPendingInlineImages('task_comment', 'draft')) {
-        final c = await DatabaseService.insertSingularCommentRow(
-          taskId: newId,
-          description: comment.isNotEmpty
-              ? comment
-              : inlineImageOnlyCommentPlaceholder,
+      String? firstId;
+      var createdCount = 0;
+      final createdIds = <String>[];
+      try {
+      for (var i = 0; i < plans.length; i++) {
+        final plan = plans[i];
+        final ins = await DatabaseService.insertTaskTableRow(
+          taskName: plan.name,
+          assignees: slots,
+          description: stripInlineImageMarkers(_descController.text).isEmpty
+              ? null
+              : stripInlineImageMarkers(_descController.text),
+          priority: priorityToDisplayName(_localPriority),
+          complexity: complexity,
+          commencementStatus: _localCommencementStatus,
+          startDate: plan.start,
+          dueDate: plan.due,
           creatorStaffLookupKey: state.userStaffAppId,
+          picStaffLookupKey: picKey,
+          changeDueReason: _needsChangeDueReason()
+              ? _reasonController.text.trim()
+              : null,
+          commencementNote: _commencementNoteForSave(),
+          projectId: _selectedProjectId,
         );
-        if (c.error != null && mounted) {
-          await _showInfo('Could not add comment', c.error!);
+        if (ins.error != null && mounted) {
+          await _showInfo(
+            createdCount == 0
+                ? 'Could not create task'
+                : 'Recurring create stopped',
+            createdCount == 0
+                ? ins.error!
+                : 'Created $createdCount of ${plans.length}. ${ins.error!}',
+          );
+          if (firstId != null) widget.onCreated?.call(firstId);
           return;
         }
-        final commentId = c.commentId;
-        if (commentId == null || commentId.isEmpty) {
-          if (mounted) {
-            await _showInfo(
-              'Could not add comment',
-              'The comment was not saved because the database did not return a comment id.',
-            );
+        final newId = ins.taskId;
+        if (newId == null || newId.isEmpty) return;
+        createdCount++;
+        firstId ??= newId;
+        createdIds.add(newId);
+        if (i == 0) {
+          _taskAi?.attachCreatedEntityId(newId);
+          _taskAi?.clearAllSuggestions();
+          final uploadErr = await _uploadPendingCreateAttachments(
+            newId,
+            state,
+            picKey,
+          );
+          if (uploadErr != null && mounted) {
+            await _showInfo('Attachment upload failed', uploadErr);
+            return;
           }
-          return;
+          final comment = stripInlineImageMarkers(_commentController.text);
+          String? draftCommentId;
+          if (comment.isNotEmpty ||
+              _hasPendingInlineImages('task_comment', 'draft')) {
+            final c = await DatabaseService.insertSingularCommentRow(
+              taskId: newId,
+              description: comment.isNotEmpty
+                  ? comment
+                  : inlineImageOnlyCommentPlaceholder,
+              creatorStaffLookupKey: state.userStaffAppId,
+            );
+            if (c.error != null && mounted) {
+              await _showInfo('Could not add comment', c.error!);
+              return;
+            }
+            final commentId = c.commentId;
+            if (commentId == null || commentId.isEmpty) {
+              if (mounted) {
+                await _showInfo(
+                  'Could not add comment',
+                  'The comment was not saved because the database did not return a comment id.',
+                );
+              }
+              return;
+            }
+            draftCommentId = commentId;
+            _commentController.clear();
+          }
+          final inlineErr = await _commitPendingInlineImages(
+            taskId: newId,
+            state: state,
+            picKey: picKey,
+            entityIdOverrides: draftCommentId == null
+                ? {'draft_description': newId}
+                : {'draft_description': newId, 'draft': draftCommentId},
+          );
+          if (inlineErr != null && mounted) {
+            await _showInfo('Could not save inline image', inlineErr);
+            return;
+          }
+          if (_attachments.isNotEmpty) {
+            final attErr = await _replaceTaskAttachments(newId);
+            if (attErr != null && mounted) {
+              await _showInfo('Could not save attachments', attErr);
+              return;
+            }
+          }
         }
-        draftCommentId = commentId;
-        _commentController.clear();
-      }
-      final inlineErr = await _commitPendingInlineImages(
-        taskId: newId,
-        state: state,
-        picKey: picKey,
-        entityIdOverrides: draftCommentId == null
-            ? {'draft_description': newId}
-            : {'draft_description': newId, 'draft': draftCommentId},
-      );
-      if (inlineErr != null && mounted) {
-        await _showInfo('Could not save inline image', inlineErr);
-        return;
-      }
-      if (_attachments.isNotEmpty) {
-        final attErr = await _replaceTaskAttachments(newId);
-        if (attErr != null && mounted) {
-          await _showInfo('Could not save attachments', attErr);
-          return;
+        final model = await DatabaseService.fetchSingularTaskModelById(newId);
+        if (model != null) {
+          state.upsertTask(model);
         }
       }
-      final model = await DatabaseService.fetchSingularTaskModelById(newId);
-      if (model != null) {
-        state.upsertTask(model);
+      } finally {
+        await _notifyCreateAssignmentEmails(
+          createdIds: createdIds,
+          seriesName: name,
+        );
       }
-      await _notifyEmail(
-        'Task assignment email',
-        (token) =>
-            BackendApi().notifyTaskAssigned(idToken: token, taskId: newId),
-      );
-      if (mounted) widget.onCreated?.call(newId);
+      if (mounted && firstId != null) widget.onCreated?.call(firstId);
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -2329,6 +2514,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         changeDueReason: _needsChangeDueReason()
             ? _reasonController.text.trim()
             : null,
+        updateCommencementNote: true,
+        commencementNote: _commencementNoteForSave(),
         clearProjectId: clearProject,
         projectId: !clearProject && selProj != null && selProj.isNotEmpty
             ? selProj
@@ -2499,6 +2686,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       changeDueReason: _needsChangeDueReason()
           ? _reasonController.text.trim()
           : null,
+      updateCommencementNote: true,
+      commencementNote: _commencementNoteForSave(),
       clearProjectId: clearProject,
       projectId: !clearProject && selProj != null && selProj.isNotEmpty
           ? selProj
@@ -3160,6 +3349,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       changeDueReason: _needsChangeDueReason()
           ? _reasonController.text.trim()
           : null,
+      commencementNote: _commencementNoteForSave(),
       updateDate: DateTime.now(),
       lastUpdated: DateTime.now(),
     );
@@ -3769,6 +3959,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
+          _commencementNoteSection(canEdit: canEdit),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
@@ -3791,39 +3982,57 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.complexity),
-          AsanaDetailTwoColumnRow(
-            label: 'Start date',
-            child: AsanaHoverTapValue(
-              value: _formatDate(_startDate),
-              canEdit: canEdit,
-              emptyPlaceholder: 'Today',
-              maxLines: 2,
-              softWrap: true,
-              overflow: TextOverflow.visible,
-              shrinkToContent: false,
-              onTap: !canEdit || _saving ? null : _pickStartDueRange,
+          if (!_recurrenceActive) ...[
+            AsanaDetailTwoColumnRow(
+              label: 'Start date',
+              child: AsanaHoverTapValue(
+                value: _formatDate(_startDate),
+                canEdit: canEdit,
+                emptyPlaceholder: 'Today',
+                maxLines: 2,
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                shrinkToContent: false,
+                onTap: !canEdit || _saving ? null : _pickStartDueRange,
+              ),
             ),
-          ),
-          _aiSuggestions(AsanaTaskAiFieldKey.startDate),
-          AsanaDetailTwoColumnRow(
-            label: 'Due date',
-            child: AsanaHoverTapValue(
-              value: _formatDate(_dueDate),
-              canEdit: canEdit,
-              maxLines: 2,
-              softWrap: true,
-              overflow: TextOverflow.visible,
-              shrinkToContent: false,
-              onTap: !canEdit || _saving ? null : _pickStartDueRange,
+            _aiSuggestions(AsanaTaskAiFieldKey.startDate),
+            AsanaDetailTwoColumnRow(
+              label: 'Due date',
+              child: AsanaHoverTapValue(
+                value: _formatDate(_dueDate),
+                canEdit: canEdit,
+                maxLines: 2,
+                softWrap: true,
+                overflow: TextOverflow.visible,
+                shrinkToContent: false,
+                onTap: !canEdit || _saving ? null : _pickStartDueRange,
+              ),
             ),
-          ),
-          _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
-          if (_needsChangeDueReason())
+            _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+          ],
+          if (canEdit && !_toBeCommenced)
+            AsanaRecurrenceCreateSection(
+              expanded: _recurrenceExpanded,
+              draft: _recurrence,
+              canEdit: canEdit && !_saving,
+              onToggle: _toggleRecurrence,
+              onChanged: () => setState(() {}),
+              onPickStartAt: _pickRecurrenceStartAt,
+              onPickEndBy: _pickRecurrenceEndBy,
+              defaultWorkingDays: workingDaysInclusiveForPriority(
+                _localPriority,
+              ),
+              reasonController: _reasonController,
+              reasonReadOnly: _saving,
+            ),
+          if (!_recurrenceActive && _needsChangeDueReason())
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaDetailLabelValue(
+                AsanaDetailTwoColumnRow(
                   label: 'Reason',
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   child: AsanaHoverTextField(
                     controller: _reasonController,
                     canEdit: canEdit,
@@ -4153,6 +4362,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   ),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
+          _commencementNoteSection(canEdit: canEdit),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
@@ -4211,8 +4421,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaDetailLabelValue(
+                AsanaDetailTwoColumnRow(
                   label: 'Reason',
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   child: AsanaHoverTextField(
                     controller: _reasonController,
                     canEdit: canEdit,
@@ -4241,6 +4452,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               label: 'Last updated',
               child: AsanaDetailPlainValue(
                 text: _formatDateTime(task.lastUpdated),
+              ),
+            ),
+          if (_taskCompleted(task))
+            AsanaDetailTwoColumnRow(
+              label: 'Completion date',
+              child: AsanaDetailPlainValue(
+                text: task.completionDate == null
+                    ? '—'
+                    : _formatDateTime(task.completionDate),
               ),
             ),
           if (_loadingExtras)

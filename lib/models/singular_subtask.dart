@@ -1,6 +1,7 @@
 /// Row from `public.subtask` (child of singular `task`).
 class SingularSubtask {
   static const Object _unsetChangeDueReason = Object();
+  static const Object _unsetCommencementNote = Object();
 
   const SingularSubtask({
     required this.id,
@@ -25,6 +26,7 @@ class SingularSubtask {
     this.lastUpdated,
     this.updateByStaffName,
     this.changeDueReason,
+    this.commencementNote,
     this.pauseStatus = 'Not Paused',
     this.overdueDay = 0,
     this.overdue = 'No',
@@ -72,6 +74,9 @@ class SingularSubtask {
 
   /// When start→due span exceeds policy (`subtask.change_due_reason`).
   final String? changeDueReason;
+
+  /// Optional note when [commencementStatus] is `To be commenced`.
+  final String? commencementNote;
 
   /// `Paused` | `Not Paused`; parent task/project pause is computed separately.
   final String pauseStatus;
@@ -128,6 +133,7 @@ class SingularSubtask {
     bool clearLastUpdated = false,
     String? updateByStaffName,
     Object? changeDueReason = _unsetChangeDueReason,
+    Object? commencementNote = _unsetCommencementNote,
     String? pauseStatus,
     int? overdueDay,
     String? overdue,
@@ -159,6 +165,9 @@ class SingularSubtask {
       changeDueReason: identical(changeDueReason, _unsetChangeDueReason)
           ? this.changeDueReason
           : changeDueReason as String?,
+      commencementNote: identical(commencementNote, _unsetCommencementNote)
+          ? this.commencementNote
+          : commencementNote as String?,
       pauseStatus: pauseStatus ?? this.pauseStatus,
       overdueDay: overdueDay ?? this.overdueDay,
       overdue: overdue ?? this.overdue,

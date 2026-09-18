@@ -29,6 +29,7 @@ import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
+import 'asana_recurrence.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -207,7 +208,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _reasonController = TextEditingController();
+  final _commencementNoteController = TextEditingController();
   final _commentController = TextEditingController();
+  bool _recurrenceExpanded = false;
+  bool _recurrenceSeeded = false;
+  AsanaRecurrenceDraft _recurrence = AsanaRecurrenceDraft.seeded();
   final List<_SubtaskAttachmentDraft> _attachments = [];
   final Map<String, String> _savedFileAttachmentLabelsById = {};
   final Map<String, String> _savedUrlAttachmentLabelsById = {};
@@ -304,7 +309,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _nameController.clear();
     _descController.clear();
     _reasonController.clear();
+    _commencementNoteController.clear();
     _commentController.clear();
+    _recurrenceExpanded = false;
+    _recurrenceSeeded = false;
+    _recurrence = AsanaRecurrenceDraft.seeded();
     _clearAttachments();
     _comments = [];
     _descriptionInlineImages = [];
@@ -360,6 +369,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     _nameController.dispose();
     _descController.dispose();
     _reasonController.dispose();
+    _commencementNoteController.dispose();
     _commentController.dispose();
     _disposePostedCommentControllers();
     _clearAttachments();
@@ -390,6 +400,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
               row?.description ?? '',
             );
             _reasonController.text = row?.changeDueReason ?? '';
+            _commencementNoteController.text = row?.commencementNote ?? '';
             _assigneeIds.clear();
             if (row != null)
               _assigneeIds.addAll(row.assigneeIds.where((e) => e.isNotEmpty));
@@ -665,6 +676,35 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     }
   }
 
+  Future<void> _notifyCreateAssignmentEmails({
+    required List<String> createdIds,
+    required String seriesName,
+  }) async {
+    if (createdIds.isEmpty) return;
+    if (_recurrenceActive) {
+      await _notifyEmail(
+        'Recurring sub-task assignment email',
+        (token) => BackendApi().notifyRecurringSubtasksAssigned(
+          idToken: token,
+          subtaskIds: createdIds,
+          seriesName: seriesName,
+          recurrenceFields: asanaRecurrenceEmailFields(
+            _recurrence,
+            reason: _reasonController.text.trim(),
+          ),
+        ),
+      );
+      return;
+    }
+    await _notifyEmail(
+      'Sub-task assignment email',
+      (token) => BackendApi().notifySubtaskAssigned(
+        idToken: token,
+        subtaskId: createdIds.first,
+      ),
+    );
+  }
+
   void _notifyEmailInBackground(
     String label,
     Future<String?> Function(String idToken) send,
@@ -747,6 +787,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       'commencementStatus',
       normalizeCommencementStatus(s.commencementStatus),
       _localCommencementStatus,
+    );
+    _addChange(
+      changes,
+      'commencementNote',
+      (s.commencementNote ?? '').trim(),
+      (_toBeCommenced ? _commencementNoteController.text : '').trim(),
     );
     _addChange(changes, 'startDate', _date(s.startDate), _date(_startDate));
     _addChange(changes, 'dueDate', _date(s.dueDate), _date(_dueDate));
@@ -1435,6 +1481,14 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     if (choice == null || !mounted) return;
     setState(() {
       _localPriority = choice;
+      if (_effectiveCreateMode && !_toBeCommenced) {
+        _dueDate = _defaultDueForPriority(choice);
+      }
+      if (_recurrenceExpanded) {
+        _recurrence.workingDaysInclusive = workingDaysInclusiveForPriority(
+          choice,
+        );
+      }
     });
   }
 
@@ -1458,6 +1512,10 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   bool _needsChangeDueReason() {
+    if (_recurrenceActive) {
+      return _recurrence.clampedWorkingDays >
+          workingDaysInclusiveForPriority(_localPriority);
+    }
     if (_startDate == null || _dueDate == null) return false;
     return dueDateExceedsPolicyForPriority(
       _startDate,
@@ -1472,13 +1530,20 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     return DateUtils.dateOnly(value);
   }
 
-  Future<bool> _validateParentTaskTimeline() async {
+  Future<bool> _validateParentTaskTimeline() {
+    return _validateParentTaskTimelineFor(start: _startDate, due: _dueDate);
+  }
+
+  Future<bool> _validateParentTaskTimelineFor({
+    DateTime? start,
+    DateTime? due,
+  }) async {
     final parent = _parentTask;
     if (parent == null) return true;
     final parentStart = _dateOnly(parent.startDate);
     final parentDue = _dateOnly(parent.endDate);
-    final subStart = _dateOnly(_startDate);
-    final subDue = _dateOnly(_dueDate);
+    final subStart = _dateOnly(start);
+    final subDue = _dateOnly(due);
     final startViolated =
         parentStart != null &&
         subStart != null &&
@@ -1512,6 +1577,106 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   bool get _toBeCommenced =>
       _localCommencementStatus == commencementToBeCommenced;
+
+  bool get _recurrenceActive =>
+      _effectiveCreateMode && _recurrenceExpanded && !_toBeCommenced;
+
+  String? _commencementNoteForSave() {
+    if (!_toBeCommenced) return null;
+    final t = _commencementNoteController.text.trim();
+    return t.isEmpty ? null : t;
+  }
+
+  List<({DateTime? start, DateTime? due, String name})> _createOccurrencePlans(
+    String baseName,
+  ) {
+    if (!_recurrenceActive) {
+      return [(start: _startDate, due: _dueDate, name: baseName)];
+    }
+    final starts = _recurrence.occurrenceStartDates();
+    return [
+      for (final start in starts)
+        (
+          start: start,
+          due: dueDateFromInclusiveWorkingDays(
+            start,
+            _recurrence.clampedWorkingDays,
+            calendarHolidayYmdSkip: _holidaySkipYmd,
+          ),
+          name: asanaRecurringPrefixedName(baseName, start),
+        ),
+    ];
+  }
+
+  void _toggleRecurrence() {
+    setState(() {
+      _recurrenceExpanded = !_recurrenceExpanded;
+      if (_recurrenceExpanded && !_recurrenceSeeded) {
+        _recurrence = AsanaRecurrenceDraft.seeded(
+          start: _startDate,
+          workingDaysInclusive: workingDaysInclusiveForPriority(_localPriority),
+        );
+        _recurrenceSeeded = true;
+      }
+    });
+  }
+
+  Future<void> _pickRecurrenceStartAt(BuildContext anchorContext) async {
+    final picked = await showAsanaAnchoredSingleDatePicker(
+      anchorContext: anchorContext,
+      initialDate: _recurrence.rangeStart,
+      helpText: 'Start at',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _recurrence.rangeStart = picked;
+      if (_recurrence.rangeEnd.isBefore(picked)) {
+        _recurrence.rangeEnd = picked;
+      }
+    });
+  }
+
+  Future<void> _pickRecurrenceEndBy(BuildContext anchorContext) async {
+    final picked = await showAsanaAnchoredSingleDatePicker(
+      anchorContext: anchorContext,
+      initialDate: _recurrence.rangeEnd,
+      helpText: 'End by',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _recurrence.rangeEnd = picked);
+  }
+
+  Widget _commencementNoteSection({required bool canEdit}) {
+    final hasNote = _commencementNoteController.text.trim().isNotEmpty;
+    if (!_toBeCommenced && !(!canEdit && hasNote)) {
+      return const SizedBox.shrink();
+    }
+    if (!canEdit) {
+      return AsanaDetailTwoColumnRow(
+        label: 'Commencement note',
+        crossAxisAlignment: CrossAxisAlignment.start,
+        labelMaxLines: 2,
+        child: AsanaDetailPlainValue(
+          text: _commencementNoteController.text.trim(),
+        ),
+      );
+    }
+    return AsanaDetailTwoColumnRow(
+      label: 'Commencement note',
+      crossAxisAlignment: CrossAxisAlignment.start,
+      labelMaxLines: 2,
+      child: AsanaHoverTextField(
+        controller: _commencementNoteController,
+        canEdit: canEdit,
+        readOnly: _saving,
+        showOutline: true,
+        maxLines: 4,
+        minLines: 2,
+        hintText: 'Optional notes about commencement',
+        style: asanaDetailMultilineValueStyle(context),
+      ),
+    );
+  }
 
   void _restoreDefaultDatesIfMissing() {
     _anchorCreateDate = HkTime.firstBusinessDayOnOrAfter(
@@ -1564,6 +1729,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   String _subtaskDisplayStatus(AppState state, SingularSubtask? s) {
     if (s != null && _subtaskEffectivelyPaused(state, s)) return 'Paused';
     return _draftStatus ?? s?.status ?? 'Todo';
+  }
+
+  bool _subtaskIsCompleted(SingularSubtask? s) {
+    final raw = (_draftStatus ?? s?.status ?? '').trim().toLowerCase();
+    return raw == 'completed' || raw == 'complete';
   }
 
   Future<void> _setSubtaskPause(
@@ -1920,126 +2090,165 @@ Due: ${_date(p.endDate)}
       );
       return;
     }
-    if (canEditDetails && !await _validateParentTaskTimeline()) return;
+    final createPlans = _effectiveCreateMode
+        ? _createOccurrencePlans(newName)
+        : const <({DateTime? start, DateTime? due, String name})>[];
+    if (_effectiveCreateMode && _recurrenceActive && createPlans.isEmpty) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'No recurring dates',
+        content:
+            'No start dates match this pattern for the selected Start at / End settings. Adjust the pattern or range.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (canEditDetails) {
+      if (_effectiveCreateMode) {
+        for (final plan in createPlans) {
+          if (!await _validateParentTaskTimelineFor(
+            start: plan.start,
+            due: plan.due,
+          )) {
+            return;
+          }
+        }
+      } else if (!await _validateParentTaskTimeline()) {
+        return;
+      }
+    }
     setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
       if (_effectiveCreateMode) {
         final commentText = stripInlineImageMarkers(_commentController.text);
-        final ins = await DatabaseService.insertSubtaskRow(
-          taskId: widget.parentTaskId!,
-          subtaskName: newName,
-          description: stripInlineImageMarkers(_descController.text),
-          priorityDisplay: priorityToDisplayName(_localPriority),
-          complexity: complexity!,
-          status: _draftStatus,
-          commencementStatus: _localCommencementStatus,
-          startDate: _startDate,
-          dueDate: _dueDate,
-          assigneeStaffUuids: effectiveAssigneeIds,
-          picStaffUuid: _picAssigneeId ?? '',
-          creatorStaffLookupKey: state.userStaffAppId,
-          initialComment: _hasPendingInlineImages('subtask_comment', 'draft')
-              ? null
-              : (commentText.isNotEmpty ? commentText : null),
-          changeDueReason: _needsChangeDueReason()
-              ? _reasonController.text.trim()
-              : null,
-        );
-        if (ins.error != null && mounted) {
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not create sub-task',
-            content: ins.error!,
-            palette: widget.palette,
+        String? firstId;
+        var createdCount = 0;
+        final createdIds = <String>[];
+        try {
+        for (var i = 0; i < createPlans.length; i++) {
+          final plan = createPlans[i];
+          final ins = await DatabaseService.insertSubtaskRow(
+            taskId: widget.parentTaskId!,
+            subtaskName: plan.name,
+            description: stripInlineImageMarkers(_descController.text),
+            priorityDisplay: priorityToDisplayName(_localPriority),
+            complexity: complexity!,
+            status: _draftStatus,
+            commencementStatus: _localCommencementStatus,
+            startDate: plan.start,
+            dueDate: plan.due,
+            assigneeStaffUuids: effectiveAssigneeIds,
+            picStaffUuid: _picAssigneeId ?? '',
+            creatorStaffLookupKey: state.userStaffAppId,
+            initialComment: null,
+            changeDueReason: _needsChangeDueReason()
+                ? _reasonController.text.trim()
+                : null,
+            commencementNote: _commencementNoteForSave(),
           );
-          return;
-        }
-        final newSubtaskId = ins.subtaskId;
-        if (newSubtaskId != null && newSubtaskId.isNotEmpty) {
-          _subtaskAi?.attachCreatedEntityId(newSubtaskId);
-          final uploadErr = await _uploadPendingCreateAttachments(
-            newSubtaskId,
-            state,
-          );
-          if (uploadErr != null && mounted) {
+          if (ins.error != null && mounted) {
             await showAsanaInfoDialog(
               context: context,
-              title: 'Attachment upload failed',
-              content: uploadErr,
+              title: createdCount == 0
+                  ? 'Could not create sub-task'
+                  : 'Recurring create stopped',
+              content: createdCount == 0
+                  ? ins.error!
+                  : 'Created $createdCount of ${createPlans.length}. ${ins.error!}',
               palette: widget.palette,
             );
+            if (firstId != null) widget.onCreated?.call(firstId);
             return;
           }
-          final created = await DatabaseService.fetchSubtaskById(newSubtaskId);
-          String? draftCommentId;
-          if (commentText.isNotEmpty ||
-              _hasPendingInlineImages('subtask_comment', 'draft')) {
-            final comment = await DatabaseService.insertSubtaskCommentRow(
-              subtaskId: newSubtaskId,
-              description: commentText.isNotEmpty
-                  ? commentText
-                  : inlineImageOnlyCommentPlaceholder,
-              creatorStaffLookupKey: state.userStaffAppId,
+          final newSubtaskId = ins.subtaskId;
+          if (newSubtaskId == null || newSubtaskId.isEmpty) return;
+          createdCount++;
+          firstId ??= newSubtaskId;
+          createdIds.add(newSubtaskId);
+          if (i == 0) {
+            _subtaskAi?.attachCreatedEntityId(newSubtaskId);
+            final uploadErr = await _uploadPendingCreateAttachments(
+              newSubtaskId,
+              state,
             );
-            if (comment.error != null && mounted) {
+            if (uploadErr != null && mounted) {
               await showAsanaInfoDialog(
                 context: context,
-                title: 'Could not add comment',
-                content: comment.error!,
+                title: 'Attachment upload failed',
+                content: uploadErr,
                 palette: widget.palette,
               );
               return;
             }
-            draftCommentId = comment.commentId;
-          }
-          if (created != null) {
-            final inlineErr = await _commitPendingInlineImages(
-              subtask: created,
-              state: state,
-              entityIdOverrides: {
-                'draft_description': newSubtaskId,
-                newSubtaskId: newSubtaskId,
-                if (draftCommentId != null) 'draft': draftCommentId,
-              },
-            );
-            if (inlineErr != null && mounted) {
-              await showAsanaInfoDialog(
-                context: context,
-                title: 'Could not save inline image',
-                content: inlineErr,
-                palette: widget.palette,
+            final created = await DatabaseService.fetchSubtaskById(newSubtaskId);
+            String? draftCommentId;
+            if (commentText.isNotEmpty ||
+                _hasPendingInlineImages('subtask_comment', 'draft')) {
+              final comment = await DatabaseService.insertSubtaskCommentRow(
+                subtaskId: newSubtaskId,
+                description: commentText.isNotEmpty
+                    ? commentText
+                    : inlineImageOnlyCommentPlaceholder,
+                creatorStaffLookupKey: state.userStaffAppId,
               );
-              return;
+              if (comment.error != null && mounted) {
+                await showAsanaInfoDialog(
+                  context: context,
+                  title: 'Could not add comment',
+                  content: comment.error!,
+                  palette: widget.palette,
+                );
+                return;
+              }
+              draftCommentId = comment.commentId;
+            }
+            if (created != null) {
+              final inlineErr = await _commitPendingInlineImages(
+                subtask: created,
+                state: state,
+                entityIdOverrides: {
+                  'draft_description': newSubtaskId,
+                  newSubtaskId: newSubtaskId,
+                  if (draftCommentId != null) 'draft': draftCommentId,
+                },
+              );
+              if (inlineErr != null && mounted) {
+                await showAsanaInfoDialog(
+                  context: context,
+                  title: 'Could not save inline image',
+                  content: inlineErr,
+                  palette: widget.palette,
+                );
+                return;
+              }
+            }
+            if (_attachments.isNotEmpty) {
+              final attErr = await _replaceSubtaskFileAndUrlAttachments(
+                newSubtaskId,
+              );
+              if (attErr != null && mounted) {
+                await showAsanaInfoDialog(
+                  context: context,
+                  title: 'Could not save attachments',
+                  content: attErr,
+                  palette: widget.palette,
+                );
+                return;
+              }
             }
           }
         }
-        if (newSubtaskId != null &&
-            newSubtaskId.isNotEmpty &&
-            _attachments.isNotEmpty) {
-          final attErr = await _replaceSubtaskFileAndUrlAttachments(
-            newSubtaskId,
+        } finally {
+          await _notifyCreateAssignmentEmails(
+            createdIds: createdIds,
+            seriesName: newName,
           );
-          if (attErr != null && mounted) {
-            await showAsanaInfoDialog(
-              context: context,
-              title: 'Could not save attachments',
-              content: attErr,
-              palette: widget.palette,
-            );
-            return;
-          }
         }
+        final newSubtaskId = firstId;
         if (mounted) {
           if (newSubtaskId != null && newSubtaskId.isNotEmpty) {
             widget.onCreated?.call(newSubtaskId);
-            await _notifyEmail(
-              'Sub-task assignment email',
-              (token) => BackendApi().notifySubtaskAssigned(
-                idToken: token,
-                subtaskId: newSubtaskId,
-              ),
-            );
             final row = await DatabaseService.fetchSubtaskById(newSubtaskId);
             if (!mounted) return;
             if (row != null) {
@@ -2051,6 +2260,7 @@ Due: ${_date(p.endDate)}
                 _nameController.text = row.subtaskName;
                 _descController.text = stripInlineImageMarkers(row.description);
                 _reasonController.text = row.changeDueReason ?? '';
+                _commencementNoteController.text = row.commencementNote ?? '';
                 _draftStatus = row.status;
               });
               await _loadAttachments(row);
@@ -2086,6 +2296,8 @@ Due: ${_date(p.endDate)}
           changeDueReason: _needsChangeDueReason()
               ? _reasonController.text.trim()
               : null,
+          updateCommencementNote: true,
+          commencementNote: _commencementNoteForSave(),
           updaterStaffLookupKey: state.userStaffAppId,
         );
         if (err != null && mounted) {
@@ -2286,6 +2498,8 @@ Due: ${_date(p.endDate)}
         changeDueReason: _needsChangeDueReason()
             ? _reasonController.text.trim()
             : null,
+        updateCommencementNote: true,
+        commencementNote: _commencementNoteForSave(),
         updaterStaffLookupKey: state.userStaffAppId,
       );
       if (err != null && mounted) {
@@ -2509,6 +2723,8 @@ Due: ${_date(p.endDate)}
         changeDueReason: _needsChangeDueReason()
             ? _reasonController.text.trim()
             : null,
+        updateCommencementNote: true,
+        commencementNote: _commencementNoteForSave(),
         updaterStaffLookupKey: state.userStaffAppId,
       );
       if (err != null && mounted) {
@@ -3884,6 +4100,9 @@ Due: ${_date(p.endDate)}
           ),
           if (_effectiveCreateMode || canEditDetails)
             _aiSuggestions(AsanaTaskAiFieldKey.commencementStatus),
+          _commencementNoteSection(
+            canEdit: _effectiveCreateMode || canEditDetails,
+          ),
           AsanaDetailTwoColumnRow(
             label: 'Complexity',
             labelTrailing: AsanaComplexityInfoButton(palette: widget.palette),
@@ -3908,40 +4127,59 @@ Due: ${_date(p.endDate)}
           ),
           if (_effectiveCreateMode || canEditDetails)
             _aiSuggestions(AsanaTaskAiFieldKey.complexity),
-          AsanaDetailTwoColumnRow(
-            label: 'Start date',
-            child: Builder(
-              builder: (anchorContext) => AsanaHoverTapValue(
-                value: _date(_startDate),
-                canEdit: canEditDetails,
-                onTap: _saving
-                    ? null
-                    : (_) => _pickStartDueRange(anchorContext),
+          if (!_recurrenceActive) ...[
+            AsanaDetailTwoColumnRow(
+              label: 'Start date',
+              child: Builder(
+                builder: (anchorContext) => AsanaHoverTapValue(
+                  value: _date(_startDate),
+                  canEdit: canEditDetails,
+                  onTap: _saving
+                      ? null
+                      : (_) => _pickStartDueRange(anchorContext),
+                ),
               ),
             ),
-          ),
-          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.startDate),
-          AsanaDetailTwoColumnRow(
-            label: 'Due date',
-            child: Builder(
-              builder: (anchorContext) => AsanaHoverTapValue(
-                value: _date(_dueDate),
-                canEdit: canEditDetails,
-                onTap: _saving
-                    ? null
-                    : (_) => _pickStartDueRange(anchorContext),
+            if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.startDate),
+            AsanaDetailTwoColumnRow(
+              label: 'Due date',
+              child: Builder(
+                builder: (anchorContext) => AsanaHoverTapValue(
+                  value: _date(_dueDate),
+                  canEdit: canEditDetails,
+                  onTap: _saving
+                      ? null
+                      : (_) => _pickStartDueRange(anchorContext),
+                ),
               ),
             ),
-          ),
-          if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
-          if (canEditDetails &&
+            if (canEditDetails) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
+          ],
+          if (_effectiveCreateMode && !_toBeCommenced)
+            AsanaRecurrenceCreateSection(
+              expanded: _recurrenceExpanded,
+              draft: _recurrence,
+              canEdit: canEditDetails && !_saving,
+              onToggle: _toggleRecurrence,
+              onChanged: () => setState(() {}),
+              onPickStartAt: _pickRecurrenceStartAt,
+              onPickEndBy: _pickRecurrenceEndBy,
+              defaultWorkingDays: workingDaysInclusiveForPriority(
+                _localPriority,
+              ),
+              reasonController: _reasonController,
+              reasonReadOnly: _saving,
+            ),
+          if (!_recurrenceActive &&
+              canEditDetails &&
               (_needsChangeDueReason() ||
                   _reasonController.text.trim().isNotEmpty))
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaDetailLabelValue(
+                AsanaDetailTwoColumnRow(
                   label: 'Reason',
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   child: AsanaHoverTextField(
                     controller: _reasonController,
                     canEdit: true,
@@ -3956,8 +4194,9 @@ Due: ${_date(p.endDate)}
             )
           else if (!canEditDetails &&
               (s?.changeDueReason ?? '').trim().isNotEmpty)
-            AsanaDetailLabelValue(
+            AsanaDetailTwoColumnRow(
               label: 'Reason',
+              crossAxisAlignment: CrossAxisAlignment.start,
               child: AsanaDetailPlainValue(text: s!.changeDueReason!.trim()),
             ),
           AsanaDetailTwoColumnRow(
@@ -4007,6 +4246,18 @@ Due: ${_date(p.endDate)}
                     s!.lastUpdated,
                     'MMM d, yyyy HH:mm',
                   ),
+                ),
+              ),
+            if (_subtaskIsCompleted(s))
+              AsanaDetailTwoColumnRow(
+                label: 'Completion date',
+                child: AsanaDetailPlainValue(
+                  text: s?.completionDate == null
+                      ? '—'
+                      : HkTime.formatInstantAsHk(
+                          s!.completionDate,
+                          'MMM d, yyyy HH:mm',
+                        ),
                 ),
               ),
           ],
