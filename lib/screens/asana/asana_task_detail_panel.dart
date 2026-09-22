@@ -1269,6 +1269,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   void _showEmailWarning(String label, String error) {
     debugPrint('$label: $error');
+    if (!mounted) return;
+    _showInfo(label, error);
   }
 
   Future<void> _notifyEmail(
@@ -3675,6 +3677,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       selectedProjectId: _selectedProjectId,
       picAssigneeId: _picAssigneeId,
       websiteAttachments: _websiteAttachmentsForAi(),
+      canSuggestRecurrence: widget.createMode,
+      recurrenceEnabled: _recurrenceExpanded,
+      recurrence: _recurrence,
     );
   }
 
@@ -3720,7 +3725,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         );
       }),
       applyComment: (v) => setState(() => _commentController.text = v),
+      applyRecurrence: _applyRecurrenceFromAi,
     );
+  }
+
+  void _applyRecurrenceFromAi(
+    AsanaRecurrenceDraft draft, {
+    required bool enabled,
+  }) {
+    setState(() {
+      if (enabled && _toBeCommenced) {
+        _localCommencementStatus = commencementCommenced;
+        _restoreDefaultDatesIfMissing();
+      }
+      _recurrenceExpanded = enabled;
+      if (enabled) {
+        _recurrence = draft;
+        _recurrenceSeeded = true;
+      }
+    });
   }
 
   void _ensureTaskAi(AppState state, {required bool canSuggestAssignees}) {
@@ -4011,7 +4034,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
             _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
           ],
-          if (canEdit && !_toBeCommenced)
+          if (canEdit && widget.createMode && !_toBeCommenced)
             AsanaRecurrenceCreateSection(
               expanded: _recurrenceExpanded,
               draft: _recurrence,
@@ -4026,6 +4049,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               reasonController: _reasonController,
               reasonReadOnly: _saving,
             ),
+          if (canEdit && widget.createMode)
+            _aiSuggestions(AsanaTaskAiFieldKey.recurrence),
           if (!_recurrenceActive && _needsChangeDueReason())
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,

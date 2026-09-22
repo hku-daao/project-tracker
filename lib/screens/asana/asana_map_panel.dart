@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
+import '../../services/asana_filter_cookie_storage.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
@@ -67,12 +69,98 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   int _loadGeneration = 0;
   bool _loadingSubtasks = false;
 
+  String get _cookieStorageKey {
+    final uid = activeUserStorageKey();
+    return uid == null || uid.isEmpty
+        ? 'asana_filters_map'
+        : 'asana_filters_map_$uid';
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadSavedFilters();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _refreshSubtasks();
     });
+  }
+
+  void _loadSavedFilters() {
+    final cookieData = AsanaFilterCookieStorage.load(_cookieStorageKey);
+    if (cookieData != null) {
+      _applyCookieJson(cookieData);
+    }
+  }
+
+  void _persistFilters() {
+    AsanaFilterCookieStorage.save(_cookieStorageKey, _toCookieJson());
+  }
+
+  void _applyFilters(VoidCallback apply) {
+    setState(apply);
+    _persistFilters();
+  }
+
+  Map<String, dynamic> _toCookieJson() => {
+    'projectCreatorTeamIds': _projectCreatorTeamIds.toList(),
+    'projectCreatorIds': _projectCreatorIds.toList(),
+    'projectPicIds': _projectPicIds.toList(),
+    'projectStatuses': _projectStatuses.toList(),
+    'taskCreatorTeamIds': _taskCreatorTeamIds.toList(),
+    'taskPicIds': _taskPicIds.toList(),
+    'taskStatuses': _taskStatuses.toList(),
+    'subtaskStatuses': _subtaskStatuses.toList(),
+    'projectStartMonth': _projectStartMonth?.millisecondsSinceEpoch,
+    'projectEndMonth': _projectEndMonth?.millisecondsSinceEpoch,
+    'taskCompletedStart': _taskCompletedStart?.millisecondsSinceEpoch,
+    'taskCompletedEnd': _taskCompletedEnd?.millisecondsSinceEpoch,
+    'subtaskCompletedStart': _subtaskCompletedStart?.millisecondsSinceEpoch,
+    'subtaskCompletedEnd': _subtaskCompletedEnd?.millisecondsSinceEpoch,
+    'sortKey': _sortKey,
+    'showProjectsWithoutTasks': _showProjectsWithoutTasks,
+  };
+
+  void _applyCookieJson(Map<String, dynamic> data) {
+    _replaceStringSet(_projectCreatorTeamIds, data['projectCreatorTeamIds']);
+    _replaceStringSet(_projectCreatorIds, data['projectCreatorIds']);
+    _replaceStringSet(_projectPicIds, data['projectPicIds']);
+    _replaceStringSet(_projectStatuses, data['projectStatuses']);
+    _replaceStringSet(_taskCreatorTeamIds, data['taskCreatorTeamIds']);
+    _replaceStringSet(_taskPicIds, data['taskPicIds']);
+    _replaceStringSet(_taskStatuses, data['taskStatuses']);
+    _replaceStringSet(_subtaskStatuses, data['subtaskStatuses']);
+    _projectStartMonth = _dateFromMs(data['projectStartMonth']);
+    _projectEndMonth = _dateFromMs(data['projectEndMonth']);
+    _taskCompletedStart = _dateFromMs(data['taskCompletedStart']);
+    _taskCompletedEnd = _dateFromMs(data['taskCompletedEnd']);
+    _subtaskCompletedStart = _dateFromMs(data['subtaskCompletedStart']);
+    _subtaskCompletedEnd = _dateFromMs(data['subtaskCompletedEnd']);
+    final rawSortKey = data['sortKey'] as String?;
+    if (rawSortKey == 'due_asc' ||
+        rawSortKey == 'due_desc' ||
+        rawSortKey == 'created_desc' ||
+        rawSortKey == 'created_asc' ||
+        rawSortKey == 'name_asc' ||
+        rawSortKey == 'name_desc') {
+      _sortKey = rawSortKey!;
+    }
+    _showProjectsWithoutTasks =
+        data['showProjectsWithoutTasks'] as bool? ?? _showProjectsWithoutTasks;
+  }
+
+  void _replaceStringSet(Set<String> target, Object? value) {
+    target
+      ..clear()
+      ..addAll({
+        for (final e in value is List ? value : const [])
+          if (e != null) e.toString(),
+      });
+  }
+
+  DateTime? _dateFromMs(Object? value) {
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is num) return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    return null;
   }
 
   @override
@@ -346,7 +434,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       helpText: 'Project start month range',
     );
     if (!mounted || picked == null) return;
-    setState(() {
+    _applyFilters(() {
       if (picked.cleared || picked.range == null) {
         _projectStartMonth = null;
         _projectEndMonth = null;
@@ -372,7 +460,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       helpText: helpText,
     );
     if (!mounted || picked == null) return;
-    setState(() {
+    _applyFilters(() {
       if (picked.cleared || picked.range == null) {
         apply(null, null);
         return;
@@ -850,7 +938,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ],
     );
     if (selected == null || !mounted) return;
-    setState(() => _showProjectsWithoutTasks = selected);
+    _applyFilters(() => _showProjectsWithoutTasks = selected);
   }
 
   Future<void> _showSortMenu(BuildContext buttonContext) async {
@@ -869,7 +957,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ],
     );
     if (selected == null || !mounted) return;
-    setState(() => _sortKey = selected);
+    _applyFilters(() => _sortKey = selected);
   }
 
   RelativeRect _menuPosition(BuildContext buttonContext) {
@@ -899,7 +987,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       initialSelection: selected,
     );
     if (result == null || !mounted) return;
-    setState(() {
+    _applyFilters(() {
       apply(result.contains('__all__') ? <String>{} : result);
     });
   }
@@ -980,7 +1068,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             createLabel: '',
             onCreate: null,
             onClearAll: () {
-              setState(() {
+              _applyFilters(() {
                 _projectCreatorTeamIds.clear();
                 _projectCreatorIds.clear();
                 _projectPicIds.clear();

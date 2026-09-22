@@ -657,6 +657,13 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   void _showEmailWarning(String label, String error) {
     debugPrint('$label: $error');
+    if (!mounted) return;
+    showAsanaInfoDialog(
+      context: context,
+      title: label,
+      content: error,
+      palette: widget.palette,
+    );
   }
 
   Future<void> _notifyEmail(
@@ -1890,6 +1897,9 @@ Due: ${_date(p.endDate)}
         selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
         picAssigneeId: _picAssigneeId,
         websiteAttachments: _websiteAttachmentsForAi(),
+        canSuggestRecurrence: _effectiveCreateMode,
+        recurrenceEnabled: _recurrenceExpanded,
+        recurrence: _recurrence,
       ),
       onApplySubtaskName: (v) => setState(() => _nameController.text = v),
       onApplySubtaskDescription: (v) =>
@@ -1927,7 +1937,25 @@ Due: ${_date(p.endDate)}
       onApplyReason: (v) => setState(() => _reasonController.text = v),
       onApplyComment: (v) => setState(() => _commentController.text = v),
       onApplyWebsiteLink: _applyWebsiteLinkFromAi,
+      onApplySubtaskRecurrence: _applyRecurrenceFromAi,
     );
+  }
+
+  void _applyRecurrenceFromAi(
+    AsanaRecurrenceDraft draft, {
+    required bool enabled,
+  }) {
+    setState(() {
+      if (enabled && _toBeCommenced) {
+        _localCommencementStatus = commencementCommenced;
+        _restoreDefaultDatesIfMissing();
+      }
+      _recurrenceExpanded = enabled;
+      if (enabled) {
+        _recurrence = draft;
+        _recurrenceSeeded = true;
+      }
+    });
   }
 
   void _applyWebsiteLinkFromAi(String url, String desc) {
@@ -4170,6 +4198,8 @@ Due: ${_date(p.endDate)}
               reasonController: _reasonController,
               reasonReadOnly: _saving,
             ),
+          if (_effectiveCreateMode && canEditDetails)
+            _aiSuggestions(AsanaTaskAiFieldKey.recurrence),
           if (!_recurrenceActive &&
               canEditDetails &&
               (_needsChangeDueReason() ||

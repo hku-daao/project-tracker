@@ -1333,6 +1333,16 @@ function collectTaskAssigneeStaffIds(taskRow) {
   return assigneeIds;
 }
 
+/** Assignees plus PIC — assignment emails should reach the person in PIC even if they are not in assignee_01..10. */
+function collectAssignmentRecipientStaffIds(row) {
+  const ids = collectTaskAssigneeStaffIds(row);
+  const pic = String(row?.pic || '').trim();
+  if (pic && !ids.some((id) => id.toLowerCase() === pic.toLowerCase())) {
+    ids.push(pic);
+  }
+  return ids;
+}
+
 /** Deduped staff UUIDs from project.assignee_01 ... assignee_20. */
 function collectProjectAssigneeStaffIds(projectRow) {
   const assigneeIds = [];
@@ -5328,7 +5338,7 @@ async function handleNotifyTaskAssigned(req, res) {
       { commentAddedText: body.commentAddedText },
     );
 
-    const assigneeIds = collectTaskAssigneeStaffIds(taskRow);
+    const assigneeIds = collectAssignmentRecipientStaffIds(taskRow);
 
     const subject = `[Project Tracker] New Task Assigned: ${mailSubjectSingleLine(taskName)}`;
 
@@ -5683,7 +5693,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     const subtaskName =
       (row.subtask_name || '').toString().trim() || '(no title)';
     const detailLines = await buildSubtaskUpdateDetailLines(db, row, new Map());
-    const assigneeUuids = collectSubtaskAssigneeStaffIds(row);
+    const assigneeUuids = collectAssignmentRecipientStaffIds(row);
     const subject = `[Project Tracker] New Subtask Assigned: ${mailSubjectSingleLine(subtaskName)}`;
     const results = [];
     const seenEmails = new Set();
@@ -5860,9 +5870,7 @@ async function handleNotifyRecurringAssigned(req, res, kind) {
     const subject = `[Project Tracker] New Recurring ${subjectKind} Assigned: ${mailSubjectSingleLine(seriesName)}`;
     const firstLinkHtml = isTask ? eventTaskLinkHtml(first.id) : eventSubtaskLinkHtml(first.id);
     const firstLinkText = isTask ? eventTaskLinkText(first.id) : eventSubtaskLinkText(first.id);
-    const assigneeUuids = isTask
-      ? collectTaskAssigneeStaffIds(first)
-      : collectSubtaskAssigneeStaffIds(first);
+    const assigneeUuids = collectAssignmentRecipientStaffIds(first);
     const results = [];
     const seenEmails = new Set();
     const creatorNorm = creatorId.toLowerCase();
@@ -5919,12 +5927,23 @@ ${projectTrackerEmailFooterText()}`;
       });
     }
 
+    const sent = results.filter((r) => r.ok && !r.skipped).length;
+    const failed = results.filter((r) => r.ok === false && !r.skipped);
+    console.log(
+      `[email] recurring ${itemLabel} assigned series=${seriesName} recipients=${results.length} sent=${sent} failed=${failed.length}`,
+    );
     sendJson(req, res, 200, {
-      ok: true,
+      ok: failed.length === 0,
+      skipped: sent === 0 && failed.length === 0,
       [isTask ? 'taskIds' : 'subtaskIds']: ordered.map((row) => row.id),
       seriesName,
       recipients: results.length,
       results,
+      error: failed.length
+        ? failed.map((r) => r.error || r.skipped || 'send failed').join('; ')
+        : sent === 0
+          ? `No assignee/PIC email was sent for this recurring ${itemLabel}`
+          : undefined,
     });
   } catch (e) {
     console.error(`handleNotifyRecurring${isTask ? 'Tasks' : 'Subtasks'}Assigned:`, e);

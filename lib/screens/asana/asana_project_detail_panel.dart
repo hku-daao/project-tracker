@@ -474,6 +474,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
   void _showEmailWarning(String label, String error) {
     debugPrint('$label: $error');
+    if (!mounted) return;
+    _showInfo(label, error);
   }
 
   Future<void> _notifyEmail(

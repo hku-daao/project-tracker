@@ -64,6 +64,7 @@ class AsanaTaskFilterState {
     'overdueOptions': overdueOptions.toList(),
     'creatorStaffIds': creatorStaffIds,
     'picStaffIds': picStaffIds,
+    'assigneeStaffIds': assigneeStaffIds,
     'creatorTeamIds': creatorTeamIds,
     'picTeamIds': picTeamIds,
   };
@@ -80,6 +81,7 @@ class AsanaTaskFilterState {
     createDateEnd = _dateFromMs(data['createDateEnd']);
     creatorStaffIds = _stringList(data['creatorStaffIds']);
     picStaffIds = _stringList(data['picStaffIds']);
+    assigneeStaffIds = _stringList(data['assigneeStaffIds']);
     creatorTeamIds = _stringList(data['creatorTeamIds']);
     picTeamIds = _stringList(data['picTeamIds']);
     final rawSortKey = data['sortKey'] as String?;

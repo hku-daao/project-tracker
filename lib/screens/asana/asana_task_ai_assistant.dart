@@ -12,6 +12,7 @@ import 'asana_project_ai_assistant.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart';
+import 'asana_recurrence.dart';
 import 'asana_theme.dart';
 
 /// Which form field an AI suggestion belongs to (for inline placement).
@@ -31,6 +32,7 @@ enum AsanaTaskAiFieldKey {
   comment,
   websiteLink,
   projectStatus,
+  recurrence,
 }
 
 class AsanaAiAuditContext {
@@ -55,7 +57,8 @@ bool asanaTaskAiFieldUsesFullWidth(AsanaTaskAiFieldKey key) {
       key == AsanaTaskAiFieldKey.description ||
       key == AsanaTaskAiFieldKey.reason ||
       key == AsanaTaskAiFieldKey.comment ||
-      key == AsanaTaskAiFieldKey.websiteLink;
+      key == AsanaTaskAiFieldKey.websiteLink ||
+      key == AsanaTaskAiFieldKey.recurrence;
 }
 
 /// Theme-derived colors for the AI assistant chrome and suggestion glow.
@@ -118,6 +121,9 @@ class AsanaTaskAiFormSnapshot {
     this.selectedProjectId,
     this.picAssigneeId,
     this.websiteAttachments = const [],
+    this.canSuggestRecurrence = false,
+    this.recurrenceEnabled = false,
+    this.recurrence,
   });
 
   final String name;
@@ -141,6 +147,9 @@ class AsanaTaskAiFormSnapshot {
   final String? selectedProjectId;
   final String? picAssigneeId;
   final List<({String url, String description})> websiteAttachments;
+  final bool canSuggestRecurrence;
+  final bool recurrenceEnabled;
+  final AsanaRecurrenceDraft? recurrence;
 
   String buildLlmContext() {
     final buf = StringBuffer()
@@ -176,6 +185,12 @@ class AsanaTaskAiFormSnapshot {
       ..writeln(
         '- reason for long duration: ${reason.isEmpty ? "(empty)" : reason}',
       );
+    _appendRecurrenceContext(
+      buf,
+      canSuggest: canSuggestRecurrence,
+      enabled: recurrenceEnabled,
+      draft: recurrence,
+    );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
@@ -200,6 +215,29 @@ class AsanaTaskAiFormSnapshot {
     buf.writeln('Commence options: Commenced, To be commenced');
     buf.writeln('Complexity options: Low, Medium, High');
     return buf.toString();
+  }
+
+  static void _appendRecurrenceContext(
+    StringBuffer buf, {
+    required bool canSuggest,
+    required bool enabled,
+    required AsanaRecurrenceDraft? draft,
+  }) {
+    if (!canSuggest) {
+      buf.writeln(
+        'Recurrence cannot be suggested on this slide (create-only). Omit recurrence.',
+      );
+      return;
+    }
+    buf.writeln(
+      '- recurrence: ${asanaFormatRecurrenceSummary(draft ?? AsanaRecurrenceDraft.seeded(), enabled: enabled)}',
+    );
+    buf.writeln(
+      'Recurrence options: frequency Daily/Weekly/Monthly/Yearly; dailyMode everyNDays or everyWeekday; '
+      'weeklyWeekdays Monday–Sunday; monthlyMode dayOfMonth or nthWeekday; '
+      'weekdayNth First/Second/Third/Fourth/Last; yearlyMode monthDay or nthWeekdayOfMonth; '
+      'endMode byDate or afterCount (1–52); workingDays 1–99 (Standard default 4, URGENT default 2).',
+    );
   }
 
   static String _ymd(DateTime d) =>
@@ -261,6 +299,9 @@ class AsanaSubtaskAiFormSnapshot {
     required this.selectedAssigneeIds,
     this.picAssigneeId,
     this.websiteAttachments = const [],
+    this.canSuggestRecurrence = false,
+    this.recurrenceEnabled = false,
+    this.recurrence,
   });
 
   final String subtaskName;
@@ -282,6 +323,9 @@ class AsanaSubtaskAiFormSnapshot {
   final Set<String> selectedAssigneeIds;
   final String? picAssigneeId;
   final List<({String url, String description})> websiteAttachments;
+  final bool canSuggestRecurrence;
+  final bool recurrenceEnabled;
+  final AsanaRecurrenceDraft? recurrence;
 
   String buildLlmContext() {
     final buf = StringBuffer()
@@ -321,6 +365,12 @@ class AsanaSubtaskAiFormSnapshot {
       ..writeln(
         '- due date: ${dueDate == null ? "(empty)" : AsanaTaskAiFormSnapshot._ymd(dueDate!)}',
       );
+    AsanaTaskAiFormSnapshot._appendRecurrenceContext(
+      buf,
+      canSuggest: canSuggestRecurrence,
+      enabled: recurrenceEnabled,
+      draft: recurrence,
+    );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
@@ -347,6 +397,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canEditReason) 'reason',
         'comment',
         'websiteLinks',
+        if (canSuggestRecurrence) 'recurrence',
       ];
       buf.writeln('\nYou may suggest changes to: ${editable.join(', ')}.');
     } else {
@@ -362,6 +413,7 @@ class AsanaSubtaskAiFormSnapshot {
         if (canEditReason) 'reason',
         'comment',
         'websiteLinks',
+        if (canSuggestRecurrence) 'recurrence',
       ];
       buf.writeln(
         '\nYou may suggest changes to: ${editable.join(', ')}. (name is NOT modifiable by this user)',
@@ -395,6 +447,8 @@ class AsanaSubtaskAiSuggestionBuilder {
     required void Function(String reason)? applyReason,
     required void Function(String comment) applyComment,
     required void Function(String url, String description)? applyWebsiteLink,
+    void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
+    applyRecurrence,
   }) {
     final lines = <AsanaTaskAiSuggestionLine>[];
 
@@ -410,7 +464,17 @@ class AsanaSubtaskAiSuggestionBuilder {
     }
 
     var datesBlocked = false;
-    if (proposedStart != null &&
+    final recurrenceOn = AsanaTaskAiSuggestionBuilder.appendRecurrenceSuggestions(
+      lines: lines,
+      raw: raw['recurrence'],
+      canSuggest: form.canSuggestRecurrence,
+      currentEnabled: form.recurrenceEnabled,
+      currentDraft: form.recurrence,
+      apply: applyRecurrence,
+    );
+    if (recurrenceOn) {
+      datesBlocked = true;
+    } else if (proposedStart != null &&
         proposedDue != null &&
         AsanaTaskAiSuggestionBuilder._dateOnly(
           proposedStart,
@@ -613,7 +677,7 @@ class AsanaSubtaskAiSuggestionBuilder {
         commencementRaw,
       );
       if (commencement == commencementToBeCommenced &&
-          (proposedStart != null || proposedDue != null)) {
+          (proposedStart != null || proposedDue != null || recurrenceOn)) {
         commencement = commencementCommenced;
       }
       if (commencement == null) {
@@ -899,7 +963,17 @@ class AsanaTaskAiSuggestionBuilder {
     if (dueRaw != null) proposedDue = _parseYmd(dueRaw);
 
     var datesBlocked = false;
-    if (proposedStart != null &&
+    final recurrenceOn = appendRecurrenceSuggestions(
+      lines: lines,
+      raw: raw['recurrence'],
+      canSuggest: form.canSuggestRecurrence,
+      currentEnabled: form.recurrenceEnabled,
+      currentDraft: form.recurrence,
+      apply: apply.applyRecurrence,
+    );
+    if (recurrenceOn) {
+      datesBlocked = true;
+    } else if (proposedStart != null &&
         proposedDue != null &&
         _dateOnly(proposedStart).isAfter(_dateOnly(proposedDue))) {
       datesBlocked = true;
@@ -1123,7 +1197,7 @@ class AsanaTaskAiSuggestionBuilder {
     if (commencementRaw != null && commencementRaw.isNotEmpty) {
       var commencement = _parseCommencementStatus(commencementRaw);
       if (commencement == commencementToBeCommenced &&
-          (proposedStart != null || proposedDue != null)) {
+          (proposedStart != null || proposedDue != null || recurrenceOn)) {
         commencement = commencementCommenced;
       }
       if (commencement == null) {
@@ -1256,6 +1330,64 @@ class AsanaTaskAiSuggestionBuilder {
     }
 
     return lines;
+  }
+
+  /// Returns true when a recurring series was suggested as enabled.
+  static bool appendRecurrenceSuggestions({
+    required List<AsanaTaskAiSuggestionLine> lines,
+    required dynamic raw,
+    required bool canSuggest,
+    required bool currentEnabled,
+    required AsanaRecurrenceDraft? currentDraft,
+    required void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
+    apply,
+  }) {
+    if (raw == null) return false;
+    if (!canSuggest || apply == null) {
+      if (raw is Map && raw.isNotEmpty) {
+        lines.add(
+          const AsanaTaskAiSuggestionLine.info(
+            'Recurrence can be suggested only when creating a task or sub-task.',
+            fieldKey: AsanaTaskAiFieldKey.recurrence,
+          ),
+        );
+      }
+      return false;
+    }
+    final parsed = asanaTryParseRecurrenceSuggestion(
+      raw,
+      fallback: currentDraft ?? AsanaRecurrenceDraft.seeded(),
+    );
+    if (parsed == null) return false;
+    for (final warning in parsed.warnings) {
+      lines.add(
+        AsanaTaskAiSuggestionLine.info(
+          warning,
+          fieldKey: AsanaTaskAiFieldKey.recurrence,
+        ),
+      );
+    }
+    final same =
+        parsed.enabled == currentEnabled &&
+        (currentDraft == null
+            ? !parsed.enabled
+            : parsed.draft.samePatternAs(currentDraft));
+    if (same) return parsed.enabled;
+    final draft = parsed.draft;
+    final enabled = parsed.enabled;
+    lines.add(
+      AsanaTaskAiSuggestionLine.adopt(
+        fieldKey: AsanaTaskAiFieldKey.recurrence,
+        fieldLabel: 'Recurring',
+        currentValue: asanaFormatRecurrenceSummary(
+          currentDraft ?? AsanaRecurrenceDraft.seeded(),
+          enabled: currentEnabled,
+        ),
+        suggestedText: asanaFormatRecurrenceSummary(draft, enabled: enabled),
+        onAdopt: () => apply(draft, enabled: enabled),
+      ),
+    );
+    return enabled;
   }
 
   static String? _str(dynamic v) {
@@ -1545,6 +1677,7 @@ class AsanaTaskAiApply {
     required this.applyReason,
     required this.applyWebsiteLink,
     required this.applyComment,
+    this.applyRecurrence,
   });
 
   final void Function(String name) applyName;
@@ -1560,6 +1693,8 @@ class AsanaTaskAiApply {
   final void Function(String reason) applyReason;
   final void Function(String url, String description) applyWebsiteLink;
   final void Function(String comment) applyComment;
+  final void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
+  applyRecurrence;
 }
 
 /// Holds prompt + suggestion state; shared by prompt bar and inline field rows.
@@ -1584,6 +1719,7 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.onApplySubtaskComplexity,
     this.onApplySubtaskStartDate,
     this.onApplySubtaskDueDate,
+    this.onApplySubtaskRecurrence,
     this.onApplyReason,
     this.auditContext,
   }) : assert(
@@ -1616,6 +1752,8 @@ class AsanaTaskAiController extends ChangeNotifier {
   final void Function(String complexity)? onApplySubtaskComplexity;
   final void Function(DateTime start)? onApplySubtaskStartDate;
   final void Function(DateTime due)? onApplySubtaskDueDate;
+  final void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
+  onApplySubtaskRecurrence;
   final void Function(String reason)? onApplyReason;
   final AsanaAiAuditContext Function()? auditContext;
 
@@ -1907,6 +2045,7 @@ class AsanaTaskAiController extends ChangeNotifier {
           applyReason: onApplyReason,
           applyComment: onApplyComment!,
           applyWebsiteLink: onApplyWebsiteLink,
+          applyRecurrence: onApplySubtaskRecurrence,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
         unawaited(_recordAudit(prompt: prompt, raw: raw));

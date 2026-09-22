@@ -102,6 +102,48 @@ class AsanaRecurrenceDraft {
     return out;
   }
 
+  AsanaRecurrenceDraft copy() {
+    return AsanaRecurrenceDraft(
+      frequency: frequency,
+      interval: interval,
+      dailyMode: dailyMode,
+      weeklyWeekdays: {...weeklyWeekdays},
+      monthlyMode: monthlyMode,
+      monthDay: monthDay,
+      weekdayNth: weekdayNth,
+      weekday: weekday,
+      yearlyMode: yearlyMode,
+      yearlyMonth: yearlyMonth,
+      workingDaysInclusive: workingDaysInclusive,
+      endMode: endMode,
+      endAfterCount: endAfterCount,
+      rangeStart: rangeStart,
+      rangeEnd: rangeEnd,
+    );
+  }
+
+  bool samePatternAs(AsanaRecurrenceDraft other) {
+    if (frequency != other.frequency) return false;
+    if (clampedInterval != other.clampedInterval) return false;
+    if (dailyMode != other.dailyMode) return false;
+    if (weeklyWeekdays.length != other.weeklyWeekdays.length ||
+        !weeklyWeekdays.containsAll(other.weeklyWeekdays)) {
+      return false;
+    }
+    if (monthlyMode != other.monthlyMode) return false;
+    if (monthDay != other.monthDay) return false;
+    if (weekdayNth != other.weekdayNth) return false;
+    if (weekday != other.weekday) return false;
+    if (yearlyMode != other.yearlyMode) return false;
+    if (yearlyMonth != other.yearlyMonth) return false;
+    if (clampedWorkingDays != other.clampedWorkingDays) return false;
+    if (endMode != other.endMode) return false;
+    if (clampedEndAfterCount != other.clampedEndAfterCount) return false;
+    if (!_sameDate(rangeStart, other.rangeStart)) return false;
+    if (!_sameDate(rangeEnd, other.rangeEnd)) return false;
+    return true;
+  }
+
   bool _matches(DateTime raw) {
     final start = _dateOnly(rangeStart);
     final cur = _dateOnly(raw);
@@ -361,6 +403,310 @@ List<Map<String, String>> asanaRecurrenceEmailFields(
     add('End', 'End after $n ${n == 1 ? 'occurrence' : 'occurrences'}');
   }
   return fields;
+}
+
+String asanaFormatRecurrenceSummary(
+  AsanaRecurrenceDraft draft, {
+  required bool enabled,
+}) {
+  if (!enabled) return 'Off';
+  return asanaRecurrenceEmailFields(draft)
+      .map((e) => '${e['label']}: ${e['value']}')
+      .join('\n');
+}
+
+bool _sameDate(DateTime a, DateTime b) {
+  final x = _dateOnly(a);
+  final y = _dateOnly(b);
+  return x.year == y.year && x.month == y.month && x.day == y.day;
+}
+
+int? asanaParseRecurrenceWeekday(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'monday':
+    case 'mon':
+    case 'mo':
+      return DateTime.monday;
+    case 'tuesday':
+    case 'tue':
+    case 'tu':
+      return DateTime.tuesday;
+    case 'wednesday':
+    case 'wed':
+    case 'we':
+      return DateTime.wednesday;
+    case 'thursday':
+    case 'thu':
+    case 'th':
+      return DateTime.thursday;
+    case 'friday':
+    case 'fri':
+    case 'fr':
+      return DateTime.friday;
+    case 'saturday':
+    case 'sat':
+    case 'sa':
+      return DateTime.saturday;
+    case 'sunday':
+    case 'sun':
+    case 'su':
+      return DateTime.sunday;
+    default:
+      return null;
+  }
+}
+
+int? asanaParseRecurrenceWeekdayNth(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'first':
+    case '1':
+    case '1st':
+      return 1;
+    case 'second':
+    case '2':
+    case '2nd':
+      return 2;
+    case 'third':
+    case '3':
+    case '3rd':
+      return 3;
+    case 'fourth':
+    case '4':
+    case '4th':
+      return 4;
+    case 'last':
+    case '-1':
+      return -1;
+    default:
+      return int.tryParse(raw.trim());
+  }
+}
+
+int? asanaParseRecurrenceMonth(dynamic raw) {
+  if (raw is num) {
+    final n = raw.toInt();
+    return n >= 1 && n <= 12 ? n : null;
+  }
+  if (raw == null) return null;
+  final t = raw.toString().trim().toLowerCase();
+  final asInt = int.tryParse(t);
+  if (asInt != null && asInt >= 1 && asInt <= 12) return asInt;
+  for (var i = 0; i < _kMonthNames.length; i++) {
+    final name = _kMonthNames[i].toLowerCase();
+    if (t == name || t == name.substring(0, 3)) return i + 1;
+  }
+  return null;
+}
+
+DateTime? asanaParseRecurrenceYmd(String raw) {
+  final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw.trim());
+  if (m == null) return null;
+  final y = int.parse(m.group(1)!);
+  final mo = int.parse(m.group(2)!);
+  final d = int.parse(m.group(3)!);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return DateTime(y, mo, d);
+}
+
+/// Parses the AI `recurrence` object onto [fallback]. Returns null if [raw] is empty.
+({AsanaRecurrenceDraft draft, bool enabled, List<String> warnings})?
+asanaTryParseRecurrenceSuggestion(
+  dynamic raw, {
+  required AsanaRecurrenceDraft fallback,
+}) {
+  if (raw == null) return null;
+  if (raw is! Map) return null;
+  final map = Map<String, dynamic>.from(raw);
+  if (map.isEmpty) return null;
+
+  final warnings = <String>[];
+  final draft = fallback.copy();
+  var enabled = true;
+  if (map.containsKey('enabled')) {
+    final e = map['enabled'];
+    if (e is bool) {
+      enabled = e;
+    } else if (e != null) {
+      final t = e.toString().trim().toLowerCase();
+      if (t == 'false' || t == 'off' || t == 'no') enabled = false;
+    }
+  }
+
+  final freqRaw = map['frequency']?.toString().trim().toLowerCase();
+  if (freqRaw != null && freqRaw.isNotEmpty) {
+    switch (freqRaw) {
+      case 'daily':
+      case 'day':
+        draft.frequency = AsanaRecurrenceFrequency.daily;
+      case 'weekly':
+      case 'week':
+        draft.frequency = AsanaRecurrenceFrequency.weekly;
+      case 'monthly':
+      case 'month':
+        draft.frequency = AsanaRecurrenceFrequency.monthly;
+      case 'yearly':
+      case 'year':
+      case 'annually':
+      case 'annual':
+        draft.frequency = AsanaRecurrenceFrequency.yearly;
+      default:
+        warnings.add('Frequency "$freqRaw" was not recognized.');
+    }
+  }
+
+  final intervalRaw = map['interval'];
+  if (intervalRaw != null) {
+    final n = intervalRaw is num
+        ? intervalRaw.toInt()
+        : int.tryParse(intervalRaw.toString().trim());
+    if (n == null || n < 1) {
+      warnings.add('Interval "$intervalRaw" was not recognized (use 1–99).');
+    } else {
+      draft.interval = n.clamp(1, 99);
+    }
+  }
+
+  final dailyModeRaw = map['dailyMode']?.toString().trim().toLowerCase();
+  if (dailyModeRaw != null && dailyModeRaw.isNotEmpty) {
+    if (dailyModeRaw.contains('weekday')) {
+      draft.dailyMode = AsanaDailyMode.everyWeekday;
+    } else {
+      draft.dailyMode = AsanaDailyMode.everyNDays;
+    }
+  }
+
+  final weekdaysRaw = map['weeklyWeekdays'];
+  if (weekdaysRaw is List) {
+    final days = <int>{};
+    for (final item in weekdaysRaw) {
+      final day = asanaParseRecurrenceWeekday(item.toString());
+      if (day == null) {
+        warnings.add('Weekday "$item" was not recognized.');
+      } else {
+        days.add(day);
+      }
+    }
+    if (days.isNotEmpty) draft.weeklyWeekdays = days;
+  }
+
+  final monthlyModeRaw = map['monthlyMode']?.toString().trim().toLowerCase();
+  if (monthlyModeRaw != null && monthlyModeRaw.isNotEmpty) {
+    draft.monthlyMode = monthlyModeRaw.contains('weekday')
+        ? AsanaMonthlyMode.nthWeekday
+        : AsanaMonthlyMode.dayOfMonth;
+  }
+
+  final monthDayRaw = map['monthDay'];
+  if (monthDayRaw != null) {
+    final n = monthDayRaw is num
+        ? monthDayRaw.toInt()
+        : int.tryParse(monthDayRaw.toString().trim());
+    if (n == null || n < 1 || n > 31) {
+      warnings.add('Day of month "$monthDayRaw" was not recognized (use 1–31).');
+    } else {
+      draft.monthDay = n;
+    }
+  }
+
+  final nthRaw = map['weekdayNth']?.toString();
+  if (nthRaw != null && nthRaw.trim().isNotEmpty) {
+    final n = asanaParseRecurrenceWeekdayNth(nthRaw);
+    if (n == null || !{1, 2, 3, 4, -1}.contains(n)) {
+      warnings.add(
+        'Weekday occurrence "$nthRaw" was not recognized (First, Second, Third, Fourth, Last).',
+      );
+    } else {
+      draft.weekdayNth = n;
+    }
+  }
+
+  final weekdayRaw = map['weekday']?.toString();
+  if (weekdayRaw != null && weekdayRaw.trim().isNotEmpty) {
+    final day = asanaParseRecurrenceWeekday(weekdayRaw);
+    if (day == null) {
+      warnings.add('Weekday "$weekdayRaw" was not recognized.');
+    } else {
+      draft.weekday = day;
+    }
+  }
+
+  final yearlyModeRaw = map['yearlyMode']?.toString().trim().toLowerCase();
+  if (yearlyModeRaw != null && yearlyModeRaw.isNotEmpty) {
+    draft.yearlyMode = yearlyModeRaw.contains('weekday')
+        ? AsanaYearlyMode.nthWeekdayOfMonth
+        : AsanaYearlyMode.monthDay;
+  }
+
+  if (map.containsKey('yearlyMonth')) {
+    final month = asanaParseRecurrenceMonth(map['yearlyMonth']);
+    if (month == null) {
+      warnings.add('Yearly month "${map['yearlyMonth']}" was not recognized.');
+    } else {
+      draft.yearlyMonth = month;
+    }
+  }
+
+  final workingRaw = map['workingDays'];
+  if (workingRaw != null) {
+    final n = workingRaw is num
+        ? workingRaw.toInt()
+        : int.tryParse(workingRaw.toString().trim());
+    if (n == null || n < 1) {
+      warnings.add(
+        'Working days "$workingRaw" was not recognized (use 1–99).',
+      );
+    } else {
+      draft.workingDaysInclusive = n.clamp(1, 99);
+    }
+  }
+
+  final startRaw = map['startAt']?.toString().trim();
+  if (startRaw != null && startRaw.isNotEmpty) {
+    final start = asanaParseRecurrenceYmd(startRaw);
+    if (start == null) {
+      warnings.add('Start at "$startRaw" could not be parsed (use YYYY-MM-DD).');
+    } else {
+      draft.rangeStart = start;
+      if (draft.rangeEnd.isBefore(start)) draft.rangeEnd = start;
+    }
+  }
+
+  final endModeRaw = map['endMode']?.toString().trim().toLowerCase();
+  if (endModeRaw != null && endModeRaw.isNotEmpty) {
+    draft.endMode = endModeRaw.contains('count') || endModeRaw.contains('after')
+        ? AsanaRecurrenceEndMode.afterCount
+        : AsanaRecurrenceEndMode.byDate;
+  }
+
+  final endByRaw = map['endBy']?.toString().trim();
+  if (endByRaw != null && endByRaw.isNotEmpty) {
+    final end = asanaParseRecurrenceYmd(endByRaw);
+    if (end == null) {
+      warnings.add('End by "$endByRaw" could not be parsed (use YYYY-MM-DD).');
+    } else {
+      draft.rangeEnd = end.isBefore(draft.rangeStart) ? draft.rangeStart : end;
+      draft.endMode = AsanaRecurrenceEndMode.byDate;
+    }
+  }
+
+  final countRaw = map['endAfterCount'];
+  if (countRaw != null) {
+    final n = countRaw is num
+        ? countRaw.toInt()
+        : int.tryParse(countRaw.toString().trim());
+    if (n == null || n < 1) {
+      warnings.add(
+        'End after count "$countRaw" was not recognized (use 1–${AsanaRecurrenceDraft.maxOccurrences}).',
+      );
+    } else {
+      draft.endAfterCount = n.clamp(1, AsanaRecurrenceDraft.maxOccurrences);
+      if (endByRaw == null || endByRaw.isEmpty) {
+        draft.endMode = AsanaRecurrenceEndMode.afterCount;
+      }
+    }
+  }
+
+  return (draft: draft, enabled: enabled, warnings: warnings);
 }
 
 class AsanaRecurrenceCreateSection extends StatelessWidget {

@@ -111,7 +111,7 @@ Schema:
 {
   "related": true or false,
   "message": "optional short note when nothing can be suggested",
-  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/commencementStatus/complexity/dates/websiteLinks are set)",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred and what the user can adopt (required if any name/description/comment/project/assignees/pic/priority/commencementStatus/complexity/dates/recurrence/websiteLinks are set)",
   "name": "string or null",
   "description": "string or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
@@ -126,15 +126,46 @@ Schema:
   "reason": "reason for needing a long time to complete the task, or null",
   "websiteLinks": [
     { "url": "https://...", "description": "short label for the link" }
-  ] or []
+  ] or [],
+  "recurrence": null or {
+    "enabled": true or false,
+    "frequency": "Daily" or "Weekly" or "Monthly" or "Yearly",
+    "interval": 1,
+    "dailyMode": "everyNDays" or "everyWeekday" or null,
+    "weeklyWeekdays": ["Monday", "Tuesday"] or [],
+    "monthlyMode": "dayOfMonth" or "nthWeekday" or null,
+    "monthDay": 15,
+    "weekdayNth": "First" or "Second" or "Third" or "Fourth" or "Last" or null,
+    "weekday": "Monday" or null,
+    "yearlyMode": "monthDay" or "nthWeekdayOfMonth" or null,
+    "yearlyMonth": "January" or 1 or null,
+    "workingDays": 4,
+    "startAt": "YYYY-MM-DD" or null,
+    "endMode": "byDate" or "afterCount" or null,
+    "endBy": "YYYY-MM-DD" or null,
+    "endAfterCount": 10
+  }
 }
 
 Rules:
 - The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
-- For optional structured fields (project, assignees, PIC, priority, commencementStatus, dates, reason, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
-- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
+- For optional structured fields (project, assignees, PIC, priority, commencementStatus, dates, reason, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date, AND they are not asking for a recurring series. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
 - If the user specifies a start date and/or due date (including relative dates such as "start tomorrow" or "due next Friday"), NEVER suggest "To be commenced". A scheduled start/due date is not the same as "To be commenced". In that case use "Commenced", or omit commencementStatus if it is already Commenced.
+- Recurrence is create-only. If context says recurrence cannot be suggested, omit recurrence.
+- Suggest recurrence ONLY when the prompt implies a repeating series (every week, each Monday, daily, monthly, yearly, recurring, repeat until, N occurrences, every 2 weeks, weekdays, first Friday of each month, etc.). For a one-off task, omit recurrence or set enabled false.
+- Recurring dates are START dates of each occurrence. Each occurrence due date is computed as that start date plus workingDays inclusive working days (Standard default 4, URGENT default 2). When recurrence.enabled is true, omit startDate and dueDate.
+- Recurring cannot be used with "To be commenced". If suggesting recurrence.enabled true, set commencementStatus to "Commenced" (or omit it if already Commenced).
+- frequency Daily + dailyMode everyWeekday = Monday–Friday (interval is ignored). Otherwise Daily uses interval as every N days.
+- Weekly: set weeklyWeekdays from the prompt. If unspecified, use the weekday of startAt.
+- Monthly dayOfMonth: set monthDay (e.g. 15). Monthly nthWeekday: set weekdayNth + weekday (e.g. First Friday).
+- Yearly monthDay: set yearlyMonth + monthDay. Yearly nthWeekdayOfMonth: set yearlyMonth + weekdayNth + weekday.
+- startAt is the first occurrence start date. Calculate relative dates from "Today (Hong Kong)".
+- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is 1–52. "until December" / "through 2026" → byDate. "for 8 weeks" / "10 times" → afterCount.
+- workingDays: use an explicit duration from the prompt; otherwise Standard=4, URGENT=2.
+- interval: "every 2 weeks" → Weekly + interval 2. "every 3 months" → Monthly + interval 3.
+- Compare to current recurrence in context; omit recurrence if the suggested pattern is identical.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
 - To judge complexity, reference the task name and description. If a parent project is selected, also reference the project name and project description from the context.
 - IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
@@ -151,7 +182,7 @@ Rules:
 - Do not contradict yourself: startDate must be on or before dueDate when both are set.
 - reason: only suggest when the current form shows or implies a long duration that needs explanation. It should explain why the task needs that much time, in one concise sentence.
 - Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description (what the link is for). Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
-- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, commencementStatus, complexity, startDate, dueDate, reason, or websiteLinks). Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
+- overallComment: required whenever you output at least one non-null field suggestion (name, description, comment, projectName, assigneeNames, picName, priority, commencementStatus, complexity, startDate, dueDate, reason, websiteLinks, or recurrence). Summarize the intended updates in plain language; include a brief reason for the complexity recommendation; mention the recurrence pattern when recurrence is set.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 
@@ -333,15 +364,46 @@ Schema:
   "comment": "comment body for the Comments field (posted when the user saves), or null",
   "websiteLinks": [
     { "url": "https://...", "description": "short label for the link" }
-  ] or []
+  ] or [],
+  "recurrence": null or {
+    "enabled": true or false,
+    "frequency": "Daily" or "Weekly" or "Monthly" or "Yearly",
+    "interval": 1,
+    "dailyMode": "everyNDays" or "everyWeekday" or null,
+    "weeklyWeekdays": ["Monday", "Tuesday"] or [],
+    "monthlyMode": "dayOfMonth" or "nthWeekday" or null,
+    "monthDay": 15,
+    "weekdayNth": "First" or "Second" or "Third" or "Fourth" or "Last" or null,
+    "weekday": "Monday" or null,
+    "yearlyMode": "monthDay" or "nthWeekdayOfMonth" or null,
+    "yearlyMonth": "January" or 1 or null,
+    "workingDays": 4,
+    "startAt": "YYYY-MM-DD" or null,
+    "endMode": "byDate" or "afterCount" or null,
+    "endBy": "YYYY-MM-DD" or null,
+    "endAfterCount": 10
+  }
 }
 
 Rules:
 - The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
-- For optional structured fields (assigneeNames, picName, priority, commencementStatus, dates, reason, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
-- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
+- For optional structured fields (assigneeNames, picName, priority, commencementStatus, dates, reason, comment, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date, AND they are not asking for a recurring series. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
 - If the user specifies a start date and/or due date (including relative dates such as "start tomorrow" or "due next Friday"), NEVER suggest "To be commenced". A scheduled start/due date is not the same as "To be commenced". In that case use "Commenced", or omit commencementStatus if it is already Commenced.
+- Recurrence is create-only. If context says recurrence cannot be suggested, omit recurrence.
+- Suggest recurrence ONLY when the prompt implies a repeating series (every week, each Monday, daily, monthly, yearly, recurring, repeat until, N occurrences, every 2 weeks, weekdays, first Friday of each month, etc.). For a one-off sub-task, omit recurrence or set enabled false.
+- Recurring dates are START dates of each occurrence. Each occurrence due date is computed as that start date plus workingDays inclusive working days (Standard default 4, URGENT default 2). When recurrence.enabled is true, omit startDate and dueDate.
+- Recurring cannot be used with "To be commenced". If suggesting recurrence.enabled true, set commencementStatus to "Commenced" (or omit it if already Commenced).
+- frequency Daily + dailyMode everyWeekday = Monday–Friday (interval is ignored). Otherwise Daily uses interval as every N days.
+- Weekly: set weeklyWeekdays from the prompt. If unspecified, use the weekday of startAt.
+- Monthly dayOfMonth: set monthDay. Monthly nthWeekday: set weekdayNth + weekday.
+- Yearly monthDay: set yearlyMonth + monthDay. Yearly nthWeekdayOfMonth: set yearlyMonth + weekdayNth + weekday.
+- startAt is the first occurrence start date. Calculate relative dates from "Today (Hong Kong)".
+- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is 1–52. "until December" / "through 2026" → byDate. "for 8 weeks" / "10 times" → afterCount.
+- workingDays: use an explicit duration from the prompt; otherwise Standard=4, URGENT=2.
+- interval: "every 2 weeks" → Weekly + interval 2.
+- Compare to current recurrence in context; omit recurrence if the suggested pattern is identical.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
 - To judge complexity, reference the sub-task name and description, then combine that with the parent task name and description. If a parent project exists, also reference the project name and project description from the context.
 - IT, developer, data, AI, automation, integration, analytics, system design, database, security, or infrastructure work tends to be High unless it is clearly trivial.
@@ -363,7 +425,7 @@ Rules:
 - Use the parent task context provided to understand the context of the sub-task.
 - If assignees are discussed, treat the "Available staff for sub-task assignees and PIC" list in context as the valid people. Never suggest assigning someone outside that list.
 - Attachments are represented as websiteLinks. Include URLs in websiteLinks, not in the comment text, unless the user explicitly asks to write them into the comment.
-- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language; include a brief reason for the complexity recommendation.
+- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language; include a brief reason for the complexity recommendation; mention the recurrence pattern when recurrence is set.
 - You are suggesting values only; the app will show suggestions and the user adopts them. Do not mention overwriting.
 ''';
 

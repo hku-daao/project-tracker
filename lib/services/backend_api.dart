@@ -19,6 +19,25 @@ class BackendApi {
     return Uri.parse('$_baseUrl$p');
   }
 
+  static String? _notifyResponseError(http.Response response) {
+    Map<String, dynamic>? j;
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) j = decoded;
+    } catch (_) {}
+    if (response.statusCode == 200) {
+      if (j == null) return null;
+      if (j['ok'] == false) {
+        return j['error']?.toString() ?? 'Assignment email was not sent';
+      }
+      if (j['skipped'] == true && j['reason'] == 'email_disabled') {
+        return 'Email sending is disabled on this environment';
+      }
+      return null;
+    }
+    return j?['error']?.toString() ?? 'HTTP ${response.statusCode}';
+  }
+
   /// Returned by [notifySubtaskUpdated] when the server sends generic 404
   /// `{ error: 'Not found' }` (no route matched). Redeploy the Railway backend
   /// from this repo so `POST /api/notify/subtask-updated` is registered.
@@ -95,13 +114,7 @@ class BackendApi {
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
+      return _notifyResponseError(response);
     } catch (e) {
       return e.toString();
     }
@@ -136,13 +149,7 @@ class BackendApi {
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
+      return _notifyResponseError(response);
     } catch (e) {
       return e.toString();
     }
