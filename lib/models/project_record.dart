@@ -18,6 +18,7 @@ class ProjectRecord {
     this.updateByDisplayName,
     this.updateDate,
     this.pauseStatus = 'Not Paused',
+    this.hasMilestone = false,
   });
 
   final String id;
@@ -52,6 +53,9 @@ class ProjectRecord {
 
   /// `Paused` | `Not Paused`.
   final String pauseStatus;
+
+  /// Creator opted in to optional `project_milestone` steps.
+  final bool hasMilestone;
 
   bool get isPaused => pauseStatus.trim().toLowerCase() == 'paused';
 

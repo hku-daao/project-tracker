@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../asana_landing_screen.dart';
 import 'asana_blocking_loading_overlay.dart';
@@ -269,6 +270,10 @@ class AsanaHoverTextField extends StatefulWidget {
     this.readOnly = false,
     this.hintText,
     this.showOutline = true,
+    this.keyboardType,
+    this.inputFormatters,
+    this.onChanged,
+    this.expands = false,
   });
 
   final TextEditingController controller;
@@ -278,6 +283,10 @@ class AsanaHoverTextField extends StatefulWidget {
   final TextStyle? style;
   final bool readOnly;
   final String? hintText;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final ValueChanged<String>? onChanged;
+  final bool expands;
 
   /// Always show a visible border (create-task slide).
   final bool showOutline;
@@ -311,7 +320,7 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
 
     final showBorder = widget.showOutline || (_hovering && !widget.readOnly);
 
-    return MouseRegion(
+    Widget field = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
       child: AnimatedContainer(
@@ -333,8 +342,12 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
               ? null
               : () => AsanaBlockingLoadingOverlay.hideAll(),
           enableInteractiveSelection: true,
-          maxLines: widget.maxLines,
-          minLines: widget.minLines,
+          keyboardType: widget.keyboardType,
+          inputFormatters: widget.inputFormatters,
+          onChanged: widget.onChanged,
+          expands: widget.expands,
+          maxLines: widget.expands ? null : widget.maxLines,
+          minLines: widget.expands ? null : widget.minLines,
           style: baseStyle,
           scrollPadding: EdgeInsets.zero,
           decoration: InputDecoration(
@@ -351,6 +364,8 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
         ),
       ),
     );
+    if (widget.expands) return SizedBox.expand(child: field);
+    return field;
   }
 }
 

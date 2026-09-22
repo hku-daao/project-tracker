@@ -21,6 +21,7 @@ import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_project_ai_assistant.dart';
+import 'asana_project_milestone_section.dart';
 import 'asana_task_ai_assistant.dart';
 
 class _CreateProjectAttachmentDraft {
@@ -95,6 +96,8 @@ class _AsanaCreateProjectDetailPanelState
   DateTime? _startDate;
   DateTime? _endDate;
   String _draftStatus = 'Not started';
+  bool _hasMilestone = false;
+  final List<AsanaMilestoneDraft> _milestoneDrafts = [];
   bool _saving = false;
   bool _assigneePickerLoading = false;
   String? _assigneePickerError;
@@ -127,6 +130,7 @@ class _AsanaCreateProjectDetailPanelState
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
+    disposeAsanaMilestoneDrafts(_milestoneDrafts);
     for (final attachment in _attachments) {
       attachment.dispose();
     }
@@ -378,8 +382,50 @@ class _AsanaCreateProjectDetailPanelState
       options: options,
     );
     if (choice != null && mounted) {
+      if (choice == 'Completed' &&
+          !asanaMilestonesAllAchieved(
+            enabled: _hasMilestone,
+            rows: _milestoneDrafts,
+          )) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Milestones not finished',
+          content:
+              'A project can be marked as completed only when every milestone is achieved.',
+          palette: widget.palette,
+        );
+        return;
+      }
       setState(() => _draftStatus = choice);
     }
+  }
+
+  void _toggleMilestones() {
+    if (_saving) return;
+    setState(() {
+      _hasMilestone = !_hasMilestone;
+      if (_hasMilestone && _milestoneDrafts.isEmpty) {
+        _milestoneDrafts.add(AsanaMilestoneDraft(progressPercent: 100));
+      }
+    });
+  }
+
+  void _addMilestoneDraft() {
+    if (_milestoneDrafts.length >= 20) return;
+    setState(() {
+      _milestoneDrafts.add(
+        AsanaMilestoneDraft(
+          progressPercent: asanaMilestoneLeftoverPercent(_milestoneDrafts),
+        ),
+      );
+    });
+  }
+
+  void _removeMilestoneDraft(AsanaMilestoneDraft row) {
+    setState(() {
+      _milestoneDrafts.remove(row);
+      row.dispose();
+    });
   }
 
   AsanaProjectAiFormSnapshot _aiFormSnapshot(AppState state) {
@@ -1018,6 +1064,33 @@ class _AsanaCreateProjectDetailPanelState
       );
       return;
     }
+    final milestoneError = asanaMilestonePercentError(
+      enabled: _hasMilestone,
+      rows: _milestoneDrafts,
+    );
+    if (milestoneError != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Milestone percentages',
+        content: milestoneError,
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (_draftStatus == 'Completed' &&
+        !asanaMilestonesAllAchieved(
+          enabled: _hasMilestone,
+          rows: _milestoneDrafts,
+        )) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Milestones not finished',
+        content:
+            'A project can be marked as completed only when every milestone is achieved.',
+        palette: widget.palette,
+      );
+      return;
+    }
     setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
@@ -1038,6 +1111,7 @@ class _AsanaCreateProjectDetailPanelState
         endDate: _endDate,
         status: _draftStatus,
         creatorStaffLookupKey: state.userStaffAppId,
+        hasMilestone: _hasMilestone,
       );
       if (ins.error != null && mounted) {
         await _showInfo('Could not create project', ins.error!);
@@ -1045,6 +1119,22 @@ class _AsanaCreateProjectDetailPanelState
       }
       final newId = ins.projectId;
       if (newId != null && newId.isNotEmpty) {
+        if (_hasMilestone) {
+          for (final draft in _milestoneDrafts) {
+            if (draft.description.isEmpty) continue;
+            final mile = await DatabaseService.insertProjectMilestone(
+              projectId: newId,
+              description: draft.description,
+              achieved: draft.achieved,
+              progressPercent: draft.percent,
+              creatorStaffLookupKey: state.userStaffAppId,
+            );
+            if (mile.error != null && mounted) {
+              await _showInfo('Could not add milestone', mile.error!);
+              return;
+            }
+          }
+        }
         _projectAi?.attachCreatedEntityId(newId);
         final commentText = stripInlineImageMarkers(_commentController.text);
         final hasDraftComment =
@@ -1235,6 +1325,23 @@ class _AsanaCreateProjectDetailPanelState
             ),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.pic),
+          AsanaProjectMilestoneSection(
+            enabled: _hasMilestone,
+            canEdit: canEdit,
+            saving: _saving,
+            palette: widget.palette,
+            rows: _milestoneDrafts,
+            onToggleEnabled: _toggleMilestones,
+            onAdd: _addMilestoneDraft,
+            onAchievedToggled: (row) {
+              asanaToggleMilestoneAchieved(_milestoneDrafts, row);
+              setState(() {});
+            },
+            onRemove: _removeMilestoneDraft,
+            onDraftChanged: () {
+              if (mounted) setState(() {});
+            },
+          ),
           AsanaDetailTwoColumnRow(
             label: 'Status',
             child: Builder(

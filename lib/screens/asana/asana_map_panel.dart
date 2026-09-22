@@ -62,6 +62,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   DateTime? _subtaskCompletedStart;
   DateTime? _subtaskCompletedEnd;
   String _sortKey = 'due_asc';
+  bool _showProjectsWithoutTasks = true;
   String _dataSig = '';
   int _loadGeneration = 0;
   bool _loadingSubtasks = false;
@@ -180,9 +181,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               _matches(subtask.subtaskName, query) ||
               _matches(subPic, query) ||
               _matches(subStatus, query);
+          if (!_passesSubtaskFilters(subtask, subStatus)) continue;
           final subOwnMatches =
               (_hasSubtaskFilters || query.isNotEmpty) &&
-              _passesSubtaskFilters(subtask, subStatus) &&
               _passesSearch(subMatches, query);
           if (subOwnMatches ||
               (projectOwnMatches && !_hasTaskOrSubtaskFilters) ||
@@ -196,6 +197,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
         }
       }
+      if (taskNodes.isEmpty && !_showProjectsWithoutTasks) continue;
       if (projectOwnMatches || taskNodes.isNotEmpty) {
         nodes.add(_ProjectMapNode(project: project, tasks: taskNodes));
       }
@@ -240,9 +242,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             _matches(subtask.subtaskName, query) ||
             _matches(subPic, query) ||
             _matches(subStatus, query);
+        if (!_passesSubtaskFilters(subtask, subStatus)) continue;
         final subOwnMatches =
             (_hasSubtaskFilters || query.isNotEmpty) &&
-            _passesSubtaskFilters(subtask, subStatus) &&
             _passesSearch(subMatches, query);
         if (subOwnMatches || (taskOwnMatches && !_hasSubtaskFilters)) {
           subtaskNodes.add(subtask);
@@ -414,10 +416,14 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     if (rangeStart == null && rangeEnd == null) return true;
     final day = _hkDateOnly(completionDate);
     if (day == null) return false;
-    final start = _hkDateOnly(rangeStart);
-    final end = _hkDateOnly(rangeEnd);
-    if (start != null && day.isBefore(start)) return false;
-    if (end != null && day.isAfter(end)) return false;
+    if (rangeStart != null) {
+      final start = DateTime(rangeStart.year, rangeStart.month, rangeStart.day);
+      if (day.isBefore(start)) return false;
+    }
+    if (rangeEnd != null) {
+      final end = DateTime(rangeEnd.year, rangeEnd.month, rangeEnd.day);
+      if (day.isAfter(end)) return false;
+    }
     return true;
   }
 
@@ -832,6 +838,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
   }
 
+  Future<void> _showEmptyProjectsMenu(BuildContext buttonContext) async {
+    final selected = await showMenu<bool>(
+      context: buttonContext,
+      position: _menuPosition(buttonContext),
+      color: Theme.of(buttonContext).colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      items: const [
+        PopupMenuItem(value: true, child: Text('Show')),
+        PopupMenuItem(value: false, child: Text('Hide')),
+      ],
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _showProjectsWithoutTasks = selected);
+  }
+
   Future<void> _showSortMenu(BuildContext buttonContext) async {
     final selected = await showMenu<String>(
       context: buttonContext,
@@ -975,6 +996,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 _subtaskCompletedStart = null;
                 _subtaskCompletedEnd = null;
                 _sortKey = 'due_asc';
+                _showProjectsWithoutTasks = true;
               });
             },
             filterChildren: [
@@ -1167,6 +1189,13 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                     _subtaskCompletedEnd = end;
                   },
                 ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Projects Without Tasks',
+                value: _showProjectsWithoutTasks ? 'Show' : 'Hide',
+                buttonWidth: 168,
+                highlighted: !_showProjectsWithoutTasks,
+                onPressed: _showEmptyProjectsMenu,
               ),
               AsanaFilterDropdown(
                 title: 'Sort',
@@ -1625,6 +1654,7 @@ _DiagramNode _taskDiagramNode({
       taskStatus,
       taskNode.task.endDate,
       taskNode.task.submission,
+      completionDate: taskNode.task.completionDate,
     ),
     dueDate: taskNode.task.endDate,
     submission: taskNode.task.submission,
@@ -1653,6 +1683,7 @@ _DiagramNode _taskDiagramNode({
                 subStatus,
                 subtask.dueDate,
                 subtask.submission,
+                completionDate: subtask.completionDate,
               ),
               dueDate: subtask.dueDate,
               submission: subtask.submission,
@@ -1664,12 +1695,23 @@ _DiagramNode _taskDiagramNode({
   );
 }
 
-String _mapBlockDetailLabel(String status, DateTime? due, String? submission) {
+String _mapBlockDetailLabel(
+  String status,
+  DateTime? due,
+  String? submission, {
+  DateTime? completionDate,
+}) {
   if ((submission ?? '').trim().toLowerCase() == 'submitted') {
     return 'Submitted';
   }
-  if (status.trim().toLowerCase() == 'incomplete') {
+  final statusKey = status.trim().toLowerCase();
+  if (statusKey == 'incomplete') {
     return due == null ? '—' : HkTime.formatInstantAsHk(due, 'MMM d, yyyy');
+  }
+  if (statusKey == 'completed' || statusKey == 'complete') {
+    if (completionDate != null) {
+      return HkTime.formatInstantAsHk(completionDate, 'MMM d, yyyy');
+    }
   }
   return AsanaStatusChip.statusStyle(status).$1;
 }

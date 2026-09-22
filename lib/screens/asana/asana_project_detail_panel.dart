@@ -28,6 +28,7 @@ import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_project_ai_assistant.dart';
 import 'asana_project_filter.dart';
+import 'asana_project_milestone_section.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -127,6 +128,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   DateTime? _startDate;
   DateTime? _endDate;
   String? _draftStatus;
+  bool _hasMilestone = false;
+  final List<AsanaMilestoneDraft> _milestoneDrafts = [];
 
   final Set<String> _assigneeIds = {};
   final Set<String> _picAssigneeIds = {};
@@ -174,6 +177,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
+    disposeAsanaMilestoneDrafts(_milestoneDrafts);
     for (final ctrl in _postedCommentControllers.values) {
       ctrl.dispose();
     }
@@ -216,6 +220,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       _endDate = p.endDate;
       _draftStatus = null;
       await _syncAssigneeKeysFromProject(p);
+      _hasMilestone = p.hasMilestone;
+      await _reloadMilestoneDrafts();
     }
     if (mounted) {
       setState(() {
@@ -223,6 +229,15 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _reloadMilestoneDrafts() async {
+    final rows = await DatabaseService.fetchProjectMilestones(widget.projectId);
+    if (!mounted) return;
+    disposeAsanaMilestoneDrafts(_milestoneDrafts);
+    _milestoneDrafts
+      ..clear()
+      ..addAll(asanaMilestoneDraftsFromRows(rows));
   }
 
   Future<void> _loadProjectTasks() async {
@@ -751,19 +766,209 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       options: options,
     );
     if (choice != null && mounted) {
+      if (choice == 'Completed' && !_milestonesAllowComplete()) {
+        await _showMilestonesRequiredForComplete();
+        return;
+      }
       setState(() => _draftStatus = choice);
     }
+  }
+
+  Future<void> _toggleMilestones() async {
+    if (_saving) return;
+    final enabled = !_hasMilestone;
+    final state = context.read<AppState>();
+    final err = await DatabaseService.updateProjectRow(
+      projectId: widget.projectId,
+      updateHasMilestone: true,
+      hasMilestone: enabled,
+      updateByStaffLookupKey: state.userStaffAppId,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not update milestone setting',
+        content: err,
+        palette: widget.palette,
+      );
+      return;
+    }
+    setState(() => _hasMilestone = enabled);
+    if (enabled) {
+      await _reloadMilestoneDrafts();
+      if (!mounted) return;
+      if (_milestoneDrafts.isEmpty) {
+        _milestoneDrafts.add(AsanaMilestoneDraft(progressPercent: 100));
+      }
+      setState(() {});
+    }
+    final projects = await DatabaseService.fetchAllProjects();
+    if (mounted) state.applyProjects(projects);
+  }
+
+  void _addMilestoneDraft() {
+    if (_milestoneDrafts.length >= 20) return;
+    setState(() {
+      _milestoneDrafts.add(
+        AsanaMilestoneDraft(
+          progressPercent: asanaMilestoneLeftoverPercent(_milestoneDrafts),
+        ),
+      );
+    });
+  }
+
+  Future<bool> _persistMilestoneRow(
+    AsanaMilestoneDraft row, {
+    bool force = false,
+  }) async {
+    if (_saving && !force) return true;
+    final text = row.description;
+    final percent = row.percent;
+    if (row.percentController.text.trim().isNotEmpty) {
+      row.percentController.text = '$percent';
+    }
+    final id = row.id?.trim();
+    final state = context.read<AppState>();
+    if (id == null || id.isEmpty) {
+      if (text.isEmpty) return true;
+      final ins = await DatabaseService.insertProjectMilestone(
+        projectId: widget.projectId,
+        description: text,
+        achieved: row.achieved,
+        progressPercent: percent,
+        creatorStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return false;
+      if (ins.error != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not add milestone',
+          content: ins.error!,
+          palette: widget.palette,
+        );
+        return false;
+      }
+      row.id = ins.milestoneId;
+      return true;
+    }
+    final err = await DatabaseService.updateProjectMilestone(
+      milestoneId: id,
+      description: text,
+      achieved: row.achieved,
+      progressPercent: percent,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    if (!mounted) return false;
+    if (err != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not update milestone',
+        content: err,
+        palette: widget.palette,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _toggleMilestoneAchieved(AsanaMilestoneDraft row) async {
+    if (_saving) return;
+    final previous = [for (final item in _milestoneDrafts) item.achieved];
+    final changed = asanaToggleMilestoneAchieved(_milestoneDrafts, row);
+    if (changed.isEmpty) return;
+    setState(() {});
+    final state = context.read<AppState>();
+    for (final item in changed) {
+      final id = item.id?.trim();
+      if (id == null || id.isEmpty) continue;
+      final err = await DatabaseService.updateProjectMilestone(
+        milestoneId: id,
+        achieved: item.achieved,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (err != null) {
+        for (var i = 0; i < _milestoneDrafts.length; i++) {
+          _milestoneDrafts[i].achieved = previous[i];
+        }
+        setState(() {});
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not update milestone',
+          content: err,
+          palette: widget.palette,
+        );
+        return;
+      }
+    }
+  }
+
+  Future<void> _removeMilestone(AsanaMilestoneDraft row) async {
+    if (_saving) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove milestone',
+      content:
+          'Remove this milestone? It will no longer appear on the project.',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    final id = row.id?.trim();
+    if (id == null || id.isEmpty) {
+      setState(() {
+        _milestoneDrafts.remove(row);
+        row.dispose();
+      });
+      return;
+    }
+    final state = context.read<AppState>();
+    final err = await DatabaseService.deleteProjectMilestone(
+      milestoneId: id,
+      projectId: widget.projectId,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not remove milestone',
+        content: err,
+        palette: widget.palette,
+      );
+      return;
+    }
+    await _reloadMilestoneDrafts();
+    if (mounted) setState(() {});
   }
 
   String _effectiveStatus(ProjectRecord p) => (_draftStatus ?? p.status).trim();
   String _displayStatus(ProjectRecord p) =>
       p.isPaused ? 'Paused' : _effectiveStatus(p);
 
+  bool _milestonesAllowComplete() => asanaMilestonesAllAchieved(
+    enabled: _hasMilestone,
+    rows: _milestoneDrafts,
+  );
+
+  Future<void> _showMilestonesRequiredForComplete() {
+    return showAsanaInfoDialog(
+      context: context,
+      title: 'Milestones not finished',
+      content:
+          'A project can be marked as completed only when every milestone is achieved.',
+      palette: widget.palette,
+    );
+  }
+
   bool _canMarkProjectComplete(ProjectRecord p) =>
       _isCreator(p) &&
       !p.isPaused &&
       _effectiveStatus(p) != 'Completed' &&
-      _effectiveStatus(p) != 'Deleted';
+      _effectiveStatus(p) != 'Deleted' &&
+      _milestonesAllowComplete();
 
   bool _canDeleteProject(ProjectRecord p) =>
       _isCreator(p) && _effectiveStatus(p) != 'Deleted';
@@ -2046,7 +2251,24 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       );
       return;
     }
+    final milestoneError = asanaMilestonePercentError(
+      enabled: _hasMilestone,
+      rows: _milestoneDrafts,
+    );
+    if (milestoneError != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Milestone percentages',
+        content: milestoneError,
+        palette: widget.palette,
+      );
+      return;
+    }
     final status = _effectiveStatus(p);
+    if (status == 'Completed' && !_milestonesAllowComplete()) {
+      await _showMilestonesRequiredForComplete();
+      return;
+    }
 
     _setSaving(true);
     try {
@@ -2080,6 +2302,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         clearStartDate: _startDate == null,
         clearEndDate: _endDate == null,
         status: status,
+        updateHasMilestone: true,
+        hasMilestone: _hasMilestone,
         updateByStaffLookupKey: state.userStaffAppId,
       );
       if (!mounted) return;
@@ -2091,6 +2315,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           palette: widget.palette,
         );
         return;
+      }
+      if (_hasMilestone) {
+        for (final row in List<AsanaMilestoneDraft>.from(_milestoneDrafts)) {
+          if (!await _persistMilestoneRow(row, force: true)) return;
+        }
       }
       if (!await _saveDirtyPostedComments(state)) return;
       final hasDraftComment =
@@ -2262,6 +2491,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
                 : AsanaDetailPlainValue(text: picReadOnly),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.pic),
+          AsanaProjectMilestoneSection(
+            enabled: _hasMilestone,
+            canEdit: canEdit,
+            saving: _saving,
+            palette: widget.palette,
+            rows: _milestoneDrafts,
+            onToggleEnabled: _toggleMilestones,
+            onAdd: _addMilestoneDraft,
+            onAchievedToggled: _toggleMilestoneAchieved,
+            onRemove: _removeMilestone,
+            onRowSubmitted: _persistMilestoneRow,
+            onDraftChanged: () {
+              if (mounted) setState(() {});
+            },
+          ),
           AsanaDetailSectionHeader(
             title: 'Tasks',
             showAddButton: !adminReadOnly,

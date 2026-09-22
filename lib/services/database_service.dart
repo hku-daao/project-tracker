@@ -11,6 +11,7 @@ import '../models/singular_comment.dart';
 import '../models/singular_subtask.dart';
 import '../models/staff_for_assignment.dart';
 import '../models/calendar_holiday.dart';
+import '../models/project_milestone.dart';
 import '../models/project_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
@@ -1424,6 +1425,7 @@ class DatabaseService {
           : null,
       updateDate: _parseDateTimeNullable(row['update_date']),
       pauseStatus: _nullableTrimmedString(row['pause_status']) ?? 'Not Paused',
+      hasMilestone: _boolFromRow(row['has_milestone']),
     );
   }
 
@@ -1815,6 +1817,7 @@ class DatabaseService {
     DateTime? endDate,
     String status = 'Not started',
     String? creatorStaffLookupKey,
+    bool hasMilestone = false,
   }) async {
     if (!_enabled) return (error: 'Database not configured', projectId: null);
     final n = name.trim();
@@ -1835,6 +1838,7 @@ class DatabaseService {
         'name': n,
         'description': description?.trim() ?? '',
         'status': status.trim().isEmpty ? 'Not started' : status.trim(),
+        'has_milestone': hasMilestone,
         'create_date': now,
         'update_date': now,
       };
@@ -1891,6 +1895,8 @@ class DatabaseService {
     String? status,
     bool updatePauseStatus = false,
     String? pauseStatus,
+    bool updateHasMilestone = false,
+    bool? hasMilestone,
     String? updateByStaffLookupKey,
   }) async {
     if (!_enabled) return 'Database not configured';
@@ -1927,6 +1933,9 @@ class DatabaseService {
         final t = pauseStatus?.trim();
         map['pause_status'] = t == 'Paused' ? 'Paused' : 'Not Paused';
       }
+      if (updateHasMilestone) {
+        map['has_milestone'] = hasMilestone == true;
+      }
       final lookup = updateByStaffLookupKey?.trim();
       if (lookup != null && lookup.isNotEmpty) {
         final staffId = await _staffRowIdForAssigneeKey(lookup);
@@ -1946,6 +1955,193 @@ class DatabaseService {
       debugPrint('PROJECT_UPDATE_ERROR exception=$e');
       debugPrint('PROJECT_UPDATE_ERROR stack=$st');
       return e.toString();
+    }
+  }
+
+  static ProjectMilestone? _projectMilestoneFromRow(Map<String, dynamic> row) {
+    final id = row['id']?.toString().trim() ?? '';
+    final projectId = row['project_id']?.toString().trim() ?? '';
+    if (id.isEmpty || projectId.isEmpty) return null;
+    return ProjectMilestone(
+      id: id,
+      projectId: projectId,
+      description: row['description']?.toString() ?? '',
+      achieved: _boolFromRow(row['achieved']),
+      progressPercent: _percentFromRow(row['progress_percent']),
+      sortOrder: int.tryParse(row['sort_order']?.toString() ?? '') ?? 0,
+      status: row['status']?.toString().trim().isNotEmpty == true
+          ? row['status'].toString().trim()
+          : 'Active',
+    );
+  }
+
+  /// Active milestone steps for a project, display order.
+  static Future<List<ProjectMilestone>> fetchProjectMilestones(
+    String projectId,
+  ) async {
+    if (!_enabled) return [];
+    final pid = projectId.trim();
+    if (pid.isEmpty) return [];
+    try {
+      final res = await PostgrestClient.instance
+          .from('project_milestone')
+          .select()
+          .eq('project_id', pid)
+          .eq('status', 'Active')
+          .order('sort_order', ascending: true)
+          .order('create_date', ascending: true);
+      final out = <ProjectMilestone>[];
+      for (final raw in res as List) {
+        final row = _projectMilestoneFromRow(Map<String, dynamic>.from(raw as Map));
+        if (row != null) out.add(row);
+      }
+      return out;
+    } catch (e) {
+      debugPrint('fetchProjectMilestones: $e');
+      return [];
+    }
+  }
+
+  static Future<({String? error, String? milestoneId})> insertProjectMilestone({
+    required String projectId,
+    required String description,
+    bool achieved = false,
+    int progressPercent = 0,
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return (error: 'Database not configured', milestoneId: null);
+    final pid = projectId.trim();
+    final desc = description.trim();
+    if (pid.isEmpty) return (error: 'Invalid project', milestoneId: null);
+    if (desc.isEmpty) return (error: 'Milestone description is required', milestoneId: null);
+    try {
+      final existing = await fetchProjectMilestones(pid);
+      if (existing.length >= 20) {
+        return (error: 'No more than 20 milestones', milestoneId: null);
+      }
+      final now = HkTime.timestampForDb();
+      final map = <String, dynamic>{
+        'project_id': pid,
+        'description': desc,
+        'achieved': achieved,
+        'progress_percent': progressPercent.clamp(0, 100),
+        'sort_order': existing.length,
+        'status': 'Active',
+        'create_date': now,
+        'update_date': now,
+      };
+      final lookup = creatorStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['create_by'] = staffId;
+          map['update_by'] = staffId;
+        }
+      }
+      final ins = await PostgrestClient.instance
+          .from('project_milestone')
+          .insert(map)
+          .select('id')
+          .maybeSingle();
+      return (error: null, milestoneId: ins?['id']?.toString());
+    } catch (e) {
+      return (error: e.toString(), milestoneId: null);
+    }
+  }
+
+  static Future<String?> updateProjectMilestone({
+    required String milestoneId,
+    String? description,
+    bool? achieved,
+    int? progressPercent,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final id = milestoneId.trim();
+    if (id.isEmpty) return 'Invalid milestone';
+    final map = <String, dynamic>{};
+    if (description != null) map['description'] = description.trim();
+    if (achieved != null) map['achieved'] = achieved;
+    if (progressPercent != null) {
+      map['progress_percent'] = progressPercent.clamp(0, 100);
+    }
+    final lookup = updaterStaffLookupKey?.trim();
+    if (lookup != null && lookup.isNotEmpty) {
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId != null && staffId.isNotEmpty) {
+        map['update_by'] = staffId;
+        map['update_date'] = HkTime.timestampForDb();
+      }
+    }
+    if (map.isEmpty) return null;
+    try {
+      await PostgrestClient.instance
+          .from('project_milestone')
+          .update(map)
+          .eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Soft-delete one milestone, then compact Active `sort_order` to 0..n-1.
+  static Future<String?> deleteProjectMilestone({
+    required String milestoneId,
+    required String projectId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final id = milestoneId.trim();
+    final pid = projectId.trim();
+    if (id.isEmpty || pid.isEmpty) return 'Invalid milestone';
+    try {
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      };
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      await PostgrestClient.instance
+          .from('project_milestone')
+          .update(map)
+          .eq('id', id);
+      await _compactProjectMilestoneSortOrder(
+        pid,
+        updaterStaffLookupKey: updaterStaffLookupKey,
+      );
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<void> _compactProjectMilestoneSortOrder(
+    String projectId, {
+    String? updaterStaffLookupKey,
+  }) async {
+    final remaining = await fetchProjectMilestones(projectId);
+    String? staffId;
+    final lookup = updaterStaffLookupKey?.trim();
+    if (lookup != null && lookup.isNotEmpty) {
+      staffId = await _staffRowIdForAssigneeKey(lookup);
+    }
+    final now = HkTime.timestampForDb();
+    for (var i = 0; i < remaining.length; i++) {
+      if (remaining[i].sortOrder == i) continue;
+      final map = <String, dynamic>{'sort_order': i, 'update_date': now};
+      if (staffId != null && staffId.isNotEmpty) {
+        map['update_by'] = staffId;
+      }
+      await PostgrestClient.instance
+          .from('project_milestone')
+          .update(map)
+          .eq('id', remaining[i].id);
     }
   }
 
@@ -1970,6 +2166,19 @@ class DatabaseService {
     final s = v?.toString().trim() ?? '';
     if (s == 'Yes' || s == 'No') return s;
     return 'No';
+  }
+
+  static int _percentFromRow(dynamic v) {
+    if (v is int) return v.clamp(0, 100);
+    if (v is num) return v.round().clamp(0, 100);
+    return (int.tryParse(v?.toString().trim() ?? '') ?? 0).clamp(0, 100);
+  }
+
+  static bool _boolFromRow(dynamic v) {
+    if (v is bool) return v;
+    if (v == 1) return true;
+    final s = v?.toString().trim().toLowerCase();
+    return s == 'true' || s == 't' || s == 'yes' || s == '1';
   }
 
   static String? _nullableTrimmedString(dynamic v) {
