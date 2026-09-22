@@ -1244,6 +1244,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _canEditMetadata(AppState state, Task task) =>
       (_isCreator(state, task) || _isPic(state, task)) && !_taskDeleted(task);
 
+  bool _canCreateSubtask(AppState state, Task task) =>
+      !_taskDeleted(task) &&
+      (_isCreator(state, task) ||
+          _isTaskAssignee(state, task) ||
+          _isPic(state, task));
+
   bool _canWriteComments(AppState state, Task task) =>
       (_isCreator(state, task) || _isTaskAssignee(state, task)) &&
       !_taskDeleted(task);
@@ -4302,11 +4308,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             title: 'Sub-tasks',
             showAddButton: true,
             addTooltip: 'Create sub-task',
-            onAdd: widget.onPushCreateSubtask != null
+            onAdd:
+                widget.onPushCreateSubtask != null &&
+                    !adminReadOnly &&
+                    _canCreateSubtask(state, task)
                 ? (_) => widget.onPushCreateSubtask!()
                 : null,
             addEnabled:
-                canEdit &&
+                !adminReadOnly &&
+                _canCreateSubtask(state, task) &&
                 !singularTaskStatusIsCompleted(task) &&
                 !_saving &&
                 widget.onPushCreateSubtask != null,

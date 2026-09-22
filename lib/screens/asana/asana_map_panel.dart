@@ -1122,7 +1122,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 ),
               ),
               AsanaFilterDropdown(
-                title: 'PIC Creator',
+                title: 'Project Creator',
                 value: _filterLabel(_projectCreatorIds, (id) {
                   final names = _projectCreatorDisplayNames(state);
                   return names[id] ?? _staffName(state, id);
