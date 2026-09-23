@@ -225,7 +225,7 @@ Schema:
 {
   "related": true or false,
   "message": "optional short note when nothing can be suggested",
-  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred (required if any name/description/comment/status/assigneeNames/picNames/startDate/dueDate/websiteLinks are set)",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred (required if any name/description/comment/status/assigneeNames/picNames/startDate/dueDate/websiteLinks/milestones are set)",
   "name": "string or null",
   "description": "string or null",
   "comment": "comment body for the Comments field (posted when the user saves), or null",
@@ -236,13 +236,23 @@ Schema:
   "dueDate": "YYYY-MM-DD" or null,
   "websiteLinks": [
     { "url": "https://...", "description": "short label for the link" }
+  ] or [],
+  "hasMilestone": true or false or null,
+  "milestones": [
+    { "description": "one project step as a sentence", "progressPercent": 40 }
   ] or []
 }
 
 Rules:
 - The user is already working inside a project create/edit slide. Treat every prompt as an attempt to fill or improve this project form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains project details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
-- For optional structured fields (status, assigneeNames, picNames, startDate, dueDate, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- For optional structured fields (status, assigneeNames, picNames, startDate, dueDate, comment, websiteLinks, hasMilestone, milestones), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- REQUIRED — Milestones: if the prompt says milestone/milestones/phase/step/deliverable, OR lists 2+ pieces of work ("one is …, one is …", "first… second…", numbered steps), you MUST set "hasMilestone": true AND fill "milestones" with those steps. Do not stop at name and description in that case. Name/description AND milestones should all be set.
+- When suggesting milestones, fill 1–20 items. Each item needs a clear description (keep the user's wording as a sentence) and progressPercent as an integer 0–100.
+- Milestone percentages MUST add up to 100. If the user does not give weights, split by implied effort; if effort is similar, use an even split and put any remainder on the last item (for example 3 similar steps → 34, 33, 33).
+- Keep milestone order the same as the user's steps. Do not mark achieved; the user does that later.
+- Compare to "milestones" in current form values. If the suggested list is the same descriptions and percents in the same order, omit hasMilestone and milestones.
+- If the user explicitly says the project has no milestones, set hasMilestone false and milestones [].
 - Avoid echoing unchanged values: compare each field to "Current project form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
 - Use assignee and PIC names only from the provided staff list.
 - assigneeNames: full resulting visible assignee list when the user changes assignees. Never include PIC names in assigneeNames.
@@ -252,7 +262,7 @@ Rules:
 - status must be exactly one of: Not started, In progress, Completed.
 - comment: text for the Comments field. When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
 - Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description. Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
-- overallComment: required whenever you output at least one non-null field suggestion.
+- overallComment: required whenever you output at least one non-null field suggestion. Mention the milestone steps briefly when milestones are set.
 - You are suggesting values only; the user adopts them. Do not mention overwriting.
 ''';
 
@@ -260,7 +270,11 @@ Rules:
       ..writeln(formContext.trim())
       ..writeln()
       ..writeln('User prompt:')
-      ..writeln(trimmed);
+      ..writeln(trimmed)
+      ..writeln()
+      ..writeln(
+        'If this prompt lists project steps or says milestone, your JSON must include hasMilestone=true and a milestones array. Name and description alone are not enough.',
+      );
 
     final body = jsonEncode({
       'model': _effectiveModel,
@@ -268,7 +282,7 @@ Rules:
         {'role': 'system', 'content': system},
         {'role': 'user', 'content': user.toString()},
       ],
-      'temperature': 0.25,
+      'temperature': 0.2,
     });
 
     return _chatCompletionJsonObject(body);

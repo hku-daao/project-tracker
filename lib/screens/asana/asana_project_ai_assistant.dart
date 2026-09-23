@@ -1,4 +1,5 @@
 import '../../utils/hk_time.dart';
+import 'asana_project_milestone_section.dart';
 import 'asana_task_ai_assistant.dart';
 
 /// Current project form values + staff list (for LLM context and name resolution).
@@ -16,6 +17,8 @@ class AsanaProjectAiFormSnapshot {
     required this.selectedAssigneeIds,
     required this.selectedPicAssigneeIds,
     this.websiteAttachments = const [],
+    this.hasMilestone = false,
+    this.milestones = const [],
   });
 
   final String name;
@@ -30,6 +33,8 @@ class AsanaProjectAiFormSnapshot {
   final Set<String> selectedAssigneeIds;
   final Set<String> selectedPicAssigneeIds;
   final List<({String url, String description})> websiteAttachments;
+  final bool hasMilestone;
+  final List<AsanaSuggestedMilestone> milestones;
 
   String buildLlmContext() {
     final buf = StringBuffer()
@@ -50,7 +55,10 @@ class AsanaProjectAiFormSnapshot {
       ..writeln(
         '- assignees: ${assigneesLabel.isEmpty ? "(none)" : assigneesLabel}',
       )
-      ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}');
+      ..writeln('- PIC: ${picLabel.isEmpty ? "(none)" : picLabel}')
+      ..writeln(
+        '- milestones: ${asanaFormatSuggestedMilestones(milestones, enabled: hasMilestone)}',
+      );
 
     if (websiteAttachments.isNotEmpty) {
       buf.writeln('Current website link attachments:');
@@ -67,6 +75,9 @@ class AsanaProjectAiFormSnapshot {
       buf.writeln('Available staff: ${staff.map((s) => s.name).join('; ')}');
     }
     buf.writeln('Status options: Not started, In progress, Completed');
+    buf.writeln(
+      'Milestones: optional project steps. Each has a description and an integer percent of the whole project. Percents must add up to 100%. Suggest them when the prompt lists steps, phases, deliverables, or named pieces of work.',
+    );
     return buf.toString();
   }
 
@@ -86,6 +97,9 @@ class AsanaProjectAiApply {
     required this.applyDueDate,
     required this.applyComment,
     required this.applyWebsiteLink,
+    required this.ensureMilestoneSlots,
+    required this.applyMilestoneDescription,
+    required this.applyMilestonePercent,
   });
 
   final void Function(String name) applyName;
@@ -97,6 +111,9 @@ class AsanaProjectAiApply {
   final void Function(DateTime due) applyDueDate;
   final void Function(String comment) applyComment;
   final void Function(String url, String description) applyWebsiteLink;
+  final void Function(int count) ensureMilestoneSlots;
+  final void Function(int index, String description) applyMilestoneDescription;
+  final void Function(int index, int percent) applyMilestonePercent;
 }
 
 /// Validates LLM JSON and builds adoptable lines for project fields.
@@ -105,6 +122,7 @@ class AsanaProjectAiSuggestionBuilder {
     required Map<String, dynamic> raw,
     required AsanaProjectAiFormSnapshot form,
     required AsanaProjectAiApply apply,
+    String userPrompt = '',
   }) {
     final lines = <AsanaTaskAiSuggestionLine>[];
 
@@ -337,6 +355,52 @@ class AsanaProjectAiSuggestionBuilder {
             onAdopt: () => apply.applyDueDate(due),
           ),
         );
+      }
+    }
+
+    var suggestedMilestones = asanaParseSuggestedMilestones(
+      raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
+    );
+    if (suggestedMilestones.isEmpty && userPrompt.trim().isNotEmpty) {
+      suggestedMilestones = asanaInferMilestonesFromPrompt(userPrompt);
+    }
+    if (suggestedMilestones.isNotEmpty) {
+      apply.ensureMilestoneSlots(suggestedMilestones.length);
+      for (var i = 0; i < suggestedMilestones.length; i++) {
+        final item = suggestedMilestones[i];
+        final current = i < form.milestones.length ? form.milestones[i] : null;
+        if (current == null ||
+            current.description.trim().toLowerCase() !=
+                item.description.trim().toLowerCase()) {
+          lines.add(
+            AsanaTaskAiSuggestionLine.adopt(
+              fieldKey: AsanaTaskAiFieldKey.milestoneDescription,
+              linkIndex: i,
+              fieldLabel: 'Milestone ${i + 1} description',
+              currentValue: AsanaTaskAiSuggestionLine.displayCurrent(
+                current?.description ?? '',
+              ),
+              suggestedText: item.description,
+              onAdopt: () =>
+                  apply.applyMilestoneDescription(i, item.description),
+            ),
+          );
+        }
+        if (current == null || current.progressPercent != item.progressPercent) {
+          lines.add(
+            AsanaTaskAiSuggestionLine.adopt(
+              fieldKey: AsanaTaskAiFieldKey.milestonePercent,
+              linkIndex: i,
+              fieldLabel: 'Milestone ${i + 1} percentage',
+              currentValue: current == null
+                  ? '(empty)'
+                  : '${current.progressPercent}%',
+              suggestedText: '${item.progressPercent}%',
+              onAdopt: () =>
+                  apply.applyMilestonePercent(i, item.progressPercent),
+            ),
+          );
+        }
       }
     }
 

@@ -452,6 +452,8 @@ class _AsanaCreateProjectDetailPanelState
       selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
       selectedPicAssigneeIds: Set<String>.from(_picAssigneeIds),
       websiteAttachments: _websiteAttachmentsForAi(),
+      hasMilestone: _hasMilestone,
+      milestones: asanaMilestonesFromDrafts(_milestoneDrafts),
     );
   }
 
@@ -487,6 +489,31 @@ class _AsanaCreateProjectDetailPanelState
           ),
         );
       }),
+      ensureMilestoneSlots: _ensureMilestoneSlots,
+      applyMilestoneDescription: _applyMilestoneDescription,
+      applyMilestonePercent: _applyMilestonePercent,
+    );
+  }
+
+  void _ensureMilestoneSlots(int count) {
+    if (count <= 0) return;
+    setState(() {
+      _hasMilestone = true;
+      while (_milestoneDrafts.length < count) {
+        _milestoneDrafts.add(AsanaMilestoneDraft());
+      }
+    });
+  }
+
+  void _applyMilestoneDescription(int index, String description) {
+    _ensureMilestoneSlots(index + 1);
+    setState(() => _milestoneDrafts[index].controller.text = description);
+  }
+
+  void _applyMilestonePercent(int index, int percent) {
+    _ensureMilestoneSlots(index + 1);
+    setState(
+      () => _milestoneDrafts[index].percentController.text = '$percent',
     );
   }
 
@@ -512,7 +539,7 @@ class _AsanaCreateProjectDetailPanelState
     );
   }
 
-  Widget _aiSuggestions(AsanaTaskAiFieldKey key) {
+  Widget _aiSuggestions(AsanaTaskAiFieldKey key, {int? linkIndex}) {
     if (context.read<AppState>().adminViewMode) {
       return const SizedBox.shrink();
     }
@@ -521,6 +548,7 @@ class _AsanaCreateProjectDetailPanelState
     return AsanaTaskAiInlineSuggestions(
       controller: c,
       fieldKey: key,
+      linkIndex: linkIndex,
       palette: widget.palette,
     );
   }
@@ -1345,6 +1373,14 @@ class _AsanaCreateProjectDetailPanelState
             onDraftChanged: () {
               if (mounted) setState(() {});
             },
+            descriptionSuggestion: (index) => _aiSuggestions(
+              AsanaTaskAiFieldKey.milestoneDescription,
+              linkIndex: index,
+            ),
+            percentSuggestion: (index) => _aiSuggestions(
+              AsanaTaskAiFieldKey.milestonePercent,
+              linkIndex: index,
+            ),
           ),
           AsanaDetailTwoColumnRow(
             label: 'Status',

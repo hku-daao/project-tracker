@@ -111,6 +111,220 @@ String asanaMilestoneProgressEncouragement(int percent) {
   return 'Every milestone achieved. Well done.';
 }
 
+class AsanaSuggestedMilestone {
+  const AsanaSuggestedMilestone({
+    required this.description,
+    required this.progressPercent,
+  });
+
+  final String description;
+  final int progressPercent;
+}
+
+String asanaFormatSuggestedMilestones(
+  List<AsanaSuggestedMilestone> items, {
+  required bool enabled,
+}) {
+  if (!enabled || items.isEmpty) return 'Off';
+  final buf = StringBuffer();
+  for (var i = 0; i < items.length; i++) {
+    if (i > 0) buf.writeln();
+    buf.write(
+      '${i + 1}. ${items[i].progressPercent}% — ${items[i].description}',
+    );
+  }
+  return buf.toString();
+}
+
+List<AsanaSuggestedMilestone> asanaMilestonesFromDrafts(
+  Iterable<AsanaMilestoneDraft> rows,
+) {
+  return [
+    for (final row in rows)
+      if (row.description.isNotEmpty || row.percent > 0)
+        AsanaSuggestedMilestone(
+          description: row.description,
+          progressPercent: row.percent,
+        ),
+  ];
+}
+
+bool asanaSameSuggestedMilestones(
+  List<AsanaSuggestedMilestone> a,
+  List<AsanaSuggestedMilestone> b,
+) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].progressPercent != b[i].progressPercent) return false;
+    if (a[i].description.trim().toLowerCase() !=
+        b[i].description.trim().toLowerCase()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+List<AsanaSuggestedMilestone> asanaInferMilestonesFromPrompt(String prompt) {
+  final text = prompt.trim();
+  if (text.isEmpty) return const [];
+  final chunks = <String>[];
+  final oneIs = RegExp(
+    r'(?:^|[,\.;]\s*)(?:(?:the\s+)?(?:first|second|third|fourth|fifth|last)|one|another)\s+is\s+',
+    caseSensitive: false,
+  );
+  final oneMatches = oneIs.allMatches(text).toList();
+  if (oneMatches.length >= 2) {
+    for (var i = 0; i < oneMatches.length; i++) {
+      final start = oneMatches[i].end;
+      final end = i + 1 < oneMatches.length
+          ? oneMatches[i + 1].start
+          : text.length;
+      final chunk = text.substring(start, end).replaceAll(RegExp(r'[,\.;\s]+$'), '').trim();
+      if (chunk.isNotEmpty) chunks.add(chunk);
+    }
+  }
+  if (chunks.length < 2) {
+    final numbered = RegExp(
+      r'(?:^|\n)\s*(?:\d+[\.\)]|\-|\*)\s+(.+)',
+      multiLine: true,
+    );
+    chunks
+      ..clear()
+      ..addAll(
+        numbered
+            .allMatches(text)
+            .map((m) => m.group(1)?.trim() ?? '')
+            .where((s) => s.isNotEmpty),
+      );
+  }
+  if (chunks.length < 2) return const [];
+  return asanaParseSuggestedMilestones([
+    for (final chunk in chunks.take(20)) {'description': chunk},
+  ]);
+}
+
+List<AsanaSuggestedMilestone> asanaParseSuggestedMilestones(Object? raw) {
+  if (raw is String && raw.trim().isNotEmpty) {
+    return asanaInferMilestonesFromPrompt(raw);
+  }
+  if (raw is! List) return const [];
+  final parsed = <({String description, int? percent})>[];
+  for (final item in raw) {
+    if (item is String) {
+      final description = item.trim();
+      if (description.isNotEmpty) {
+        parsed.add((description: description, percent: null));
+      }
+      continue;
+    }
+    if (item is! Map) continue;
+    final description =
+        (item['description'] ?? item['name'] ?? item['text'])
+            ?.toString()
+            .trim() ??
+        '';
+    if (description.isEmpty) continue;
+    final rawPercent = item['progressPercent'] ?? item['percent'];
+    int? percent;
+    if (rawPercent is int) {
+      percent = rawPercent;
+    } else if (rawPercent is num) {
+      percent = rawPercent.round();
+    } else if (rawPercent is String) {
+      percent = int.tryParse(rawPercent.trim());
+    }
+    parsed.add((description: description, percent: percent));
+  }
+  if (parsed.isEmpty) return const [];
+  if (parsed.length > 20) {
+    parsed.removeRange(20, parsed.length);
+  }
+
+  final items = <AsanaSuggestedMilestone>[];
+  final missingCount = parsed.where((row) => row.percent == null).length;
+  if (missingCount == 0) {
+    final percents = [
+      for (final row in parsed) row.percent!.clamp(0, 100),
+    ];
+    final sum = percents.fold<int>(0, (total, value) => total + value);
+    if (sum != 100 && percents.isNotEmpty) {
+      percents[percents.length - 1] = (percents.last + (100 - sum)).clamp(
+        0,
+        100,
+      );
+    }
+    for (var i = 0; i < parsed.length; i++) {
+      items.add(
+        AsanaSuggestedMilestone(
+          description: parsed[i].description,
+          progressPercent: percents[i],
+        ),
+      );
+    }
+    return items;
+  }
+
+  var leftover = 100;
+  for (final row in parsed) {
+    if (row.percent != null) leftover -= row.percent!.clamp(0, 100);
+  }
+  leftover = leftover.clamp(0, 100);
+  var remainingMissing = missingCount;
+  for (final row in parsed) {
+    if (row.percent != null) {
+      items.add(
+        AsanaSuggestedMilestone(
+          description: row.description,
+          progressPercent: row.percent!.clamp(0, 100),
+        ),
+      );
+      continue;
+    }
+    remainingMissing--;
+    final share = remainingMissing == 0
+        ? leftover
+        : (leftover / (remainingMissing + 1)).floor();
+    leftover -= share;
+    items.add(
+      AsanaSuggestedMilestone(
+        description: row.description,
+        progressPercent: share,
+      ),
+    );
+  }
+  return items;
+}
+
+/// Updates [drafts] to match [items]. Returns leftover rows that were removed.
+List<AsanaMilestoneDraft> asanaReplaceMilestoneDrafts({
+  required List<AsanaMilestoneDraft> drafts,
+  required List<AsanaSuggestedMilestone> items,
+}) {
+  final leftover = <AsanaMilestoneDraft>[];
+  while (drafts.length > items.length) {
+    leftover.add(drafts.removeLast());
+  }
+  for (var i = 0; i < items.length; i++) {
+    final item = items[i];
+    if (i < drafts.length) {
+      final row = drafts[i];
+      final sameDescription =
+          row.description.toLowerCase() == item.description.toLowerCase();
+      row.controller.text = item.description;
+      row.percentController.text = '${item.progressPercent}';
+      if (!sameDescription) row.achieved = false;
+    } else {
+      drafts.add(
+        AsanaMilestoneDraft(
+          description: item.description,
+          progressPercent: item.progressPercent,
+        ),
+      );
+    }
+  }
+  return leftover;
+}
+
 /// Progress line shown under the project name when milestones are on.
 class AsanaProjectMilestoneProgressLine extends StatelessWidget {
   const AsanaProjectMilestoneProgressLine({
@@ -251,6 +465,8 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
     this.onRemove,
     this.onRowSubmitted,
     this.onDraftChanged,
+    this.descriptionSuggestion,
+    this.percentSuggestion,
   });
 
   final bool enabled;
@@ -264,6 +480,8 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
   final void Function(AsanaMilestoneDraft row)? onRemove;
   final void Function(AsanaMilestoneDraft row)? onRowSubmitted;
   final VoidCallback? onDraftChanged;
+  final Widget Function(int index)? descriptionSuggestion;
+  final Widget Function(int index)? percentSuggestion;
 
   @override
   Widget build(BuildContext context) {
@@ -350,6 +568,8 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
                         onRemove: onRemove,
                         onRowSubmitted: onRowSubmitted,
                         onDraftChanged: onDraftChanged,
+                        descriptionSuggestion: descriptionSuggestion,
+                        percentSuggestion: percentSuggestion,
                       ),
                   if (canEdit)
                     const SizedBox(height: 10),
@@ -415,6 +635,8 @@ class _MilestoneRow extends StatelessWidget {
     this.onRemove,
     this.onRowSubmitted,
     this.onDraftChanged,
+    this.descriptionSuggestion,
+    this.percentSuggestion,
   });
 
   final AsanaMilestoneDraft row;
@@ -426,6 +648,8 @@ class _MilestoneRow extends StatelessWidget {
   final void Function(AsanaMilestoneDraft row)? onRemove;
   final void Function(AsanaMilestoneDraft row)? onRowSubmitted;
   final VoidCallback? onDraftChanged;
+  final Widget Function(int index)? descriptionSuggestion;
+  final Widget Function(int index)? percentSuggestion;
 
   @override
   Widget build(BuildContext context) {
@@ -493,22 +717,32 @@ class _MilestoneRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     _percentValueRow(context),
+                    if (percentSuggestion != null) percentSuggestion!(index),
                     if (canEdit) _removeButton(compact: compact),
                   ],
                 ),
               ),
               SizedBox(width: compact ? 8 : 10),
               Expanded(
-                child: AsanaHoverTextField(
-                  controller: row.controller,
-                  canEdit: canEdit,
-                  readOnly: saving,
-                  showOutline: true,
-                  expands: true,
-                  maxLines: 8,
-                  minLines: compact ? 3 : 2,
-                  hintText: 'Milestone description',
-                  style: asanaDetailMultilineValueStyle(context),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: AsanaHoverTextField(
+                        controller: row.controller,
+                        canEdit: canEdit,
+                        readOnly: saving,
+                        showOutline: true,
+                        expands: true,
+                        maxLines: 8,
+                        minLines: compact ? 3 : 2,
+                        hintText: 'Milestone description',
+                        style: asanaDetailMultilineValueStyle(context),
+                      ),
+                    ),
+                    if (descriptionSuggestion != null)
+                      descriptionSuggestion!(index),
+                  ],
                 ),
               ),
             ],

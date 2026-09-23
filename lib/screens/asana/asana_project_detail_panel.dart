@@ -1166,6 +1166,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
       selectedPicAssigneeIds: Set<String>.from(_picAssigneeIds),
       websiteAttachments: _websiteAttachmentsForAi(),
+      hasMilestone: _hasMilestone,
+      milestones: asanaMilestonesFromDrafts(_milestoneDrafts),
     );
   }
 
@@ -1197,6 +1199,31 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           _ProjectAttachmentDraft(url: url, desc: desc, isWebsiteLink: true),
         );
       }),
+      ensureMilestoneSlots: _ensureMilestoneSlots,
+      applyMilestoneDescription: _applyMilestoneDescription,
+      applyMilestonePercent: _applyMilestonePercent,
+    );
+  }
+
+  void _ensureMilestoneSlots(int count) {
+    if (count <= 0) return;
+    setState(() {
+      _hasMilestone = true;
+      while (_milestoneDrafts.length < count) {
+        _milestoneDrafts.add(AsanaMilestoneDraft());
+      }
+    });
+  }
+
+  void _applyMilestoneDescription(int index, String description) {
+    _ensureMilestoneSlots(index + 1);
+    setState(() => _milestoneDrafts[index].controller.text = description);
+  }
+
+  void _applyMilestonePercent(int index, int percent) {
+    _ensureMilestoneSlots(index + 1);
+    setState(
+      () => _milestoneDrafts[index].percentController.text = '$percent',
     );
   }
 
@@ -1222,12 +1249,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     );
   }
 
-  Widget _aiSuggestions(AsanaTaskAiFieldKey key) {
+  Widget _aiSuggestions(AsanaTaskAiFieldKey key, {int? linkIndex}) {
     final c = _projectAi;
     if (c == null) return const SizedBox.shrink();
     return AsanaTaskAiInlineSuggestions(
       controller: c,
       fieldKey: key,
+      linkIndex: linkIndex,
       palette: widget.palette,
     );
   }
@@ -2511,6 +2539,18 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             onDraftChanged: () {
               if (mounted) setState(() {});
             },
+            descriptionSuggestion: canEdit
+                ? (index) => _aiSuggestions(
+                    AsanaTaskAiFieldKey.milestoneDescription,
+                    linkIndex: index,
+                  )
+                : null,
+            percentSuggestion: canEdit
+                ? (index) => _aiSuggestions(
+                    AsanaTaskAiFieldKey.milestonePercent,
+                    linkIndex: index,
+                  )
+                : null,
           ),
           AsanaDetailSectionHeader(
             title: 'Tasks',

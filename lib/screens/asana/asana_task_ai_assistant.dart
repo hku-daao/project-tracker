@@ -9,6 +9,7 @@ import '../../priority.dart';
 import '../../services/llm_service.dart';
 import '../../services/database_service.dart';
 import 'asana_project_ai_assistant.dart';
+import 'asana_project_milestone_section.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart';
@@ -33,6 +34,9 @@ enum AsanaTaskAiFieldKey {
   websiteLink,
   projectStatus,
   recurrence,
+  milestones,
+  milestoneDescription,
+  milestonePercent,
 }
 
 class AsanaAiAuditContext {
@@ -58,7 +62,10 @@ bool asanaTaskAiFieldUsesFullWidth(AsanaTaskAiFieldKey key) {
       key == AsanaTaskAiFieldKey.reason ||
       key == AsanaTaskAiFieldKey.comment ||
       key == AsanaTaskAiFieldKey.websiteLink ||
-      key == AsanaTaskAiFieldKey.recurrence;
+      key == AsanaTaskAiFieldKey.recurrence ||
+      key == AsanaTaskAiFieldKey.milestones ||
+      key == AsanaTaskAiFieldKey.milestoneDescription ||
+      key == AsanaTaskAiFieldKey.milestonePercent;
 }
 
 /// Theme-derived colors for the AI assistant chrome and suggestion glow.
@@ -1798,12 +1805,20 @@ class AsanaTaskAiController extends ChangeNotifier {
   }
 
   void _dismissLine(AsanaTaskAiSuggestionLine line) {
-    if (line.fieldKey == AsanaTaskAiFieldKey.websiteLink &&
-        line.linkIndex != null) {
-      dismissWebsiteLink(line.linkIndex!);
+    if (line.linkIndex != null &&
+        (line.fieldKey == AsanaTaskAiFieldKey.websiteLink ||
+            line.fieldKey == AsanaTaskAiFieldKey.milestoneDescription ||
+            line.fieldKey == AsanaTaskAiFieldKey.milestonePercent)) {
+      dismissIndexedField(line.fieldKey, line.linkIndex!);
     } else {
       dismissField(line.fieldKey);
     }
+  }
+
+  void dismissIndexedField(AsanaTaskAiFieldKey key, int index) {
+    final n = lines.length;
+    lines.removeWhere((l) => l.fieldKey == key && l.linkIndex == index);
+    if (lines.length != n) notifyListeners();
   }
 
   void dismissWebsiteLink(int index) {
@@ -1931,8 +1946,11 @@ class AsanaTaskAiController extends ChangeNotifier {
     AsanaTaskAiSuggestionLine line,
     int fallbackIndex,
   ) {
-    if (line.fieldKey == AsanaTaskAiFieldKey.websiteLink) {
-      return 'websiteLink_${line.linkIndex ?? fallbackIndex}';
+    if (line.linkIndex != null &&
+        (line.fieldKey == AsanaTaskAiFieldKey.websiteLink ||
+            line.fieldKey == AsanaTaskAiFieldKey.milestoneDescription ||
+            line.fieldKey == AsanaTaskAiFieldKey.milestonePercent)) {
+      return '${line.fieldKey.name}_${line.linkIndex}';
     }
     return line.fieldKey.name;
   }
@@ -2017,10 +2035,26 @@ class AsanaTaskAiController extends ChangeNotifier {
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
+        if (asanaParseSuggestedMilestones(
+              raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
+            ).isEmpty) {
+          final inferred = asanaInferMilestonesFromPrompt(prompt);
+          if (inferred.isNotEmpty) {
+            raw['hasMilestone'] = true;
+            raw['milestones'] = [
+              for (final item in inferred)
+                {
+                  'description': item.description,
+                  'progressPercent': item.progressPercent,
+                },
+            ];
+          }
+        }
         lines = AsanaProjectAiSuggestionBuilder.build(
           raw: raw,
           form: form,
           apply: projectApply!,
+          userPrompt: prompt,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
         unawaited(_recordAudit(prompt: prompt, raw: raw));
@@ -2401,11 +2435,13 @@ class AsanaTaskAiInlineSuggestions extends StatelessWidget {
     required this.controller,
     required this.fieldKey,
     required this.palette,
+    this.linkIndex,
   });
 
   final AsanaTaskAiController controller;
   final AsanaTaskAiFieldKey fieldKey;
   final AsanaLandingPalette palette;
+  final int? linkIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -2413,7 +2449,10 @@ class AsanaTaskAiInlineSuggestions extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final fieldLines = controller.linesForField(fieldKey);
+        final fieldLines = [
+          for (final line in controller.linesForField(fieldKey))
+            if (linkIndex == null || line.linkIndex == linkIndex) line,
+        ];
         if (fieldLines.isEmpty) return const SizedBox.shrink();
 
         final fullWidth = asanaTaskAiFieldUsesFullWidth(fieldKey);
