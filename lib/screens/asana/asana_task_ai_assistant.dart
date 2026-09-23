@@ -456,6 +456,7 @@ class AsanaSubtaskAiSuggestionBuilder {
     required void Function(String url, String description)? applyWebsiteLink,
     void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
     applyRecurrence,
+    String userPrompt = '',
   }) {
     final lines = <AsanaTaskAiSuggestionLine>[];
 
@@ -674,39 +675,18 @@ class AsanaSubtaskAiSuggestionBuilder {
       }
     }
 
-    final commencementRaw = AsanaTaskAiSuggestionBuilder._str(
-      raw['commencementStatus'],
-    );
-    if (applyCommencementStatus != null &&
-        commencementRaw != null &&
-        commencementRaw.isNotEmpty) {
-      var commencement = AsanaTaskAiSuggestionBuilder._parseCommencementStatus(
-        commencementRaw,
+    if (applyCommencementStatus != null) {
+      AsanaTaskAiSuggestionBuilder.appendCommencementSuggestion(
+        lines: lines,
+        commencementRaw: AsanaTaskAiSuggestionBuilder._str(
+          raw['commencementStatus'],
+        ),
+        userPrompt: userPrompt,
+        currentStatus: form.commencementStatus,
+        recurrenceOn: recurrenceOn,
+        hasProposedDates: proposedStart != null || proposedDue != null,
+        apply: applyCommencementStatus,
       );
-      if (commencement == commencementToBeCommenced &&
-          (proposedStart != null || proposedDue != null || recurrenceOn)) {
-        commencement = commencementCommenced;
-      }
-      if (commencement == null) {
-        lines.add(
-          AsanaTaskAiSuggestionLine.info(
-            'Commence "$commencementRaw" was not recognized (use Commenced or To be commenced).',
-            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
-          ),
-        );
-      } else if (commencement !=
-          normalizeCommencementStatus(form.commencementStatus)) {
-        final resolvedCommencement = commencement;
-        lines.add(
-          AsanaTaskAiSuggestionLine.adopt(
-            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
-            fieldLabel: 'Commence',
-            currentValue: normalizeCommencementStatus(form.commencementStatus),
-            suggestedText: resolvedCommencement,
-            onAdopt: () => applyCommencementStatus(resolvedCommencement),
-          ),
-        );
-      }
     }
 
     final complexityRaw = AsanaTaskAiSuggestionBuilder._str(raw['complexity']);
@@ -959,6 +939,7 @@ class AsanaTaskAiSuggestionBuilder {
     required Map<String, dynamic> raw,
     required AsanaTaskAiFormSnapshot form,
     required AsanaTaskAiApply apply,
+    String userPrompt = '',
   }) {
     final lines = <AsanaTaskAiSuggestionLine>[];
 
@@ -1200,34 +1181,15 @@ class AsanaTaskAiSuggestionBuilder {
       }
     }
 
-    final commencementRaw = _str(raw['commencementStatus']);
-    if (commencementRaw != null && commencementRaw.isNotEmpty) {
-      var commencement = _parseCommencementStatus(commencementRaw);
-      if (commencement == commencementToBeCommenced &&
-          (proposedStart != null || proposedDue != null || recurrenceOn)) {
-        commencement = commencementCommenced;
-      }
-      if (commencement == null) {
-        lines.add(
-          AsanaTaskAiSuggestionLine.info(
-            'Commence "$commencementRaw" was not recognized (use Commenced or To be commenced).',
-            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
-          ),
-        );
-      } else if (commencement !=
-          normalizeCommencementStatus(form.commencementStatus)) {
-        final resolvedCommencement = commencement;
-        lines.add(
-          AsanaTaskAiSuggestionLine.adopt(
-            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
-            fieldLabel: 'Commence',
-            currentValue: normalizeCommencementStatus(form.commencementStatus),
-            suggestedText: resolvedCommencement,
-            onAdopt: () => apply.applyCommencementStatus(resolvedCommencement),
-          ),
-        );
-      }
-    }
+    appendCommencementSuggestion(
+      lines: lines,
+      commencementRaw: _str(raw['commencementStatus']),
+      userPrompt: userPrompt,
+      currentStatus: form.commencementStatus,
+      recurrenceOn: recurrenceOn,
+      hasProposedDates: proposedStart != null || proposedDue != null,
+      apply: apply.applyCommencementStatus,
+    );
 
     final complexityRaw = _str(raw['complexity']);
     if (complexityRaw != null && complexityRaw.isNotEmpty) {
@@ -1506,15 +1468,61 @@ class AsanaTaskAiSuggestionBuilder {
     return null;
   }
 
+  static void appendCommencementSuggestion({
+    required List<AsanaTaskAiSuggestionLine> lines,
+    required String? commencementRaw,
+    required String userPrompt,
+    required String currentStatus,
+    required bool recurrenceOn,
+    required bool hasProposedDates,
+    required void Function(String commencementStatus) apply,
+  }) {
+    final impliedToBe = asanaPromptImpliesToBeCommenced(userPrompt);
+    final raw = commencementRaw?.trim() ?? '';
+    final hadRaw = raw.isNotEmpty;
+    var commencement = hadRaw ? _parseCommencementStatus(raw) : null;
+    if (impliedToBe && !recurrenceOn) {
+      commencement = commencementToBeCommenced;
+    } else if (commencement == commencementToBeCommenced &&
+        (hasProposedDates || recurrenceOn)) {
+      commencement = commencementCommenced;
+    }
+    if (commencement == null) {
+      if (hadRaw && !impliedToBe) {
+        lines.add(
+          AsanaTaskAiSuggestionLine.info(
+            'Commence "$commencementRaw" was not recognized (use Commenced or To be commenced).',
+            fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+          ),
+        );
+      }
+      return;
+    }
+    if (commencement == normalizeCommencementStatus(currentStatus)) {
+      return;
+    }
+    final resolvedCommencement = commencement;
+    lines.add(
+      AsanaTaskAiSuggestionLine.adopt(
+        fieldKey: AsanaTaskAiFieldKey.commencementStatus,
+        fieldLabel: 'Commence',
+        currentValue: normalizeCommencementStatus(currentStatus),
+        suggestedText: resolvedCommencement,
+        onAdopt: () => apply(resolvedCommencement),
+      ),
+    );
+  }
+
   static String? _parseCommencementStatus(String raw) {
     final v = raw.trim().toLowerCase();
-    if (v == 'to be commenced' ||
-        v == 'not commenced' ||
-        v == 'not yet commenced' ||
-        v == 'not started yet') {
+    if (v.isEmpty) return null;
+    if (asanaPromptImpliesToBeCommenced(v) || v.contains('to be commenced')) {
       return commencementToBeCommenced;
     }
-    if (v == 'commenced' || v == 'in progress' || v == 'started') {
+    if (v.contains('commenced') ||
+        v.contains('in progress') ||
+        v.contains('started') ||
+        v.contains('underway')) {
       return commencementCommenced;
     }
     return null;
@@ -2064,6 +2072,9 @@ class AsanaTaskAiController extends ChangeNotifier {
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
+        if (asanaPromptImpliesToBeCommenced(prompt)) {
+          raw['commencementStatus'] = commencementToBeCommenced;
+        }
         lines = AsanaSubtaskAiSuggestionBuilder.build(
           raw: raw,
           form: form,
@@ -2080,6 +2091,7 @@ class AsanaTaskAiController extends ChangeNotifier {
           applyComment: onApplyComment!,
           applyWebsiteLink: onApplyWebsiteLink,
           applyRecurrence: onApplySubtaskRecurrence,
+          userPrompt: prompt,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
         unawaited(_recordAudit(prompt: prompt, raw: raw));
@@ -2089,10 +2101,14 @@ class AsanaTaskAiController extends ChangeNotifier {
           userPrompt: prompt,
           formContext: form.buildLlmContext(),
         );
+        if (asanaPromptImpliesToBeCommenced(prompt)) {
+          raw['commencementStatus'] = commencementToBeCommenced;
+        }
         lines = AsanaTaskAiSuggestionBuilder.build(
           raw: raw,
           form: form,
           apply: apply!,
+          userPrompt: prompt,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
         unawaited(_recordAudit(prompt: prompt, raw: raw));

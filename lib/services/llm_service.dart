@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../commencement_status.dart';
 import '../config/local_llm_config.dart';
 
 /// Task AI assistant — HKU IT Vertex AI Qwen (OpenAI-compatible chat completions).
@@ -151,8 +152,10 @@ Rules:
 - The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
 - For optional structured fields (project, assignees, PIC, priority, commencementStatus, dates, reason, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
-- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date, AND they are not asking for a recurring series. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
-- If the user specifies a start date and/or due date (including relative dates such as "start tomorrow" or "due next Friday"), NEVER suggest "To be commenced". A scheduled start/due date is not the same as "To be commenced". In that case use "Commenced", or omit commencementStatus if it is already Commenced.
+- REQUIRED — commencementStatus: if the user says the work has not commenced, is not yet commenced, not commenced yet, yet to commence, has not started, not started yet, should wait, or should not start yet, you MUST set commencementStatus to exactly "To be commenced". Do not omit this field. Do not use "Commenced" for those phrases. "not yet commenced" and "to be commenced" always mean "To be commenced".
+- commencementStatus: use "Commenced" when the prompt says work has started, is ongoing, is already underway, or has already commenced.
+- Dates already on the current form do NOT override an explicit "not yet commenced" / "not started" request. Still set "To be commenced".
+- If the user newly specifies a start date and/or due date in this prompt (including relative dates such as "start tomorrow") AND they did not also say the work has not commenced / not yet commenced / not started, do not suggest "To be commenced". A scheduled start/due date alone is not "To be commenced".
 - Recurrence is create-only. If context says recurrence cannot be suggested, omit recurrence.
 - Suggest recurrence ONLY when the prompt implies a repeating series (every week, each Monday, daily, monthly, yearly, recurring, repeat until, N occurrences, every 2 weeks, weekdays, first Friday of each month, etc.). For a one-off task, omit recurrence or set enabled false.
 - Recurring dates are START dates of each occurrence. Each occurrence due date is computed as that start date plus workingDays inclusive working days (Standard default 4, URGENT default 2). When recurrence.enabled is true, omit startDate and dueDate.
@@ -191,6 +194,13 @@ Rules:
       ..writeln()
       ..writeln('User prompt:')
       ..writeln(trimmed);
+    if (asanaPromptImpliesToBeCommenced(trimmed)) {
+      user
+        ..writeln()
+        ..writeln(
+          'This prompt says work has not commenced. Your JSON MUST set commencementStatus to "To be commenced". Do not omit that field.',
+        );
+    }
 
     final body = jsonEncode({
       'model': _effectiveModel,
@@ -403,8 +413,10 @@ Rules:
 - The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
 - For optional structured fields (assigneeNames, picName, priority, commencementStatus, dates, reason, comment, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
-- commencementStatus: use "To be commenced" ONLY when the user explicitly says the work has not commenced / has not started yet / should wait before starting, AND they did not give a start date or due date, AND they are not asking for a recurring series. Use "Commenced" when the prompt says work has started, is ongoing, or is already underway.
-- If the user specifies a start date and/or due date (including relative dates such as "start tomorrow" or "due next Friday"), NEVER suggest "To be commenced". A scheduled start/due date is not the same as "To be commenced". In that case use "Commenced", or omit commencementStatus if it is already Commenced.
+- REQUIRED — commencementStatus: if the user says the work has not commenced, is not yet commenced, not commenced yet, yet to commence, has not started, not started yet, should wait, or should not start yet, you MUST set commencementStatus to exactly "To be commenced". Do not omit this field. Do not use "Commenced" for those phrases. "not yet commenced" and "to be commenced" always mean "To be commenced".
+- commencementStatus: use "Commenced" when the prompt says work has started, is ongoing, is already underway, or has already commenced.
+- Dates already on the current form do NOT override an explicit "not yet commenced" / "not started" request. Still set "To be commenced".
+- If the user newly specifies a start date and/or due date in this prompt (including relative dates such as "start tomorrow") AND they did not also say the work has not commenced / not yet commenced / not started, do not suggest "To be commenced". A scheduled start/due date alone is not "To be commenced".
 - Recurrence is create-only. If context says recurrence cannot be suggested, omit recurrence.
 - Suggest recurrence ONLY when the prompt implies a repeating series (every week, each Monday, daily, monthly, yearly, recurring, repeat until, N occurrences, every 2 weeks, weekdays, first Friday of each month, etc.). For a one-off sub-task, omit recurrence or set enabled false.
 - Recurring dates are START dates of each occurrence. Each occurrence due date is computed as that start date plus workingDays inclusive working days (Standard default 4, URGENT default 2). When recurrence.enabled is true, omit startDate and dueDate.
@@ -448,6 +460,13 @@ Rules:
       ..writeln()
       ..writeln('User prompt:')
       ..writeln(trimmed);
+    if (asanaPromptImpliesToBeCommenced(trimmed)) {
+      user
+        ..writeln()
+        ..writeln(
+          'This prompt says work has not commenced. Your JSON MUST set commencementStatus to "To be commenced". Do not omit that field.',
+        );
+    }
 
     final body = jsonEncode({
       'model': _effectiveModel,
