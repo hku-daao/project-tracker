@@ -80,6 +80,117 @@ const _kMilestoneNotAchievedAcronym = 'NA';
 const _kMilestoneStatusWidth = 118.0;
 const _kMilestonePercentReadOnlyWidthCompact = 72.0;
 
+/// Share of the project completed from achieved Active milestones.
+int asanaMilestoneCompletedPercent(Iterable<AsanaMilestoneDraft> rows) {
+  var done = 0;
+  for (final row in rows) {
+    if (row.achieved) done += row.percent;
+  }
+  if (done < 0) return 0;
+  if (done > 100) return 100;
+  return done;
+}
+
+/// Short encouragement for the project-name progress line.
+String asanaMilestoneProgressEncouragement(int percent) {
+  if (percent <= 0) {
+    return 'A clear path ahead — ready when you are.';
+  }
+  if (percent < 25) {
+    return 'A solid start. Keep the momentum going.';
+  }
+  if (percent < 50) {
+    return 'Good progress. You\'re well on your way.';
+  }
+  if (percent < 75) {
+    return 'More than halfway. Stay with it.';
+  }
+  if (percent < 100) {
+    return 'The finish is in sight. One more push.';
+  }
+  return 'Every milestone achieved. Well done.';
+}
+
+/// Progress line shown under the project name when milestones are on.
+class AsanaProjectMilestoneProgressLine extends StatelessWidget {
+  const AsanaProjectMilestoneProgressLine({
+    super.key,
+    required this.enabled,
+    required this.rows,
+  });
+
+  final bool enabled;
+  final List<AsanaMilestoneDraft> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return const SizedBox.shrink();
+    final percent = asanaMilestoneCompletedPercent(rows);
+    final complete = percent >= 100;
+    final percentColor = complete
+        ? const Color(0xFF1B7A4E)
+        : percent <= 0
+        ? kAsanaTextSecondary
+        : Theme.of(context).colorScheme.primary;
+    const fontSize = 13 * 1.3;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$percent% complete',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w700,
+                    color: percentColor,
+                  ),
+                ),
+                TextSpan(
+                  text: '  ·  ${asanaMilestoneProgressEncouragement(percent)}',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w500,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              height: 8,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const ColoredBox(color: Color(0xFFE6E7E8)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: AnimatedFractionallySizedBox(
+                      duration: const Duration(milliseconds: 320),
+                      curve: Curves.easeOutCubic,
+                      widthFactor: percent / 100,
+                      heightFactor: 1,
+                      child: ColoredBox(color: percentColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// When milestones are on, every filled step must be achieved.
 bool asanaMilestonesAllAchieved({
   required bool enabled,

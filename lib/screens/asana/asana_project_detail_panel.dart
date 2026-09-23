@@ -2419,6 +2419,10 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             minLines: 1,
             style: asanaDetailTitleStyle(context),
           ),
+          AsanaProjectMilestoneProgressLine(
+            enabled: _hasMilestone,
+            rows: _milestoneDrafts,
+          ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.taskName),
           const SizedBox(height: 12),
           AsanaDetailLabelValue(

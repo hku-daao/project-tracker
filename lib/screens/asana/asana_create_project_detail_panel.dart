@@ -1260,6 +1260,10 @@ class _AsanaCreateProjectDetailPanelState
             style: asanaDetailTitleStyle(context),
             hintText: 'Please fill in project name',
           ),
+          AsanaProjectMilestoneProgressLine(
+            enabled: _hasMilestone,
+            rows: _milestoneDrafts,
+          ),
           _aiSuggestions(AsanaTaskAiFieldKey.taskName),
           const SizedBox(height: 12),
           AsanaDetailLabelValue(
