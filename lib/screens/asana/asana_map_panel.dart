@@ -146,6 +146,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
     _showProjectsWithoutTasks =
         data['showProjectsWithoutTasks'] as bool? ?? _showProjectsWithoutTasks;
+    _relaxIncompleteStatusForCompletedRanges();
   }
 
   void _replaceStringSet(Set<String> target, Object? value) {
@@ -200,8 +201,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   List<Task> _visibleTasks(AppState state) {
     final tasks = state.tasksForTeams({}).where((task) {
       if (!task.isSingularTableRow) return false;
-      final status = task.dbStatus?.trim().toLowerCase() ?? '';
-      return status != 'deleted' && status != 'delete';
+      return !_isMapHiddenTask(state, task);
     }).toList();
     tasks.sort(_compareTasks);
     return tasks;
@@ -213,7 +213,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   List<SingularSubtask> _sortedSubtasks(List<SingularSubtask> subtasks) {
-    final list = subtasks.where((s) => !s.isDeleted).toList();
+    final list = subtasks.where((s) => !s.isDeleted && !s.isPaused).toList();
     list.sort(
       (a, b) =>
           a.subtaskName.toLowerCase().compareTo(b.subtaskName.toLowerCase()),
@@ -237,58 +237,77 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     final nodes = <_ProjectMapNode>[];
     for (final project in projects) {
       final tasks = tasksByProject[project.id] ?? const <Task>[];
-      final projectMatches =
+      final projectSearch =
           _matches(project.name, query) ||
           _matches(_projectPicLabel(project), query) ||
           _matches(project.status, query);
-      final projectPassesFilters = _passesProjectFilters(state, project);
-      if (!projectPassesFilters) continue;
-      final projectOwnMatches =
-          projectPassesFilters && _passesSearch(projectMatches, query);
+      final projectGroupHit =
+          _hasProjectFilters && _passesProjectFilters(state, project);
       final taskNodes = <_TaskMapNode>[];
       for (final task in tasks) {
+        if (_isMapHiddenTask(state, task)) continue;
         final subtasks = _subtasksByTask[task.id] ?? const <SingularSubtask>[];
         final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
+        final taskGroupHit =
+            _hasTaskFilters && _passesTaskFilters(state, task, taskStatus);
         final taskPic = _staffName(state, task.pic);
-        final taskMatches =
+        final taskSearch =
             _matches(task.name, query) ||
             _matches(taskPic, query) ||
             _matches(taskStatus, query);
-        final taskOwnMatches =
-            _passesTaskFilters(state, task, taskStatus) &&
-            _passesSearch(taskMatches, query);
         final subtaskNodes = <SingularSubtask>[];
         for (final subtask in subtasks) {
+          if (_isMapHiddenSubtask(state, task, subtask)) continue;
           final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
             state,
             task,
             subtask,
           );
+          final subGroupHit =
+              _hasSubtaskFilters && _passesSubtaskFilters(subtask, subStatus);
+          final includeSub =
+              (!_hasSubtaskFilters || subGroupHit) &&
+              (!_hasAnyGroupFilters ||
+                  subGroupHit ||
+                  taskGroupHit ||
+                  projectGroupHit);
+          if (!includeSub) continue;
           final subPic = _staffName(state, subtask.pic);
-          final subMatches =
+          final subSearch =
               _matches(subtask.subtaskName, query) ||
               _matches(subPic, query) ||
               _matches(subStatus, query);
-          if (!_passesSubtaskFilters(subtask, subStatus)) continue;
-          final subOwnMatches =
-              (_hasSubtaskFilters || query.isNotEmpty) &&
-              _passesSearch(subMatches, query);
-          if (subOwnMatches ||
-              (projectOwnMatches && !_hasTaskOrSubtaskFilters) ||
-              (taskOwnMatches && !_hasSubtaskFilters)) {
-            subtaskNodes.add(subtask);
+          if (!_passesSearch(
+            subSearch || taskSearch || projectSearch,
+            query,
+          )) {
+            continue;
           }
+          subtaskNodes.add(subtask);
         }
-        if (taskOwnMatches ||
-            subtaskNodes.isNotEmpty ||
-            (projectOwnMatches && !_hasTaskOrSubtaskFilters)) {
-          taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
+        final includeTask =
+            (!_hasTaskFilters || taskGroupHit) &&
+            (!_hasAnyGroupFilters ||
+                taskGroupHit ||
+                projectGroupHit ||
+                subtaskNodes.isNotEmpty);
+        if (!includeTask) continue;
+        if (!_passesSearch(
+          taskSearch || projectSearch || subtaskNodes.isNotEmpty,
+          query,
+        )) {
+          continue;
         }
+        taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
       }
+      final includeProject =
+          !_hasAnyGroupFilters || projectGroupHit || taskNodes.isNotEmpty;
+      if (!includeProject) continue;
       if (taskNodes.isEmpty && !_showProjectsWithoutTasks) continue;
-      if (projectOwnMatches || taskNodes.isNotEmpty) {
-        nodes.add(_ProjectMapNode(project: project, tasks: taskNodes));
+      if (!_passesSearch(projectSearch || taskNodes.isNotEmpty, query)) {
+        continue;
       }
+      nodes.add(_ProjectMapNode(project: project, tasks: taskNodes));
     }
     for (final node in nodes) {
       node.tasks.sort((a, b) => _compareTaskNodes(state, a, b));
@@ -302,46 +321,53 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   List<_TaskMapNode> _buildStandaloneTaskNodes(AppState state) {
-    if (_hasProjectFilters) return const [];
+    if (_hasProjectFilters && !_hasTaskOrSubtaskFilters) return const [];
     final query = widget.searchQuery.trim().toLowerCase();
     final nodes = <_TaskMapNode>[];
     for (final task in _visibleTasks(state)) {
       final projectId = task.projectId?.trim();
       if (projectId != null && projectId.isNotEmpty) continue;
+      if (_isMapHiddenTask(state, task)) continue;
       final subtasks = _subtasksByTask[task.id] ?? const <SingularSubtask>[];
       final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
+      final taskGroupHit =
+          _hasTaskFilters && _passesTaskFilters(state, task, taskStatus);
       final taskPic = _staffName(state, task.pic);
-      final taskMatches =
+      final taskSearch =
           _matches(task.name, query) ||
           _matches(taskPic, query) ||
           _matches(taskStatus, query);
-      final taskOwnMatches =
-          _passesTaskFilters(state, task, taskStatus) &&
-          _passesSearch(taskMatches, query);
       final subtaskNodes = <SingularSubtask>[];
       for (final subtask in subtasks) {
+        if (_isMapHiddenSubtask(state, task, subtask)) continue;
         final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
           state,
           task,
           subtask,
         );
+        final subGroupHit =
+            _hasSubtaskFilters && _passesSubtaskFilters(subtask, subStatus);
+        final includeSub =
+            (!_hasSubtaskFilters || subGroupHit) &&
+            (!_hasTaskOrSubtaskFilters || subGroupHit || taskGroupHit);
+        if (!includeSub) continue;
         final subPic = _staffName(state, subtask.pic);
-        final subMatches =
+        final subSearch =
             _matches(subtask.subtaskName, query) ||
             _matches(subPic, query) ||
             _matches(subStatus, query);
-        if (!_passesSubtaskFilters(subtask, subStatus)) continue;
-        final subOwnMatches =
-            (_hasSubtaskFilters || query.isNotEmpty) &&
-            _passesSearch(subMatches, query);
-        if (subOwnMatches || (taskOwnMatches && !_hasSubtaskFilters)) {
-          subtaskNodes.add(subtask);
-        }
+        if (!_passesSearch(subSearch || taskSearch, query)) continue;
+        subtaskNodes.add(subtask);
       }
-      if (taskOwnMatches || subtaskNodes.isNotEmpty) {
-        subtaskNodes.sort((a, b) => _compareSubtasks(state, task, a, b));
-        nodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
+      final includeTask =
+          (!_hasTaskFilters || taskGroupHit) &&
+          (!_hasTaskOrSubtaskFilters || taskGroupHit || subtaskNodes.isNotEmpty);
+      if (!includeTask) continue;
+      if (!_passesSearch(taskSearch || subtaskNodes.isNotEmpty, query)) {
+        continue;
       }
+      subtaskNodes.sort((a, b) => _compareSubtasks(state, task, a, b));
+      nodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
     }
     nodes.sort((a, b) => _compareTaskNodes(state, a, b));
     return nodes;
@@ -355,13 +381,17 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _projectStartMonth != null ||
       _projectEndMonth != null;
 
-  bool get _hasTaskOrSubtaskFilters =>
+  bool get _hasTaskFilters =>
       _taskCreatorTeamIds.isNotEmpty ||
       _taskPicIds.isNotEmpty ||
       _taskStatuses.isNotEmpty ||
-      _subtaskStatuses.isNotEmpty ||
-      _taskCompletedDateEngaged ||
-      _subtaskCompletedDateEngaged;
+      _taskCompletedDateEngaged;
+
+  bool get _hasTaskOrSubtaskFilters =>
+      _hasTaskFilters || _hasSubtaskFilters;
+
+  bool get _hasAnyGroupFilters =>
+      _hasProjectFilters || _hasTaskFilters || _hasSubtaskFilters;
 
   bool get _hasSubtaskFilters =>
       _subtaskStatuses.isNotEmpty || _subtaskCompletedDateEngaged;
@@ -472,6 +502,25 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     });
   }
 
+  /// Completed From/To means All or Completed. Incomplete is cleared to All.
+  void _relaxIncompleteStatusForCompletedRange(Set<String> statuses) {
+    statuses.removeWhere(_isIncompleteStatusKey);
+  }
+
+  void _relaxIncompleteStatusForCompletedRanges() {
+    if (_taskCompletedDateEngaged) {
+      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
+    }
+    if (_subtaskCompletedDateEngaged) {
+      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
+    }
+  }
+
+  bool _isIncompleteStatusKey(String status) {
+    final key = _statusKey(status);
+    return key == 'incomplete' || key == 'incompleted';
+  }
+
   bool _passesTaskFilters(AppState state, Task task, String taskStatus) {
     return _passesTeamFilter(
           state,
@@ -484,6 +533,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           task.completionDate,
           _taskCompletedStart,
           _taskCompletedEnd,
+          status: taskStatus,
         );
   }
 
@@ -493,15 +543,18 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           subtask.completionDate,
           _subtaskCompletedStart,
           _subtaskCompletedEnd,
+          status: status,
         );
   }
 
   bool _passesCompletionDateRange(
     DateTime? completionDate,
     DateTime? rangeStart,
-    DateTime? rangeEnd,
-  ) {
+    DateTime? rangeEnd, {
+    String? status,
+  }) {
     if (rangeStart == null && rangeEnd == null) return true;
+    if (status != null && !_mapBlockIsCompleted(status)) return false;
     final day = _hkDateOnly(completionDate);
     if (day == null) return false;
     if (rangeStart != null) {
@@ -539,6 +592,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   String _statusKey(String status) => status.trim().toLowerCase();
+
+  bool _isMapHiddenTask(AppState state, Task task) {
+    final status = task.dbStatus?.trim().toLowerCase() ?? '';
+    if (status == 'deleted' || status == 'delete') return true;
+    return AsanaTaskFilter.taskEffectivelyPaused(state, task);
+  }
+
+  bool _isMapHiddenSubtask(
+    AppState state,
+    Task parent,
+    SingularSubtask subtask,
+  ) {
+    if (subtask.isDeleted) return true;
+    return AsanaTaskFilter.subtaskEffectivelyPaused(state, parent, subtask);
+  }
 
   bool _matches(String? value, String query) {
     if (query.isEmpty) return true;
@@ -893,14 +961,17 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   Iterable<String> _taskStatusValues(AppState state) sync* {
     for (final task in _visibleTasks(state)) {
+      if (_isMapHiddenTask(state, task)) continue;
       yield AsanaTaskFilter.taskDisplayStatus(state, task);
     }
   }
 
   Iterable<String> _subtaskStatusValues(AppState state) sync* {
     for (final task in _visibleTasks(state)) {
+      if (_isMapHiddenTask(state, task)) continue;
       for (final subtask
           in _subtasksByTask[task.id] ?? const <SingularSubtask>[]) {
+        if (_isMapHiddenSubtask(state, task, subtask)) continue;
         yield AsanaTaskFilter.subtaskDisplayStatus(state, task, subtask);
       }
     }
@@ -1067,6 +1138,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             palette: widget.palette,
             createLabel: '',
             onCreate: null,
+            alignFiltersLeft: true,
             onClearAll: () {
               _applyFilters(() {
                 _projectCreatorTeamIds.clear();
@@ -1166,6 +1238,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
               ),
+            ],
+            secondRowFilterChildren: [
               AsanaFilterDropdown(
                 title: 'Task Team',
                 value: _filterLabel(_taskCreatorTeamIds, state.teamNameById),
@@ -1217,6 +1291,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _taskCompletedStart = start;
                     _taskCompletedEnd = end;
+                    if (start != null || end != null) {
+                      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
+                    }
                   },
                 ),
               ),
@@ -1232,6 +1309,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _taskCompletedStart = start;
                     _taskCompletedEnd = end;
+                    if (start != null || end != null) {
+                      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
+                    }
                   },
                 ),
               ),
@@ -1260,6 +1340,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _subtaskCompletedStart = start;
                     _subtaskCompletedEnd = end;
+                    if (start != null || end != null) {
+                      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
+                    }
                   },
                 ),
               ),
@@ -1275,6 +1358,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _subtaskCompletedStart = start;
                     _subtaskCompletedEnd = end;
+                    if (start != null || end != null) {
+                      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
+                    }
                   },
                 ),
               ),
@@ -1630,6 +1716,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
   static const double _padding = 22;
   static const double _toggleHeight = 28;
   static const double _fontScale = 1.25;
+  static const double _nameToPicGap = 6.5;
 
   final AsanaLandingPalette palette;
   final AppState state;
@@ -1657,6 +1744,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
       name: node.project.name,
       pic: _projectPicLabel(node.project),
       status: status,
+      completed: _mapBlockIsCompleted(status),
       detailLabel: AsanaStatusChip.statusStyle(status).$1,
       onTap: () => onOpenProject?.call(node.project.id),
       children: [
@@ -1738,6 +1826,7 @@ _DiagramNode _taskDiagramNode({
     name: taskNode.task.name,
     pic: _staffNameFor(state, taskNode.task.pic),
     status: taskStatus,
+    completed: _mapBlockIsCompleted(taskStatus),
     detailLabel: _mapBlockDetailLabel(
       taskStatus,
       taskNode.task.endDate,
@@ -1767,6 +1856,7 @@ _DiagramNode _taskDiagramNode({
               name: subtask.subtaskName,
               pic: _staffNameFor(state, subtask.pic),
               status: subStatus,
+              completed: _mapBlockIsCompleted(subStatus),
               detailLabel: _mapBlockDetailLabel(
                 subStatus,
                 subtask.dueDate,
@@ -1783,6 +1873,11 @@ _DiagramNode _taskDiagramNode({
   );
 }
 
+bool _mapBlockIsCompleted(String status) {
+  final statusKey = status.trim().toLowerCase();
+  return statusKey == 'completed' || statusKey == 'complete';
+}
+
 String _mapBlockDetailLabel(
   String status,
   DateTime? due,
@@ -1793,13 +1888,15 @@ String _mapBlockDetailLabel(
     return 'Submitted';
   }
   final statusKey = status.trim().toLowerCase();
-  if (statusKey == 'incomplete') {
-    return due == null ? '—' : HkTime.formatInstantAsHk(due, 'MMM d, yyyy');
+  String dateOrDash(DateTime? value) {
+    return value == null ? '—' : HkTime.formatInstantAsHk(value, 'MMM d, yyyy');
   }
-  if (statusKey == 'completed' || statusKey == 'complete') {
-    if (completionDate != null) {
-      return HkTime.formatInstantAsHk(completionDate, 'MMM d, yyyy');
-    }
+
+  if (statusKey == 'incomplete') {
+    return 'Due: ${dateOrDash(due)}';
+  }
+  if (_mapBlockIsCompleted(status)) {
+    return 'Comp: ${dateOrDash(completionDate)}';
   }
   return AsanaStatusChip.statusStyle(status).$1;
 }
@@ -2024,7 +2121,7 @@ class _GenericTreeDiagram extends StatelessWidget {
         : 0;
     return 8 +
         nameH +
-        5 +
+        _ProjectTreeDiagram._nameToPicGap +
         picH +
         detailH +
         8 +
@@ -2242,7 +2339,11 @@ class _DiagramBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = _DiagramBoxStyle.forType(item.node.type, palette);
+    final style = _DiagramBoxStyle.forType(
+      item.node.type,
+      palette,
+      completed: item.node.completed,
+    );
     final canExpand = item.node.canExpand;
     final textTheme = theme.textTheme;
     final content = InkWell(
@@ -2264,7 +2365,7 @@ class _DiagramBox extends StatelessWidget {
                 textTheme,
               ).copyWith(color: style.text),
             ),
-            const SizedBox(height: 5),
+            const SizedBox(height: _ProjectTreeDiagram._nameToPicGap),
             Text(
               item.node.pic.trim().isEmpty ? '—' : item.node.pic.trim(),
               textAlign: TextAlign.center,
@@ -2311,19 +2412,35 @@ class _DiagramBox extends StatelessWidget {
       );
     }
 
-    final dueBadge = item.node.type == _DiagramNodeType.project
+    final cornerBadge = item.node.completed
+        ? 'Completed'
+        : item.node.type == _DiagramNodeType.project
         ? null
         : AsanaDueBadge.labelFor(
             due: item.node.dueDate,
             status: item.node.status,
             submission: item.node.submission,
           );
+    Widget inner = sideExpand
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: content),
+              if (canExpand) toggleBar(vertical: true),
+            ],
+          )
+        : Column(
+            children: [
+              Expanded(child: content),
+              if (canExpand) toggleBar(vertical: false),
+            ],
+          );
     final box = Material(
       color: Colors.transparent,
       child: Ink(
         decoration: BoxDecoration(
           color: style.background,
-          border: Border.all(color: style.border),
+          border: Border.all(color: style.border, width: style.borderWidth),
           borderRadius: BorderRadius.circular(8),
           boxShadow: const [
             BoxShadow(
@@ -2335,24 +2452,11 @@ class _DiagramBox extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(7),
-          child: sideExpand
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: content),
-                    if (canExpand) toggleBar(vertical: true),
-                  ],
-                )
-              : Column(
-                  children: [
-                    Expanded(child: content),
-                    if (canExpand) toggleBar(vertical: false),
-                  ],
-                ),
+          child: inner,
         ),
       ),
     );
-    if (dueBadge == null) return box;
+    if (cornerBadge == null) return box;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -2362,7 +2466,7 @@ class _DiagramBox extends StatelessWidget {
           right: 0,
           child: FractionalTranslation(
             translation: const Offset(1 / 3, 0),
-            child: AsanaDueBadge(label: dueBadge),
+            child: AsanaDueBadge(label: cornerBadge),
           ),
         ),
       ],
@@ -2486,20 +2590,23 @@ class _DiagramBoxStyle {
     required this.border,
     required this.text,
     required this.secondaryText,
+    this.borderWidth = 1,
   });
 
   final Color background;
   final Color border;
   final Color text;
   final Color secondaryText;
+  final double borderWidth;
 
   Color get toggleBackground =>
       Color.alphaBlend(Colors.black.withValues(alpha: 0.14), background);
 
   static _DiagramBoxStyle forType(
     _DiagramNodeType type,
-    AsanaLandingPalette palette,
-  ) {
+    AsanaLandingPalette palette, {
+    bool completed = false,
+  }) {
     final surface = palette.listSurface;
     final accent = palette.accent;
     switch (type) {
@@ -2516,7 +2623,8 @@ class _DiagramBoxStyle {
             accent.withValues(alpha: palette.darkChrome ? 0.34 : 0.28),
             surface,
           ),
-          border: accent.withValues(alpha: 0.52),
+          border: accent.withValues(alpha: completed ? 0.92 : 0.52),
+          borderWidth: completed ? 2.4 : 1,
           text: kAsanaTextPrimary,
           secondaryText: kAsanaTextSecondary,
         );
@@ -2526,7 +2634,8 @@ class _DiagramBoxStyle {
             accent.withValues(alpha: palette.darkChrome ? 0.13 : 0.12),
             surface,
           ),
-          border: accent.withValues(alpha: 0.52),
+          border: accent.withValues(alpha: completed ? 0.92 : 0.52),
+          borderWidth: completed ? 2.4 : 1,
           text: kAsanaTextPrimary,
           secondaryText: kAsanaTextSecondary,
         );
@@ -2544,6 +2653,7 @@ class _DiagramNode {
     required this.detailLabel,
     required this.onTap,
     required this.children,
+    this.completed = false,
     this.dueDate,
     this.submission,
     this.canExpand = false,
@@ -2556,6 +2666,7 @@ class _DiagramNode {
   final String name;
   final String pic;
   final String status;
+  final bool completed;
   final String detailLabel;
   final DateTime? dueDate;
   final String? submission;

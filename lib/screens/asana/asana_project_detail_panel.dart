@@ -1134,12 +1134,23 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       final projects = await DatabaseService.fetchAllProjects();
       if (mounted) state.applyProjects(projects);
       await _loadProject();
+      await _syncChildTasksAfterComplete(state);
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
+  }
+
+  Future<void> _syncChildTasksAfterComplete(AppState state) async {
+    final list = await DatabaseService.fetchSingularTasksForProject(
+      widget.projectId,
+    );
+    for (final task in list) {
+      state.replaceTask(task);
+    }
+    await _loadProjectTasks();
   }
 
   AsanaProjectAiFormSnapshot _aiFormSnapshot(AppState state) {
@@ -2380,6 +2391,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       final projects = await DatabaseService.fetchAllProjects();
       if (mounted) state.applyProjects(projects);
       await _loadProject();
+      if (status == 'Completed') {
+        await _syncChildTasksAfterComplete(state);
+      }
       await _loadComments();
       await _loadAttachments();
       await _loadProjectDescriptionInlineImages();

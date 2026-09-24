@@ -70,6 +70,12 @@ class QueryBuilder {
     return this;
   }
 
+  in(column, values) {
+    const list = Array.isArray(values) ? values : [values];
+    this.filters.push({ column, op: 'in', value: list });
+    return this;
+  }
+
   ilike(column, value) {
     this.filters.push({ column, op: 'ilike', value });
     return this;
@@ -237,6 +243,15 @@ function buildWhere(filters, startIndex) {
     if (f.op === 'ilike') {
       parts.push(`${quoteIdent(f.column)} ILIKE $${idx++}`);
       values.push(f.value);
+    } else if (f.op === 'in') {
+      const list = Array.isArray(f.value) ? f.value : [f.value];
+      if (list.length === 0) {
+        parts.push('FALSE');
+        continue;
+      }
+      const placeholders = list.map(() => `$${idx++}`).join(', ');
+      parts.push(`${quoteIdent(f.column)} IN (${placeholders})`);
+      values.push(...list);
     } else {
       parts.push(`${quoteIdent(f.column)} = $${idx++}`);
       values.push(f.value);

@@ -758,6 +758,14 @@ class DatabaseService {
         final projectTouchError = await _touchTaskProjectFromTaskRow(taskId);
         if (projectTouchError != null) return projectTouchError;
       }
+      if (_isCompletedStatusValue(status)) {
+        final cascadeErr = await markSubtasksCompletedForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+          completionDateAt: completionDateAt,
+        );
+        if (cascadeErr != null) return cascadeErr;
+      }
       return null;
     } catch (e) {
       return e.toString();
@@ -868,6 +876,141 @@ class DatabaseService {
             .eq('id', sid);
       }
       invalidateSubtasksCacheForTask(tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static bool _isCompletedStatusValue(String? value) {
+    final s = value?.trim().toLowerCase() ?? '';
+    return s == 'completed' || s == 'complete';
+  }
+
+  static Map<String, dynamic> _completedStatusPatch({
+    required DateTime completionDateAt,
+    String? updateByStaffId,
+  }) {
+    final map = <String, dynamic>{
+      'status': 'Completed',
+      'submission': 'Accepted',
+      'completion_date': HkTime.timestampForDbFromStoredUtc(
+        completionDateAt.toUtc(),
+      ),
+      'pause_status': 'Not Paused',
+      'update_date': HkTime.timestampForDb(),
+    };
+    final staffId = updateByStaffId?.trim();
+    if (staffId != null && staffId.isNotEmpty) {
+      map['update_by'] = staffId;
+    }
+    return map;
+  }
+
+  /// When a parent [task] is marked Completed, set every non-deleted
+  /// incomplete sub-task under it to Completed.
+  static Future<String?> markSubtasksCompletedForParentTask({
+    required String taskId,
+    String? updateByStaffLookupKey,
+    DateTime? completionDateAt,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final tid = taskId.trim();
+    if (tid.isEmpty) return 'task id required';
+    try {
+      final rows = await _fetchSubtaskRawRowsForTask(tid);
+      final ids = <String>[];
+      for (final row in rows) {
+        if (!_subtaskRowStatusNotDeleted(row)) continue;
+        if (_isCompletedStatusValue(_dbStatusRawFromRow(row['status']))) {
+          continue;
+        }
+        final sid = row['id']?.toString().trim();
+        if (sid != null && sid.isNotEmpty) ids.add(sid);
+      }
+      if (ids.isEmpty) {
+        invalidateSubtasksCacheForTask(tid);
+        return null;
+      }
+      final lookup = updateByStaffLookupKey?.trim();
+      String? staffId;
+      if (lookup != null && lookup.isNotEmpty) {
+        staffId = await _staffRowIdForAssigneeKey(lookup);
+      }
+      final map = _completedStatusPatch(
+        completionDateAt: completionDateAt ?? DateTime.now().toUtc(),
+        updateByStaffId: staffId,
+      );
+      Future<void> apply(Map<String, dynamic> patch) async {
+        const chunkSize = 80;
+        for (var i = 0; i < ids.length; i += chunkSize) {
+          final end = i + chunkSize > ids.length ? ids.length : i + chunkSize;
+          await PostgrestClient.instance
+              .from('subtask')
+              .update(patch)
+              .inFilter('id', ids.sublist(i, end));
+        }
+      }
+
+      try {
+        await apply(map);
+      } catch (_) {
+        final fallback = Map<String, dynamic>.from(map)
+          ..remove('pause_status');
+        await apply(fallback);
+      }
+      invalidateSubtasksCacheForTask(tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// When a parent [project] is marked Completed, set every non-deleted
+  /// incomplete task under it to Completed, then cascade each task to its
+  /// sub-tasks.
+  static Future<String?> markTasksAndSubtasksCompletedForProject({
+    required String projectId,
+    String? updateByStaffLookupKey,
+    DateTime? completionDateAt,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = projectId.trim();
+    if (pid.isEmpty) return 'project id required';
+    try {
+      final res = await PostgrestClient.instance
+          .from('task')
+          .select()
+          .eq('project_id', pid);
+      final lookup = updateByStaffLookupKey?.trim();
+      String? staffId;
+      if (lookup != null && lookup.isNotEmpty) {
+        staffId = await _staffRowIdForAssigneeKey(lookup);
+      }
+      final completedAt = completionDateAt ?? DateTime.now().toUtc();
+      final map = _completedStatusPatch(
+        completionDateAt: completedAt,
+        updateByStaffId: staffId,
+      );
+      for (final raw in (res as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final status = _dbStatusRawFromRow(row['status']).toLowerCase();
+        if (status == 'deleted' || status == 'delete') continue;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        if (!_isCompletedStatusValue(status)) {
+          await PostgrestClient.instance
+              .from('task')
+              .update(map)
+              .eq('id', taskId);
+        }
+        await markSubtasksCompletedForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+          completionDateAt: completedAt,
+        );
+      }
+      clearSubtaskListMemoryCache();
       return null;
     } catch (e) {
       return e.toString();
@@ -1949,6 +2092,13 @@ class DatabaseService {
           .from('project')
           .update(map)
           .eq('id', projectId);
+      if (_isCompletedStatusValue(status)) {
+        final cascadeErr = await markTasksAndSubtasksCompletedForProject(
+          projectId: projectId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (cascadeErr != null) return cascadeErr;
+      }
       return null;
     } catch (e, st) {
       debugPrint('PROJECT_UPDATE_ERROR projectId=$projectId payload=$map');

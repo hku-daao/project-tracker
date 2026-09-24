@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../utils/hk_time.dart';
 import 'asana_theme.dart';
 
-/// Same Overdue / Due today chip used on Tasks and All tasks & sub-tasks.
+/// Same Overdue / Due today / Completed chip used on task lists and map blocks.
 class AsanaDueBadge extends StatelessWidget {
   const AsanaDueBadge({super.key, required this.label});
 
@@ -30,9 +30,20 @@ class AsanaDueBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final overdue = label == 'Overdue';
-    final bg = overdue ? const Color(0xFFFFEBEE) : const Color(0xFFFFF3E0);
-    final fg = overdue ? const Color(0xFFC62828) : const Color(0xFFE65100);
+    final (:bg, :fg) = switch (label) {
+      'Overdue' => (
+        bg: const Color(0xFFFFEBEE),
+        fg: const Color(0xFFC62828),
+      ),
+      'Completed' => (
+        bg: const Color(0xFFE8F5E9),
+        fg: const Color(0xFF2E7D32),
+      ),
+      _ => (
+        bg: const Color(0xFFFFF3E0),
+        fg: const Color(0xFFE65100),
+      ),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(

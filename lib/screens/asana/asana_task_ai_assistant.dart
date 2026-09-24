@@ -479,6 +479,7 @@ class AsanaSubtaskAiSuggestionBuilder {
       currentEnabled: form.recurrenceEnabled,
       currentDraft: form.recurrence,
       apply: applyRecurrence,
+      userPrompt: userPrompt,
     );
     if (recurrenceOn) {
       datesBlocked = true;
@@ -958,6 +959,7 @@ class AsanaTaskAiSuggestionBuilder {
       currentEnabled: form.recurrenceEnabled,
       currentDraft: form.recurrence,
       apply: apply.applyRecurrence,
+      userPrompt: userPrompt,
     );
     if (recurrenceOn) {
       datesBlocked = true;
@@ -1310,6 +1312,7 @@ class AsanaTaskAiSuggestionBuilder {
     required AsanaRecurrenceDraft? currentDraft,
     required void Function(AsanaRecurrenceDraft draft, {required bool enabled})?
     apply,
+    String userPrompt = '',
   }) {
     if (raw == null) return false;
     if (!canSuggest || apply == null) {
@@ -1328,6 +1331,9 @@ class AsanaTaskAiSuggestionBuilder {
       fallback: currentDraft ?? AsanaRecurrenceDraft.seeded(),
     );
     if (parsed == null) return false;
+    if (userPrompt.trim().isNotEmpty) {
+      asanaCorrectWeeklyDurationCount(parsed.draft, userPrompt);
+    }
     for (final warning in parsed.warnings) {
       lines.add(
         AsanaTaskAiSuggestionLine.info(

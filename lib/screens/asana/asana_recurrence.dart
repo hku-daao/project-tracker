@@ -424,30 +424,43 @@ bool _sameDate(DateTime a, DateTime b) {
 int? asanaParseRecurrenceWeekday(String raw) {
   switch (raw.trim().toLowerCase()) {
     case 'monday':
+    case 'mondays':
     case 'mon':
     case 'mo':
       return DateTime.monday;
     case 'tuesday':
+    case 'tuesdays':
     case 'tue':
+    case 'tues':
     case 'tu':
       return DateTime.tuesday;
     case 'wednesday':
+    case 'wednesdays':
+    case 'wedensday':
+    case 'wedensdays':
+    case 'wensday':
     case 'wed':
     case 'we':
       return DateTime.wednesday;
     case 'thursday':
+    case 'thursdays':
     case 'thu':
+    case 'thur':
+    case 'thurs':
     case 'th':
       return DateTime.thursday;
     case 'friday':
+    case 'fridays':
     case 'fri':
     case 'fr':
       return DateTime.friday;
     case 'saturday':
+    case 'saturdays':
     case 'sat':
     case 'sa':
       return DateTime.saturday;
     case 'sunday':
+    case 'sundays':
     case 'sun':
     case 'su':
       return DateTime.sunday;
@@ -496,6 +509,77 @@ int? asanaParseRecurrenceMonth(dynamic raw) {
     if (t == name || t == name.substring(0, 3)) return i + 1;
   }
   return null;
+}
+
+/// Weekdays named in a free-text prompt (Monday, Wed, friday, …).
+Set<int> asanaWeekdaysMentionedInPrompt(String prompt) {
+  final days = <int>{};
+  final matches = RegExp(
+    r'\b(mondays?|mon|tuesdays?|tues|tue|wednesdays?|wedensdays?|wensdays?|wed|thursdays?|thurs|thur|thu|fridays?|fri|saturdays?|sat|sundays?|sun)\b',
+    caseSensitive: false,
+  ).allMatches(prompt);
+  for (final match in matches) {
+    final day = asanaParseRecurrenceWeekday(match.group(0)!);
+    if (day != null) days.add(day);
+  }
+  return days;
+}
+
+/// "for/over/across N weeks" duration. Not "every N weeks" (that is interval).
+int? asanaPromptRecurrenceWeekSpan(String prompt) {
+  final match = RegExp(
+    r'(?:for|over|across)\s+(\d+)\s+weeks?\b',
+    caseSensitive: false,
+  ).firstMatch(prompt);
+  if (match == null) return null;
+  final n = int.tryParse(match.group(1)!);
+  if (n == null || n < 1) return null;
+  return n;
+}
+
+/// Occurrence count for weekly days × N weeks. Example: Mon/Wed/Fri for 2 weeks → 6.
+int? asanaExpectedWeeklyOccurrencesFromPrompt(String prompt) {
+  final weeks = asanaPromptRecurrenceWeekSpan(prompt);
+  if (weeks == null) return null;
+  final days = asanaWeekdaysMentionedInPrompt(prompt);
+  if (days.isEmpty) return null;
+  return weeks * days.length;
+}
+
+String? asanaPromptRecurrenceDurationHint(String prompt) {
+  final weeks = asanaPromptRecurrenceWeekSpan(prompt);
+  final days = asanaWeekdaysMentionedInPrompt(prompt);
+  final expected = asanaExpectedWeeklyOccurrencesFromPrompt(prompt);
+  if (weeks == null || days.isEmpty || expected == null) return null;
+  final names = (days.toList()..sort())
+      .map(_weekdayLongName)
+      .where((n) => n.isNotEmpty)
+      .join(', ');
+  return 'This prompt repeats on $names for $weeks weeks. '
+      'Set recurrence.enabled true, frequency Weekly, weeklyWeekdays ['
+      '$names], endMode afterCount, endAfterCount $expected '
+      '(${days.length} weekdays × $weeks weeks). '
+      'endAfterCount is the number of created tasks, not $weeks.';
+}
+
+void asanaCorrectWeeklyDurationCount(
+  AsanaRecurrenceDraft draft,
+  String prompt,
+) {
+  final weeks = asanaPromptRecurrenceWeekSpan(prompt);
+  final mentioned = asanaWeekdaysMentionedInPrompt(prompt);
+  final expected = asanaExpectedWeeklyOccurrencesFromPrompt(prompt);
+  if (weeks == null || mentioned.isEmpty || expected == null) return;
+  draft.frequency = AsanaRecurrenceFrequency.weekly;
+  if (draft.weeklyWeekdays.isEmpty ||
+      !mentioned.every(draft.weeklyWeekdays.contains)) {
+    draft.weeklyWeekdays = mentioned;
+  }
+  if (draft.endMode == AsanaRecurrenceEndMode.byDate) return;
+  if (draft.endAfterCount == weeks || draft.endAfterCount < expected) {
+    draft.endMode = AsanaRecurrenceEndMode.afterCount;
+    draft.endAfterCount = expected.clamp(1, AsanaRecurrenceDraft.maxOccurrences);
+  }
 }
 
 DateTime? asanaParseRecurrenceYmd(String raw) {

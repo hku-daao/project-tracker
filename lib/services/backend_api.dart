@@ -86,7 +86,7 @@ class BackendApi {
     }
   }
 
-  /// One email per assignee after a recurring task series is created.
+  /// One series email to each unique assignee/PIC after a recurring task create.
   Future<String?> notifyRecurringTasksAssigned({
     required String idToken,
     required List<String> taskIds,
@@ -120,7 +120,7 @@ class BackendApi {
     }
   }
 
-  /// One email per assignee after a recurring subtask series is created.
+  /// One series email to each unique assignee/PIC after a recurring subtask create.
   Future<String?> notifyRecurringSubtasksAssigned({
     required String idToken,
     required List<String> subtaskIds,

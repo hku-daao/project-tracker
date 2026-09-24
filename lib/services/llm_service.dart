@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../commencement_status.dart';
 import '../config/local_llm_config.dart';
+import '../screens/asana/asana_recurrence.dart';
 
 /// Task AI assistant — HKU IT Vertex AI Qwen (OpenAI-compatible chat completions).
 ///
@@ -165,8 +166,11 @@ Rules:
 - Monthly dayOfMonth: set monthDay (e.g. 15). Monthly nthWeekday: set weekdayNth + weekday (e.g. First Friday).
 - Yearly monthDay: set yearlyMonth + monthDay. Yearly nthWeekdayOfMonth: set yearlyMonth + weekdayNth + weekday.
 - startAt is the first occurrence start date. Calculate relative dates from "Today (Hong Kong)".
-- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is 1–52. "until December" / "through 2026" → byDate. "for 8 weeks" / "10 times" → afterCount.
-- workingDays: use an explicit duration from the prompt; otherwise Standard=4, URGENT=2.
+- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is the number of created occurrences, 1–52. It is NEVER the number of weeks or months.
+- Weekly + several weekdays + "for N weeks" → endMode afterCount and endAfterCount = N × (count of weeklyWeekdays). Example: "every Monday, Wednesday, Friday for 2 weeks" → frequency Weekly, weeklyWeekdays ["Monday","Wednesday","Friday"], endAfterCount 6 (3 days × 2 weeks). Do NOT set endAfterCount to 2.
+- "10 times" / "10 occurrences" → afterCount 10. "until December" / "through 2026" / "end by 15 Oct" → byDate.
+- "every 2 weeks" → Weekly interval 2. "for 2 weeks" is a duration, not interval.
+- workingDays: use an explicit duration from the prompt ("one working day" / "1 working day" → 1); otherwise Standard=4, URGENT=2.
 - interval: "every 2 weeks" → Weekly + interval 2. "every 3 months" → Monthly + interval 3.
 - Compare to current recurrence in context; omit recurrence if the suggested pattern is identical.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
@@ -200,6 +204,12 @@ Rules:
         ..writeln(
           'This prompt says work has not commenced. Your JSON MUST set commencementStatus to "To be commenced". Do not omit that field.',
         );
+    }
+    final recurrenceHint = asanaPromptRecurrenceDurationHint(trimmed);
+    if (recurrenceHint != null) {
+      user
+        ..writeln()
+        ..writeln(recurrenceHint);
     }
 
     final body = jsonEncode({
@@ -426,8 +436,11 @@ Rules:
 - Monthly dayOfMonth: set monthDay. Monthly nthWeekday: set weekdayNth + weekday.
 - Yearly monthDay: set yearlyMonth + monthDay. Yearly nthWeekdayOfMonth: set yearlyMonth + weekdayNth + weekday.
 - startAt is the first occurrence start date. Calculate relative dates from "Today (Hong Kong)".
-- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is 1–52. "until December" / "through 2026" → byDate. "for 8 weeks" / "10 times" → afterCount.
-- workingDays: use an explicit duration from the prompt; otherwise Standard=4, URGENT=2.
+- endMode byDate: endBy is the inclusive last start date. endMode afterCount: endAfterCount is the number of created occurrences, 1–52. It is NEVER the number of weeks or months.
+- Weekly + several weekdays + "for N weeks" → endMode afterCount and endAfterCount = N × (count of weeklyWeekdays). Example: "every Monday, Wednesday, Friday for 2 weeks" → frequency Weekly, weeklyWeekdays ["Monday","Wednesday","Friday"], endAfterCount 6 (3 days × 2 weeks). Do NOT set endAfterCount to 2.
+- "10 times" / "10 occurrences" → afterCount 10. "until December" / "through 2026" / "end by 15 Oct" → byDate.
+- "every 2 weeks" → Weekly interval 2. "for 2 weeks" is a duration, not interval.
+- workingDays: use an explicit duration from the prompt ("one working day" / "1 working day" → 1); otherwise Standard=4, URGENT=2.
 - interval: "every 2 weeks" → Weekly + interval 2.
 - Compare to current recurrence in context; omit recurrence if the suggested pattern is identical.
 - Always suggest complexity as exactly one of Low, Medium, or High. If the user explicitly describes complexity using another word, translate it into one of these three values.
@@ -466,6 +479,12 @@ Rules:
         ..writeln(
           'This prompt says work has not commenced. Your JSON MUST set commencementStatus to "To be commenced". Do not omit that field.',
         );
+    }
+    final recurrenceHint = asanaPromptRecurrenceDurationHint(trimmed);
+    if (recurrenceHint != null) {
+      user
+        ..writeln()
+        ..writeln(recurrenceHint);
     }
 
     final body = jsonEncode({

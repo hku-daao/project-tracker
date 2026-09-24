@@ -657,6 +657,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
 
   void _showEmailWarning(String label, String error) {
     debugPrint('$label: $error');
+    AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
     showAsanaInfoDialog(
       context: context,
@@ -688,12 +689,13 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     required String seriesName,
   }) async {
     if (createdIds.isEmpty) return;
+    final firstId = createdIds.first;
     if (_recurrenceActive) {
       await _notifyEmail(
         'Recurring sub-task assignment email',
         (token) => BackendApi().notifyRecurringSubtasksAssigned(
           idToken: token,
-          subtaskIds: createdIds,
+          subtaskIds: [firstId],
           seriesName: seriesName,
           recurrenceFields: asanaRecurrenceEmailFields(
             _recurrence,
@@ -707,7 +709,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
       'Sub-task assignment email',
       (token) => BackendApi().notifySubtaskAssigned(
         idToken: token,
-        subtaskId: createdIds.first,
+        subtaskId: firstId,
       ),
     );
   }

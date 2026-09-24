@@ -5765,8 +5765,9 @@ ${projectTrackerEmailFooterText()}`;
 }
 
 /**
- * POST { taskIds, seriesName? } or { subtaskIds, seriesName? } — creator only.
- * One assignment email per assignee for a recurring create series.
+ * POST { taskIds|taskId, seriesName? } or { subtaskIds|subtaskId, seriesName? } — creator only.
+ * One assignment email per unique assignee/PIC for the whole recurring series
+ * (not one email per occurrence). Uses the first created item for recipients and details.
  */
 async function handleNotifyRecurringAssigned(req, res, kind) {
   const isTask = kind === 'task';
@@ -5801,42 +5802,40 @@ async function handleNotifyRecurringAssigned(req, res, kind) {
       sendJson(req, res, 400, { error: `${itemLabel}Ids required` });
       return;
     }
-    const { data: rows, error: qErr } = await db
+    const firstId = ids[0];
+    const { data: first, error: qErr } = await db
       .from(isTask ? 'task' : 'subtask')
       .select('*')
-      .in('id', ids);
-    if (qErr || !rows?.length) {
-      sendJson(req, res, 404, { error: isTask ? 'Tasks not found' : 'Sub-tasks not found' });
+      .eq('id', firstId)
+      .maybeSingle();
+    if (qErr || !first) {
+      sendJson(req, res, 404, { error: isTask ? 'Task not found' : 'Sub-task not found' });
       return;
     }
-    const byId = new Map(rows.map((row) => [String(row.id), row]));
-    const ordered = sortOccurrenceRows(ids.map((id) => byId.get(id)).filter(Boolean));
-    if (ordered.length === 0) {
-      sendJson(req, res, 404, { error: isTask ? 'Tasks not found' : 'Sub-tasks not found' });
-      return;
-    }
-    const first = ordered[0];
     const creatorId = first.create_by?.toString().trim();
     if (!creatorId) {
       sendJson(req, res, 400, { error: `${isTask ? 'Task' : 'Sub-task'} has no create_by` });
       return;
     }
-    if (ordered.some((row) => String(row.create_by || '').trim() !== creatorId)) {
-      sendJson(req, res, 400, { error: 'Recurring items must share the same creator' });
-      return;
-    }
-    const { data: creatorStaff, error: cErr } = await db
-      .from('staff')
-      .select('id, name, email')
-      .eq('id', creatorId)
-      .maybeSingle();
+    const { data: creatorStaff, error: cErr } = await fetchStaffRowForCreateBy(db, creatorId);
     if (cErr || !creatorStaff) {
       sendJson(req, res, 400, { error: 'Creator staff not found' });
       return;
     }
-    const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
+    const creatorEmail = (
+      (await resolveStaffEmailForNotifications(db, creatorStaff)) ||
+      creatorStaff.email ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!creatorEmail || creatorEmail !== sessionEmail) {
+    const creatorMatchesSession = await sessionEmailBelongsToStaffRow(
+      db,
+      creatorStaff,
+      sessionEmail,
+    );
+    if (!creatorEmail || !creatorMatchesSession) {
       sendJson(req, res, 403, {
         error: `Only the ${itemLabel} creator (staff email must match signed-in user) can send assignment emails`,
       });
@@ -5873,10 +5872,14 @@ async function handleNotifyRecurringAssigned(req, res, kind) {
     const assigneeUuids = collectAssignmentRecipientStaffIds(first);
     const results = [];
     const seenEmails = new Set();
-    const creatorNorm = creatorId.toLowerCase();
+    const creatorNorms = new Set(
+      [creatorId, creatorStaff.id]
+        .map((v) => String(v || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
 
     for (const staffUuid of assigneeUuids) {
-      if (String(staffUuid).trim().toLowerCase() === creatorNorm) {
+      if (creatorNorms.has(String(staffUuid).trim().toLowerCase())) {
         results.push({
           staffId: staffUuid,
           ok: true,
@@ -5893,7 +5896,18 @@ async function handleNotifyRecurringAssigned(req, res, kind) {
         results.push({ staffId: staffUuid, ok: false, skipped: 'no email on staff row' });
         continue;
       }
-      if (seenEmails.has(to)) continue;
+      if (to === creatorEmail || seenEmails.has(to)) {
+        if (!seenEmails.has(to)) {
+          seenEmails.add(to);
+          results.push({
+            staffId: staffUuid,
+            to,
+            ok: true,
+            skipped: `${itemLabel} creator is excluded from ${itemLabel} creation email`,
+          });
+        }
+        continue;
+      }
       seenEmails.add(to);
       const recipientName = (s?.name || '').trim() || to;
       const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear ${escapeHtml(recipientName)},<br><br>
@@ -5935,7 +5949,7 @@ ${projectTrackerEmailFooterText()}`;
     sendJson(req, res, 200, {
       ok: failed.length === 0,
       skipped: sent === 0 && failed.length === 0,
-      [isTask ? 'taskIds' : 'subtaskIds']: ordered.map((row) => row.id),
+      [isTask ? 'taskIds' : 'subtaskIds']: [first.id],
       seriesName,
       recipients: results.length,
       results,

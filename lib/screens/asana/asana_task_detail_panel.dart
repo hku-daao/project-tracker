@@ -836,21 +836,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return DateUtils.dateOnly(a).compareTo(DateUtils.dateOnly(b));
   }
 
-  Future<List<SingularSubtask>?> _loadFreshActiveSubtasksForCompletion(
-    String taskId,
-  ) async {
-    if (!PostgrestConfig.isConfigured) return _subtasks;
-    try {
-      DatabaseService.invalidateSubtasksCacheForTask(taskId);
-      final list = await DatabaseService.fetchSubtasksForTask(taskId);
-      final active = list.where((s) => !s.isDeleted).toList();
-      if (mounted) setState(() => _subtasks = active);
-      return active;
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> _loadComments() async {
     final id = widget.taskId;
     if (id == null || !PostgrestConfig.isConfigured) return;
@@ -1275,6 +1260,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   void _showEmailWarning(String label, String error) {
     debugPrint('$label: $error');
+    AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
     _showInfo(label, error);
   }
@@ -1301,12 +1287,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     required String seriesName,
   }) async {
     if (createdIds.isEmpty) return;
+    final firstId = createdIds.first;
     if (_recurrenceActive) {
       await _notifyEmail(
         'Recurring task assignment email',
         (token) => BackendApi().notifyRecurringTasksAssigned(
           idToken: token,
-          taskIds: createdIds,
+          taskIds: [firstId],
           seriesName: seriesName,
           recurrenceFields: asanaRecurrenceEmailFields(
             _recurrence,
@@ -1320,7 +1307,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       'Task assignment email',
       (token) => BackendApi().notifyTaskAssigned(
         idToken: token,
-        taskId: createdIds.first,
+        taskId: firstId,
       ),
     );
   }
@@ -2875,21 +2862,6 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _markCompleted(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
-    final activeSubtasks = await _loadFreshActiveSubtasksForCompletion(task.id);
-    if (activeSubtasks == null) {
-      await _showInfo(
-        'Could not check sub-tasks',
-        'Please try again before marking this task as completed.',
-      );
-      return;
-    }
-    if (activeSubtasks.any(subtaskPreventsParentTaskSubmission)) {
-      await _showInfo(
-        'Sub-tasks incomplete',
-        'All sub-tasks must be completed or deleted before this task can be marked as completed.',
-      );
-      return;
-    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -2928,6 +2900,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           completionDate: completedAt,
         ),
       );
+      await _loadSubtasks();
       _notifyChanged();
       await _notifyEmail(
         'Task accepted email',
