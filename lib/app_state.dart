@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'models/assignee.dart';
 import 'models/staff_team_lookup.dart';
 import 'models/project_record.dart';
+import 'models/subproject_record.dart';
 import 'models/task.dart';
 import 'models/team.dart';
 import 'services/database_service.dart';
@@ -29,6 +30,7 @@ class AppState extends ChangeNotifier {
   List<Team> get teams => List.unmodifiable(_teams);
 
   final List<ProjectRecord> _projects = [];
+  final List<SubprojectRecord> _subprojects = [];
   final List<Task> _tasks = [];
 
   /// Current user's `staff.app_id` (from the database lookup or backend).
@@ -322,12 +324,50 @@ class AppState extends ChangeNotifier {
 
   List<ProjectRecord> get projects => List.unmodifiable(_projects);
 
+  List<SubprojectRecord> get subprojects => List.unmodifiable(_subprojects);
+
   /// Replace projects from the database after fetch or create.
   void applyProjects(List<ProjectRecord> list) {
     _projects
       ..clear()
       ..addAll(list);
     notifyListeners();
+  }
+
+  void applySubprojects(List<SubprojectRecord> list) {
+    _subprojects
+      ..clear()
+      ..addAll(list);
+    notifyListeners();
+  }
+
+  List<SubprojectRecord> subprojectsForProject(
+    String? projectId, {
+    bool includeDeleted = false,
+  }) {
+    final pid = projectId?.trim();
+    if (pid == null || pid.isEmpty) return const [];
+    final out = <SubprojectRecord>[
+      for (final row in _subprojects)
+        if (row.projectId == pid && (includeDeleted || row.isActive)) row,
+    ];
+    out.sort((a, b) {
+      final byOrder = a.sortOrder.compareTo(b.sortOrder);
+      if (byOrder != 0) return byOrder;
+      return (a.createDate ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+        b.createDate ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
+    });
+    return out;
+  }
+
+  SubprojectRecord? subprojectById(String? id) {
+    final sid = id?.trim();
+    if (sid == null || sid.isEmpty) return null;
+    for (final row in _subprojects) {
+      if (row.id == sid) return row;
+    }
+    return null;
   }
 
   /// True when login fetch used [TaskFetchVisibility] (rows already scoped in Postgres).

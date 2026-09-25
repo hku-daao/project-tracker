@@ -29,6 +29,7 @@ import 'asana_inline_image_widgets.dart';
 import 'asana_project_ai_assistant.dart';
 import 'asana_project_filter.dart';
 import 'asana_project_milestone_section.dart';
+import 'asana_project_subproject_section.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -90,6 +91,8 @@ class AsanaProjectDetailPanel extends StatefulWidget {
     this.onChanged,
     this.onPushCreateTask,
     this.onPushTask,
+    this.onPushCreateSubproject,
+    this.onPushSubproject,
   });
 
   final String projectId;
@@ -99,6 +102,8 @@ class AsanaProjectDetailPanel extends StatefulWidget {
   final VoidCallback? onChanged;
   final VoidCallback? onPushCreateTask;
   final void Function(String taskId)? onPushTask;
+  final VoidCallback? onPushCreateSubproject;
+  final void Function(String subprojectId)? onPushSubproject;
 
   @override
   State<AsanaProjectDetailPanel> createState() =>
@@ -238,6 +243,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     _milestoneDrafts
       ..clear()
       ..addAll(asanaMilestoneDraftsFromRows(rows));
+  }
+
+  Future<void> _applyProjectsAndSubprojects(AppState state) async {
+    final projects = await DatabaseService.fetchAllProjects();
+    final subprojects = await DatabaseService.fetchAllSubprojects();
+    if (!mounted) return;
+    state.applyProjects(projects);
+    state.applySubprojects(subprojects);
   }
 
   Future<void> _loadProjectTasks() async {
@@ -805,8 +818,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       }
       setState(() {});
     }
-    final projects = await DatabaseService.fetchAllProjects();
-    if (mounted) state.applyProjects(projects);
+    await _applyProjectsAndSubprojects(state);
   }
 
   void _addMilestoneDraft() {
@@ -1007,8 +1019,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      final projects = await DatabaseService.fetchAllProjects();
-      if (mounted) state.applyProjects(projects);
+      await _applyProjectsAndSubprojects(state);
       await _loadProject();
       widget.onChanged?.call();
     } finally {
@@ -1068,8 +1079,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      final projects = await DatabaseService.fetchAllProjects();
-      if (mounted) state.applyProjects(projects);
+      await _applyProjectsAndSubprojects(state);
       await _loadProject();
       widget.onChanged?.call();
     } finally {
@@ -1099,8 +1109,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      final projects = await DatabaseService.fetchAllProjects();
-      if (mounted) state.applyProjects(projects);
+      await _applyProjectsAndSubprojects(state);
       await _loadProject();
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
@@ -1131,8 +1140,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      final projects = await DatabaseService.fetchAllProjects();
-      if (mounted) state.applyProjects(projects);
+      await _applyProjectsAndSubprojects(state);
       await _loadProject();
       await _syncChildTasksAfterComplete(state);
       _projectAi?.clearAllSuggestions();
@@ -2388,8 +2396,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         await _showInfo('Could not save attachments', attachmentErr);
         return;
       }
-      final projects = await DatabaseService.fetchAllProjects();
-      if (mounted) state.applyProjects(projects);
+      await _applyProjectsAndSubprojects(state);
       await _loadProject();
       if (status == 'Completed') {
         await _syncChildTasksAfterComplete(state);
@@ -2539,6 +2546,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
                 : AsanaDetailPlainValue(text: picReadOnly),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.pic),
+          AsanaProjectSubprojectSection(
+            projectId: widget.projectId,
+            canEdit: canEdit,
+            saving: _saving,
+            palette: widget.palette,
+            onCreate: widget.onPushCreateSubproject,
+            onOpen: widget.onPushSubproject,
+          ),
           AsanaProjectMilestoneSection(
             enabled: _hasMilestone,
             canEdit: canEdit,

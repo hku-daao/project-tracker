@@ -414,8 +414,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             !adminAll && visibility != null && visibility.isConfigured,
       );
       final projects = await DatabaseService.fetchAllProjects();
+      final subprojects = await DatabaseService.fetchAllSubprojects();
       if (!mounted) return;
       state.applyProjects(projects);
+      state.applySubprojects(subprojects);
       setState(() => _detailRefreshToken++);
     } catch (e) {
       debugPrint('Admin view-as reload failed: $e');
@@ -699,11 +701,41 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     _syncWebLocationToDetailStack();
   }
 
+  Future<void> _reloadProjectsAndSubprojects() async {
+    final state = context.read<AppState>();
+    final projects = await DatabaseService.fetchAllProjects();
+    final subprojects = await DatabaseService.fetchAllSubprojects();
+    if (!mounted) return;
+    state.applyProjects(projects);
+    state.applySubprojects(subprojects);
+  }
+
   void _handleProjectChanged() {
+    _reloadProjectsAndSubprojects();
     setState(() => _detailRefreshToken++);
   }
 
+  void _handleSubprojectCreated(String projectId, String subprojectId) {
+    _reloadProjectsAndSubprojects();
+    setState(() {
+      if (_detailStack.isNotEmpty &&
+          _detailStack.last is AsanaCreateSubprojectDetailSelection) {
+        _detailStack
+          ..removeLast()
+          ..add(
+            AsanaDetailSelection.subproject(
+              subprojectId: subprojectId,
+              projectId: projectId,
+            ),
+          );
+      }
+      _detailRefreshToken++;
+    });
+    _syncWebLocationToDetailStack();
+  }
+
   void _handleProjectCreated(String projectId) {
+    _reloadProjectsAndSubprojects();
     setState(() {
       _detailStack
         ..clear()
@@ -1185,6 +1217,27 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                                     taskId,
                                                   ),
                                                 ),
+                                            onPushCreateSubproject:
+                                                adminViewMode
+                                                ? null
+                                                : (projectId) => _pushDetail(
+                                                    AsanaDetailSelection
+                                                        .createSubproject(
+                                                      projectId,
+                                                    ),
+                                                  ),
+                                            onPushSubproject:
+                                                (subprojectId, projectId) =>
+                                                    _pushDetail(
+                                                      AsanaDetailSelection
+                                                          .subproject(
+                                                        subprojectId:
+                                                            subprojectId,
+                                                        projectId: projectId,
+                                                      ),
+                                                    ),
+                                            onSubprojectCreated:
+                                                _handleSubprojectCreated,
                                             onTaskChanged: _handleTaskChanged,
                                             onTaskCreated: _handleTaskCreated,
                                             onDiscussionCreated:

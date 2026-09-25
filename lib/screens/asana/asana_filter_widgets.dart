@@ -157,6 +157,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
     required this.filterChildren,
     required this.onClearAll,
     this.secondRowFilterChildren,
+    this.thirdRowFilterChildren,
     this.alignFiltersLeft = false,
   });
 
@@ -165,6 +166,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
   final VoidCallback? onCreate;
   final List<Widget> filterChildren;
   final List<Widget>? secondRowFilterChildren;
+  final List<Widget>? thirdRowFilterChildren;
   final bool alignFiltersLeft;
   final VoidCallback onClearAll;
 
@@ -176,11 +178,13 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
 class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
   final _filterScrollController = ScrollController();
   final _secondRowScrollController = ScrollController();
+  final _thirdRowScrollController = ScrollController();
 
   @override
   void dispose() {
     _filterScrollController.dispose();
     _secondRowScrollController.dispose();
+    _thirdRowScrollController.dispose();
     super.dispose();
   }
 
@@ -239,8 +243,11 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             child: const Text('Clear all'),
           );
           final secondRow = widget.secondRowFilterChildren;
+          final thirdRow = widget.thirdRowFilterChildren;
           final hasSecondRow = secondRow != null && secondRow.isNotEmpty;
-          final clearAtEndOfFirstRow = hasSecondRow || widget.alignFiltersLeft;
+          final hasThirdRow = thirdRow != null && thirdRow.isNotEmpty;
+          final clearAtEndOfFirstRow =
+              hasSecondRow || hasThirdRow || widget.alignFiltersLeft;
           final firstRowChildren = [
             ...widget.filterChildren,
             if (clearAtEndOfFirstRow)
@@ -271,6 +278,13 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   _filterRow(
                     secondRow,
                     controller: _secondRowScrollController,
+                  ),
+                ],
+                if (hasThirdRow) ...[
+                  const SizedBox(height: 10),
+                  _filterRow(
+                    thirdRow,
+                    controller: _thirdRowScrollController,
                   ),
                 ],
               ],

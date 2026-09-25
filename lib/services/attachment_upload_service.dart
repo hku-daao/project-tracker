@@ -270,6 +270,32 @@ class AttachmentUploadService {
   }
 
   static Future<({String? url, String? label, String? error})>
+  uploadBytesForSubproject(
+    String subprojectId, {
+    required Uint8List bytes,
+    required String originalFilename,
+    required List<String?> aclStaffKeys,
+    void Function()? onUploadPhaseStarted,
+    void Function()? onUploadPhaseEnded,
+  }) async {
+    if (subprojectId.trim().isEmpty) {
+      return (url: null, label: null, error: 'Missing sub-project id');
+    }
+    try {
+      onUploadPhaseStarted?.call();
+      return await _uploadBytes(
+        entityType: 'subproject',
+        entityId: subprojectId,
+        originalFilename: originalFilename,
+        bytes: bytes,
+        aclStaffKeys: aclStaffKeys,
+      );
+    } finally {
+      onUploadPhaseEnded?.call();
+    }
+  }
+
+  static Future<({String? url, String? label, String? error})>
   uploadBytesForSubtask(
     String subtaskId, {
     required Uint8List bytes,

@@ -33,8 +33,9 @@ class AsanaRowTypeLetter extends StatelessWidget {
         ? const Color(0xFF2E7D32)
         : kAsanaTextPrimary;
 
+    final twoLetter = letter.trim().length > 1;
     return Container(
-      width: 24,
+      width: twoLetter ? 30 : 24,
       height: 24,
       alignment: Alignment.center,
       decoration: BoxDecoration(
@@ -45,7 +46,7 @@ class AsanaRowTypeLetter extends StatelessWidget {
       child: Text(
         letter,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: twoLetter ? 10 : 12,
           fontWeight: FontWeight.w700,
           color: fg,
           height: 1,

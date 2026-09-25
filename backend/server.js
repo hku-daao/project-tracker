@@ -49,6 +49,7 @@ const TASK_UPDATE_NOTIFY_FIELD_LABELS = {
   taskName: 'Task name',
   description: 'Description',
   project: 'Project',
+  subproject: 'Sub-project',
   assignees: 'Assignees',
   pic: 'PIC',
   priority: 'Priority',
@@ -1417,8 +1418,20 @@ async function projectNameForEmail(dbClient, projectId) {
   return (data?.name || '').toString().trim() || id;
 }
 
+async function subprojectNameForEmail(dbClient, subprojectId) {
+  const id = String(subprojectId || '').trim();
+  if (!id) return '';
+  const { data } = await dbClient
+    .from('subproject')
+    .select('name')
+    .eq('id', id)
+    .maybeSingle();
+  return (data?.name || '').toString().trim() || id;
+}
+
 async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = {}) {
   const projectName = await projectNameForEmail(dbClient, taskRow.project_id);
+  const subprojectName = await subprojectNameForEmail(dbClient, taskRow.subproject_id);
   const creatorName = await staffNameForEmail(dbClient, taskRow.create_by);
   const assigneeNames = await staffNamesForEmail(dbClient, collectTaskAssigneeStaffIds(taskRow));
   const picName = await staffNameForEmail(dbClient, taskRow.pic);
@@ -1426,6 +1439,7 @@ async function buildTaskUpdateDetailLines(dbClient, taskRow, changeMap, extra = 
     ['Task', changedValueHtml(changeMap.get('taskName'), taskRow.task_name), changedValueText(changeMap.get('taskName'), taskRow.task_name)],
     ['Description', changedValueHtml(changeMap.get('description'), taskRow.description), changedValueText(changeMap.get('description'), taskRow.description)],
     ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
+    ['Sub-project', changedValueHtml(changeMap.get('subproject'), subprojectName), changedValueText(changeMap.get('subproject'), subprojectName)],
     ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
     ['Assignees', changedValueHtml(changeMap.get('assignees'), assigneeNames), changedValueText(changeMap.get('assignees'), assigneeNames)],
     ['PIC', changedValueHtml(changeMap.get('pic'), picName), changedValueText(changeMap.get('pic'), picName)],

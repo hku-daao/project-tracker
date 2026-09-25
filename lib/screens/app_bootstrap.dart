@@ -194,8 +194,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
         state.setStaffAppIdToTeamIdMap(appIdToTeamId);
       }
       final projects = await DatabaseService.fetchAllProjects();
+      final subprojects = await DatabaseService.fetchAllSubprojects();
       if (!mounted) return;
       state.applyProjects(projects);
+      state.applySubprojects(subprojects);
     } catch (e) {
       debugPrint('AppBootstrap: load tasks/projects from the database: $e');
     }

@@ -152,6 +152,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   DateTime? _startDate;
   DateTime? _dueDate;
   String? _selectedProjectId;
+  String? _selectedSubprojectId;
   List<ProjectRecord> _myProjects = [];
 
   Set<String> _holidaySkipYmd = {};
@@ -166,6 +167,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   final ValueNotifier<AsanaAssigneePickerSnapshot> _assigneeSnapshot =
       ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
   final LayerLink _projectAnchorLink = LayerLink();
+  final LayerLink _subprojectAnchorLink = LayerLink();
   final LayerLink _assigneeAnchorLink = LayerLink();
   final LayerLink _picAnchorLink = LayerLink();
   final LayerLink _priorityAnchorLink = LayerLink();
@@ -390,6 +392,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _selectedProjectId = initialProjectId == null || initialProjectId.isEmpty
         ? null
         : initialProjectId;
+    _selectedSubprojectId = null;
     _selectedAssigneeIds.clear();
     _picAssigneeId = null;
     _subtasks = [];
@@ -771,6 +774,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _startDate = task.startDate;
     _dueDate = task.endDate;
     _selectedProjectId = task.projectId;
+    _selectedSubprojectId = task.subprojectId;
     _selectedAssigneeIds
       ..clear()
       ..addAll(task.assigneeIds);
@@ -1211,8 +1215,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return false;
   }
 
+  bool _taskSubprojectPaused(AppState state, Task task) {
+    final sid = (task.subprojectId ?? _selectedSubprojectId)?.trim();
+    if (sid == null || sid.isEmpty) return false;
+    return state.subprojectById(sid)?.isPaused ?? false;
+  }
+
   bool _taskEffectivelyPaused(AppState state, Task task) =>
-      _taskPaused(task) || _taskProjectPaused(state, task);
+      _taskPaused(task) ||
+      _taskProjectPaused(state, task) ||
+      _taskSubprojectPaused(state, task);
 
   String _taskDisplayStatus(AppState state, Task task) =>
       _taskEffectivelyPaused(state, task)
@@ -1359,6 +1371,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       'project',
       _projectNameForEmail(state, task.projectId),
       _projectNameForEmail(state, _selectedProjectId),
+    );
+    _addChange(
+      changes,
+      'subproject',
+      state.subprojectById(task.subprojectId)?.name ?? '',
+      state.subprojectById(_selectedSubprojectId)?.name ?? '',
     );
     _addChange(
       changes,
@@ -1864,8 +1882,58 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       options: _projectMenuOptions,
     );
     if (!mounted || choice == null) return;
-    setState(() => _selectedProjectId = choice.isEmpty ? null : choice);
+    setState(() {
+      _selectedProjectId = choice.isEmpty ? null : choice;
+      _syncSubprojectToSelectedProject(context.read<AppState>());
+    });
     _publishAssigneeSnapshot();
+  }
+
+  void _syncSubprojectToSelectedProject(AppState state) {
+    final sid = _selectedSubprojectId?.trim();
+    if (sid == null || sid.isEmpty) return;
+    final belongs = state
+        .subprojectsForProject(_selectedProjectId)
+        .any((row) => row.id == sid);
+    if (!belongs) _selectedSubprojectId = null;
+  }
+
+  List<AsanaAnchoredOption<String>> _subprojectMenuOptions(AppState state) {
+    final rows = state.subprojectsForProject(_selectedProjectId);
+    return [
+      const AsanaAnchoredOption(value: '', label: 'No sub-project'),
+      for (final row in rows)
+        AsanaAnchoredOption(value: row.id, label: row.name.trim()),
+    ];
+  }
+
+  Future<void> _pickSubproject(BuildContext anchorContext) async {
+    if (!_canOpenAnchoredPicker) return;
+    final state = context.read<AppState>();
+    final options = _subprojectMenuOptions(state);
+    if (options.length <= 1) return;
+    final choice = await showAsanaAnchoredOptionMenu<String>(
+      anchorLink: _subprojectAnchorLink,
+      anchorContext: anchorContext,
+      onClosed: _blockAnchoredPickerReopen,
+      options: options,
+    );
+    if (!mounted || choice == null) return;
+    setState(() => _selectedSubprojectId = choice.isEmpty ? null : choice);
+  }
+
+  String _subprojectLabel(AppState state) {
+    final id = _selectedSubprojectId?.trim();
+    if (id == null || id.isEmpty) return '';
+    final row = state.subprojectById(id);
+    if (row != null) return row.name.trim();
+    return id;
+  }
+
+  bool _showSubprojectField(AppState state) {
+    final pid = _selectedProjectId?.trim();
+    if (pid == null || pid.isEmpty) return false;
+    return state.subprojectsForProject(pid).isNotEmpty;
   }
 
   List<String?> _createAttachmentAclKeys(AppState state, String picKey) {
@@ -2341,6 +2409,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               : null,
           commencementNote: _commencementNoteForSave(),
           projectId: _selectedProjectId,
+          subprojectId: _selectedSubprojectId,
         );
         if (ins.error != null && mounted) {
           await _showInfo(
@@ -2515,6 +2584,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         projectId: !clearProject && selProj != null && selProj.isNotEmpty
             ? selProj
             : null,
+        clearSubprojectId: clearProject ||
+            (_selectedSubprojectId?.trim().isEmpty ?? true),
+        subprojectId: !clearProject &&
+                (_selectedSubprojectId?.trim().isNotEmpty ?? false)
+            ? _selectedSubprojectId
+            : null,
       );
       if (err != null && mounted) {
         await _showInfo('Could not update task', err);
@@ -2686,6 +2761,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       clearProjectId: clearProject,
       projectId: !clearProject && selProj != null && selProj.isNotEmpty
           ? selProj
+          : null,
+      clearSubprojectId: clearProject ||
+          (_selectedSubprojectId?.trim().isEmpty ?? true),
+      subprojectId: !clearProject &&
+              (_selectedSubprojectId?.trim().isNotEmpty ?? false)
+          ? _selectedSubprojectId
           : null,
     );
     if (err != null && mounted) {
@@ -3327,6 +3408,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       projectId: clearProject ? null : _selectedProjectId,
       projectName: projectName,
       clearProject: clearProject,
+      subprojectId: _selectedSubprojectId,
+      subprojectName: context.read<AppState>().subprojectById(_selectedSubprojectId)?.name,
+      clearSubproject: clearProject ||
+          (_selectedSubprojectId?.trim().isEmpty ?? true),
       changeDueReason: _needsChangeDueReason()
           ? _reasonController.text.trim()
           : null,
@@ -3667,7 +3752,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       applyName: (v) => setState(() => _nameController.text = v),
       applyDescription: (v) => setState(() => _descController.text = v),
       applyProject: (id) {
-        setState(() => _selectedProjectId = id);
+        setState(() {
+          _selectedProjectId = id;
+          _syncSubprojectToSelectedProject(context.read<AppState>());
+        });
         _publishAssigneeSnapshot();
       },
       applyAssignees: (ids) => setState(() {
@@ -3900,6 +3988,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 : const AsanaDetailPlainValue(text: ''),
           ),
           _aiSuggestions(AsanaTaskAiFieldKey.project),
+          if (_showSubprojectField(state))
+            AsanaDetailTwoColumnRow(
+              label: 'Sub-project',
+              child: AsanaHoverTapValue(
+                anchorLink: _subprojectAnchorLink,
+                value: _subprojectLabel(state),
+                canEdit: canEdit,
+                emptyPlaceholder: 'Select sub-project (optional)',
+                onTap: canEdit ? _pickSubproject : null,
+              ),
+            ),
           ..._buildAssigneePicSection(
             context,
             state,
@@ -4263,6 +4362,19 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 : AsanaDetailPlainValue(text: task.projectName?.trim() ?? ''),
           ),
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.project),
+          if (_showSubprojectField(state))
+            AsanaDetailTwoColumnRow(
+              label: 'Sub-project',
+              child: canEdit
+                  ? AsanaHoverTapValue(
+                      anchorLink: _subprojectAnchorLink,
+                      value: _subprojectLabel(state),
+                      canEdit: true,
+                      emptyPlaceholder: 'Select sub-project (optional)',
+                      onTap: _pickSubproject,
+                    )
+                  : AsanaDetailPlainValue(text: _subprojectLabel(state)),
+            ),
           ..._buildAssigneePicSection(
             context,
             state,

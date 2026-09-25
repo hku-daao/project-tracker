@@ -16,6 +16,12 @@ sealed class AsanaDetailSelection {
       AsanaCreateProjectDetailSelection;
   const factory AsanaDetailSelection.createDiscussion() =
       AsanaCreateDiscussionDetailSelection;
+  const factory AsanaDetailSelection.subproject({
+    required String subprojectId,
+    required String projectId,
+  }) = AsanaSubprojectDetailSelection;
+  const factory AsanaDetailSelection.createSubproject(String projectId) =
+      AsanaCreateSubprojectDetailSelection;
 }
 
 final class AsanaTaskDetailSelection extends AsanaDetailSelection {
@@ -49,4 +55,18 @@ final class AsanaCreateProjectDetailSelection extends AsanaDetailSelection {
 
 final class AsanaCreateDiscussionDetailSelection extends AsanaDetailSelection {
   const AsanaCreateDiscussionDetailSelection();
+}
+
+final class AsanaSubprojectDetailSelection extends AsanaDetailSelection {
+  const AsanaSubprojectDetailSelection({
+    required this.subprojectId,
+    required this.projectId,
+  });
+  final String subprojectId;
+  final String projectId;
+}
+
+final class AsanaCreateSubprojectDetailSelection extends AsanaDetailSelection {
+  const AsanaCreateSubprojectDetailSelection(this.projectId);
+  final String projectId;
 }

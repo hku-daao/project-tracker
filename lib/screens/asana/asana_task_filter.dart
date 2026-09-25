@@ -455,8 +455,14 @@ class AsanaTaskFilter {
     return false;
   }
 
+  static bool _taskSubprojectPaused(AppState state, Task t) {
+    final sid = t.subprojectId?.trim();
+    if (sid == null || sid.isEmpty) return false;
+    return state.subprojectById(sid)?.isPaused ?? false;
+  }
+
   static bool taskEffectivelyPaused(AppState state, Task t) =>
-      t.isPaused || _taskProjectPaused(state, t);
+      t.isPaused || _taskProjectPaused(state, t) || _taskSubprojectPaused(state, t);
 
   static bool subtaskEffectivelyPaused(
     AppState state,
@@ -465,7 +471,8 @@ class AsanaTaskFilter {
   ) {
     return s.isPaused ||
         parentTask.isPaused ||
-        _taskProjectPaused(state, parentTask);
+        _taskProjectPaused(state, parentTask) ||
+        _taskSubprojectPaused(state, parentTask);
   }
 
   static String taskDisplayStatus(AppState state, Task t) =>

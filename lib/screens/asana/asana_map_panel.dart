@@ -9,6 +9,7 @@ import '../../app_state.dart';
 import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
+import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/asana_filter_cookie_storage.dart';
 import '../../services/database_service.dart';
@@ -53,6 +54,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Set<String> _projectCreatorIds = {};
   final Set<String> _projectPicIds = {};
   final Set<String> _projectStatuses = {};
+  final Set<String> _subprojectCreatorTeamIds = {};
+  final Set<String> _subprojectCreatorIds = {};
+  final Set<String> _subprojectPicIds = {};
+  final Set<String> _subprojectStatuses = {};
+  DateTime? _subprojectStartMonth;
+  DateTime? _subprojectEndMonth;
   final Set<String> _taskCreatorTeamIds = {};
   final Set<String> _taskPicIds = {};
   final Set<String> _taskStatuses = {};
@@ -106,6 +113,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     'projectCreatorIds': _projectCreatorIds.toList(),
     'projectPicIds': _projectPicIds.toList(),
     'projectStatuses': _projectStatuses.toList(),
+    'subprojectCreatorTeamIds': _subprojectCreatorTeamIds.toList(),
+    'subprojectCreatorIds': _subprojectCreatorIds.toList(),
+    'subprojectPicIds': _subprojectPicIds.toList(),
+    'subprojectStatuses': _subprojectStatuses.toList(),
+    'subprojectStartMonth': _subprojectStartMonth?.millisecondsSinceEpoch,
+    'subprojectEndMonth': _subprojectEndMonth?.millisecondsSinceEpoch,
     'taskCreatorTeamIds': _taskCreatorTeamIds.toList(),
     'taskPicIds': _taskPicIds.toList(),
     'taskStatuses': _taskStatuses.toList(),
@@ -125,6 +138,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     _replaceStringSet(_projectCreatorIds, data['projectCreatorIds']);
     _replaceStringSet(_projectPicIds, data['projectPicIds']);
     _replaceStringSet(_projectStatuses, data['projectStatuses']);
+    _replaceStringSet(_subprojectCreatorTeamIds, data['subprojectCreatorTeamIds']);
+    _replaceStringSet(_subprojectCreatorIds, data['subprojectCreatorIds']);
+    _replaceStringSet(_subprojectPicIds, data['subprojectPicIds']);
+    _replaceStringSet(_subprojectStatuses, data['subprojectStatuses']);
+    _subprojectStartMonth = _dateFromMs(data['subprojectStartMonth']);
+    _subprojectEndMonth = _dateFromMs(data['subprojectEndMonth']);
     _replaceStringSet(_taskCreatorTeamIds, data['taskCreatorTeamIds']);
     _replaceStringSet(_taskPicIds, data['taskPicIds']);
     _replaceStringSet(_taskStatuses, data['taskStatuses']);
@@ -250,6 +269,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
         final taskGroupHit =
             _hasTaskFilters && _passesTaskFilters(state, task, taskStatus);
+        final linkedSp = state.subprojectById(task.subprojectId);
+        final activeSp = linkedSp != null && linkedSp.isActive ? linkedSp : null;
+        final subprojectGroupHit =
+            activeSp != null &&
+            _hasSubprojectFilters &&
+            _passesSubprojectFilters(state, project, activeSp);
         final taskPic = _staffName(state, task.pic);
         final taskSearch =
             _matches(task.name, query) ||
@@ -270,7 +295,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               (!_hasAnyGroupFilters ||
                   subGroupHit ||
                   taskGroupHit ||
-                  projectGroupHit);
+                  projectGroupHit ||
+                  subprojectGroupHit);
           if (!includeSub) continue;
           final subPic = _staffName(state, subtask.pic);
           final subSearch =
@@ -290,6 +316,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             (!_hasAnyGroupFilters ||
                 taskGroupHit ||
                 projectGroupHit ||
+                subprojectGroupHit ||
                 subtaskNodes.isNotEmpty);
         if (!includeTask) continue;
         if (!_passesSearch(
@@ -300,14 +327,49 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         }
         taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
       }
+      final visibleSps = <SubprojectRecord>[];
+      for (final sp in state.subprojectsForProject(project.id)) {
+        if (sp.isDeleted || sp.isPaused) continue;
+        final spHit =
+            _hasSubprojectFilters && _passesSubprojectFilters(state, project, sp);
+        final hasTasks = taskNodes.any(
+          (n) => n.task.subprojectId?.trim() == sp.id,
+        );
+        final includeSp =
+            (!_hasSubprojectFilters || spHit) &&
+            (!_hasAnyGroupFilters || spHit || projectGroupHit || hasTasks);
+        if (!includeSp) continue;
+        if (!hasTasks && !_showProjectsWithoutTasks) continue;
+        final spSearch = _matches(sp.name, query) || _matches(sp.status, query);
+        if (!_passesSearch(spSearch || projectSearch || hasTasks, query)) {
+          continue;
+        }
+        visibleSps.add(sp);
+      }
       final includeProject =
-          !_hasAnyGroupFilters || projectGroupHit || taskNodes.isNotEmpty;
+          !_hasAnyGroupFilters ||
+          projectGroupHit ||
+          taskNodes.isNotEmpty ||
+          visibleSps.isNotEmpty;
       if (!includeProject) continue;
-      if (taskNodes.isEmpty && !_showProjectsWithoutTasks) continue;
-      if (!_passesSearch(projectSearch || taskNodes.isNotEmpty, query)) {
+      if (taskNodes.isEmpty &&
+          visibleSps.isEmpty &&
+          !_showProjectsWithoutTasks) {
         continue;
       }
-      nodes.add(_ProjectMapNode(project: project, tasks: taskNodes));
+      if (!_passesSearch(
+        projectSearch || taskNodes.isNotEmpty || visibleSps.isNotEmpty,
+        query,
+      )) {
+        continue;
+      }
+      nodes.add(
+        _ProjectMapNode(
+          project: project,
+          tasks: taskNodes,
+          subprojects: visibleSps,
+        ),
+      );
     }
     for (final node in nodes) {
       node.tasks.sort((a, b) => _compareTaskNodes(state, a, b));
@@ -321,7 +383,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   List<_TaskMapNode> _buildStandaloneTaskNodes(AppState state) {
-    if (_hasProjectFilters && !_hasTaskOrSubtaskFilters) return const [];
+    if ((_hasProjectFilters || _hasSubprojectFilters) &&
+        !_hasTaskOrSubtaskFilters) {
+      return const [];
+    }
     final query = widget.searchQuery.trim().toLowerCase();
     final nodes = <_TaskMapNode>[];
     for (final task in _visibleTasks(state)) {
@@ -381,6 +446,14 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _projectStartMonth != null ||
       _projectEndMonth != null;
 
+  bool get _hasSubprojectFilters =>
+      _subprojectCreatorTeamIds.isNotEmpty ||
+      _subprojectCreatorIds.isNotEmpty ||
+      _subprojectPicIds.isNotEmpty ||
+      _subprojectStatuses.isNotEmpty ||
+      _subprojectStartMonth != null ||
+      _subprojectEndMonth != null;
+
   bool get _hasTaskFilters =>
       _taskCreatorTeamIds.isNotEmpty ||
       _taskPicIds.isNotEmpty ||
@@ -391,7 +464,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _hasTaskFilters || _hasSubtaskFilters;
 
   bool get _hasAnyGroupFilters =>
-      _hasProjectFilters || _hasTaskFilters || _hasSubtaskFilters;
+      _hasProjectFilters ||
+      _hasSubprojectFilters ||
+      _hasTaskFilters ||
+      _hasSubtaskFilters;
 
   bool get _hasSubtaskFilters =>
       _subtaskStatuses.isNotEmpty || _subtaskCompletedDateEngaged;
@@ -443,6 +519,50 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     return true;
   }
 
+  bool _passesSubprojectFilters(
+    AppState state,
+    ProjectRecord project,
+    SubprojectRecord subproject,
+  ) {
+    final status = (project.isPaused || subproject.isPaused)
+        ? 'Paused'
+        : subproject.status;
+    return _passesTeamFilter(
+          state,
+          project.createByStaffUuid,
+          _subprojectCreatorTeamIds,
+        ) &&
+        _passesStaffFilter(
+          [subproject.createByStaffUuid],
+          _subprojectCreatorIds,
+        ) &&
+        _passesStaffFilter(project.picStaffUuids, _subprojectPicIds) &&
+        _passesStatusFilter(status, _subprojectStatuses) &&
+        _passesSubprojectStartFilters(subproject);
+  }
+
+  bool _passesSubprojectStartFilters(SubprojectRecord subproject) {
+    final start = _hkDateOnly(subproject.startDate);
+    if (start == null) return true;
+    if (_subprojectStartMonth == null || _subprojectEndMonth == null) {
+      return true;
+    }
+    final rangeStart = DateTime(
+      _subprojectStartMonth!.year,
+      _subprojectStartMonth!.month,
+      1,
+    );
+    final rangeEnd = DateTime(
+      _subprojectEndMonth!.year,
+      _subprojectEndMonth!.month + 1,
+      0,
+    );
+    if (start.isBefore(rangeStart) || start.isAfter(rangeEnd)) {
+      return false;
+    }
+    return true;
+  }
+
   String _projectMonthFilterLabel(DateTime? value) {
     if (value == null) return 'All';
     return HkTime.formatInstantAsHk(
@@ -473,6 +593,26 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       final range = picked.range!;
       _projectStartMonth = DateTime(range.start.year, range.start.month, 1);
       _projectEndMonth = DateTime(range.end.year, range.end.month, 1);
+    });
+  }
+
+  Future<void> _pickSubprojectMonthRange(BuildContext anchorContext) async {
+    final picked = await showAsanaAnchoredMonthRangePicker(
+      anchorContext: anchorContext,
+      startMonth: _subprojectStartMonth,
+      endMonth: _subprojectEndMonth,
+      helpText: 'Sub-project start month range',
+    );
+    if (!mounted || picked == null) return;
+    _applyFilters(() {
+      if (picked.cleared || picked.range == null) {
+        _subprojectStartMonth = null;
+        _subprojectEndMonth = null;
+        return;
+      }
+      final range = picked.range!;
+      _subprojectStartMonth = DateTime(range.start.year, range.start.month, 1);
+      _subprojectEndMonth = DateTime(range.end.year, range.end.month, 1);
     });
   }
 
@@ -947,6 +1087,29 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
   }
 
+  Iterable<String?> _subprojectCreatorKeys(AppState state) sync* {
+    for (final row in state.subprojects) {
+      if (!row.isActive) continue;
+      yield row.createByStaffUuid;
+    }
+  }
+
+  Iterable<String> _subprojectStatusValues(AppState state) sync* {
+    for (final row in state.subprojects) {
+      if (!row.isActive) continue;
+      ProjectRecord? parent;
+      for (final project in state.projects) {
+        if (project.id == row.projectId) {
+          parent = project;
+          break;
+        }
+      }
+      yield (row.isPaused || (parent?.isPaused ?? false))
+          ? 'Paused'
+          : row.status;
+    }
+  }
+
   Iterable<String?> _taskCreatorKeys(AppState state) sync* {
     for (final task in _visibleTasks(state)) {
       yield task.createByAssigneeKey;
@@ -1091,7 +1254,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       state.projects
           .map((p) => '${p.id}:${p.status}:${p.pauseStatus}')
           .join('|'),
-      state.tasks.map((t) => '${t.id}:${t.projectId}:${t.dbStatus}').join('|'),
+      state.subprojects
+          .map((s) => '${s.id}:${s.status}:${s.pauseStatus}:${s.projectId}')
+          .join('|'),
+      state.tasks
+          .map((t) => '${t.id}:${t.projectId}:${t.subprojectId}:${t.dbStatus}')
+          .join('|'),
     ].join('||');
     if (sig != _dataSig) {
       _dataSig = sig;
@@ -1145,6 +1313,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 _projectCreatorIds.clear();
                 _projectPicIds.clear();
                 _projectStatuses.clear();
+                _subprojectCreatorTeamIds.clear();
+                _subprojectCreatorIds.clear();
+                _subprojectPicIds.clear();
+                _subprojectStatuses.clear();
+                _subprojectStartMonth = null;
+                _subprojectEndMonth = null;
                 _taskCreatorTeamIds.clear();
                 _taskPicIds.clear();
                 _taskStatuses.clear();
@@ -1237,6 +1411,83 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 value: _projectMonthFilterLabel(_projectEndMonth),
                 buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Team',
+                value: _filterLabel(
+                  _subprojectCreatorTeamIds,
+                  state.teamNameById,
+                ),
+                buttonWidth: 150,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _teamOptions(state, _projectCreatorKeys(state)),
+                  selected: _subprojectCreatorTeamIds,
+                  apply: (value) => _subprojectCreatorTeamIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project PIC',
+                value: _filterLabel(_subprojectPicIds, (id) {
+                  final names = _projectPicDisplayNames(state);
+                  return names[id] ?? _staffName(state, id);
+                }),
+                buttonWidth: 140,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(
+                    state,
+                    _projectPicKeys(state),
+                    displayNames: _projectPicDisplayNames(state),
+                  ),
+                  selected: _subprojectPicIds,
+                  apply: (value) => _subprojectPicIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Creator',
+                value: _filterLabel(
+                  _subprojectCreatorIds,
+                  (id) => _staffName(state, id),
+                ),
+                buttonWidth: 154,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(state, _subprojectCreatorKeys(state)),
+                  selected: _subprojectCreatorIds,
+                  apply: (value) => _subprojectCreatorIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Status',
+                value: _filterLabel(_subprojectStatuses, _statusLabelFor),
+                buttonWidth: 148,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _statusOptionsFrom(_subprojectStatusValues(state)),
+                  selected: _subprojectStatuses,
+                  apply: (value) => _subprojectStatuses
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Started From',
+                value: _projectMonthFilterLabel(_subprojectStartMonth),
+                buttonWidth: 168,
+                onPressed: _pickSubprojectMonthRange,
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Started To',
+                value: _projectMonthFilterLabel(_subprojectEndMonth),
+                buttonWidth: 168,
+                onPressed: _pickSubprojectMonthRange,
               ),
             ],
             secondRowFilterChildren: [
@@ -1748,15 +1999,32 @@ class _ProjectTreeDiagram extends StatelessWidget {
       detailLabel: AsanaStatusChip.statusStyle(status).$1,
       onTap: () => onOpenProject?.call(node.project.id),
       children: [
-        for (final taskNode in node.tasks)
-          _taskDiagramNode(
+        for (final subproject in node.subprojects)
+          _subprojectDiagramNode(
             state: state,
-            taskNode: taskNode,
+            project: node.project,
+            subproject: subproject,
+            taskNodes: [
+              for (final taskNode in node.tasks)
+                if (taskNode.task.subprojectId?.trim() == subproject.id)
+                  taskNode,
+            ],
             expandedTaskIds: expandedTaskIds,
             onToggleTaskSubtasks: onToggleTaskSubtasks,
+            onOpenProject: onOpenProject,
             onOpenTask: onOpenTask,
             onOpenSubtask: onOpenSubtask,
           ),
+        for (final taskNode in node.tasks)
+          if (!_taskSitsUnderVisibleSubproject(taskNode.task, node.subprojects))
+            _taskDiagramNode(
+              state: state,
+              taskNode: taskNode,
+              expandedTaskIds: expandedTaskIds,
+              onToggleTaskSubtasks: onToggleTaskSubtasks,
+              onOpenTask: onOpenTask,
+              onOpenSubtask: onOpenSubtask,
+            ),
       ],
     );
   }
@@ -1807,6 +2075,69 @@ class _StandaloneTaskTreeDiagram extends StatelessWidget {
       palette: palette,
     );
   }
+}
+
+bool _taskSitsUnderVisibleSubproject(
+  Task task,
+  List<SubprojectRecord> subprojects,
+) {
+  final sid = task.subprojectId?.trim();
+  if (sid == null || sid.isEmpty) return false;
+  for (final row in subprojects) {
+    if (row.id == sid) return true;
+  }
+  return false;
+}
+
+_DiagramNode _subprojectDiagramNode({
+  required AppState state,
+  required ProjectRecord project,
+  required SubprojectRecord subproject,
+  required List<_TaskMapNode> taskNodes,
+  required Set<String> expandedTaskIds,
+  required void Function(String taskId) onToggleTaskSubtasks,
+  void Function(String projectId)? onOpenProject,
+  void Function(String taskId)? onOpenTask,
+  void Function(String subtaskId)? onOpenSubtask,
+}) {
+  final status = (project.isPaused || subproject.isPaused)
+      ? 'Paused'
+      : subproject.status;
+  return _DiagramNode(
+    type: _DiagramNodeType.subproject,
+    id: subproject.id,
+    name: subproject.name,
+    pic: subproject.createByDisplayName?.trim().isNotEmpty == true
+        ? subproject.createByDisplayName!.trim()
+        : _projectPicLabelFor(project),
+    status: status,
+    completed: _mapBlockIsCompleted(status),
+    detailLabel: AsanaStatusChip.statusStyle(status).$1,
+    onTap: () => onOpenProject?.call(project.id),
+    children: [
+      for (final taskNode in taskNodes)
+        _taskDiagramNode(
+          state: state,
+          taskNode: taskNode,
+          expandedTaskIds: expandedTaskIds,
+          onToggleTaskSubtasks: onToggleTaskSubtasks,
+          onOpenTask: onOpenTask,
+          onOpenSubtask: onOpenSubtask,
+        ),
+    ],
+  );
+}
+
+String _projectPicLabelFor(ProjectRecord project) {
+  final names = project.picStaffDisplayNames
+      .map((name) => name.trim())
+      .where((name) => name.isNotEmpty)
+      .toList();
+  if (names.isNotEmpty) return names.join(', ');
+  return project.picStaffUuids
+      .map((id) => id.trim())
+      .where((id) => id.isNotEmpty)
+      .join(', ');
 }
 
 _DiagramNode _taskDiagramNode({
@@ -2414,7 +2745,8 @@ class _DiagramBox extends StatelessWidget {
 
     final cornerBadge = item.node.completed
         ? 'Completed'
-        : item.node.type == _DiagramNodeType.project
+        : item.node.type == _DiagramNodeType.project ||
+              item.node.type == _DiagramNodeType.subproject
         ? null
         : AsanaDueBadge.labelFor(
             due: item.node.dueDate,
@@ -2582,7 +2914,7 @@ class _TreeConnectorPainter extends CustomPainter {
   }
 }
 
-enum _DiagramNodeType { project, task, subtask }
+enum _DiagramNodeType { project, subproject, task, subtask }
 
 class _DiagramBoxStyle {
   const _DiagramBoxStyle({
@@ -2613,6 +2945,16 @@ class _DiagramBoxStyle {
       case _DiagramNodeType.project:
         return _DiagramBoxStyle(
           background: accent,
+          border: accent,
+          text: Colors.white,
+          secondaryText: Colors.white.withValues(alpha: 0.86),
+        );
+      case _DiagramNodeType.subproject:
+        return _DiagramBoxStyle(
+          background: Color.alphaBlend(
+            accent.withValues(alpha: palette.darkChrome ? 0.62 : 0.58),
+            surface,
+          ),
           border: accent,
           text: Colors.white,
           secondaryText: Colors.white.withValues(alpha: 0.86),
@@ -2700,10 +3042,15 @@ class _PlacedDiagramNode {
 }
 
 class _ProjectMapNode {
-  const _ProjectMapNode({required this.project, required this.tasks});
+  const _ProjectMapNode({
+    required this.project,
+    required this.tasks,
+    this.subprojects = const [],
+  });
 
   final ProjectRecord project;
   final List<_TaskMapNode> tasks;
+  final List<SubprojectRecord> subprojects;
 }
 
 class _TaskMapNode {

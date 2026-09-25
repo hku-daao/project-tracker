@@ -5,6 +5,7 @@ import 'asana_create_discussion_detail_panel.dart';
 import 'asana_detail_selection.dart';
 import 'asana_create_project_detail_panel.dart';
 import 'asana_project_detail_panel.dart';
+import 'asana_subproject_detail_panel.dart';
 import 'asana_subtask_detail_panel.dart';
 import 'asana_task_detail_panel.dart';
 
@@ -20,6 +21,9 @@ class AsanaDetailPanelHost extends StatelessWidget {
     this.onPushSubtask,
     this.onPushCreateTaskForProject,
     this.onPushTaskFromProject,
+    this.onPushCreateSubproject,
+    this.onPushSubproject,
+    this.onSubprojectCreated,
     this.onTaskCreated,
     this.onDiscussionCreated,
     this.onProjectCreated,
@@ -38,6 +42,9 @@ class AsanaDetailPanelHost extends StatelessWidget {
   final void Function(String subtaskId)? onPushSubtask;
   final void Function(String projectId)? onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
+  final void Function(String projectId)? onPushCreateSubproject;
+  final void Function(String subprojectId, String projectId)? onPushSubproject;
+  final void Function(String projectId, String subprojectId)? onSubprojectCreated;
   final void Function(String taskId)? onTaskCreated;
   final VoidCallback? onDiscussionCreated;
   final void Function(String projectId)? onProjectCreated;
@@ -77,6 +84,12 @@ class AsanaDetailPanelHost extends StatelessWidget {
             ? null
             : () => onPushCreateTaskForProject!(projectId),
         onPushTask: onPushTaskFromProject,
+        onPushCreateSubproject: onPushCreateSubproject == null
+            ? null
+            : () => onPushCreateSubproject!(projectId),
+        onPushSubproject: onPushSubproject == null
+            ? null
+            : (subprojectId) => onPushSubproject!(subprojectId, projectId),
       ),
       AsanaCreateSubtaskDetailSelection(:final parentTaskId) =>
         AsanaSubtaskDetailPanel(
@@ -107,6 +120,27 @@ class AsanaDetailPanelHost extends StatelessWidget {
         onClose: onClose,
         onCreated: onDiscussionCreated,
       ),
+      AsanaSubprojectDetailSelection(
+        :final subprojectId,
+        :final projectId,
+      ) => AsanaSubprojectDetailPanel(
+        projectId: projectId,
+        subprojectId: subprojectId,
+        palette: palette,
+        onClose: onPop ?? onClose,
+        onChanged: onProjectChanged,
+      ),
+      AsanaCreateSubprojectDetailSelection(:final projectId) =>
+        AsanaSubprojectDetailPanel(
+          createMode: true,
+          projectId: projectId,
+          palette: palette,
+          onClose: onPop ?? onClose,
+          onCreated: onSubprojectCreated == null
+              ? null
+              : (subprojectId) => onSubprojectCreated!(projectId, subprojectId),
+          onChanged: onProjectChanged,
+        ),
     };
   }
 }

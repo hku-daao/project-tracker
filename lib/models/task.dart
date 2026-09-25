@@ -91,6 +91,12 @@ class Task {
   /// [`project.description`] when joined at load time (landing search).
   final String? projectDescription;
 
+  /// Optional `task.subproject_id` → [`subproject`].
+  final String? subprojectId;
+
+  /// [`subproject.name`] when joined at load time.
+  final String? subprojectName;
+
   bool get isArchivedCompleted => archivedAt != null;
 
   bool get isPaused => pauseStatus.trim().toLowerCase() == 'paused';
@@ -130,6 +136,8 @@ class Task {
     this.projectId,
     this.projectName,
     this.projectDescription,
+    this.subprojectId,
+    this.subprojectName,
   });
 
   Task copyWith({
@@ -173,6 +181,9 @@ class Task {
     String? projectName,
     String? projectDescription,
     bool clearProject = false,
+    String? subprojectId,
+    String? subprojectName,
+    bool clearSubproject = false,
   }) {
     return Task(
       id: id ?? this.id,
@@ -219,6 +230,12 @@ class Task {
       projectDescription: clearProject
           ? null
           : (projectDescription ?? this.projectDescription),
+      subprojectId: clearProject || clearSubproject
+          ? null
+          : (subprojectId ?? this.subprojectId),
+      subprojectName: clearProject || clearSubproject
+          ? null
+          : (subprojectName ?? this.subprojectName),
     );
   }
 

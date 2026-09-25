@@ -7,6 +7,7 @@ import '../../app_state.dart';
 import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
+import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
 import '../../services/asana_filter_cookie_storage.dart';
@@ -884,7 +885,7 @@ class _ProjectTableLayout {
   final double tableWidth;
 
   static const double minTableWidth = 1000;
-  static const double typeCol = 48;
+  static const double typeCol = 56;
   static const double typeColGap = 10;
 
   /// Aligns project name with task list (matches [_TaskTableLayout.nameGutter]).
@@ -922,7 +923,7 @@ class _ProjectExpandedTaskTableLayout {
 
   final double tableWidth;
 
-  static const double typeCol = 48;
+  static const double typeCol = 56;
   static const double typeColGap = 10;
   static const double nameGutter = 36;
   static const int textColumnGapCount = 5;
@@ -1068,7 +1069,8 @@ class _ExpandableProjectTableRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasTasks = tasks.isNotEmpty;
+    final subprojects = appState.subprojectsForProject(project.id);
+    final hasChildren = tasks.isNotEmpty || subprojects.isNotEmpty;
     return SizedBox(
       width: tableWidth,
       child: Column(
@@ -1080,14 +1082,14 @@ class _ExpandableProjectTableRow extends StatelessWidget {
             project: project,
             appState: appState,
             onRowTap: onRowTap,
-            expandControl: hasTasks
+            expandControl: hasChildren
                 ? _ProjectExpandChevron(
                     expanded: expanded,
                     onPressed: onToggleExpand,
                   )
                 : null,
           ),
-          if (hasTasks)
+          if (hasChildren)
             _AnimatedProjectTaskExpansion(
               expanded: expanded,
               child: ColoredBox(
@@ -1097,28 +1099,23 @@ class _ExpandableProjectTableRow extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _ProjectTaskSectionHeader(tableWidth: tableWidth),
-                      for (var i = 0; i < tasks.length; i++)
-                        _ProjectTaskDataRow(
-                          tableWidth: tableWidth,
-                          tableColors: tableColors,
-                          appState: appState,
-                          task: tasks[i],
-                          subtasks:
-                              subtasksByTask[tasks[i].id] ??
-                              const <SingularSubtask>[],
-                          subtasksKnown: subtasksByTask.containsKey(
-                            tasks[i].id,
-                          ),
-                          expanded: expandedTaskIds.contains(tasks[i].id),
-                          loadingSubtasks: loadingSubtaskTaskIds.contains(
-                            tasks[i].id,
-                          ),
-                          showDivider: i > 0,
-                          onToggleExpand: () => onToggleTaskExpand(tasks[i]),
-                          onOpenTask: onOpenTask,
-                          onOpenSubtask: onOpenSubtask,
-                        ),
+                      _ProjectTaskSectionHeader(
+                        tableWidth: tableWidth,
+                        nameLabel: 'Name',
+                      ),
+                      ..._expandedProjectChildRows(
+                        tableWidth: tableWidth,
+                        tableColors: tableColors,
+                        appState: appState,
+                        subprojects: subprojects,
+                        tasks: tasks,
+                        subtasksByTask: subtasksByTask,
+                        expandedTaskIds: expandedTaskIds,
+                        loadingSubtaskTaskIds: loadingSubtaskTaskIds,
+                        onToggleTaskExpand: onToggleTaskExpand,
+                        onOpenTask: onOpenTask,
+                        onOpenSubtask: onOpenSubtask,
+                      ),
                     ],
                   ),
                 ),
@@ -1289,6 +1286,210 @@ class _ProjectTaskSectionHeader extends StatelessWidget {
   }
 }
 
+List<Widget> _expandedProjectChildRows({
+  required double tableWidth,
+  required AsanaTableColors tableColors,
+  required AppState appState,
+  required List<SubprojectRecord> subprojects,
+  required List<Task> tasks,
+  required Map<String, List<SingularSubtask>> subtasksByTask,
+  required Set<String> expandedTaskIds,
+  required Set<String> loadingSubtaskTaskIds,
+  required void Function(Task task) onToggleTaskExpand,
+  void Function(String taskId)? onOpenTask,
+  void Function(String subtaskId)? onOpenSubtask,
+}) {
+  final widgets = <Widget>[];
+  final usedTaskIds = <String>{};
+
+  void addTask(Task task) {
+    usedTaskIds.add(task.id);
+    widgets.add(
+      _ProjectTaskDataRow(
+        tableWidth: tableWidth,
+        tableColors: tableColors,
+        appState: appState,
+        task: task,
+        subtasks: subtasksByTask[task.id] ?? const <SingularSubtask>[],
+        subtasksKnown: subtasksByTask.containsKey(task.id),
+        expanded: expandedTaskIds.contains(task.id),
+        loadingSubtasks: loadingSubtaskTaskIds.contains(task.id),
+        showDivider: widgets.isNotEmpty,
+        onToggleExpand: () => onToggleTaskExpand(task),
+        onOpenTask: onOpenTask,
+        onOpenSubtask: onOpenSubtask,
+      ),
+    );
+  }
+
+  for (final subproject in subprojects) {
+    widgets.add(
+      _ProjectSubprojectDataRow(
+        tableWidth: tableWidth,
+        tableColors: tableColors,
+        subproject: subproject,
+        showDivider: widgets.isNotEmpty,
+      ),
+    );
+    for (final task in tasks) {
+      if (task.subprojectId?.trim() == subproject.id) addTask(task);
+    }
+  }
+  for (final task in tasks) {
+    if (usedTaskIds.contains(task.id)) continue;
+    addTask(task);
+  }
+  return widgets;
+}
+
+class _ProjectSubprojectDataRow extends StatelessWidget {
+  const _ProjectSubprojectDataRow({
+    required this.tableWidth,
+    required this.tableColors,
+    required this.subproject,
+    required this.showDivider,
+  });
+
+  final double tableWidth;
+  final AsanaTableColors tableColors;
+  final SubprojectRecord subproject;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = subproject.isCompleted;
+    final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final nameStyle = asanaTableRowNameStyle(
+      context,
+      completed: completed,
+      isSubtask: true,
+    );
+    final rowValueStyle = asanaTableRowValueStyle(
+      context,
+      completed: completed,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (showDivider)
+          Divider(
+            height: 1,
+            indent:
+                _ProjectExpandedTaskTableLayout.hPad +
+                _ProjectExpandedTaskTableLayout.typeCol +
+                _ProjectExpandedTaskTableLayout.typeColGap +
+                _ProjectExpandedTaskTableLayout.nameGutter,
+            color: Colors.grey.shade200,
+          ),
+        Material(
+          color: tableColors.subtaskRow,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              _ProjectExpandedTaskTableLayout.hPad,
+              10,
+              _ProjectExpandedTaskTableLayout.hPad,
+              10,
+            ),
+            child: SizedBox(
+              width: tableWidth - _ProjectExpandedTaskTableLayout.hPad * 2,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: _ProjectExpandedTaskTableLayout.typeCol,
+                    child: Center(
+                      child: Transform.translate(
+                        offset: Offset(
+                          _ProjectExpandedTaskTableLayout.hierarchyIndentStep /
+                              2,
+                          0,
+                        ),
+                        child: AsanaRowTypeLetter(
+                          letter: 'SP',
+                          completed: completed,
+                          deleted: subproject.isDeleted,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(
+                    width: _ProjectExpandedTaskTableLayout.typeColGap,
+                  ),
+                  SizedBox(
+                    width: cols.taskNameCol,
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: _ProjectExpandedTaskTableLayout.nameGutter,
+                        ),
+                        Expanded(
+                          child: AsanaNameWithFreshness(
+                            name: subproject.name.trim().isEmpty
+                                ? '(Unnamed sub-project)'
+                                : subproject.name.trim(),
+                            style: nameStyle,
+                            createdAt: subproject.createDate,
+                            updatedAt: subproject.updateDate,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  asanaTextColumnGap(),
+                  SizedBox(
+                    width: cols.dueCol,
+                    child: Text(
+                      subproject.endDate == null
+                          ? '—'
+                          : HkTime.formatInstantAsHk(
+                              subproject.endDate!,
+                              'MMM d, yyyy',
+                            ),
+                      style: rowValueStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  asanaTextColumnGap(),
+                  SizedBox(
+                    width: cols.creatorCol,
+                    child: Text(
+                      (subproject.createByDisplayName ?? '').trim().isEmpty
+                          ? '—'
+                          : subproject.createByDisplayName!.trim(),
+                      style: rowValueStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  asanaTextColumnGap(),
+                  SizedBox(width: cols.picCol, child: Text('—', style: rowValueStyle)),
+                  asanaTextColumnGap(),
+                  SizedBox(
+                    width: cols.assigneeCol,
+                    child: Text('—', style: rowValueStyle),
+                  ),
+                  asanaTextColumnGap(),
+                  SizedBox(
+                    width: cols.statusCol,
+                    child: AsanaTableCellChip(
+                      child: AsanaStatusChip(
+                        status: subproject.isPaused
+                            ? 'Paused'
+                            : subproject.status,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ProjectTaskDataRow extends StatelessWidget {
   const _ProjectTaskDataRow({
     required this.tableWidth,
@@ -1372,8 +1573,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
                         child: Transform.translate(
                           offset: const Offset(
                             _ProjectExpandedTaskTableLayout
-                                    .hierarchyIndentStep /
-                                2,
+                                .hierarchyIndentStep,
                             0,
                           ),
                           child: AsanaRowTypeLetter(
@@ -1661,7 +1861,8 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
                       child: Center(
                         child: Transform.translate(
                           offset: const Offset(
-                            _ProjectExpandedTaskTableLayout.hierarchyIndentStep,
+                            _ProjectExpandedTaskTableLayout.hierarchyIndentStep *
+                                1.5,
                             0,
                           ),
                           child: AsanaRowTypeLetter(
@@ -1998,7 +2199,10 @@ class _ProjectMobileRow extends StatelessWidget {
                             completed: _completed,
                             deleted: _deleted,
                           ),
-                          if (tasks.isNotEmpty) ...[
+                          if (tasks.isNotEmpty ||
+                              appState
+                                  .subprojectsForProject(project.id)
+                                  .isNotEmpty) ...[
                             const SizedBox(height: 2),
                             _ProjectMobileExpandChevron(
                               expanded: expanded,
@@ -2055,12 +2259,14 @@ class _ProjectMobileRow extends StatelessWidget {
             ),
           ),
         ),
-        if (tasks.isNotEmpty)
+        if (tasks.isNotEmpty ||
+            appState.subprojectsForProject(project.id).isNotEmpty)
           _AnimatedProjectTaskExpansion(
             expanded: expanded,
             child: ColoredBox(
               color: tableColors.subtaskSection,
               child: _ProjectMobileTaskList(
+                projectId: project.id,
                 tasks: tasks,
                 subtasksByTask: subtasksByTask,
                 expandedTaskIds: expandedTaskIds,
@@ -2105,6 +2311,7 @@ class _ProjectMobileExpandChevron extends StatelessWidget {
 
 class _ProjectMobileTaskList extends StatelessWidget {
   const _ProjectMobileTaskList({
+    required this.projectId,
     required this.tasks,
     required this.subtasksByTask,
     required this.expandedTaskIds,
@@ -2116,6 +2323,7 @@ class _ProjectMobileTaskList extends StatelessWidget {
     this.onOpenSubtask,
   });
 
+  final String projectId;
   final List<Task> tasks;
   final Map<String, List<SingularSubtask>> subtasksByTask;
   final Set<String> expandedTaskIds;
@@ -2128,25 +2336,69 @@ class _ProjectMobileTaskList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final subprojects = appState.subprojectsForProject(projectId);
+    final used = <String>{};
+    final children = <Widget>[];
+
+    void addTask(Task task) {
+      if (used.contains(task.id)) return;
+      used.add(task.id);
+      if (children.isNotEmpty) {
+        children.add(Divider(height: 1, color: Colors.grey.shade300));
+      }
+      children.add(
+        _ProjectMobileTaskRow(
+          task: task,
+          subtasks: subtasksByTask[task.id] ?? const <SingularSubtask>[],
+          subtasksKnown: subtasksByTask.containsKey(task.id),
+          expanded: expandedTaskIds.contains(task.id),
+          loadingSubtasks: loadingSubtaskTaskIds.contains(task.id),
+          tableColors: tableColors,
+          appState: appState,
+          onToggleExpand: () => onToggleTaskExpand(task),
+          onTap: onOpenTask == null ? null : () => onOpenTask!(task.id),
+          onOpenSubtask: onOpenSubtask,
+        ),
+      );
+    }
+
+    for (final subproject in subprojects) {
+      if (children.isNotEmpty) {
+        children.add(Divider(height: 1, color: Colors.grey.shade300));
+      }
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+          child: Row(
+            children: [
+              AsanaRowTypeLetter(
+                letter: 'SP',
+                completed: subproject.isCompleted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  subproject.name.trim().isEmpty
+                      ? '(Unnamed sub-project)'
+                      : subproject.name.trim(),
+                  style: asanaTableRowNameStyle(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      for (final task in tasks) {
+        if (task.subprojectId?.trim() == subproject.id) addTask(task);
+      }
+    }
+    for (final task in tasks) {
+      addTask(task);
+    }
+
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < tasks.length; i++) ...[
-          if (i > 0) Divider(height: 1, color: Colors.grey.shade300),
-          _ProjectMobileTaskRow(
-            task: tasks[i],
-            subtasks: subtasksByTask[tasks[i].id] ?? const <SingularSubtask>[],
-            subtasksKnown: subtasksByTask.containsKey(tasks[i].id),
-            expanded: expandedTaskIds.contains(tasks[i].id),
-            loadingSubtasks: loadingSubtaskTaskIds.contains(tasks[i].id),
-            tableColors: tableColors,
-            appState: appState,
-            onToggleExpand: () => onToggleTaskExpand(tasks[i]),
-            onTap: onOpenTask == null ? null : () => onOpenTask!(tasks[i].id),
-            onOpenSubtask: onOpenSubtask,
-          ),
-        ],
-      ],
+      children: children,
     );
   }
 }
