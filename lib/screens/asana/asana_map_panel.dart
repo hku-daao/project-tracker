@@ -279,26 +279,31 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     final query = widget.searchQuery.trim().toLowerCase();
     final nodes = <_ProjectMapNode>[];
     for (final project in projects) {
+      if (_hasProjectFilters && !_passesProjectFilters(state, project)) {
+        continue;
+      }
       final tasks = tasksByProject[project.id] ?? const <Task>[];
       final projectSearch =
           _matches(project.name, query) ||
           _matches(_projectPicLabel(project), query) ||
           _matches(project.status, query);
-      final projectGroupHit =
-          _hasProjectFilters && _passesProjectFilters(state, project);
       final taskNodes = <_TaskMapNode>[];
       for (final task in tasks) {
         if (_isMapHiddenTask(state, task)) continue;
         final subtasks = _subtasksByTask[task.id] ?? const <SingularSubtask>[];
         final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
-        final taskGroupHit =
-            _hasTaskFilters && _passesTaskFilters(state, task, taskStatus);
+        if (_hasTaskFilters &&
+            !_passesTaskFilters(state, task, taskStatus)) {
+          continue;
+        }
         final linkedSp = state.subprojectById(task.subprojectId);
         final activeSp = linkedSp != null && linkedSp.isActive ? linkedSp : null;
-        final subprojectGroupHit =
-            activeSp != null &&
-            _hasSubprojectFilters &&
-            _passesSubprojectFilters(state, project, activeSp);
+        if (_hasSubprojectFilters) {
+          if (activeSp == null ||
+              !_passesSubprojectFilters(state, project, activeSp)) {
+            continue;
+          }
+        }
         final taskPic = _staffName(state, task.pic);
         final taskSearch =
             _matches(task.name, query) ||
@@ -312,17 +317,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             task,
             subtask,
           );
-          final subGroupHit =
-              _hasSubtaskFilters &&
-              _passesSubtaskFilters(state, subtask, subStatus);
-          final includeSub =
-              (!_hasSubtaskFilters || subGroupHit) &&
-              (!_hasAnyGroupFilters ||
-                  subGroupHit ||
-                  taskGroupHit ||
-                  projectGroupHit ||
-                  subprojectGroupHit);
-          if (!includeSub) continue;
+          if (_hasSubtaskFilters &&
+              !_passesSubtaskFilters(state, subtask, subStatus)) {
+            continue;
+          }
           final subPic = _staffName(state, subtask.pic);
           final subSearch =
               _matches(subtask.subtaskName, query) ||
@@ -336,14 +334,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           }
           subtaskNodes.add(subtask);
         }
-        final includeTask =
-            (!_hasTaskFilters || taskGroupHit) &&
-            (!_hasAnyGroupFilters ||
-                taskGroupHit ||
-                projectGroupHit ||
-                subprojectGroupHit ||
-                subtaskNodes.isNotEmpty);
-        if (!includeTask) continue;
+        if (_hasSubtaskFilters && subtaskNodes.isEmpty) continue;
         if (!_passesSearch(
           taskSearch || projectSearch || subtaskNodes.isNotEmpty,
           query,
@@ -355,15 +346,14 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       final visibleSps = <SubprojectRecord>[];
       for (final sp in state.subprojectsForProject(project.id)) {
         if (sp.isDeleted || sp.isPaused) continue;
-        final spHit =
-            _hasSubprojectFilters && _passesSubprojectFilters(state, project, sp);
+        if (_hasSubprojectFilters &&
+            !_passesSubprojectFilters(state, project, sp)) {
+          continue;
+        }
         final hasTasks = taskNodes.any(
           (n) => n.task.subprojectId?.trim() == sp.id,
         );
-        final includeSp =
-            (!_hasSubprojectFilters || spHit) &&
-            (!_hasAnyGroupFilters || spHit || projectGroupHit || hasTasks);
-        if (!includeSp) continue;
+        if (!hasTasks && _hasTaskOrSubtaskFilters) continue;
         if (!hasTasks && !_showProjectsWithoutTasks) continue;
         final spSearch = _matches(sp.name, query) || _matches(sp.status, query);
         if (!_passesSearch(spSearch || projectSearch || hasTasks, query)) {
@@ -371,15 +361,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         }
         visibleSps.add(sp);
       }
-      final includeProject =
-          !_hasAnyGroupFilters ||
-          projectGroupHit ||
-          taskNodes.isNotEmpty ||
-          visibleSps.isNotEmpty;
-      if (!includeProject) continue;
       if (taskNodes.isEmpty &&
           visibleSps.isEmpty &&
-          !_showProjectsWithoutTasks) {
+          (_hasTaskOrSubtaskFilters ||
+              _hasSubprojectFilters ||
+              !_showProjectsWithoutTasks)) {
         continue;
       }
       if (!_passesSearch(
@@ -408,8 +394,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   List<_TaskMapNode> _buildStandaloneTaskNodes(AppState state) {
-    if ((_hasProjectFilters || _hasSubprojectFilters) &&
-        !_hasTaskOrSubtaskFilters) {
+    if (_hasProjectFilters || _hasSubprojectFilters) {
       return const [];
     }
     final query = widget.searchQuery.trim().toLowerCase();
@@ -435,13 +420,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           task,
           subtask,
         );
-        final subGroupHit =
-            _hasSubtaskFilters &&
-            _passesSubtaskFilters(state, subtask, subStatus);
-        final includeSub =
-            (!_hasSubtaskFilters || subGroupHit) &&
-            (!_hasTaskOrSubtaskFilters || subGroupHit || taskGroupHit);
-        if (!includeSub) continue;
+        if (_hasSubtaskFilters &&
+            !_passesSubtaskFilters(state, subtask, subStatus)) {
+          continue;
+        }
         final subPic = _staffName(state, subtask.pic);
         final subSearch =
             _matches(subtask.subtaskName, query) ||
@@ -450,10 +432,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         if (!_passesSearch(subSearch || taskSearch, query)) continue;
         subtaskNodes.add(subtask);
       }
-      final includeTask =
-          (!_hasTaskFilters || taskGroupHit) &&
-          (!_hasTaskOrSubtaskFilters || taskGroupHit || subtaskNodes.isNotEmpty);
-      if (!includeTask) continue;
+      if (_hasTaskFilters && !taskGroupHit) continue;
+      if (_hasSubtaskFilters && subtaskNodes.isEmpty) continue;
       if (!_passesSearch(taskSearch || subtaskNodes.isNotEmpty, query)) {
         continue;
       }
@@ -490,12 +470,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool get _hasTaskOrSubtaskFilters =>
       _hasTaskFilters || _hasSubtaskFilters;
-
-  bool get _hasAnyGroupFilters =>
-      _hasProjectFilters ||
-      _hasSubprojectFilters ||
-      _hasTaskFilters ||
-      _hasSubtaskFilters;
 
   bool get _hasSubtaskFilters =>
       _subtaskCreatorTeamIds.isNotEmpty ||
@@ -575,7 +549,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           [subproject.createByStaffUuid],
           _subprojectCreatorIds,
         ) &&
-        _passesStaffFilter(project.picStaffUuids, _subprojectPicIds) &&
+        _passesStaffFilter(subproject.picStaffUuids, _subprojectPicIds) &&
         _passesStatusFilter(status, _subprojectStatuses) &&
         _passesSubprojectStartFilters(subproject);
   }
@@ -946,9 +920,13 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool _passesStaffFilter(Iterable<String?> ids, Set<String> selectedIds) {
     if (selectedIds.isEmpty) return true;
+    final selected = {
+      for (final id in selectedIds)
+        if (id.trim().isNotEmpty) id.trim().toLowerCase(),
+    };
     return ids.any((id) {
-      final key = id?.trim();
-      return key != null && key.isNotEmpty && selectedIds.contains(key);
+      final key = id?.trim().toLowerCase();
+      return key != null && key.isNotEmpty && selected.contains(key);
     });
   }
 
@@ -1441,6 +1419,31 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
   }
 
+  Iterable<String?> _subprojectPicKeys(AppState state) sync* {
+    for (final row in state.subprojects) {
+      if (!row.isActive) continue;
+      for (final id in row.picStaffUuids) {
+        yield id;
+      }
+    }
+  }
+
+  Map<String, String> _subprojectPicDisplayNames(AppState state) {
+    final names = <String, String>{};
+    for (final row in state.subprojects) {
+      if (!row.isActive) continue;
+      for (var i = 0; i < row.picStaffUuids.length; i++) {
+        final id = row.picStaffUuids[i].trim();
+        if (id.isEmpty) continue;
+        final display = i < row.picStaffDisplayNames.length
+            ? row.picStaffDisplayNames[i].trim()
+            : '';
+        names[id] = display.isNotEmpty ? display : _staffName(state, id);
+      }
+    }
+    return names;
+  }
+
   Iterable<String> _subprojectStatusValues(AppState state) sync* {
     for (final row in state.subprojects) {
       if (!row.isActive) continue;
@@ -1824,7 +1827,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Sub-project PIC',
                 value: _filterLabel(_subprojectPicIds, (id) {
-                  final names = _projectPicDisplayNames(state);
+                  final names = _subprojectPicDisplayNames(state);
                   return names[id] ?? _staffName(state, id);
                 }),
                 buttonWidth: 140,
@@ -1832,8 +1835,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   anchorContext: anchor,
                   options: _staffOptions(
                     state,
-                    _projectPicKeys(state),
-                    displayNames: _projectPicDisplayNames(state),
+                    _subprojectPicKeys(state),
+                    displayNames: _subprojectPicDisplayNames(state),
                   ),
                   selected: _subprojectPicIds,
                   apply: (value) => _subprojectPicIds
