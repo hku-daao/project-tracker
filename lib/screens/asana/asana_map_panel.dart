@@ -282,15 +282,26 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       if (_hasProjectFilters && !_passesProjectFilters(state, project)) {
         continue;
       }
-      final tasks = tasksByProject[project.id] ?? const <Task>[];
       final projectSearch =
           _matches(project.name, query) ||
           _matches(_projectPicLabel(project), query) ||
           _matches(project.status, query);
+
+      final visibleSps = <SubprojectRecord>[];
+      for (final sp in state.subprojectsForProject(project.id)) {
+        if (sp.isDeleted || sp.isPaused) continue;
+        if (_hasSubprojectFilters &&
+            !_passesSubprojectFilters(state, project, sp)) {
+          continue;
+        }
+        visibleSps.add(sp);
+      }
+      final visibleSpIds = {for (final sp in visibleSps) sp.id};
+
+      final tasks = tasksByProject[project.id] ?? const <Task>[];
       final taskNodes = <_TaskMapNode>[];
       for (final task in tasks) {
         if (_isMapHiddenTask(state, task)) continue;
-        final subtasks = _subtasksByTask[task.id] ?? const <SingularSubtask>[];
         final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
         if (_hasTaskFilters &&
             !_passesTaskFilters(state, task, taskStatus)) {
@@ -298,11 +309,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         }
         final linkedSp = state.subprojectById(task.subprojectId);
         final activeSp = linkedSp != null && linkedSp.isActive ? linkedSp : null;
-        if (_hasSubprojectFilters) {
-          if (activeSp == null ||
-              !_passesSubprojectFilters(state, project, activeSp)) {
-            continue;
-          }
+        if (activeSp != null && !visibleSpIds.contains(activeSp.id)) {
+          continue;
         }
         final taskPic = _staffName(state, task.pic);
         final taskSearch =
@@ -310,7 +318,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             _matches(taskPic, query) ||
             _matches(taskStatus, query);
         final subtaskNodes = <SingularSubtask>[];
-        for (final subtask in subtasks) {
+        for (final subtask
+            in _subtasksByTask[task.id] ?? const <SingularSubtask>[]) {
           if (_isMapHiddenSubtask(state, task, subtask)) continue;
           final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
             state,
@@ -334,7 +343,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           }
           subtaskNodes.add(subtask);
         }
-        if (_hasSubtaskFilters && subtaskNodes.isEmpty) continue;
         if (!_passesSearch(
           taskSearch || projectSearch || subtaskNodes.isNotEmpty,
           query,
@@ -343,29 +351,20 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         }
         taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
       }
-      final visibleSps = <SubprojectRecord>[];
-      for (final sp in state.subprojectsForProject(project.id)) {
-        if (sp.isDeleted || sp.isPaused) continue;
-        if (_hasSubprojectFilters &&
-            !_passesSubprojectFilters(state, project, sp)) {
-          continue;
-        }
+
+      visibleSps.removeWhere((sp) {
         final hasTasks = taskNodes.any(
           (n) => n.task.subprojectId?.trim() == sp.id,
         );
-        if (!hasTasks && _hasTaskOrSubtaskFilters) continue;
-        if (!hasTasks && !_showProjectsWithoutTasks) continue;
         final spSearch = _matches(sp.name, query) || _matches(sp.status, query);
         if (!_passesSearch(spSearch || projectSearch || hasTasks, query)) {
-          continue;
+          return true;
         }
-        visibleSps.add(sp);
-      }
+        return !hasTasks && !_showProjectsWithoutTasks;
+      });
       if (taskNodes.isEmpty &&
           visibleSps.isEmpty &&
-          (_hasTaskOrSubtaskFilters ||
-              _hasSubprojectFilters ||
-              !_showProjectsWithoutTasks)) {
+          !_showProjectsWithoutTasks) {
         continue;
       }
       if (!_passesSearch(
@@ -433,7 +432,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         subtaskNodes.add(subtask);
       }
       if (_hasTaskFilters && !taskGroupHit) continue;
-      if (_hasSubtaskFilters && subtaskNodes.isEmpty) continue;
       if (!_passesSearch(taskSearch || subtaskNodes.isNotEmpty, query)) {
         continue;
       }
@@ -467,9 +465,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _taskStatuses.isNotEmpty ||
       _taskCompletedDateEngaged ||
       _taskExpectedDueEngaged;
-
-  bool get _hasTaskOrSubtaskFilters =>
-      _hasTaskFilters || _hasSubtaskFilters;
 
   bool get _hasSubtaskFilters =>
       _subtaskCreatorTeamIds.isNotEmpty ||
@@ -932,7 +927,18 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool _passesStatusFilter(String status, Set<String> selectedStatuses) {
     if (selectedStatuses.isEmpty) return true;
-    return selectedStatuses.contains(_statusKey(status));
+    switch (_classifyWorkStatus(selectedStatuses)) {
+      case _WorkStatusMode.all:
+        return true;
+      case _WorkStatusMode.completed:
+        return _mapBlockIsCompleted(status);
+      case _WorkStatusMode.incomplete:
+        return !_mapBlockIsCompleted(status);
+      case _WorkStatusMode.both:
+        return true;
+      case _WorkStatusMode.other:
+        return selectedStatuses.contains(_statusKey(status));
+    }
   }
 
   String _statusKey(String status) => status.trim().toLowerCase();
