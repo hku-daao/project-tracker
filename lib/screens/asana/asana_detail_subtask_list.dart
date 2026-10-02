@@ -291,7 +291,7 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                         width: AsanaDetailSubtaskTableLayout.typeCol,
                         child: Center(
                           child: AsanaRowTypeLetter(
-                            letter: 'S',
+                            letter: 'ST',
                             completed: completed,
                             deleted: s.isDeleted,
                           ),

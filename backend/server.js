@@ -8702,6 +8702,139 @@ ${projectTrackerEmailFooterText()}`;
   }
 }
 
+const DISCUSSION_NEW_POST_NOTIFY_EMAIL = 'kenkylee@hku.hk';
+
+/**
+ * POST { threadId, postId } — new discussion thread only (root post).
+ * Replies must not call this. Emails Ken LEE with the quoted post body.
+ */
+async function handleNotifyDiscussionPosted(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(req, res, 405, { error: 'Method not allowed' });
+    return;
+  }
+  const session = await verifyFirebaseToken(req);
+  if (!session) {
+    sendJson(req, res, 401, { error: 'Unauthorized' });
+    return;
+  }
+  if (!db) {
+    sendJson(req, res, 503, { error: 'Database not configured' });
+    return;
+  }
+  if (!EMAIL_SENDING_ENABLED) {
+    notifyEmailSkippedResponse(req, res);
+    return;
+  }
+  if (!outboundEmailConfigured()) {
+    sendJson(req, res, 503, { error: 'Outbound email transport not configured' });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    const threadId = (body.threadId || '').trim();
+    const postId = (body.postId || '').trim();
+    if (!threadId || !postId) {
+      sendJson(req, res, 400, { error: 'threadId and postId required' });
+      return;
+    }
+    const { data: threadRow, error: threadErr } = await db
+      .from('forum_thread')
+      .select('id, title, category, created_by')
+      .eq('id', threadId)
+      .maybeSingle();
+    if (threadErr || !threadRow) {
+      sendJson(req, res, 404, { error: 'Discussion thread not found' });
+      return;
+    }
+    const { data: postRow, error: postErr } = await db
+      .from('forum_post')
+      .select('id, thread_id, parent_post_id, depth, content, created_by')
+      .eq('id', postId)
+      .maybeSingle();
+    if (postErr || !postRow) {
+      sendJson(req, res, 404, { error: 'Discussion post not found' });
+      return;
+    }
+    if (String(postRow.thread_id || '').trim() !== threadId) {
+      sendJson(req, res, 400, { error: 'postId does not belong to threadId' });
+      return;
+    }
+    const parentId = String(postRow.parent_post_id || '').trim();
+    const depth = Number(postRow.depth || 0);
+    if (parentId || depth > 0) {
+      sendJson(req, res, 200, {
+        ok: true,
+        skipped: true,
+        reason: 'reply_does_not_notify',
+      });
+      return;
+    }
+    const authorId = String(postRow.created_by || threadRow.created_by || '').trim();
+    const { data: authorStaff } = authorId
+      ? await fetchStaffRowForCreateBy(db, authorId)
+      : { data: null };
+    const authorName =
+      (authorStaff?.name || '').trim() ||
+      (authorStaff?.email || '').trim() ||
+      'A colleague';
+    const title = String(threadRow.title || '').trim() || '(no title)';
+    const category = String(threadRow.category || '').trim() || 'General';
+    const content = String(postRow.content || '').trim() || '(empty)';
+    const subject = `[Project Tracker] New discussion post: ${mailSubjectSingleLine(title)}`;
+    const contentHtml = escapeHtml(content).replace(/\r\n|\r|\n/g, '<br>');
+    const appUrl = String(PUBLIC_WEB_APP_URL || '').trim();
+    const reviewLineHtml = appUrl
+      ? `Please review it in Discussion in Project Tracker: <a href="${escapeHtml(appUrl)}">${escapeHtml(appUrl)}</a>`
+      : 'Please review it in Discussion in Project Tracker.';
+    const reviewLineText = appUrl
+      ? `Please review it in Discussion in Project Tracker: ${appUrl}`
+      : 'Please review it in Discussion in Project Tracker.';
+    const html = `<div style="margin:0;font-family:Aptos,'Segoe UI',Calibri,sans-serif;font-size:16px;line-height:1.5;color:#000000;">Dear Ken LEE,<br><br>
+A new discussion post has been published in Project Tracker.<br><br>
+Posted by: ${escapeHtml(authorName)}<br>
+Category: ${escapeHtml(category)}<br>
+Title: ${escapeHtml(title)}<br><br>
+Post content:<br>
+${contentHtml}<br><br>
+${reviewLineHtml}<br><br>
+${projectTrackerEmailFooterHtml()}</div>`;
+    const text = `Dear Ken LEE,
+
+A new discussion post has been published in Project Tracker.
+
+Posted by: ${authorName}
+Category: ${category}
+Title: ${title}
+
+Post content:
+${content}
+
+${reviewLineText}
+
+${projectTrackerEmailFooterText()}`;
+    const r = await sendNotificationEmail({
+      to: DISCUSSION_NEW_POST_NOTIFY_EMAIL,
+      subject,
+      text,
+      html,
+      from: NOTIFICATION_EMAIL_FROM,
+    });
+    sendJson(req, res, 200, {
+      ok: r.ok,
+      threadId,
+      postId,
+      to: DISCUSSION_NEW_POST_NOTIFY_EMAIL,
+      messageId: r.ok ? r.id : null,
+      error: r.ok ? null : r.error,
+      detail: r.ok ? null : r.detail,
+    });
+  } catch (e) {
+    console.error('handleNotifyDiscussionPosted:', e);
+    sendJson(req, res, 500, { error: e.message || String(e) });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     applyCors(req, res, 204);
@@ -8766,6 +8899,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/test-smtp' && req.method === 'POST') {
     await handleTestSmtp(req, res);
+    return;
+  }
+  if (path === '/api/notify/discussion-posted' && req.method === 'POST') {
+    await handleNotifyDiscussionPosted(req, res);
     return;
   }
   if (path === '/api/notify/task-assigned' && req.method === 'POST') {

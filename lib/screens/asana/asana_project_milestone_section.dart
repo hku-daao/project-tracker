@@ -91,6 +91,18 @@ int asanaMilestoneCompletedPercent(Iterable<AsanaMilestoneDraft> rows) {
   return done;
 }
 
+/// Project-view list percent: milestone sum, or 100% / 0% when milestones are off.
+int asanaProjectListProgressPercent({
+  required bool hasMilestone,
+  required String status,
+  int milestoneAchievedPercent = 0,
+}) {
+  if (hasMilestone) return milestoneAchievedPercent.clamp(0, 100);
+  final key = status.trim().toLowerCase();
+  if (key == 'completed' || key == 'complete') return 100;
+  return 0;
+}
+
 /// Short encouragement for the project-name progress line.
 String asanaMilestoneProgressEncouragement(int percent) {
   if (percent <= 0) {
@@ -493,34 +505,22 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: canEdit && !saving ? onToggleEnabled : null,
-              icon: Icon(
-                enabled ? Icons.flag : Icons.flag_outlined,
-                size: 18,
-                color: enabled
-                    ? Theme.of(context).colorScheme.primary
-                    : kAsanaTextSecondary,
-              ),
-              label: Text(
-                enabled ? 'Milestones' : 'Add milestones',
-                style: asanaTextStyle(
-                  Theme.of(context).textTheme.bodySmall,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: enabled
-                      ? Theme.of(context).colorScheme.primary
-                      : kAsanaTextSecondary,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
+          AsanaDetailSectionHeader(
+            title: 'Milestones',
+            infoButton: AsanaMilestoneInfoButton(palette: palette),
+            showAddButton: canEdit,
+            addEnabled: !saving && (enabled ? rows.length < 20 : true),
+            addTooltip: enabled ? 'Add milestone' : 'Add milestones',
+            bottomPadding: 0,
+            onAdd: !saving
+                ? (_) {
+                    if (!enabled) {
+                      onToggleEnabled?.call();
+                    } else {
+                      onAdd?.call();
+                    }
+                  }
+                : null,
           ),
           if (enabled) ...[
             const SizedBox(height: 4),
@@ -571,19 +571,6 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
                         descriptionSuggestion: descriptionSuggestion,
                         percentSuggestion: percentSuggestion,
                       ),
-                  if (canEdit)
-                    const SizedBox(height: 10),
-                  if (canEdit)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: AsanaDetailCircleAddButton(
-                        tooltip: 'Add milestone',
-                        enabled: !saving && rows.length < 20,
-                        onTap: !saving && rows.length < 20
-                            ? (_) => onAdd?.call()
-                            : null,
-                      ),
-                    ),
                   if (showTotalWarning) ...[
                     const SizedBox(height: 8),
                     Align(

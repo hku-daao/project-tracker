@@ -68,6 +68,7 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
   double _left = 0;
   double? _top;
   double? _bottom;
+  double? _maxHeight;
   bool _laidOut = false;
   bool _tracking = true;
 
@@ -130,12 +131,16 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
 
     final double? top;
     final double? bottom;
+    final double maxHeight;
     if (placeAbove) {
       top = null;
       bottom = viewportH - anchorOffset.dy + _kAnchorGap;
+      maxHeight = (anchorOffset.dy - _kAnchorGap - _kViewportMargin)
+          .clamp(96.0, viewportH);
     } else {
       top = anchorOffset.dy + anchorBox.size.height + _kAnchorGap;
       bottom = null;
+      maxHeight = (viewportH - top - _kViewportMargin).clamp(96.0, viewportH);
     }
 
     final changed =
@@ -146,12 +151,15 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
             bottom != null &&
             (bottom - _bottom!).abs() > 0.5) ||
         (_top == null) != (top == null) ||
-        (_bottom == null) != (bottom == null);
+        (_bottom == null) != (bottom == null) ||
+        _maxHeight == null ||
+        (_maxHeight! - maxHeight).abs() > 0.5;
     if (changed) {
       setState(() {
         _left = left;
         _top = top;
         _bottom = bottom;
+        _maxHeight = maxHeight;
         _laidOut = true;
       });
     }
@@ -160,7 +168,13 @@ class _AnchoredOverlayPositionState extends State<_AnchoredOverlayPosition>
   @override
   Widget build(BuildContext context) {
     if (!_laidOut) return const SizedBox.shrink();
-    final child = KeyedSubtree(key: _childKey, child: widget.child);
+    Widget child = KeyedSubtree(key: _childKey, child: widget.child);
+    if (_maxHeight != null) {
+      child = ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: _maxHeight!),
+        child: child,
+      );
+    }
     if (_bottom != null) {
       return Positioned(
         left: _left,

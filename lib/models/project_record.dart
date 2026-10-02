@@ -61,15 +61,25 @@ class ProjectRecord {
 
   /// True if [staffRowUuid] is project creator, assignee slot, or PIC.
   bool staffMayLinkTasks(String staffRowUuid) {
-    final m = staffRowUuid.trim();
-    if (m.isEmpty) return false;
-    final cb = createByStaffUuid?.trim();
-    if (cb != null && cb.isNotEmpty && cb == m) return true;
-    for (final u in assigneeStaffUuids) {
-      if (u.trim() == m) return true;
+    return isInvolvedStaff(staffUuid: staffRowUuid);
+  }
+
+  /// Creator, assignee, or PIC — matches `staff.id` and/or `staff.app_id`.
+  bool isInvolvedStaff({String? staffUuid, String? staffAppId}) {
+    bool hit(String? raw) {
+      final v = raw?.trim() ?? '';
+      if (v.isEmpty) return false;
+      final u = staffUuid?.trim() ?? '';
+      final a = staffAppId?.trim() ?? '';
+      return (u.isNotEmpty && v == u) || (a.isNotEmpty && v == a);
     }
-    for (final u in picStaffUuids) {
-      if (u.trim() == m) return true;
+
+    if (hit(createByStaffUuid)) return true;
+    for (final id in assigneeStaffUuids) {
+      if (hit(id)) return true;
+    }
+    for (final id in picStaffUuids) {
+      if (hit(id)) return true;
     }
     return false;
   }

@@ -15,6 +15,7 @@ import '../../services/asana_filter_cookie_storage.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_date_range_picker.dart';
 import 'asana_due_badge.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
@@ -61,15 +62,23 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   DateTime? _subprojectStartMonth;
   DateTime? _subprojectEndMonth;
   final Set<String> _taskCreatorTeamIds = {};
+  final Set<String> _taskCreatorIds = {};
   final Set<String> _taskPicIds = {};
   final Set<String> _taskStatuses = {};
+  final Set<String> _subtaskCreatorTeamIds = {};
+  final Set<String> _subtaskCreatorIds = {};
+  final Set<String> _subtaskPicIds = {};
   final Set<String> _subtaskStatuses = {};
   DateTime? _projectStartMonth;
   DateTime? _projectEndMonth;
   DateTime? _taskCompletedStart;
   DateTime? _taskCompletedEnd;
+  DateTime? _taskExpectedDueStart;
+  DateTime? _taskExpectedDueEnd;
   DateTime? _subtaskCompletedStart;
   DateTime? _subtaskCompletedEnd;
+  DateTime? _subtaskExpectedDueStart;
+  DateTime? _subtaskExpectedDueEnd;
   String _sortKey = 'due_asc';
   bool _showProjectsWithoutTasks = true;
   String _dataSig = '';
@@ -120,15 +129,23 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     'subprojectStartMonth': _subprojectStartMonth?.millisecondsSinceEpoch,
     'subprojectEndMonth': _subprojectEndMonth?.millisecondsSinceEpoch,
     'taskCreatorTeamIds': _taskCreatorTeamIds.toList(),
+    'taskCreatorIds': _taskCreatorIds.toList(),
     'taskPicIds': _taskPicIds.toList(),
     'taskStatuses': _taskStatuses.toList(),
+    'subtaskCreatorTeamIds': _subtaskCreatorTeamIds.toList(),
+    'subtaskCreatorIds': _subtaskCreatorIds.toList(),
+    'subtaskPicIds': _subtaskPicIds.toList(),
     'subtaskStatuses': _subtaskStatuses.toList(),
     'projectStartMonth': _projectStartMonth?.millisecondsSinceEpoch,
     'projectEndMonth': _projectEndMonth?.millisecondsSinceEpoch,
     'taskCompletedStart': _taskCompletedStart?.millisecondsSinceEpoch,
     'taskCompletedEnd': _taskCompletedEnd?.millisecondsSinceEpoch,
+    'taskExpectedDueStart': _taskExpectedDueStart?.millisecondsSinceEpoch,
+    'taskExpectedDueEnd': _taskExpectedDueEnd?.millisecondsSinceEpoch,
     'subtaskCompletedStart': _subtaskCompletedStart?.millisecondsSinceEpoch,
     'subtaskCompletedEnd': _subtaskCompletedEnd?.millisecondsSinceEpoch,
+    'subtaskExpectedDueStart': _subtaskExpectedDueStart?.millisecondsSinceEpoch,
+    'subtaskExpectedDueEnd': _subtaskExpectedDueEnd?.millisecondsSinceEpoch,
     'sortKey': _sortKey,
     'showProjectsWithoutTasks': _showProjectsWithoutTasks,
   };
@@ -145,15 +162,23 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     _subprojectStartMonth = _dateFromMs(data['subprojectStartMonth']);
     _subprojectEndMonth = _dateFromMs(data['subprojectEndMonth']);
     _replaceStringSet(_taskCreatorTeamIds, data['taskCreatorTeamIds']);
+    _replaceStringSet(_taskCreatorIds, data['taskCreatorIds']);
     _replaceStringSet(_taskPicIds, data['taskPicIds']);
     _replaceStringSet(_taskStatuses, data['taskStatuses']);
+    _replaceStringSet(_subtaskCreatorTeamIds, data['subtaskCreatorTeamIds']);
+    _replaceStringSet(_subtaskCreatorIds, data['subtaskCreatorIds']);
+    _replaceStringSet(_subtaskPicIds, data['subtaskPicIds']);
     _replaceStringSet(_subtaskStatuses, data['subtaskStatuses']);
     _projectStartMonth = _dateFromMs(data['projectStartMonth']);
     _projectEndMonth = _dateFromMs(data['projectEndMonth']);
     _taskCompletedStart = _dateFromMs(data['taskCompletedStart']);
     _taskCompletedEnd = _dateFromMs(data['taskCompletedEnd']);
+    _taskExpectedDueStart = _dateFromMs(data['taskExpectedDueStart']);
+    _taskExpectedDueEnd = _dateFromMs(data['taskExpectedDueEnd']);
     _subtaskCompletedStart = _dateFromMs(data['subtaskCompletedStart']);
     _subtaskCompletedEnd = _dateFromMs(data['subtaskCompletedEnd']);
+    _subtaskExpectedDueStart = _dateFromMs(data['subtaskExpectedDueStart']);
+    _subtaskExpectedDueEnd = _dateFromMs(data['subtaskExpectedDueEnd']);
     final rawSortKey = data['sortKey'] as String?;
     if (rawSortKey == 'due_asc' ||
         rawSortKey == 'due_desc' ||
@@ -165,7 +190,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
     _showProjectsWithoutTasks =
         data['showProjectsWithoutTasks'] as bool? ?? _showProjectsWithoutTasks;
-    _relaxIncompleteStatusForCompletedRanges();
   }
 
   void _replaceStringSet(Set<String> target, Object? value) {
@@ -289,7 +313,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             subtask,
           );
           final subGroupHit =
-              _hasSubtaskFilters && _passesSubtaskFilters(subtask, subStatus);
+              _hasSubtaskFilters &&
+              _passesSubtaskFilters(state, subtask, subStatus);
           final includeSub =
               (!_hasSubtaskFilters || subGroupHit) &&
               (!_hasAnyGroupFilters ||
@@ -411,7 +436,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           subtask,
         );
         final subGroupHit =
-            _hasSubtaskFilters && _passesSubtaskFilters(subtask, subStatus);
+            _hasSubtaskFilters &&
+            _passesSubtaskFilters(state, subtask, subStatus);
         final includeSub =
             (!_hasSubtaskFilters || subGroupHit) &&
             (!_hasTaskOrSubtaskFilters || subGroupHit || taskGroupHit);
@@ -456,9 +482,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool get _hasTaskFilters =>
       _taskCreatorTeamIds.isNotEmpty ||
+      _taskCreatorIds.isNotEmpty ||
       _taskPicIds.isNotEmpty ||
       _taskStatuses.isNotEmpty ||
-      _taskCompletedDateEngaged;
+      _taskCompletedDateEngaged ||
+      _taskExpectedDueEngaged;
 
   bool get _hasTaskOrSubtaskFilters =>
       _hasTaskFilters || _hasSubtaskFilters;
@@ -470,13 +498,24 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       _hasSubtaskFilters;
 
   bool get _hasSubtaskFilters =>
-      _subtaskStatuses.isNotEmpty || _subtaskCompletedDateEngaged;
+      _subtaskCreatorTeamIds.isNotEmpty ||
+      _subtaskCreatorIds.isNotEmpty ||
+      _subtaskPicIds.isNotEmpty ||
+      _subtaskStatuses.isNotEmpty ||
+      _subtaskCompletedDateEngaged ||
+      _subtaskExpectedDueEngaged;
 
   bool get _taskCompletedDateEngaged =>
       _taskCompletedStart != null || _taskCompletedEnd != null;
 
+  bool get _taskExpectedDueEngaged =>
+      _taskExpectedDueStart != null || _taskExpectedDueEnd != null;
+
   bool get _subtaskCompletedDateEngaged =>
       _subtaskCompletedStart != null || _subtaskCompletedEnd != null;
+
+  bool get _subtaskExpectedDueEngaged =>
+      _subtaskExpectedDueStart != null || _subtaskExpectedDueEnd != null;
 
   bool _passesSearch(bool matches, String query) => query.isEmpty || matches;
 
@@ -529,7 +568,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         : subproject.status;
     return _passesTeamFilter(
           state,
-          project.createByStaffUuid,
+          subproject.createByStaffUuid,
           _subprojectCreatorTeamIds,
         ) &&
         _passesStaffFilter(
@@ -642,23 +681,167 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     });
   }
 
-  /// Completed From/To means All or Completed. Incomplete is cleared to All.
-  void _relaxIncompleteStatusForCompletedRange(Set<String> statuses) {
-    statuses.removeWhere(_isIncompleteStatusKey);
-  }
-
-  void _relaxIncompleteStatusForCompletedRanges() {
-    if (_taskCompletedDateEngaged) {
-      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
-    }
-    if (_subtaskCompletedDateEngaged) {
-      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
-    }
+  bool _isCompletedStatusKey(String status) {
+    final key = _statusKey(status);
+    return key == 'completed' || key == 'complete';
   }
 
   bool _isIncompleteStatusKey(String status) {
     final key = _statusKey(status);
     return key == 'incomplete' || key == 'incompleted';
+  }
+
+  _WorkStatusMode _classifyWorkStatus(Set<String> statuses) {
+    if (statuses.isEmpty) return _WorkStatusMode.all;
+    final onlyCompleted = statuses.every(_isCompletedStatusKey);
+    final onlyIncomplete = statuses.every(_isIncompleteStatusKey);
+    final onlyWorkKeys = statuses.every(
+      (key) => _isCompletedStatusKey(key) || _isIncompleteStatusKey(key),
+    );
+    if (onlyCompleted) return _WorkStatusMode.completed;
+    if (onlyIncomplete) return _WorkStatusMode.incomplete;
+    if (onlyWorkKeys) return _WorkStatusMode.both;
+    return _WorkStatusMode.other;
+  }
+
+  ({DateTime start, DateTime end}) _recentPastThreeMonthsRange() {
+    final today = HkTime.todayDateOnlyHk();
+    return (
+      start: asanaFirstDayOfMonth(DateTime(today.year, today.month - 2, 1)),
+      end: asanaLastDayOfMonth(today),
+    );
+  }
+
+  ({DateTime start, DateTime end}) _futureThreeMonthsRange() {
+    final today = HkTime.todayDateOnlyHk();
+    return (
+      start: asanaFirstDayOfMonth(today),
+      end: asanaLastDayOfMonth(DateTime(today.year, today.month + 2, 1)),
+    );
+  }
+
+  void _setWorkStatuses(Set<String> statuses, _WorkStatusMode mode) {
+    statuses.clear();
+    switch (mode) {
+      case _WorkStatusMode.all:
+      case _WorkStatusMode.other:
+        break;
+      case _WorkStatusMode.completed:
+        statuses.addAll(const ['completed', 'complete']);
+      case _WorkStatusMode.incomplete:
+        statuses.addAll(const ['incomplete', 'incompleted']);
+      case _WorkStatusMode.both:
+        statuses.addAll(const [
+          'completed',
+          'complete',
+          'incomplete',
+          'incompleted',
+        ]);
+    }
+  }
+
+  void _syncWorkStatusFromDates({
+    required Set<String> statuses,
+    required bool completedEngaged,
+    required bool expectedDueEngaged,
+  }) {
+    if (completedEngaged && !expectedDueEngaged) {
+      _setWorkStatuses(statuses, _WorkStatusMode.completed);
+    } else if (!completedEngaged && expectedDueEngaged) {
+      _setWorkStatuses(statuses, _WorkStatusMode.incomplete);
+    } else {
+      _setWorkStatuses(statuses, _WorkStatusMode.both);
+    }
+  }
+
+  void _syncDatesFromWorkStatus({
+    required Set<String> statuses,
+    required DateTime? completedStart,
+    required DateTime? completedEnd,
+    required DateTime? expectedDueStart,
+    required DateTime? expectedDueEnd,
+    required void Function(DateTime? start, DateTime? end) setCompleted,
+    required void Function(DateTime? start, DateTime? end) setExpectedDue,
+  }) {
+    final completedEngaged = completedStart != null || completedEnd != null;
+    final expectedDueEngaged =
+        expectedDueStart != null || expectedDueEnd != null;
+    switch (_classifyWorkStatus(statuses)) {
+      case _WorkStatusMode.all:
+        setCompleted(null, null);
+        setExpectedDue(null, null);
+      case _WorkStatusMode.completed:
+        setExpectedDue(null, null);
+        if (!completedEngaged) {
+          final range = _recentPastThreeMonthsRange();
+          setCompleted(range.start, range.end);
+        }
+      case _WorkStatusMode.incomplete:
+        setCompleted(null, null);
+        if (!expectedDueEngaged) {
+          final range = _futureThreeMonthsRange();
+          setExpectedDue(range.start, range.end);
+        }
+      case _WorkStatusMode.both:
+        if (!expectedDueEngaged) {
+          final range = _futureThreeMonthsRange();
+          setExpectedDue(range.start, range.end);
+        }
+      case _WorkStatusMode.other:
+        break;
+    }
+  }
+
+  void _onTaskDatesChanged() {
+    _syncWorkStatusFromDates(
+      statuses: _taskStatuses,
+      completedEngaged: _taskCompletedDateEngaged,
+      expectedDueEngaged: _taskExpectedDueEngaged,
+    );
+  }
+
+  void _onSubtaskDatesChanged() {
+    _syncWorkStatusFromDates(
+      statuses: _subtaskStatuses,
+      completedEngaged: _subtaskCompletedDateEngaged,
+      expectedDueEngaged: _subtaskExpectedDueEngaged,
+    );
+  }
+
+  void _onTaskStatusChanged() {
+    _syncDatesFromWorkStatus(
+      statuses: _taskStatuses,
+      completedStart: _taskCompletedStart,
+      completedEnd: _taskCompletedEnd,
+      expectedDueStart: _taskExpectedDueStart,
+      expectedDueEnd: _taskExpectedDueEnd,
+      setCompleted: (start, end) {
+        _taskCompletedStart = start;
+        _taskCompletedEnd = end;
+      },
+      setExpectedDue: (start, end) {
+        _taskExpectedDueStart = start;
+        _taskExpectedDueEnd = end;
+      },
+    );
+  }
+
+  void _onSubtaskStatusChanged() {
+    _syncDatesFromWorkStatus(
+      statuses: _subtaskStatuses,
+      completedStart: _subtaskCompletedStart,
+      completedEnd: _subtaskCompletedEnd,
+      expectedDueStart: _subtaskExpectedDueStart,
+      expectedDueEnd: _subtaskExpectedDueEnd,
+      setCompleted: (start, end) {
+        _subtaskCompletedStart = start;
+        _subtaskCompletedEnd = end;
+      },
+      setExpectedDue: (start, end) {
+        _subtaskExpectedDueStart = start;
+        _subtaskExpectedDueEnd = end;
+      },
+    );
   }
 
   bool _passesTaskFilters(AppState state, Task task, String taskStatus) {
@@ -667,6 +850,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           task.createByAssigneeKey,
           _taskCreatorTeamIds,
         ) &&
+        _passesStaffFilter([task.createByAssigneeKey], _taskCreatorIds) &&
         _passesStaffFilter([task.pic], _taskPicIds) &&
         _passesStatusFilter(taskStatus, _taskStatuses) &&
         _passesCompletionDateRange(
@@ -674,15 +858,38 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           _taskCompletedStart,
           _taskCompletedEnd,
           status: taskStatus,
+        ) &&
+        _passesExpectedDueRange(
+          task.endDate,
+          _taskExpectedDueStart,
+          _taskExpectedDueEnd,
+          status: taskStatus,
         );
   }
 
-  bool _passesSubtaskFilters(SingularSubtask subtask, String status) {
-    return _passesStatusFilter(status, _subtaskStatuses) &&
+  bool _passesSubtaskFilters(
+    AppState state,
+    SingularSubtask subtask,
+    String status,
+  ) {
+    return _passesTeamFilter(
+          state,
+          subtask.createByStaffId,
+          _subtaskCreatorTeamIds,
+        ) &&
+        _passesStaffFilter([subtask.createByStaffId], _subtaskCreatorIds) &&
+        _passesStaffFilter([subtask.pic], _subtaskPicIds) &&
+        _passesStatusFilter(status, _subtaskStatuses) &&
         _passesCompletionDateRange(
           subtask.completionDate,
           _subtaskCompletedStart,
           _subtaskCompletedEnd,
+          status: status,
+        ) &&
+        _passesExpectedDueRange(
+          subtask.dueDate,
+          _subtaskExpectedDueStart,
+          _subtaskExpectedDueEnd,
           status: status,
         );
   }
@@ -694,8 +901,27 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     String? status,
   }) {
     if (rangeStart == null && rangeEnd == null) return true;
-    if (status != null && !_mapBlockIsCompleted(status)) return false;
-    final day = _hkDateOnly(completionDate);
+    if (status != null && !_mapBlockIsCompleted(status)) return true;
+    return _dayInRange(completionDate, rangeStart, rangeEnd);
+  }
+
+  bool _passesExpectedDueRange(
+    DateTime? dueDate,
+    DateTime? rangeStart,
+    DateTime? rangeEnd, {
+    String? status,
+  }) {
+    if (rangeStart == null && rangeEnd == null) return true;
+    if (status != null && _mapBlockIsCompleted(status)) return true;
+    return _dayInRange(dueDate, rangeStart, rangeEnd);
+  }
+
+  bool _dayInRange(
+    DateTime? stored,
+    DateTime? rangeStart,
+    DateTime? rangeEnd,
+  ) {
+    final day = _hkDateOnly(stored);
     if (day == null) return false;
     if (rangeStart != null) {
       final start = DateTime(rangeStart.year, rangeStart.month, rangeStart.day);
@@ -873,6 +1099,43 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     return '${values.length} selected';
   }
 
+  static const _completedAndIncompleteKey = '__completed_incomplete__';
+
+  String _workStatusFilterLabel(Set<String> statuses) {
+    switch (_classifyWorkStatus(statuses)) {
+      case _WorkStatusMode.all:
+        return 'All';
+      case _WorkStatusMode.completed:
+        return 'Completed';
+      case _WorkStatusMode.incomplete:
+        return 'Incomplete';
+      case _WorkStatusMode.both:
+        return 'Com&Incom';
+      case _WorkStatusMode.other:
+        return _filterLabel(statuses, _statusLabelFor);
+    }
+  }
+
+  String _completedDateLabelForStatus(
+    DateTime? value,
+    Set<String> statuses,
+  ) {
+    if (_classifyWorkStatus(statuses) == _WorkStatusMode.incomplete) {
+      return 'N/A';
+    }
+    return _completedDateFilterLabel(value);
+  }
+
+  String _expectedDueLabelForStatus(
+    DateTime? value,
+    Set<String> statuses,
+  ) {
+    if (_classifyWorkStatus(statuses) == _WorkStatusMode.completed) {
+      return 'N/A';
+    }
+    return _completedDateFilterLabel(value);
+  }
+
   List<AsanaFilterCheckboxOption> _projectOptions(List<_ProjectMapNode> nodes) {
     return [
       const AsanaFilterCheckboxOption(
@@ -1037,6 +1300,90 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     ];
   }
 
+  String _workStatusMenuValue(Set<String> statuses) {
+    switch (_classifyWorkStatus(statuses)) {
+      case _WorkStatusMode.all:
+        return '__all__';
+      case _WorkStatusMode.completed:
+        return 'completed';
+      case _WorkStatusMode.incomplete:
+        return 'incomplete';
+      case _WorkStatusMode.both:
+        return _completedAndIncompleteKey;
+      case _WorkStatusMode.other:
+        return statuses.length == 1 ? statuses.first : '';
+    }
+  }
+
+  List<PopupMenuItem<String>> _workStatusMenuItems(Iterable<String> statuses) {
+    final extras = <String, String>{};
+    for (final status in statuses) {
+      final key = _statusKey(status);
+      if (key.isEmpty ||
+          _isCompletedStatusKey(key) ||
+          _isIncompleteStatusKey(key)) {
+        continue;
+      }
+      extras[key] = AsanaStatusChip.statusStyle(status).$1;
+    }
+    final extraItems = extras.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    return [
+      const PopupMenuItem(value: '__all__', child: Text('All')),
+      const PopupMenuItem(value: 'completed', child: Text('Completed')),
+      const PopupMenuItem(value: 'incomplete', child: Text('Incomplete')),
+      const PopupMenuItem(
+        value: _completedAndIncompleteKey,
+        child: Text('Completed & Incomplete'),
+      ),
+      for (final entry in extraItems)
+        PopupMenuItem(value: entry.key, child: Text(entry.value)),
+    ];
+  }
+
+  void _applySingleWorkStatus(String key, Set<String> target) {
+    if (key == '__all__') {
+      target.clear();
+      return;
+    }
+    if (key == _completedAndIncompleteKey) {
+      _setWorkStatuses(target, _WorkStatusMode.both);
+      return;
+    }
+    if (_isCompletedStatusKey(key)) {
+      _setWorkStatuses(target, _WorkStatusMode.completed);
+      return;
+    }
+    if (_isIncompleteStatusKey(key)) {
+      _setWorkStatuses(target, _WorkStatusMode.incomplete);
+      return;
+    }
+    target
+      ..clear()
+      ..add(key);
+  }
+
+  Future<void> _showWorkStatusMenu({
+    required BuildContext buttonContext,
+    required Iterable<String> statusValues,
+    required Set<String> statuses,
+    required VoidCallback afterApply,
+  }) async {
+    final selected = await showMenu<String>(
+      context: buttonContext,
+      position: _menuPosition(buttonContext),
+      color: Theme.of(buttonContext).colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      initialValue: _workStatusMenuValue(statuses),
+      items: _workStatusMenuItems(statusValues),
+    );
+    if (selected == null || !mounted) return;
+    _applyFilters(() {
+      _applySingleWorkStatus(selected, statuses);
+      afterApply();
+    });
+  }
+
   Map<String, String> _projectCreatorDisplayNames(AppState state) {
     final names = <String, String>{};
     for (final project in _visibleProjects(state)) {
@@ -1119,6 +1466,28 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   Iterable<String?> _taskPicKeys(AppState state) sync* {
     for (final task in _visibleTasks(state)) {
       yield task.pic;
+    }
+  }
+
+  Iterable<String?> _subtaskCreatorKeys(AppState state) sync* {
+    for (final task in _visibleTasks(state)) {
+      if (_isMapHiddenTask(state, task)) continue;
+      for (final subtask
+          in _subtasksByTask[task.id] ?? const <SingularSubtask>[]) {
+        if (_isMapHiddenSubtask(state, task, subtask)) continue;
+        yield subtask.createByStaffId;
+      }
+    }
+  }
+
+  Iterable<String?> _subtaskPicKeys(AppState state) sync* {
+    for (final task in _visibleTasks(state)) {
+      if (_isMapHiddenTask(state, task)) continue;
+      for (final subtask
+          in _subtasksByTask[task.id] ?? const <SingularSubtask>[]) {
+        if (_isMapHiddenSubtask(state, task, subtask)) continue;
+        yield subtask.pic;
+      }
     }
   }
 
@@ -1320,49 +1689,37 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 _subprojectStartMonth = null;
                 _subprojectEndMonth = null;
                 _taskCreatorTeamIds.clear();
+                _taskCreatorIds.clear();
                 _taskPicIds.clear();
                 _taskStatuses.clear();
+                _subtaskCreatorTeamIds.clear();
+                _subtaskCreatorIds.clear();
+                _subtaskPicIds.clear();
                 _subtaskStatuses.clear();
                 _projectStartMonth = null;
                 _projectEndMonth = null;
                 _taskCompletedStart = null;
                 _taskCompletedEnd = null;
+                _taskExpectedDueStart = null;
+                _taskExpectedDueEnd = null;
                 _subtaskCompletedStart = null;
                 _subtaskCompletedEnd = null;
+                _subtaskExpectedDueStart = null;
+                _subtaskExpectedDueEnd = null;
                 _sortKey = 'due_asc';
                 _showProjectsWithoutTasks = true;
               });
             },
             filterChildren: [
               AsanaFilterDropdown(
-                title: 'Project Team',
+                title: 'Project Creator Team',
                 value: _filterLabel(_projectCreatorTeamIds, state.teamNameById),
-                buttonWidth: 144,
+                buttonWidth: 168,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _projectCreatorKeys(state)),
                   selected: _projectCreatorTeamIds,
                   apply: (value) => _projectCreatorTeamIds
-                    ..clear()
-                    ..addAll(value),
-                ),
-              ),
-              AsanaFilterDropdown(
-                title: 'Project PIC',
-                value: _filterLabel(_projectPicIds, (id) {
-                  final names = _projectPicDisplayNames(state);
-                  return names[id] ?? _staffName(state, id);
-                }),
-                buttonWidth: 140,
-                onPressed: (anchor) => _showFilterMenu(
-                  anchorContext: anchor,
-                  options: _staffOptions(
-                    state,
-                    _projectPicKeys(state),
-                    displayNames: _projectPicDisplayNames(state),
-                  ),
-                  selected: _projectPicIds,
-                  apply: (value) => _projectPicIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1383,6 +1740,26 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   ),
                   selected: _projectCreatorIds,
                   apply: (value) => _projectCreatorIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Project PIC',
+                value: _filterLabel(_projectPicIds, (id) {
+                  final names = _projectPicDisplayNames(state);
+                  return names[id] ?? _staffName(state, id);
+                }),
+                buttonWidth: 140,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(
+                    state,
+                    _projectPicKeys(state),
+                    displayNames: _projectPicDisplayNames(state),
+                  ),
+                  selected: _projectPicIds,
+                  apply: (value) => _projectPicIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1413,17 +1790,33 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 onPressed: _pickProjectMonthRange,
               ),
               AsanaFilterDropdown(
-                title: 'Sub-project Team',
+                title: 'Sub-project Creator Team',
                 value: _filterLabel(
                   _subprojectCreatorTeamIds,
                   state.teamNameById,
                 ),
-                buttonWidth: 150,
+                buttonWidth: 186,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
-                  options: _teamOptions(state, _projectCreatorKeys(state)),
+                  options: _teamOptions(state, _subprojectCreatorKeys(state)),
                   selected: _subprojectCreatorTeamIds,
                   apply: (value) => _subprojectCreatorTeamIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-project Creator',
+                value: _filterLabel(
+                  _subprojectCreatorIds,
+                  (id) => _staffName(state, id),
+                ),
+                buttonWidth: 154,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(state, _subprojectCreatorKeys(state)),
+                  selected: _subprojectCreatorIds,
+                  apply: (value) => _subprojectCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1444,22 +1837,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   ),
                   selected: _subprojectPicIds,
                   apply: (value) => _subprojectPicIds
-                    ..clear()
-                    ..addAll(value),
-                ),
-              ),
-              AsanaFilterDropdown(
-                title: 'Sub-project Creator',
-                value: _filterLabel(
-                  _subprojectCreatorIds,
-                  (id) => _staffName(state, id),
-                ),
-                buttonWidth: 154,
-                onPressed: (anchor) => _showFilterMenu(
-                  anchorContext: anchor,
-                  options: _staffOptions(state, _subprojectCreatorKeys(state)),
-                  selected: _subprojectCreatorIds,
-                  apply: (value) => _subprojectCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1492,14 +1869,30 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             ],
             secondRowFilterChildren: [
               AsanaFilterDropdown(
-                title: 'Task Team',
+                title: 'Task Creator Team',
                 value: _filterLabel(_taskCreatorTeamIds, state.teamNameById),
-                buttonWidth: 132,
+                buttonWidth: 156,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _taskCreatorKeys(state)),
                   selected: _taskCreatorTeamIds,
                   apply: (value) => _taskCreatorTeamIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Task Creator',
+                value: _filterLabel(
+                  _taskCreatorIds,
+                  (id) => _staffName(state, id),
+                ),
+                buttonWidth: 126,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(state, _taskCreatorKeys(state)),
+                  selected: _taskCreatorIds,
+                  apply: (value) => _taskCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1519,20 +1912,24 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               ),
               AsanaFilterDropdown(
                 title: 'Task Status',
-                value: _filterLabel(_taskStatuses, _statusLabelFor),
+                value: _workStatusFilterLabel(_taskStatuses),
                 buttonWidth: 109,
-                onPressed: (anchor) => _showFilterMenu(
-                  anchorContext: anchor,
-                  options: _statusOptionsFrom(_taskStatusValues(state)),
-                  selected: _taskStatuses,
-                  apply: (value) => _taskStatuses
-                    ..clear()
-                    ..addAll(value),
+                onPressed: (anchor) => _showWorkStatusMenu(
+                  buttonContext: anchor,
+                  statusValues: _taskStatusValues(state),
+                  statuses: _taskStatuses,
+                  afterApply: _onTaskStatusChanged,
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Task Completed From',
-                value: _completedDateFilterLabel(_taskCompletedStart),
+                value: _completedDateLabelForStatus(
+                  _taskCompletedStart,
+                  _taskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_taskStatuses) !=
+                    _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
@@ -1542,15 +1939,19 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _taskCompletedStart = start;
                     _taskCompletedEnd = end;
-                    if (start != null || end != null) {
-                      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
-                    }
+                    _onTaskDatesChanged();
                   },
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Task Completed To',
-                value: _completedDateFilterLabel(_taskCompletedEnd),
+                value: _completedDateLabelForStatus(
+                  _taskCompletedEnd,
+                  _taskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_taskStatuses) !=
+                    _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
@@ -1560,28 +1961,122 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _taskCompletedStart = start;
                     _taskCompletedEnd = end;
-                    if (start != null || end != null) {
-                      _relaxIncompleteStatusForCompletedRange(_taskStatuses);
-                    }
+                    _onTaskDatesChanged();
                   },
                 ),
               ),
               AsanaFilterDropdown(
-                title: 'Subtask Status',
-                value: _filterLabel(_subtaskStatuses, _statusLabelFor),
-                buttonWidth: 118,
+                title: 'Task Expected Due From',
+                value: _expectedDueLabelForStatus(
+                  _taskExpectedDueStart,
+                  _taskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_taskStatuses) !=
+                    _WorkStatusMode.completed,
+                buttonWidth: 168,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _taskExpectedDueStart,
+                  end: _taskExpectedDueEnd,
+                  helpText: 'Task expected due date range',
+                  apply: (start, end) {
+                    _taskExpectedDueStart = start;
+                    _taskExpectedDueEnd = end;
+                    _onTaskDatesChanged();
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Task Expected Due To',
+                value: _expectedDueLabelForStatus(
+                  _taskExpectedDueEnd,
+                  _taskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_taskStatuses) !=
+                    _WorkStatusMode.completed,
+                buttonWidth: 168,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _taskExpectedDueStart,
+                  end: _taskExpectedDueEnd,
+                  helpText: 'Task expected due date range',
+                  apply: (start, end) {
+                    _taskExpectedDueStart = start;
+                    _taskExpectedDueEnd = end;
+                    _onTaskDatesChanged();
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-task Creator Team',
+                value: _filterLabel(
+                  _subtaskCreatorTeamIds,
+                  state.teamNameById,
+                ),
+                buttonWidth: 172,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
-                  options: _statusOptionsFrom(_subtaskStatusValues(state)),
-                  selected: _subtaskStatuses,
-                  apply: (value) => _subtaskStatuses
+                  options: _teamOptions(state, _subtaskCreatorKeys(state)),
+                  selected: _subtaskCreatorTeamIds,
+                  apply: (value) => _subtaskCreatorTeamIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
+                title: 'Sub-task Creator',
+                value: _filterLabel(
+                  _subtaskCreatorIds,
+                  (id) => _staffName(state, id),
+                ),
+                buttonWidth: 140,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(state, _subtaskCreatorKeys(state)),
+                  selected: _subtaskCreatorIds,
+                  apply: (value) => _subtaskCreatorIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Sub-task PIC',
+                value: _filterLabel(
+                  _subtaskPicIds,
+                  (id) => _staffName(state, id),
+                ),
+                buttonWidth: 126,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(state, _subtaskPicKeys(state)),
+                  selected: _subtaskPicIds,
+                  apply: (value) => _subtaskPicIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Subtask Status',
+                value: _workStatusFilterLabel(_subtaskStatuses),
+                buttonWidth: 118,
+                onPressed: (anchor) => _showWorkStatusMenu(
+                  buttonContext: anchor,
+                  statusValues: _subtaskStatusValues(state),
+                  statuses: _subtaskStatuses,
+                  afterApply: _onSubtaskStatusChanged,
+                ),
+              ),
+              AsanaFilterDropdown(
                 title: 'Subtask Completed From',
-                value: _completedDateFilterLabel(_subtaskCompletedStart),
+                value: _completedDateLabelForStatus(
+                  _subtaskCompletedStart,
+                  _subtaskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
@@ -1591,15 +2086,19 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _subtaskCompletedStart = start;
                     _subtaskCompletedEnd = end;
-                    if (start != null || end != null) {
-                      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
-                    }
+                    _onSubtaskDatesChanged();
                   },
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Subtask Completed To',
-                value: _completedDateFilterLabel(_subtaskCompletedEnd),
+                value: _completedDateLabelForStatus(
+                  _subtaskCompletedEnd,
+                  _subtaskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
@@ -1609,9 +2108,51 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   apply: (start, end) {
                     _subtaskCompletedStart = start;
                     _subtaskCompletedEnd = end;
-                    if (start != null || end != null) {
-                      _relaxIncompleteStatusForCompletedRange(_subtaskStatuses);
-                    }
+                    _onSubtaskDatesChanged();
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Subtask Expected Due From',
+                value: _expectedDueLabelForStatus(
+                  _subtaskExpectedDueStart,
+                  _subtaskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _WorkStatusMode.completed,
+                buttonWidth: 176,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _subtaskExpectedDueStart,
+                  end: _subtaskExpectedDueEnd,
+                  helpText: 'Subtask expected due date range',
+                  apply: (start, end) {
+                    _subtaskExpectedDueStart = start;
+                    _subtaskExpectedDueEnd = end;
+                    _onSubtaskDatesChanged();
+                  },
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Subtask Expected Due To',
+                value: _expectedDueLabelForStatus(
+                  _subtaskExpectedDueEnd,
+                  _subtaskStatuses,
+                ),
+                enabled:
+                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _WorkStatusMode.completed,
+                buttonWidth: 176,
+                onPressed: (anchor) => _pickCompletedDateRange(
+                  anchorContext: anchor,
+                  start: _subtaskExpectedDueStart,
+                  end: _subtaskExpectedDueEnd,
+                  helpText: 'Subtask expected due date range',
+                  apply: (start, end) {
+                    _subtaskExpectedDueStart = start;
+                    _subtaskExpectedDueEnd = end;
+                    _onSubtaskDatesChanged();
                   },
                 ),
               ),
@@ -1751,7 +2292,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           for (final subtask in node.subtasks)
             _MapNodeRow(
               level: 2,
-              typeLetter: 'S',
+              typeLetter: 'ST',
               name: subtask.subtaskName,
               pic: _staffName(state, subtask.pic),
               status: AsanaTaskFilter.subtaskDisplayStatus(
@@ -1962,9 +2503,9 @@ class _ProjectTreeDiagram extends StatelessWidget {
   });
 
   static const double _boxWidth = 174;
-  static const double _horizontalGap = 28;
+  static const double _horizontalGap = 30.8;
   static const double _levelGap = 42;
-  static const double _padding = 22;
+  static const double _padding = 30;
   static const double _toggleHeight = 28;
   static const double _fontScale = 1.25;
   static const double _nameToPicGap = 6.5;
@@ -1989,6 +2530,36 @@ class _ProjectTreeDiagram extends StatelessWidget {
 
   _DiagramNode _toDiagramNode() {
     final status = node.project.isPaused ? 'Paused' : node.project.status;
+    final subprojectNodes = [
+      for (final subproject in node.subprojects)
+        _subprojectDiagramNode(
+          state: state,
+          project: node.project,
+          subproject: subproject,
+          taskNodes: [
+            for (final taskNode in node.tasks)
+              if (taskNode.task.subprojectId?.trim() == subproject.id)
+                taskNode,
+          ],
+          expandedTaskIds: expandedTaskIds,
+          onToggleTaskSubtasks: onToggleTaskSubtasks,
+          onOpenProject: onOpenProject,
+          onOpenTask: onOpenTask,
+          onOpenSubtask: onOpenSubtask,
+        ),
+    ];
+    final directTaskNodes = [
+      for (final taskNode in node.tasks)
+        if (!_taskSitsUnderVisibleSubproject(taskNode.task, node.subprojects))
+          _taskDiagramNode(
+            state: state,
+            taskNode: taskNode,
+            expandedTaskIds: expandedTaskIds,
+            onToggleTaskSubtasks: onToggleTaskSubtasks,
+            onOpenTask: onOpenTask,
+            onOpenSubtask: onOpenSubtask,
+          ),
+    ];
     return _DiagramNode(
       type: _DiagramNodeType.project,
       id: node.project.id,
@@ -1999,32 +2570,20 @@ class _ProjectTreeDiagram extends StatelessWidget {
       detailLabel: AsanaStatusChip.statusStyle(status).$1,
       onTap: () => onOpenProject?.call(node.project.id),
       children: [
-        for (final subproject in node.subprojects)
-          _subprojectDiagramNode(
-            state: state,
-            project: node.project,
-            subproject: subproject,
-            taskNodes: [
-              for (final taskNode in node.tasks)
-                if (taskNode.task.subprojectId?.trim() == subproject.id)
-                  taskNode,
-            ],
-            expandedTaskIds: expandedTaskIds,
-            onToggleTaskSubtasks: onToggleTaskSubtasks,
-            onOpenProject: onOpenProject,
-            onOpenTask: onOpenTask,
-            onOpenSubtask: onOpenSubtask,
-          ),
-        for (final taskNode in node.tasks)
-          if (!_taskSitsUnderVisibleSubproject(taskNode.task, node.subprojects))
-            _taskDiagramNode(
-              state: state,
-              taskNode: taskNode,
-              expandedTaskIds: expandedTaskIds,
-              onToggleTaskSubtasks: onToggleTaskSubtasks,
-              onOpenTask: onOpenTask,
-              onOpenSubtask: onOpenSubtask,
-            ),
+        ...subprojectNodes,
+        if (directTaskNodes.isNotEmpty && subprojectNodes.isNotEmpty)
+          _DiagramNode(
+            type: _DiagramNodeType.levelSpacer,
+            id: '${node.project.id}__task_lane',
+            name: '',
+            pic: '',
+            status: '',
+            detailLabel: '',
+            onTap: () {},
+            children: directTaskNodes,
+          )
+        else
+          ...directTaskNodes,
       ],
     );
   }
@@ -2163,6 +2722,7 @@ _DiagramNode _taskDiagramNode({
       taskNode.task.endDate,
       taskNode.task.submission,
       completionDate: taskNode.task.completionDate,
+      submitDate: taskNode.task.submitDate,
     ),
     dueDate: taskNode.task.endDate,
     submission: taskNode.task.submission,
@@ -2193,6 +2753,7 @@ _DiagramNode _taskDiagramNode({
                 subtask.dueDate,
                 subtask.submission,
                 completionDate: subtask.completionDate,
+                submitDate: subtask.submitDate,
               ),
               dueDate: subtask.dueDate,
               submission: subtask.submission,
@@ -2214,13 +2775,15 @@ String _mapBlockDetailLabel(
   DateTime? due,
   String? submission, {
   DateTime? completionDate,
+  DateTime? submitDate,
 }) {
-  if ((submission ?? '').trim().toLowerCase() == 'submitted') {
-    return 'Submitted';
-  }
   final statusKey = status.trim().toLowerCase();
   String dateOrDash(DateTime? value) {
     return value == null ? '—' : HkTime.formatInstantAsHk(value, 'MMM d, yyyy');
+  }
+
+  if ((submission ?? '').trim().toLowerCase() == 'submitted') {
+    return 'Sub: ${dateOrDash(submitDate)}';
   }
 
   if (statusKey == 'incomplete') {
@@ -2269,6 +2832,10 @@ class _GenericTreeDiagram extends StatelessWidget {
 
   static const double _mobileBreakpoint = 600;
   static const double _heightSafetyPad = 10;
+  static const double _mobileHeightSafetyPad = 16;
+  static const double _boxBorderWidth = 1;
+  static const double _desktopBoxPadV = 8;
+  static const double _mobileBoxPadV = 14;
   static const double _mobilePadding = 12;
   static const double _mobileBelowParentGap = 16;
   static const double _mobileSubtaskGap = 40;
@@ -2302,6 +2869,7 @@ class _GenericTreeDiagram extends StatelessWidget {
             textScaler: textScaler,
             boxWidth: boxWidth,
           );
+          _syncSpacerHeights(root);
           _measure(root, horizontal: mobile);
           const desktopPadding = _ProjectTreeDiagram._padding;
           const levelGap = _ProjectTreeDiagram._levelGap;
@@ -2347,6 +2915,7 @@ class _GenericTreeDiagram extends StatelessWidget {
             width: width,
             height: height,
             child: Stack(
+              clipBehavior: Clip.none,
               children: [
                 Positioned.fill(
                   child: CustomPaint(
@@ -2360,17 +2929,18 @@ class _GenericTreeDiagram extends StatelessWidget {
                   ),
                 ),
                 for (final item in placed)
-                  Positioned(
-                    left: item.x - boxWidth / 2,
-                    top: item.y,
-                    width: boxWidth,
-                    height: item.height,
-                    child: _DiagramBox(
-                      item: item,
-                      palette: palette,
-                      sideExpand: mobile,
+                  if (item.node.type != _DiagramNodeType.levelSpacer)
+                    Positioned(
+                      left: item.x - boxWidth / 2,
+                      top: item.y,
+                      width: boxWidth,
+                      height: item.height,
+                      child: _DiagramBox(
+                        item: item,
+                        palette: palette,
+                        sideExpand: mobile,
+                      ),
                     ),
-                  ),
               ],
             ),
           );
@@ -2399,13 +2969,15 @@ class _GenericTreeDiagram extends StatelessWidget {
     required TextScaler textScaler,
     required double boxWidth,
   }) {
-    node.boxHeight = _computeBoxHeight(
-      node,
-      theme,
-      sideExpand: sideExpand,
-      textScaler: textScaler,
-      boxWidth: boxWidth,
-    );
+    node.boxHeight = node.type == _DiagramNodeType.levelSpacer
+        ? 0
+        : _computeBoxHeight(
+            node,
+            theme,
+            sideExpand: sideExpand,
+            textScaler: textScaler,
+            boxWidth: boxWidth,
+          );
     for (final child in node.children) {
       _assignBoxHeights(
         child,
@@ -2417,6 +2989,27 @@ class _GenericTreeDiagram extends StatelessWidget {
     }
   }
 
+  void _syncSpacerHeights(_DiagramNode node) {
+    if (node.type == _DiagramNodeType.project) {
+      var maxSubprojectHeight = 0.0;
+      for (final child in node.children) {
+        if (child.type == _DiagramNodeType.subproject &&
+            child.boxHeight > maxSubprojectHeight) {
+          maxSubprojectHeight = child.boxHeight;
+        }
+      }
+      if (maxSubprojectHeight <= 0) maxSubprojectHeight = node.boxHeight;
+      for (final child in node.children) {
+        if (child.type == _DiagramNodeType.levelSpacer) {
+          child.boxHeight = maxSubprojectHeight;
+        }
+      }
+    }
+    for (final child in node.children) {
+      _syncSpacerHeights(child);
+    }
+  }
+
   double _computeBoxHeight(
     _DiagramNode node,
     TextTheme theme, {
@@ -2425,8 +3018,14 @@ class _GenericTreeDiagram extends StatelessWidget {
     required double boxWidth,
   }) {
     final sideToggle = sideExpand && node.canExpand;
+    final padV = sideExpand
+        ? _GenericTreeDiagram._mobileBoxPadV
+        : _GenericTreeDiagram._desktopBoxPadV;
     final innerWidth =
-        boxWidth - 16 - (sideToggle ? _ProjectTreeDiagram._toggleHeight : 0);
+        boxWidth -
+        16 -
+        _GenericTreeDiagram._boxBorderWidth * 2 -
+        (sideToggle ? _ProjectTreeDiagram._toggleHeight : 0);
     final name = node.name.trim().isEmpty ? 'Untitled' : node.name.trim();
     final pic = node.pic.trim().isEmpty ? '—' : node.pic.trim();
     final nameH = _measureTextHeight(
@@ -2450,14 +3049,17 @@ class _GenericTreeDiagram extends StatelessWidget {
     final toggle = !sideExpand && node.canExpand
         ? _ProjectTreeDiagram._toggleHeight
         : 0;
-    return 8 +
+    final safety = sideExpand
+        ? _GenericTreeDiagram._mobileHeightSafetyPad
+        : _GenericTreeDiagram._heightSafetyPad;
+    return padV +
         nameH +
         _ProjectTreeDiagram._nameToPicGap +
         picH +
         detailH +
-        8 +
+        padV +
         toggle +
-        _GenericTreeDiagram._heightSafetyPad;
+        safety;
   }
 
   double _measureTextHeight(
@@ -2494,6 +3096,10 @@ class _GenericTreeDiagram extends StatelessWidget {
     return node.subtreeWidth;
   }
 
+  double _childTop(_DiagramNode parent, double parentTop) {
+    return parentTop + parent.boxHeight + _ProjectTreeDiagram._levelGap;
+  }
+
   void _placeTopToBottom(_DiagramNode node, double centerX, double top) {
     node.x = centerX;
     node.y = top;
@@ -2503,7 +3109,7 @@ class _GenericTreeDiagram extends StatelessWidget {
       _placeTopToBottom(
         child,
         childCenter,
-        top + node.boxHeight + _ProjectTreeDiagram._levelGap,
+        _childTop(node, top),
       );
       nextLeft += child.subtreeWidth + _ProjectTreeDiagram._horizontalGap;
     }
@@ -2518,7 +3124,7 @@ class _GenericTreeDiagram extends StatelessWidget {
       _placeTopToBottom(
         child,
         childCenter,
-        top + root.boxHeight + _ProjectTreeDiagram._levelGap,
+        _childTop(root, top),
       );
       nextLeft += child.subtreeWidth + _ProjectTreeDiagram._horizontalGap;
     }
@@ -2565,17 +3171,30 @@ class _GenericTreeDiagram extends StatelessWidget {
     }
   }
 
+  double _mobileColumnCenter({
+    required int column,
+    required double boxWidth,
+    required double viewportWidth,
+  }) {
+    if (column <= 0) return _mobilePadding + boxWidth / 2;
+    final column1 = viewportWidth - _mobilePadding - boxWidth / 2;
+    if (column == 1) return column1;
+    return column1 + (column - 1) * (boxWidth + _mobileSubtaskGap);
+  }
+
   void _placeMobileTaskAndSubtasks({
     required _DiagramNode task,
     required double viewportWidth,
     required double boxWidth,
     required double slotTop,
-    required bool asRoot,
+    required int column,
   }) {
     final slotHeight = _mobileSubtreeHeight(task);
-    task.x = asRoot
-        ? _mobilePadding + boxWidth / 2
-        : viewportWidth - _mobilePadding - boxWidth / 2;
+    task.x = _mobileColumnCenter(
+      column: column,
+      boxWidth: boxWidth,
+      viewportWidth: viewportWidth,
+    );
     task.y = slotTop + (slotHeight - task.boxHeight) / 2;
     _placeMobileSubtasksToRight(
       task: task,
@@ -2592,16 +3211,42 @@ class _GenericTreeDiagram extends StatelessWidget {
     required double top,
   }) {
     if (node.type == _DiagramNodeType.project) {
-      node.x = _mobilePadding + boxWidth / 2;
+      node.x = _mobileColumnCenter(
+        column: 0,
+        boxWidth: boxWidth,
+        viewportWidth: viewportWidth,
+      );
       node.y = top;
       var childTop = top + node.boxHeight + _mobileBelowParentGap;
       for (final child in node.children) {
+        if (child.type == _DiagramNodeType.levelSpacer) {
+          child.x = _mobileColumnCenter(
+            column: 1,
+            boxWidth: boxWidth,
+            viewportWidth: viewportWidth,
+          );
+          child.y = childTop;
+          var nestedTop = childTop + child.boxHeight + _mobileBelowParentGap;
+          for (final task in child.children) {
+            _placeMobileTaskAndSubtasks(
+              task: task,
+              viewportWidth: viewportWidth,
+              boxWidth: boxWidth,
+              slotTop: nestedTop,
+              column: 2,
+            );
+            nestedTop +=
+                _mobileSubtreeHeight(task) + _ProjectTreeDiagram._horizontalGap;
+          }
+          childTop = nestedTop;
+          continue;
+        }
         _placeMobileTaskAndSubtasks(
           task: child,
           viewportWidth: viewportWidth,
           boxWidth: boxWidth,
           slotTop: childTop,
-          asRoot: false,
+          column: 1,
         );
         childTop +=
             _mobileSubtreeHeight(child) + _ProjectTreeDiagram._horizontalGap;
@@ -2613,7 +3258,7 @@ class _GenericTreeDiagram extends StatelessWidget {
       viewportWidth: viewportWidth,
       boxWidth: boxWidth,
       slotTop: top,
-      asRoot: true,
+      column: 0,
     );
   }
 
@@ -2635,21 +3280,36 @@ class _GenericTreeDiagram extends StatelessWidget {
     return bottom;
   }
 
+  List<_DiagramNode> _visualChildren(_DiagramNode node) {
+    final children = <_DiagramNode>[];
+    for (final child in node.children) {
+      if (child.type == _DiagramNodeType.levelSpacer) {
+        children.addAll(child.children);
+      } else {
+        children.add(child);
+      }
+    }
+    return children;
+  }
+
   void _collect(_DiagramNode node, List<_PlacedDiagramNode> out) {
-    out.add(
-      _PlacedDiagramNode(
-        node: node,
-        x: node.x,
-        y: node.y,
-        height: node.boxHeight,
-        children: node.children
-            .map((child) => Offset(child.x, child.y))
-            .toList(growable: false),
-        childHeights: node.children
-            .map((child) => child.boxHeight)
-            .toList(growable: false),
-      ),
-    );
+    if (node.type != _DiagramNodeType.levelSpacer) {
+      final visual = _visualChildren(node);
+      out.add(
+        _PlacedDiagramNode(
+          node: node,
+          x: node.x,
+          y: node.y,
+          height: node.boxHeight,
+          children: visual
+              .map((child) => Offset(child.x, child.y))
+              .toList(growable: false),
+          childHeights: visual
+              .map((child) => child.boxHeight)
+              .toList(growable: false),
+        ),
+      );
+    }
     for (final child in node.children) {
       _collect(child, out);
     }
@@ -2670,19 +3330,18 @@ class _DiagramBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = _DiagramBoxStyle.forType(
-      item.node.type,
-      palette,
-      completed: item.node.completed,
-    );
+    final style = _DiagramBoxStyle.forType(item.node.type, palette);
     final canExpand = item.node.canExpand;
     final textTheme = theme.textTheme;
+    final padV = sideExpand
+        ? _GenericTreeDiagram._mobileBoxPadV
+        : _GenericTreeDiagram._desktopBoxPadV;
     final content = InkWell(
       onTap: item.node.onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        padding: EdgeInsets.fromLTRB(8, padV, 8, padV),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
@@ -2743,15 +3402,15 @@ class _DiagramBox extends StatelessWidget {
       );
     }
 
-    final cornerBadge = item.node.completed
-        ? 'Completed'
-        : item.node.type == _DiagramNodeType.project ||
-              item.node.type == _DiagramNodeType.subproject
+    final cornerBadge =
+        item.node.type == _DiagramNodeType.project ||
+            item.node.type == _DiagramNodeType.subproject
         ? null
         : AsanaDueBadge.labelFor(
             due: item.node.dueDate,
             status: item.node.status,
             submission: item.node.submission,
+            completed: item.node.completed,
           );
     Widget inner = sideExpand
         ? Row(
@@ -2772,7 +3431,7 @@ class _DiagramBox extends StatelessWidget {
       child: Ink(
         decoration: BoxDecoration(
           color: style.background,
-          border: Border.all(color: style.border, width: style.borderWidth),
+          border: Border.all(color: style.border, width: 1),
           borderRadius: BorderRadius.circular(8),
           boxShadow: const [
             BoxShadow(
@@ -2788,19 +3447,33 @@ class _DiagramBox extends StatelessWidget {
         ),
       ),
     );
-    if (cornerBadge == null) return box;
+    const letterHeight = 24.0;
+    const letterTop = -20.0 + letterHeight * 0.25;
     return Stack(
       clipBehavior: Clip.none,
       children: [
         box,
         Positioned(
-          top: -3,
-          right: 0,
-          child: FractionalTranslation(
-            translation: const Offset(1 / 3, 0),
-            child: AsanaDueBadge(label: cornerBadge),
+          top: letterTop,
+          left: -6,
+          height: letterHeight,
+          child: AsanaRowTypeLetter(
+            letter: item.node.type.letter,
+            completed: item.node.completed,
+            status: item.node.status,
           ),
         ),
+        if (cornerBadge != null)
+          Positioned(
+            top: letterTop,
+            right: -6,
+            height: letterHeight,
+            child: AsanaDueBadge(
+              label: cornerBadge,
+              fontSize: 9 * 1.3,
+              height: letterHeight,
+            ),
+          ),
       ],
     );
   }
@@ -2914,7 +3587,19 @@ class _TreeConnectorPainter extends CustomPainter {
   }
 }
 
-enum _DiagramNodeType { project, subproject, task, subtask }
+enum _WorkStatusMode { all, completed, incomplete, both, other }
+
+enum _DiagramNodeType { project, subproject, task, subtask, levelSpacer }
+
+extension on _DiagramNodeType {
+  String get letter => switch (this) {
+    _DiagramNodeType.project => 'P',
+    _DiagramNodeType.subproject => 'SP',
+    _DiagramNodeType.task => 'T',
+    _DiagramNodeType.subtask => 'ST',
+    _DiagramNodeType.levelSpacer => '',
+  };
+}
 
 class _DiagramBoxStyle {
   const _DiagramBoxStyle({
@@ -2922,25 +3607,25 @@ class _DiagramBoxStyle {
     required this.border,
     required this.text,
     required this.secondaryText,
-    this.borderWidth = 1,
   });
 
   final Color background;
   final Color border;
   final Color text;
   final Color secondaryText;
-  final double borderWidth;
 
   Color get toggleBackground =>
       Color.alphaBlend(Colors.black.withValues(alpha: 0.14), background);
 
   static _DiagramBoxStyle forType(
     _DiagramNodeType type,
-    AsanaLandingPalette palette, {
-    bool completed = false,
-  }) {
+    AsanaLandingPalette palette,
+  ) {
     final surface = palette.listSurface;
     final accent = palette.accent;
+    final dark = palette.darkChrome;
+    Color wash(double alpha) =>
+        Color.alphaBlend(accent.withValues(alpha: alpha), surface);
     switch (type) {
       case _DiagramNodeType.project:
         return _DiagramBoxStyle(
@@ -2951,35 +3636,31 @@ class _DiagramBoxStyle {
         );
       case _DiagramNodeType.subproject:
         return _DiagramBoxStyle(
-          background: Color.alphaBlend(
-            accent.withValues(alpha: palette.darkChrome ? 0.62 : 0.58),
-            surface,
-          ),
-          border: accent,
+          background: wash(dark ? 0.78 : 0.70),
+          border: accent.withValues(alpha: 0.88),
           text: Colors.white,
           secondaryText: Colors.white.withValues(alpha: 0.86),
         );
       case _DiagramNodeType.task:
         return _DiagramBoxStyle(
-          background: Color.alphaBlend(
-            accent.withValues(alpha: palette.darkChrome ? 0.34 : 0.28),
-            surface,
-          ),
-          border: accent.withValues(alpha: completed ? 0.92 : 0.52),
-          borderWidth: completed ? 2.4 : 1,
+          background: wash(dark ? 0.38 : 0.32),
+          border: accent.withValues(alpha: 0.52),
           text: kAsanaTextPrimary,
           secondaryText: kAsanaTextSecondary,
         );
       case _DiagramNodeType.subtask:
         return _DiagramBoxStyle(
-          background: Color.alphaBlend(
-            accent.withValues(alpha: palette.darkChrome ? 0.13 : 0.12),
-            surface,
-          ),
-          border: accent.withValues(alpha: completed ? 0.92 : 0.52),
-          borderWidth: completed ? 2.4 : 1,
+          background: wash(dark ? 0.18 : 0.12),
+          border: accent.withValues(alpha: 0.36),
           text: kAsanaTextPrimary,
           secondaryText: kAsanaTextSecondary,
+        );
+      case _DiagramNodeType.levelSpacer:
+        return _DiagramBoxStyle(
+          background: Colors.transparent,
+          border: Colors.transparent,
+          text: Colors.transparent,
+          secondaryText: Colors.transparent,
         );
     }
   }

@@ -75,6 +75,30 @@ class HkTime {
     return DateTime(hk.year, hk.month, hk.day);
   }
 
+  /// Hong Kong wall-clock components of a stored UTC instant.
+  static DateTime hkWallFromStoredUtc(DateTime stored) {
+    return stored.toUtc().add(const Duration(hours: 8));
+  }
+
+  /// Interprets civil [year]…[second] as Hong Kong wall time (UTC+8).
+  static DateTime utcFromHkWall({
+    required int year,
+    required int month,
+    required int day,
+    int hour = 0,
+    int minute = 0,
+    int second = 0,
+  }) {
+    return DateTime.utc(
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+    ).subtract(const Duration(hours: 8));
+  }
+
   static bool _isWeekend(DateTime d) {
     final wd = d.weekday;
     return wd == DateTime.saturday || wd == DateTime.sunday;

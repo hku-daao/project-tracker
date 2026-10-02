@@ -1,5 +1,6 @@
 import '../../app_state.dart';
 import '../../models/project_record.dart';
+import '../../models/subproject_record.dart';
 
 class AsanaProjectFilterState {
   AsanaProjectFilterState() {
@@ -210,6 +211,89 @@ class AsanaProjectFilter {
       if (_keyInVisibilityKeys(uid, visibilityKeys)) return true;
     }
     return false;
+  }
+
+  static bool subprojectCreatedByCurrentUser(
+    AppState state,
+    SubprojectRecord s,
+  ) {
+    final visibilityKeys = state.taskVisibilityLookupKeys;
+    final cb = s.createByStaffUuid?.trim();
+    if (cb == null || cb.isEmpty) return false;
+    return _keyInVisibilityKeys(cb, visibilityKeys);
+  }
+
+  static bool subprojectAssignedToCurrentUser(
+    AppState state,
+    SubprojectRecord s,
+  ) {
+    final visibilityKeys = state.taskVisibilityLookupKeys;
+    for (final u in s.assigneeStaffUuids) {
+      final uid = u.trim();
+      if (uid.isEmpty) continue;
+      if (_keyInVisibilityKeys(uid, visibilityKeys)) return true;
+    }
+    for (final u in s.picStaffUuids) {
+      final uid = u.trim();
+      if (uid.isEmpty) continue;
+      if (_keyInVisibilityKeys(uid, visibilityKeys)) return true;
+    }
+    return false;
+  }
+
+  static bool subprojectSearchMatches(
+    AppState state,
+    SubprojectRecord s,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) return false;
+    return _containsAllTokens([
+      s.name,
+      s.description,
+      s.createByDisplayName,
+      s.createByStaffUuid,
+      subprojectCreatorLine(s, state),
+      subprojectAssigneesLine(s, state),
+      subprojectPicLine(s, state),
+      ...s.assigneeStaffDisplayNames,
+      ...s.assigneeStaffUuids,
+      ...s.picStaffDisplayNames,
+      ...s.picStaffUuids,
+    ], tokens);
+  }
+
+  static String subprojectAssigneesLine(SubprojectRecord s, AppState state) {
+    if (s.assigneeStaffUuids.isEmpty) return '—';
+    final parts = <String>[];
+    for (var i = 0; i < s.assigneeStaffUuids.length; i++) {
+      final uuid = s.assigneeStaffUuids[i];
+      final stored = i < s.assigneeStaffDisplayNames.length
+          ? s.assigneeStaffDisplayNames[i]
+          : null;
+      parts.add(_staffName(state, uuid, resolvedName: stored));
+    }
+    return parts.join(', ');
+  }
+
+  static String subprojectCreatorLine(SubprojectRecord s, AppState state) {
+    final stored = s.createByDisplayName?.trim();
+    if (stored != null && stored.isNotEmpty) return stored;
+    final id = s.createByStaffUuid?.trim();
+    if (id == null || id.isEmpty) return '—';
+    return _staffName(state, id);
+  }
+
+  static String subprojectPicLine(SubprojectRecord s, AppState state) {
+    if (s.picStaffUuids.isEmpty) return '—';
+    final parts = <String>[];
+    for (var i = 0; i < s.picStaffUuids.length; i++) {
+      final uuid = s.picStaffUuids[i];
+      final stored = i < s.picStaffDisplayNames.length
+          ? s.picStaffDisplayNames[i]
+          : null;
+      parts.add(_staffName(state, uuid, resolvedName: stored));
+    }
+    return parts.join(', ');
   }
 
   static bool _keyInVisibilityKeys(String value, Set<String> keys) {

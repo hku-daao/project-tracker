@@ -6,11 +6,14 @@ import '../../app_state.dart';
 import '../../commencement_status.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
+import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_due_badge.dart';
 import 'asana_project_filter.dart';
+import 'asana_project_milestone_section.dart';
 import 'asana_task_filter.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -24,6 +27,7 @@ class AsanaHomePanel extends StatefulWidget {
     this.onOpenTask,
     this.onOpenSubtask,
     this.onOpenProject,
+    this.onOpenSubproject,
   });
 
   final AsanaLandingPalette palette;
@@ -31,6 +35,7 @@ class AsanaHomePanel extends StatefulWidget {
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String projectId)? onOpenProject;
+  final void Function(String subprojectId, String projectId)? onOpenSubproject;
 
   @override
   State<AsanaHomePanel> createState() => _AsanaHomePanelState();
@@ -42,17 +47,9 @@ class AsanaHomePanel extends StatefulWidget {
   /// Home content width at or above this keeps the 2×2 card grid.
   static const double _twoColumnGridMinWidth = 1000;
 
-  /// Below this card width, task/project lists use two-line labeled rows.
-  static const double _homeCompactMaxWidth = 540;
   static const int _minVisibleTaskRows = 5;
   static const double _taskRowHeight = 44;
-  static const double _taskRowCompactHeight = 64;
   static const double _homeWorkNameInset = 10;
-  static const double _homeDueColWidth = 76;
-  static const double _homePicColWidth = 118;
-  static const double _homePeopleNameMinWidth = _homePicColWidth;
-  static const double _homeSubmissionColWidth = 92;
-  static const double _homeStatusColWidth = 100;
   static const double _rowDividerHeight = 1;
   static const double _tableHeaderHeight = 34;
   static const double _cardPaddingVertical = 30;
@@ -67,15 +64,20 @@ class AsanaHomePanel extends StatefulWidget {
       _tableHeaderHeight +
       _rowDividerHeight +
       homeListMinHeight;
-  static const double _homeTaskTableChromeAboveList =
-      _taskRowHeight + 8 + _rowDividerHeight;
-
-  static bool homeUseCompact(double cardWidth) =>
-      cardWidth > 0 && cardWidth < _homeCompactMaxWidth;
 
   /// Title block + top/bottom padding in [_HomeCardShell] (excludes list body).
   static const double _homeShellHeaderHeight =
       18 + _panelTitleFontSize * 1.2 + 4 + 12 + 12;
+
+  /// Room at the bottom of the first screen for the People panel title.
+  static const double _peopleTitlePeek = 76;
+
+  /// Desktop height for each of the top two panel rows so People title is visible.
+  static double desktopWorkPanelRowHeight(double viewportHeight) {
+    if (!viewportHeight.isFinite || viewportHeight <= 0) return 280;
+    final available = viewportHeight - _peopleTitlePeek - _gridGap * 2;
+    return (available / 2).clamp(220.0, 420.0);
+  }
 
   /// List viewport height inside the card body (shell chrome already excluded).
   static double listViewportHeight({
@@ -95,12 +97,16 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
   final Map<String, bool> _expanded = {
     'created': true,
     'assigned': true,
+    'projectsCreated': true,
+    'projectsAssigned': true,
     'people': true,
-    'projects': true,
   };
   Map<String, List<SingularSubtask>> _peopleSubtasksByTaskId = {};
   String _peopleSubtaskTaskIdsKey = '';
   int _peopleSubtaskLoadSerial = 0;
+  final Map<String, int> _milestoneProgressByProject = {};
+  String _milestoneProgressIdsKey = '';
+  int _milestoneProgressLoadSerial = 0;
 
   void _toggleSection(String key) {
     setState(() => _expanded[key] = !(_expanded[key] ?? true));
@@ -193,7 +199,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         out.add(_HomeWorkItem.subtask(s, parent: t));
       }
     }
-    out.sort(_sortWorkByDueDescending);
+    out.sort(_sortWorkByDueAscending);
     return out;
   }
 
@@ -209,7 +215,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         out.add(_HomeWorkItem.subtask(s, parent: t));
       }
     }
-    out.sort(_sortWorkByDueDescending);
+    out.sort(_sortWorkByDueAscending);
     return out;
   }
 
@@ -221,6 +227,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final out = <_HomeWorkItem>[];
     for (final t in tasks) {
       if (state.taskIsCreatedByCurrentUser(t) &&
+          _isIncomplete(t) &&
           !_hideFromLeftHomePanel(
             commencementStatus: t.commencementStatus,
             submission: t.submission,
@@ -229,7 +236,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         out.add(_HomeWorkItem.task(t));
       }
       for (final s in subtasksByTaskId[t.id] ?? const <SingularSubtask>[]) {
-        if (s.isDeleted) continue;
+        if (s.isDeleted || _subtaskCompleted(s)) continue;
         if (_hideFromLeftHomePanel(
           commencementStatus: s.commencementStatus,
           submission: s.submission,
@@ -242,7 +249,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
         }
       }
     }
-    out.sort(_sortWorkByDueDescending);
+    out.sort(_sortWorkByDueAscending);
     return out;
   }
 
@@ -252,23 +259,33 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     Map<String, List<SingularSubtask>> subtasksByTaskId,
   ) {
     final out = <_HomeWorkItem>[];
+    final appId = state.effectiveStaffAppId?.trim() ?? '';
+    final staffUuid = state.effectiveStaffUuid?.trim();
     for (final t in tasks) {
-      if (AsanaTaskFilter.taskAssignedToCurrentUser(state, t)) {
+      if (_taskMatchesStaff(state, t, appId, staffUuid) &&
+          _isIncomplete(t) &&
+          !_hideFromLeftHomePanel(
+            commencementStatus: t.commencementStatus,
+            submission: t.submission,
+            workStatus: t.dbStatus,
+          )) {
         out.add(_HomeWorkItem.task(t));
       }
       for (final s in subtasksByTaskId[t.id] ?? const <SingularSubtask>[]) {
-        if (s.isDeleted) continue;
-        if (_subtaskMatchesStaff(
-          state,
-          s,
-          state.effectiveStaffAppId?.trim() ?? '',
-          state.effectiveStaffUuid?.trim(),
+        if (s.isDeleted || _subtaskCompleted(s)) continue;
+        if (_hideFromLeftHomePanel(
+          commencementStatus: s.commencementStatus,
+          submission: s.submission,
+          workStatus: s.status,
         )) {
+          continue;
+        }
+        if (_subtaskMatchesStaff(state, s, appId, staffUuid)) {
           out.add(_HomeWorkItem.subtask(s, parent: t));
         }
       }
     }
-    out.sort(_sortWorkByDueDescending);
+    out.sort(_sortWorkByDueAscending);
     return out;
   }
 
@@ -304,25 +321,177 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     }).toList();
   }
 
-  static int _sortWorkByDueDescending(_HomeWorkItem a, _HomeWorkItem b) {
+  static int _sortWorkByDueAscending(_HomeWorkItem a, _HomeWorkItem b) {
     final ae = a.dueDate;
     final be = b.dueDate;
     if (ae == null && be == null) return a.name.compareTo(b.name);
     if (ae == null) return 1;
     if (be == null) return -1;
-    final c = be.compareTo(ae);
+    final c = ae.compareTo(be);
     return c != 0 ? c : a.name.compareTo(b.name);
   }
 
-  static List<ProjectRecord> _filterProjectsBySearch(
+  static bool _projectActive(ProjectRecord p) {
+    final s = p.status.trim().toLowerCase();
+    return s != 'deleted' && s != 'delete';
+  }
+
+  static List<_HomeNestItem> _userCreatedNestItems(AppState state) {
+    final out = <_HomeNestItem>[];
+    for (final p in state.projects) {
+      if (!_projectActive(p)) continue;
+      if (AsanaProjectFilter.projectCreatedByCurrentUser(state, p)) {
+        out.add(_HomeNestItem.project(p));
+      }
+    }
+    for (final s in state.subprojects) {
+      if (s.isDeleted) continue;
+      if (AsanaProjectFilter.subprojectCreatedByCurrentUser(state, s)) {
+        out.add(_HomeNestItem.subproject(s));
+      }
+    }
+    out.sort(_sortNestItems);
+    return out;
+  }
+
+  static List<_HomeNestItem> _userAssignedNestItems(AppState state) {
+    final out = <_HomeNestItem>[];
+    for (final p in state.projects) {
+      if (!_projectActive(p)) continue;
+      if (AsanaProjectFilter.projectAssignedToCurrentUser(state, p)) {
+        out.add(_HomeNestItem.project(p));
+      }
+    }
+    for (final s in state.subprojects) {
+      if (s.isDeleted) continue;
+      if (AsanaProjectFilter.subprojectAssignedToCurrentUser(state, s)) {
+        out.add(_HomeNestItem.subproject(s));
+      }
+    }
+    out.sort(_sortNestItems);
+    return out;
+  }
+
+  static List<_HomeNestItem> _adminNestItems(AppState state) {
+    final out = <_HomeNestItem>[
+      for (final p in state.projects)
+        if (_projectActive(p)) _HomeNestItem.project(p),
+      for (final s in state.subprojects)
+        if (!s.isDeleted) _HomeNestItem.subproject(s),
+    ];
+    out.sort(_sortNestItems);
+    return out;
+  }
+
+  static int _sortNestItems(_HomeNestItem a, _HomeNestItem b) {
+    if (a.isSubproject != b.isSubproject) {
+      return a.isSubproject ? 1 : -1;
+    }
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  }
+
+  static List<_HomeNestItem> _filterNestItemsBySearch(
     AppState state,
-    List<ProjectRecord> projects,
+    List<_HomeNestItem> items,
     List<String> tokens,
   ) {
-    if (tokens.isEmpty) return projects;
-    return projects
-        .where((p) => AsanaProjectFilter.projectSearchMatches(state, p, tokens))
-        .toList();
+    if (tokens.isEmpty) return items;
+    return items.where((item) {
+      if (item.isSubproject) {
+        return AsanaProjectFilter.subprojectSearchMatches(
+          state,
+          item.subproject!,
+          tokens,
+        );
+      }
+      return AsanaProjectFilter.projectSearchMatches(
+        state,
+        item.project!,
+        tokens,
+      );
+    }).toList();
+  }
+
+  static _HomeNestCounts _nestCountsFor(
+    AppState state,
+    _HomeNestItem item,
+    List<Task> tasks,
+    Map<String, List<SingularSubtask>> subtasksByTaskId,
+  ) {
+    if (item.isSubproject) {
+      final sid = item.id;
+      final linked = [
+        for (final t in tasks)
+          if ((t.subprojectId ?? '').trim() == sid) t,
+      ];
+      var subtaskN = 0;
+      for (final t in linked) {
+        for (final s in subtasksByTaskId[t.id] ?? const <SingularSubtask>[]) {
+          if (!s.isDeleted) subtaskN++;
+        }
+      }
+      return _HomeNestCounts(
+        subprojects: 0,
+        tasks: linked.length,
+        subtasks: subtaskN,
+      );
+    }
+    final pid = item.id;
+    final sps = state.subprojectsForProject(pid);
+    final linked = [
+      for (final t in tasks)
+        if ((t.projectId ?? '').trim() == pid) t,
+    ];
+    var subtaskN = 0;
+    for (final t in linked) {
+      for (final s in subtasksByTaskId[t.id] ?? const <SingularSubtask>[]) {
+        if (!s.isDeleted) subtaskN++;
+      }
+    }
+    return _HomeNestCounts(
+      subprojects: sps.length,
+      tasks: linked.length,
+      subtasks: subtaskN,
+    );
+  }
+
+  int _progressForProject(ProjectRecord project) {
+    return asanaProjectListProgressPercent(
+      hasMilestone: project.hasMilestone,
+      status: project.status,
+      milestoneAchievedPercent: _milestoneProgressByProject[project.id] ?? 0,
+    );
+  }
+
+  void _ensureMilestoneProgressLoaded(List<_HomeNestItem> items) {
+    final ids = [
+      for (final item in items)
+        if (!item.isSubproject && item.project!.hasMilestone) item.id,
+    ]..sort();
+    final key = ids.join('|');
+    if (key == _milestoneProgressIdsKey) return;
+    _milestoneProgressIdsKey = key;
+    final serial = ++_milestoneProgressLoadSerial;
+    if (ids.isEmpty) {
+      if (_milestoneProgressByProject.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && serial == _milestoneProgressLoadSerial) {
+            setState(_milestoneProgressByProject.clear);
+          }
+        });
+      }
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final map =
+          await DatabaseService.fetchAchievedMilestonePercentByProject(ids);
+      if (!mounted || serial != _milestoneProgressLoadSerial) return;
+      setState(() {
+        _milestoneProgressByProject
+          ..clear()
+          ..addAll(map);
+      });
+    });
   }
 
   @override
@@ -357,34 +526,19 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
 
     final people = _peopleRows(state, all, _peopleSubtasksByTaskId, today);
 
-    final projects = state.projects;
-    final projectsCreated = adminViewMode
-        ? (projects.toList()..sort(_sortProjectsByDue))
-        : (projects
-              .where(
-                (p) => AsanaProjectFilter.projectCreatedByCurrentUser(state, p),
-              )
-              .toList()
-            ..sort(_sortProjectsByDue));
-    final projectsAssigned = adminViewMode
-        ? <ProjectRecord>[]
-        : (projects
-              .where(
-                (p) =>
-                    AsanaProjectFilter.projectAssignedToCurrentUser(state, p),
-              )
-              .toList()
-            ..sort(_sortProjectsByDue));
-    final visibleProjectsCreated = _filterProjectsBySearch(
+    final nestCreated = _filterNestItemsBySearch(
       state,
-      projectsCreated,
+      adminViewMode
+          ? _adminNestItems(state)
+          : _userCreatedNestItems(state),
       searchTokens,
     );
-    final visibleProjectsAssigned = _filterProjectsBySearch(
+    final nestAssigned = _filterNestItemsBySearch(
       state,
-      projectsAssigned,
+      adminViewMode ? const <_HomeNestItem>[] : _userAssignedNestItems(state),
       searchTokens,
     );
+    _ensureMilestoneProgressLoaded([...nestCreated, ...nestAssigned]);
 
     return ColoredBox(
       color: palette.panelBackground,
@@ -424,8 +578,9 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                       AsanaHomePanel._twoColumnGridMinWidth;
                   final allowCollapse = useSingleColumn;
                   // Narrow: fixed min card height, stack may extend below viewport.
-                  // Wide: cards fill grid cells (min height still enforced).
-                  final fillHeight = !useSingleColumn;
+                  // Wide: top four panels use a tall row and the page scrolls;
+                  // People keeps its natural height.
+                  final fillTopPanels = !useSingleColumn;
                   final layoutKey = useSingleColumn ? 'stack' : 'grid';
                   final createdCard = _HomeTaskCard(
                     key: ValueKey('home-created-$layoutKey'),
@@ -434,8 +589,6 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                         ? 'Incomplete Tasks & Sub-tasks'
                         : "Tasks & Sub-tasks I've created",
                     items: leftItems,
-                    nameHeader: 'Name',
-                    middleHeader: 'PIC',
                     onOpenItem: (item) {
                       if (item.isSubtask) {
                         widget.onOpenSubtask?.call(item.id);
@@ -449,7 +602,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     onToggleExpanded: allowCollapse
                         ? () => _toggleSection('created')
                         : null,
-                    fillHeight: fillHeight,
+                    fillHeight: fillTopPanels,
                   );
                   final assignedCard = _HomeTaskCard(
                     key: ValueKey('home-assigned-$layoutKey'),
@@ -458,17 +611,6 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                         ? 'Completed Tasks & Sub-tasks'
                         : 'Tasks & Sub-tasks assigned to me',
                     items: rightItems,
-                    nameHeader: 'Name',
-                    middleHeader: adminViewMode ? 'PIC' : 'Creator',
-                    middleOverride: adminViewMode
-                        ? null
-                        : (item) {
-                            final name = item.isSubtask
-                                ? item.subtask?.createByStaffName
-                                : item.task.createByStaffName;
-                            final t = name?.trim();
-                            return (t != null && t.isNotEmpty) ? t : '—';
-                          },
                     onOpenItem: (item) {
                       if (item.isSubtask) {
                         widget.onOpenSubtask?.call(item.id);
@@ -482,7 +624,73 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     onToggleExpanded: allowCollapse
                         ? () => _toggleSection('assigned')
                         : null,
-                    fillHeight: fillHeight,
+                    fillHeight: fillTopPanels,
+                  );
+                  final projectsCreatedCard = _HomeNestCard(
+                    key: ValueKey('home-nest-created-$layoutKey'),
+                    palette: palette,
+                    title: adminViewMode
+                        ? 'All Projects & Sub-projects'
+                        : "Projects & Sub-projects I've created",
+                    items: nestCreated,
+                    countsFor: (item) => _nestCountsFor(
+                      state,
+                      item,
+                      all,
+                      _peopleSubtasksByTaskId,
+                    ),
+                    progressFor: (item) => item.isSubproject
+                        ? null
+                        : _progressForProject(item.project!),
+                    onOpenItem: (item) {
+                      if (item.isSubproject) {
+                        widget.onOpenSubproject?.call(
+                          item.id,
+                          item.subproject!.projectId,
+                        );
+                      } else {
+                        widget.onOpenProject?.call(item.id);
+                      }
+                    },
+                    expanded: allowCollapse
+                        ? (_expanded['projectsCreated'] ?? true)
+                        : true,
+                    onToggleExpanded: allowCollapse
+                        ? () => _toggleSection('projectsCreated')
+                        : null,
+                    fillHeight: fillTopPanels,
+                  );
+                  final projectsAssignedCard = _HomeNestCard(
+                    key: ValueKey('home-nest-assigned-$layoutKey'),
+                    palette: palette,
+                    title: 'Projects & sub-projects assigned to me',
+                    items: nestAssigned,
+                    countsFor: (item) => _nestCountsFor(
+                      state,
+                      item,
+                      all,
+                      _peopleSubtasksByTaskId,
+                    ),
+                    progressFor: (item) => item.isSubproject
+                        ? null
+                        : _progressForProject(item.project!),
+                    onOpenItem: (item) {
+                      if (item.isSubproject) {
+                        widget.onOpenSubproject?.call(
+                          item.id,
+                          item.subproject!.projectId,
+                        );
+                      } else {
+                        widget.onOpenProject?.call(item.id);
+                      }
+                    },
+                    expanded: allowCollapse
+                        ? (_expanded['projectsAssigned'] ?? true)
+                        : true,
+                    onToggleExpanded: allowCollapse
+                        ? () => _toggleSection('projectsAssigned')
+                        : null,
+                    fillHeight: fillTopPanels,
                   );
                   final peopleCard = _HomePeopleCard(
                     key: ValueKey('home-people-$layoutKey'),
@@ -494,83 +702,79 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
                     onToggleExpanded: allowCollapse
                         ? () => _toggleSection('people')
                         : null,
-                    fillHeight: fillHeight,
+                    fillHeight: false,
                   );
-                  final projectsCard = _HomeProjectsCard(
-                    key: ValueKey('home-projects-$layoutKey'),
-                    palette: palette,
-                    created: visibleProjectsCreated,
-                    assigned: visibleProjectsAssigned,
-                    adminViewMode: adminViewMode,
-                    onOpenProject: widget.onOpenProject,
-                    expanded: allowCollapse
-                        ? (_expanded['projects'] ?? true)
-                        : true,
-                    onToggleExpanded: allowCollapse
-                        ? () => _toggleSection('projects')
-                        : null,
-                    fillHeight: fillHeight,
-                  );
-
                   if (useSingleColumn) {
-                    // Cards keep min height; stack may extend below viewport (clip, no page scroll).
                     return KeyedSubtree(
                       key: const ValueKey('home-stacked'),
-                      child: ClipRect(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          clipBehavior: Clip.hardEdge,
-                          children: [
-                            Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: _stackedHomeSections(
-                                  cards: [
-                                    createdCard,
-                                    assignedCard,
-                                    peopleCard,
-                                    projectsCard,
-                                  ],
-                                ),
-                              ),
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(
+                          context,
+                        ).copyWith(scrollbars: false),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: _stackedHomeSections(
+                              cards: [
+                                createdCard,
+                                assignedCard,
+                                projectsCreatedCard,
+                                projectsAssignedCard,
+                                peopleCard,
+                              ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     );
                   }
 
+                  final panelRowH = AsanaHomePanel.desktopWorkPanelRowHeight(
+                    constraints.maxHeight,
+                  );
                   return KeyedSubtree(
                     key: const ValueKey('home-grid'),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: createdCard),
-                              const SizedBox(width: AsanaHomePanel._gridGap),
-                              Expanded(child: assignedCard),
-                            ],
-                          ),
+                    child: ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(
+                        context,
+                      ).copyWith(scrollbars: false),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SizedBox(
+                              height: panelRowH,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(child: createdCard),
+                                  const SizedBox(
+                                    width: AsanaHomePanel._gridGap,
+                                  ),
+                                  Expanded(child: assignedCard),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: AsanaHomePanel._gridGap),
+                            SizedBox(
+                              height: panelRowH,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(child: projectsCreatedCard),
+                                  const SizedBox(
+                                    width: AsanaHomePanel._gridGap,
+                                  ),
+                                  Expanded(child: projectsAssignedCard),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: AsanaHomePanel._gridGap),
+                            peopleCard,
+                          ],
                         ),
-                        const SizedBox(height: AsanaHomePanel._gridGap),
-                        Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: peopleCard),
-                              const SizedBox(width: AsanaHomePanel._gridGap),
-                              Expanded(child: projectsCard),
-                            ],
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   );
                 },
@@ -615,16 +819,6 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
       if (!mounted || serial != _peopleSubtaskLoadSerial) return;
       setState(() => _peopleSubtasksByTaskId = grouped);
     });
-  }
-
-  static int _sortProjectsByDue(ProjectRecord a, ProjectRecord b) {
-    final ae = a.endDate;
-    final be = b.endDate;
-    if (ae == null && be == null) return a.name.compareTo(b.name);
-    if (ae == null) return 1;
-    if (be == null) return -1;
-    final c = ae.compareTo(be);
-    return c != 0 ? c : a.name.compareTo(b.name);
   }
 
   static List<_PersonTaskSummary> _peopleRows(
@@ -891,22 +1085,54 @@ class _PersonTaskSummary {
   final bool isSelf;
 }
 
-/// Single-line table cell with fixed width (headers and values align).
-Widget _homeFixedCell({
-  required double width,
-  required Widget child,
-  double height = AsanaHomePanel._taskRowHeight,
-}) {
-  return SizedBox(
-    width: width,
-    height: height,
-    child: Align(alignment: Alignment.centerLeft, child: child),
-  );
-}
-
 String _homeLabeledMetaLine({required String label, required String value}) {
   final v = value.trim().isEmpty ? '—' : value.trim();
   return '$label: $v';
+}
+
+String _homePeopleMetaLine({
+  required String creator,
+  required String pic,
+  required String assignee,
+}) {
+  return [
+    _homeLabeledMetaLine(label: 'Creator', value: creator),
+    _homeLabeledMetaLine(label: 'PIC', value: pic),
+    _homeLabeledMetaLine(label: 'Assignee', value: assignee),
+  ].join(' · ');
+}
+
+String _homeAssigneeNames(AppState state, List<String> ids) {
+  final parts = <String>[];
+  for (final raw in ids) {
+    final name = _AsanaHomePanelState._picLine(state, raw);
+    if (name != '—') parts.add(name);
+  }
+  return parts.isEmpty ? '—' : parts.join(', ');
+}
+
+String _homeCreatorName({required String? storedName, required String? fallback}) {
+  final n = storedName?.trim();
+  if (n != null && n.isNotEmpty) return n;
+  final f = fallback?.trim();
+  if (f != null && f.isNotEmpty) return f;
+  return '—';
+}
+
+String _homeCountPhrase(int n, String singular, String plural) {
+  return '$n ${n == 1 ? singular : plural}';
+}
+
+String? _homeDueUrgencyLabel(BuildContext context, _HomeWorkItem item) {
+  final state = context.read<AppState>();
+  final status = item.isSubtask
+      ? AsanaTaskFilter.subtaskDisplayStatus(state, item.task, item.subtask!)
+      : AsanaTaskFilter.taskDisplayStatus(state, item.task);
+  return asanaTaskViewDueLabel(
+    due: item.dueDate,
+    status: status,
+    submission: item.submission,
+  );
 }
 
 Widget _homeListViewport({required double height, required Widget child}) {
@@ -1025,6 +1251,7 @@ class _HomeCardShell extends StatelessWidget {
           )
         : LayoutBuilder(builder: (_, c) => buildShell(c));
 
+    if (fillHeight) return shell;
     return ConstrainedBox(
       constraints: const BoxConstraints(
         minHeight: AsanaHomePanel.homeCardMinHeight,
@@ -1056,6 +1283,10 @@ class _HomeWorkItem {
   String? get pic => isSubtask ? subtask!.pic : task.pic;
   DateTime? get dueDate => isSubtask ? subtask!.dueDate : task.endDate;
   String? get submission => isSubtask ? subtask!.submission : task.submission;
+  String? get creatorName =>
+      isSubtask ? subtask!.createByStaffName : task.createByStaffName;
+  List<String> get assigneeIds =>
+      isSubtask ? subtask!.assigneeIds : task.assigneeIds;
 }
 
 class _HomeTaskCard extends StatelessWidget {
@@ -1064,9 +1295,6 @@ class _HomeTaskCard extends StatelessWidget {
     required this.palette,
     required this.title,
     required this.items,
-    required this.middleHeader,
-    this.nameHeader = 'Task Name',
-    this.middleOverride,
     this.onOpenItem,
     this.expanded = true,
     this.onToggleExpanded,
@@ -1076,18 +1304,10 @@ class _HomeTaskCard extends StatelessWidget {
   final AsanaLandingPalette palette;
   final String title;
   final List<_HomeWorkItem> items;
-  final String nameHeader;
-  final String middleHeader;
-  final String Function(_HomeWorkItem item)? middleOverride;
   final void Function(_HomeWorkItem item)? onOpenItem;
   final bool expanded;
   final VoidCallback? onToggleExpanded;
   final bool fillHeight;
-
-  String _middleFor(BuildContext context, _HomeWorkItem item) {
-    if (middleOverride != null) return middleOverride!(item);
-    return _AsanaHomePanelState._picLine(context.read<AppState>(), item.pic);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1099,43 +1319,22 @@ class _HomeTaskCard extends StatelessWidget {
       fillHeight: fillHeight,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final cardWidth = constraints.maxWidth;
-          final compact = AsanaHomePanel.homeUseCompact(cardWidth);
           final listH = AsanaHomePanel.listViewportHeight(
             maxHeight: constraints.maxHeight,
             fillHeight: fillHeight,
-            chromeAboveList: compact
-                ? 1
-                : AsanaHomePanel._homeTaskTableChromeAboveList,
+            chromeAboveList: 1,
           );
-          if (compact) {
-            return _HomeTaskCompactList(
-              items: items,
-              middleHeader: middleHeader,
-              middleValue: _middleFor,
-              onOpenItem: onOpenItem,
-              listHeight: listH,
-              palette: palette,
-            );
-          }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _HomeTaskTableHeader(
-                nameHeader: nameHeader,
-                middleHeader: middleHeader,
-              ),
               Divider(height: 1, color: Colors.grey.shade300),
               _homeListViewport(
                 height: listH,
                 child: _homeTaskListBody(
                   context: context,
                   items: items,
-                  middleHeader: middleHeader,
-                  middleValue: _middleFor,
                   onOpenItem: onOpenItem,
-                  compact: false,
                   palette: palette,
                 ),
               ),
@@ -1150,11 +1349,7 @@ class _HomeTaskCard extends StatelessWidget {
 Widget _homeTaskListBody({
   required BuildContext context,
   required List<_HomeWorkItem> items,
-  required String Function(BuildContext context, _HomeWorkItem item)
-  middleValue,
   required void Function(_HomeWorkItem item)? onOpenItem,
-  required bool compact,
-  required String middleHeader,
   required AsanaLandingPalette palette,
 }) {
   if (items.isEmpty) {
@@ -1170,274 +1365,112 @@ Widget _homeTaskListBody({
     );
   }
 
-  Widget rowAt(int index) {
-    final item = items[index];
-    final rowBg = item.isSubtask ? palette.tableColors.subtaskRow : null;
-    if (compact) {
-      return _HomeTaskCompactRow(
-        item: item,
-        middleHeader: middleHeader,
-        middle: middleValue(context, item),
-        rowBackground: rowBg,
-        onTap: onOpenItem == null ? null : () => onOpenItem(item),
-      );
-    }
-    return _HomeTaskRow(
-      item: item,
-      middle: middleValue(context, item),
-      rowBackground: rowBg,
-      onTap: onOpenItem == null ? null : () => onOpenItem(item),
-    );
-  }
-
   return ListView.separated(
     primary: false,
     itemCount: items.length,
     separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade200),
-    itemBuilder: (context, index) => rowAt(index),
+    itemBuilder: (context, index) {
+      final item = items[index];
+      return _HomeTaskItemRow(
+        item: item,
+        rowBackground: item.isSubtask ? palette.tableColors.subtaskRow : null,
+        onTap: onOpenItem == null ? null : () => onOpenItem(item),
+      );
+    },
   );
 }
 
-class _HomeTaskCompactList extends StatelessWidget {
-  const _HomeTaskCompactList({
-    required this.items,
-    required this.middleHeader,
-    required this.middleValue,
-    required this.listHeight,
-    required this.palette,
-    this.onOpenItem,
-  });
-
-  final List<_HomeWorkItem> items;
-  final String middleHeader;
-  final String Function(BuildContext context, _HomeWorkItem item) middleValue;
-  final double listHeight;
-  final AsanaLandingPalette palette;
-  final void Function(_HomeWorkItem item)? onOpenItem;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Divider(height: 1, color: Colors.grey.shade300),
-        _homeListViewport(
-          height: listHeight,
-          child: _homeTaskListBody(
-            context: context,
-            items: items,
-            middleHeader: middleHeader,
-            middleValue: middleValue,
-            onOpenItem: onOpenItem,
-            compact: true,
-            palette: palette,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _HomeTaskTableHeader extends StatelessWidget {
-  const _HomeTaskTableHeader({
-    required this.middleHeader,
-    this.nameHeader = 'Task Name',
-  });
-
-  final String nameHeader;
-  final String middleHeader;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = asanaTableHeaderStyle(context);
-    const headerH = AsanaHomePanel._taskRowHeight;
-    return Padding(
-      padding: const EdgeInsets.only(
-        left: AsanaHomePanel._homeWorkNameInset,
-        bottom: 8,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: SizedBox(
-              height: headerH,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(nameHeader, style: style),
-              ),
-            ),
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homePicColWidth,
-            label: middleHeader,
-            style: style,
-            rowHeight: headerH,
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homeDueColWidth,
-            label: 'Due Date',
-            style: style,
-            rowHeight: headerH,
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homeSubmissionColWidth,
-            label: 'Submission',
-            style: style,
-            rowHeight: headerH,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HomeTaskRow extends StatelessWidget {
-  const _HomeTaskRow({
+class _HomeTaskItemRow extends StatelessWidget {
+  const _HomeTaskItemRow({
     required this.item,
-    required this.middle,
     this.rowBackground,
     this.onTap,
   });
 
   final _HomeWorkItem item;
-  final String middle;
   final Color? rowBackground;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final valueStyle = asanaTableRowValueStyle(context);
+    final state = context.read<AppState>();
     final nameStyle = asanaTableRowNameStyle(context);
+    final metaStyle = asanaTableRowValueStyle(context);
+    final status = item.isSubtask
+        ? AsanaTaskFilter.subtaskDisplayStatus(state, item.task, item.subtask!)
+        : AsanaTaskFilter.taskDisplayStatus(state, item.task);
+    final dueLabel = _homeDueUrgencyLabel(context, item);
+    final peopleLine = _homePeopleMetaLine(
+      creator: _homeCreatorName(storedName: item.creatorName, fallback: null),
+      pic: _AsanaHomePanelState._picLine(state, item.pic),
+      assignee: _homeAssigneeNames(state, item.assigneeIds),
+    );
 
     return Material(
       color: rowBackground ?? Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        child: SizedBox(
-          height: AsanaHomePanel._taskRowHeight,
-          child: Padding(
-            padding: const EdgeInsets.only(
-              left: AsanaHomePanel._homeWorkNameInset,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    item.name,
-                    style: nameStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AsanaHomePanel._homeWorkNameInset,
+            8,
+            4,
+            8,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AsanaRowTypeLetter(
+                    letter: item.isSubtask ? 'ST' : 'T',
+                    completed: status.trim().toLowerCase() == 'completed',
+                    status: status,
                   ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homePicColWidth,
-                  child: Text(
-                    middle,
-                    style: valueStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      item.name,
+                      style: nameStyle,
+                      maxLines: 3,
+                      softWrap: true,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homeDueColWidth,
-                  child: Text(
-                    _formatDueDate(item.dueDate),
-                    style: valueStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homeSubmissionColWidth,
-                  child: AsanaSubmissionChip(
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                peopleLine,
+                style: metaStyle,
+                maxLines: 4,
+                softWrap: true,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  AsanaStatusChip(status: status, preserveFullLabel: true),
+                  AsanaSubmissionChip(
                     submission: item.submission,
                     preserveFullLabel: true,
                   ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Two-line row: task name, then `PIC: … · Due Date: …` + submission chip.
-class _HomeTaskCompactRow extends StatelessWidget {
-  const _HomeTaskCompactRow({
-    required this.item,
-    required this.middleHeader,
-    required this.middle,
-    this.rowBackground,
-    this.onTap,
-  });
-
-  final _HomeWorkItem item;
-  final String middleHeader;
-  final String middle;
-  final Color? rowBackground;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final nameStyle = asanaTableRowNameStyle(context);
-    final metaStyle = asanaTableRowValueStyle(context);
-    final metaLine = [
-      _homeLabeledMetaLine(label: middleHeader, value: middle),
-      _homeLabeledMetaLine(label: 'Due', value: _formatDueDate(item.dueDate)),
-    ].join(' · ');
-
-    return Material(
-      color: rowBackground ?? Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: AsanaHomePanel._taskRowCompactHeight,
-          child: Padding(
-            padding: const EdgeInsets.only(
-              left: AsanaHomePanel._homeWorkNameInset,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  item.name,
-                  style: nameStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        metaLine,
-                        style: metaStyle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                  Text(
+                    _homeLabeledMetaLine(
+                      label: 'Due',
+                      value: _formatDueDate(item.dueDate),
                     ),
-                    const SizedBox(width: 8),
-                    AsanaSubmissionChip(
-                      submission: item.submission,
-                      preserveFullLabel: true,
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                    style: metaStyle,
+                  ),
+                  if (dueLabel != null) AsanaTaskViewDueLabel(label: dueLabel),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1672,65 +1705,79 @@ class _HomeMetricChip extends StatelessWidget {
   }
 }
 
-class _HomeProjectsCard extends StatelessWidget {
-  const _HomeProjectsCard({
+class _HomeNestCounts {
+  const _HomeNestCounts({
+    required this.subprojects,
+    required this.tasks,
+    required this.subtasks,
+  });
+
+  final int subprojects;
+  final int tasks;
+  final int subtasks;
+
+  String summary({required bool isSubproject}) {
+    return [
+      if (!isSubproject)
+        _homeCountPhrase(subprojects, 'sub-project', 'sub-projects'),
+      _homeCountPhrase(tasks, 'task', 'tasks'),
+      _homeCountPhrase(subtasks, 'sub-task', 'sub-tasks'),
+    ].join(' · ');
+  }
+}
+
+class _HomeNestItem {
+  const _HomeNestItem.project(this.project) : subproject = null;
+  const _HomeNestItem.subproject(this.subproject) : project = null;
+
+  final ProjectRecord? project;
+  final SubprojectRecord? subproject;
+
+  bool get isSubproject => subproject != null;
+  String get id => isSubproject ? subproject!.id : project!.id;
+  String get name {
+    if (isSubproject) {
+      final n = subproject!.name.trim();
+      return n.isEmpty ? '(Unnamed sub-project)' : n;
+    }
+    final n = project!.name.trim();
+    return n.isEmpty ? '(Unnamed project)' : n;
+  }
+
+  String get status =>
+      isSubproject ? subproject!.status : project!.status;
+  String get letter => isSubproject ? 'SP' : 'P';
+}
+
+class _HomeNestCard extends StatelessWidget {
+  const _HomeNestCard({
     super.key,
     required this.palette,
-    required this.created,
-    required this.assigned,
-    this.adminViewMode = false,
-    this.onOpenProject,
+    required this.title,
+    required this.items,
+    required this.countsFor,
+    required this.progressFor,
+    this.onOpenItem,
     this.expanded = true,
     this.onToggleExpanded,
     this.fillHeight = false,
   });
 
   final AsanaLandingPalette palette;
-  final List<ProjectRecord> created;
-  final List<ProjectRecord> assigned;
-  final bool adminViewMode;
-  final void Function(String projectId)? onOpenProject;
+  final String title;
+  final List<_HomeNestItem> items;
+  final _HomeNestCounts Function(_HomeNestItem item) countsFor;
+  final int? Function(_HomeNestItem item) progressFor;
+  final void Function(_HomeNestItem item)? onOpenItem;
   final bool expanded;
   final VoidCallback? onToggleExpanded;
   final bool fillHeight;
 
-  List<Widget> _projectSection({
-    required BuildContext context,
-    required AppState state,
-    required bool compact,
-    required String bannerTitle,
-    required List<ProjectRecord> projects,
-  }) {
-    if (projects.isEmpty) return [];
-    return [
-      _HomeSectionBanner(palette: palette, title: bannerTitle),
-      if (!compact) const _HomeProjectTableHeader(),
-      ...projects.map(
-        (p) => compact
-            ? _HomeProjectCompactRow(
-                project: p,
-                appState: state,
-                onTap: onOpenProject == null
-                    ? null
-                    : () => onOpenProject!(p.id),
-              )
-            : _HomeProjectRow(
-                project: p,
-                appState: state,
-                onTap: onOpenProject == null
-                    ? null
-                    : () => onOpenProject!(p.id),
-              ),
-      ),
-    ];
-  }
-
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
     return _HomeCardShell(
       palette: palette,
-      title: 'Projects',
+      title: title,
       expanded: expanded,
       onToggleExpanded: onToggleExpanded,
       fillHeight: fillHeight,
@@ -1739,45 +1786,48 @@ class _HomeProjectsCard extends StatelessWidget {
           final listH = AsanaHomePanel.listViewportHeight(
             maxHeight: constraints.maxHeight,
             fillHeight: fillHeight,
-            chromeAboveList: 0,
+            chromeAboveList: 1,
           );
-          if (created.isEmpty && assigned.isEmpty) {
-            return _homeListViewport(
-              height: listH,
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Text(
-                  'No projects to show.',
-                  style: asanaTableRowValueStyle(context),
-                ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Divider(height: 1, color: Colors.grey.shade300),
+              _homeListViewport(
+                height: listH,
+                child: items.isEmpty
+                    ? Align(
+                        alignment: Alignment.topLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            'No items to show.',
+                            style: asanaTableRowValueStyle(context),
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        primary: false,
+                        itemCount: items.length,
+                        separatorBuilder: (_, _) =>
+                            Divider(height: 1, color: Colors.grey.shade200),
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          return _HomeNestItemRow(
+                            item: item,
+                            counts: countsFor(item),
+                            progressPercent: progressFor(item),
+                            rowBackground: item.isSubproject
+                                ? palette.tableColors.subtaskRow
+                                : null,
+                            onTap: onOpenItem == null
+                                ? null
+                                : () => onOpenItem!(item),
+                          );
+                        },
+                      ),
               ),
-            );
-          }
-          final compact = AsanaHomePanel.homeUseCompact(constraints.maxWidth);
-          final children = <Widget>[
-            ..._projectSection(
-              context: context,
-              state: state,
-              compact: compact,
-              bannerTitle: adminViewMode
-                  ? 'All active projects'
-                  : "Projects I've created",
-              projects: created,
-            ),
-            if (created.isNotEmpty && assigned.isNotEmpty)
-              const SizedBox(height: 12),
-            ..._projectSection(
-              context: context,
-              state: state,
-              compact: compact,
-              bannerTitle: 'Projects assigned to me',
-              projects: assigned,
-            ),
-          ];
-
-          return _homeListViewport(
-            height: listH,
-            child: ListView(primary: false, children: children),
+            ],
           );
         },
       ),
@@ -1785,236 +1835,159 @@ class _HomeProjectsCard extends StatelessWidget {
   }
 }
 
-class _HomeSectionBanner extends StatelessWidget {
-  const _HomeSectionBanner({required this.palette, required this.title});
-
-  final AsanaLandingPalette palette;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = palette.darkChrome
-        ? palette.selectedNav
-        : Color.alphaBlend(
-            palette.accent.withValues(alpha: 0.14),
-            palette.listSurface,
-          );
-    final fg = palette.darkChrome ? palette.onSidebar : palette.accent;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        title,
-        style: asanaTextStyle(
-          Theme.of(context).textTheme.labelLarge,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: fg,
-        ),
-      ),
-    );
-  }
-}
-
-class _HomeProjectTableHeader extends StatelessWidget {
-  const _HomeProjectTableHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    final style = asanaTableHeaderStyle(context);
-    const headerH = AsanaHomePanel._taskRowHeight;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: SizedBox(
-              height: headerH,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Project Name', style: style),
-              ),
-            ),
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homePicColWidth,
-            label: 'PIC',
-            style: style,
-            rowHeight: headerH,
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homeDueColWidth,
-            label: 'Due Date',
-            style: style,
-            rowHeight: headerH,
-          ),
-          asanaTextColumnGap(),
-          asanaTableHeaderLabel(
-            width: AsanaHomePanel._homeStatusColWidth,
-            label: 'Status',
-            style: style,
-            rowHeight: headerH,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HomeProjectRow extends StatelessWidget {
-  const _HomeProjectRow({
-    required this.project,
-    required this.appState,
+class _HomeNestItemRow extends StatelessWidget {
+  const _HomeNestItemRow({
+    required this.item,
+    required this.counts,
+    this.progressPercent,
+    this.rowBackground,
     this.onTap,
   });
 
-  final ProjectRecord project;
-  final AppState appState;
+  final _HomeNestItem item;
+  final _HomeNestCounts counts;
+  final int? progressPercent;
+  final Color? rowBackground;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final name = project.name.trim().isEmpty
-        ? '(Unnamed project)'
-        : project.name.trim();
-    final completed = project.status.trim() == 'Completed';
-    final nameStyle = asanaTableRowNameStyle(context, completed: completed);
-    final valueStyle = asanaTableRowValueStyle(context, completed: completed);
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Divider(height: 1, color: Colors.grey.shade200),
-        InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            height: AsanaHomePanel._taskRowHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    name,
-                    style: nameStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homePicColWidth,
-                  child: Text(
-                    AsanaProjectFilter.picLine(project, appState),
-                    style: valueStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homeDueColWidth,
-                  child: Text(
-                    _formatDueDate(project.endDate),
-                    style: valueStyle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                asanaTextColumnGap(),
-                _homeFixedCell(
-                  width: AsanaHomePanel._homeStatusColWidth,
-                  child: AsanaStatusChip(
-                    status: project.status,
-                    preserveFullLabel: true,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Two-line project row: name, then `PIC: … · Due Date: …` + status chip.
-class _HomeProjectCompactRow extends StatelessWidget {
-  const _HomeProjectCompactRow({
-    required this.project,
-    required this.appState,
-    this.onTap,
-  });
-
-  final ProjectRecord project;
-  final AppState appState;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = project.name.trim().isEmpty
-        ? '(Unnamed project)'
-        : project.name.trim();
-    final completed = project.status.trim() == 'Completed';
+    final state = context.read<AppState>();
+    final completed = item.status.trim().toLowerCase() == 'completed';
     final nameStyle = asanaTableRowNameStyle(context, completed: completed);
     final metaStyle = asanaTableRowValueStyle(context, completed: completed);
-    final metaLine = [
-      _homeLabeledMetaLine(
-        label: 'PIC',
-        value: AsanaProjectFilter.picLine(project, appState),
-      ),
-      _homeLabeledMetaLine(
-        label: 'Due',
-        value: _formatDueDate(project.endDate),
-      ),
-    ].join(' · ');
+    final creator = item.isSubproject
+        ? AsanaProjectFilter.subprojectCreatorLine(item.subproject!, state)
+        : AsanaProjectFilter.creatorLine(item.project!, state);
+    final pic = item.isSubproject
+        ? AsanaProjectFilter.subprojectPicLine(item.subproject!, state)
+        : AsanaProjectFilter.picLine(item.project!, state);
+    final assignee = item.isSubproject
+        ? AsanaProjectFilter.subprojectAssigneesLine(item.subproject!, state)
+        : AsanaProjectFilter.assigneesLine(item.project!, state);
+    final peopleLine = _homePeopleMetaLine(
+      creator: creator,
+      pic: pic,
+      assignee: assignee,
+    );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Divider(height: 1, color: Colors.grey.shade200),
-        InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            height: AsanaHomePanel._taskRowCompactHeight,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  name,
-                  style: nameStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        metaLine,
-                        style: metaStyle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+    return Material(
+      color: rowBackground ?? Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AsanaHomePanel._homeWorkNameInset,
+            8,
+            4,
+            8,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AsanaRowTypeLetter(
+                    letter: item.letter,
+                    completed: completed,
+                    status: item.status,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      item.name,
+                      style: nameStyle,
+                      maxLines: 3,
+                      softWrap: true,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  if (progressPercent != null) ...[
                     const SizedBox(width: 8),
-                    AsanaStatusChip(
-                      status: project.status,
-                      preserveFullLabel: true,
+                    SizedBox(
+                      width: 84,
+                      child: _HomeProjectProgress(percent: progressPercent!),
                     ),
                   ],
-                ),
-              ],
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                peopleLine,
+                style: metaStyle,
+                maxLines: 4,
+                softWrap: true,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  AsanaStatusChip(
+                    status: item.status,
+                    preserveFullLabel: true,
+                  ),
+                  Text(
+                    counts.summary(isSubproject: item.isSubproject),
+                    style: metaStyle,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeProjectProgress extends StatelessWidget {
+  const _HomeProjectProgress({required this.percent});
+
+  final int percent;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = percent >= 100
+        ? const Color(0xFF1B7A4E)
+        : percent <= 0
+        ? kAsanaTextSecondary
+        : Theme.of(context).colorScheme.primary;
+    final fill = (percent.clamp(0, 100)) / 100;
+    return Row(
+      children: [
+        Text(
+          '$percent%',
+          style: asanaTextStyle(
+            Theme.of(context).textTheme.labelSmall,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              height: 6,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const ColoredBox(color: Color(0xFFE6E7E8)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: fill,
+                      heightFactor: 1,
+                      child: ColoredBox(color: color),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

@@ -184,6 +184,30 @@ class BackendApi {
     }
   }
 
+  /// Emails Ken LEE after a new discussion thread is created (`POST /api/notify/discussion-posted`).
+  /// Replies must not call this.
+  Future<String?> notifyDiscussionPosted({
+    required String idToken,
+    required String threadId,
+    required String postId,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            url('/api/notify/discussion-posted'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'threadId': threadId, 'postId': postId}),
+          )
+          .timeout(const Duration(seconds: 45));
+      return _notifyResponseError(response);
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Emails project assignees after project detail columns change (`POST /api/notify/project-updated`).
   ///
   /// [changes]: `{ 'field': 'projectName'|'description'|'assignees'|'pic'|'status'|'startDate'|'endDate', 'value': '...' }`.

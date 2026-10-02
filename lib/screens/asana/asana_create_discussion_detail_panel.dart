@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../app_state.dart';
+import '../../config/dev_auth_context.dart';
 import '../../services/attachment_upload_service.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../services/llm_service.dart';
 import '../../utils/attachment_file_pick.dart';
@@ -300,11 +302,32 @@ Current forum draft:
         await _showInfo('Inline image upload failed', inlineErr);
         return;
       }
+      await _notifyNewDiscussionPosted(
+        threadId: threadId,
+        postId: rootPostId,
+      );
       widget.onCreated?.call();
       widget.onClose();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _notifyNewDiscussionPosted({
+    required String threadId,
+    required String postId,
+  }) async {
+    try {
+      final token = await activeUserIdToken();
+      if (token == null) return;
+      await BackendApi().notifyDiscussionPosted(
+        idToken: token,
+        threadId: threadId,
+        postId: postId,
+      );
+    } catch (e) {
+      debugPrint('notifyDiscussionPosted: $e');
     }
   }
 

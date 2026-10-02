@@ -804,6 +804,7 @@ class AsanaRecurrenceCreateSection extends StatelessWidget {
     required this.onPickStartAt,
     required this.onPickEndBy,
     required this.defaultWorkingDays,
+    required this.infoButton,
     this.reasonController,
     this.reasonReadOnly = false,
   });
@@ -812,6 +813,7 @@ class AsanaRecurrenceCreateSection extends StatelessWidget {
   final AsanaRecurrenceDraft draft;
   final bool canEdit;
   final VoidCallback onToggle;
+  final Widget infoButton;
   final VoidCallback onChanged;
   final Future<void> Function(BuildContext fieldContext) onPickStartAt;
   final Future<void> Function(BuildContext fieldContext) onPickEndBy;
@@ -829,34 +831,14 @@ class AsanaRecurrenceCreateSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: canEdit ? onToggle : null,
-              icon: Icon(
-                expanded ? Icons.repeat : Icons.repeat_outlined,
-                size: 18,
-                color: expanded
-                    ? Theme.of(context).colorScheme.primary
-                    : kAsanaTextSecondary,
-              ),
-              label: Text(
-                expanded ? 'Recurring (on)' : 'Make recurring',
-                style: asanaTextStyle(
-                  Theme.of(context).textTheme.bodySmall,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: expanded
-                      ? Theme.of(context).colorScheme.primary
-                      : kAsanaTextSecondary,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
+          AsanaDetailSectionHeader(
+            title: 'Make recurring',
+            infoButton: infoButton,
+            showAddButton: canEdit,
+            addEnabled: canEdit,
+            addTooltip: expanded ? 'Turn off recurring' : 'Make recurring',
+            bottomPadding: 0,
+            onAdd: canEdit ? (_) => onToggle() : null,
           ),
           if (expanded) ...[
             const SizedBox(height: 4),

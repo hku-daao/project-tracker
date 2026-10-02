@@ -1012,3 +1012,198 @@ class _MonthChip extends StatelessWidget {
     );
   }
 }
+
+class AsanaTimeOfDayHms {
+  const AsanaTimeOfDayHms({
+    required this.hour,
+    required this.minute,
+    required this.second,
+  });
+
+  final int hour;
+  final int minute;
+  final int second;
+}
+
+/// 24-hour hour / minute / second picker used after a calendar day is chosen.
+class AsanaTimePickerPanel extends StatefulWidget {
+  const AsanaTimePickerPanel({
+    super.key,
+    required this.accentColor,
+    required this.initialHour,
+    required this.initialMinute,
+    required this.initialSecond,
+    this.helpText = 'Select time',
+  });
+
+  final Color accentColor;
+  final int initialHour;
+  final int initialMinute;
+  final int initialSecond;
+  final String helpText;
+
+  @override
+  State<AsanaTimePickerPanel> createState() => _AsanaTimePickerPanelState();
+}
+
+class _AsanaTimePickerPanelState extends State<AsanaTimePickerPanel> {
+  late int _hour;
+  late int _minute;
+  late int _second;
+
+  @override
+  void initState() {
+    super.initState();
+    _hour = widget.initialHour.clamp(0, 23);
+    _minute = widget.initialMinute.clamp(0, 59);
+    _second = widget.initialSecond.clamp(0, 59);
+  }
+
+  String _two(int value) => value.toString().padLeft(2, '0');
+
+  Widget _unitDropdown({
+    required String label,
+    required int value,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) {
+    final theme = Theme.of(context);
+    final accent = widget.accentColor;
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: kAsanaTextSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonHideUnderline(
+            child: Theme(
+              data: theme.copyWith(
+                canvasColor: theme.colorScheme.surface,
+                colorScheme: theme.colorScheme.copyWith(primary: accent),
+              ),
+              child: DropdownButton<int>(
+                dropdownColor: theme.colorScheme.surface,
+                isExpanded: true,
+                value: value,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: kAsanaTextPrimary,
+                ),
+                items: [
+                  for (var i = 0; i <= max; i++)
+                    DropdownMenuItem(value: i, child: Text(_two(i))),
+                ],
+                onChanged: (next) {
+                  if (next == null) return;
+                  onChanged(next);
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = widget.accentColor;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.helpText,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                tooltip: 'Close',
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Row(
+            children: [
+              _unitDropdown(
+                label: 'Hour (24h)',
+                value: _hour,
+                max: 23,
+                onChanged: (v) => setState(() => _hour = v),
+              ),
+              const SizedBox(width: 12),
+              _unitDropdown(
+                label: 'Minute',
+                value: _minute,
+                max: 59,
+                onChanged: (v) => setState(() => _minute = v),
+              ),
+              const SizedBox(width: 12),
+              _unitDropdown(
+                label: 'Second',
+                value: _second,
+                max: 59,
+                onChanged: (v) => setState(() => _second = v),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  AsanaTimeOfDayHms(
+                    hour: _hour,
+                    minute: _minute,
+                    second: _second,
+                  ),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -324,6 +324,15 @@ class AppState extends ChangeNotifier {
 
   List<ProjectRecord> get projects => List.unmodifiable(_projects);
 
+  ProjectRecord? projectById(String? id) {
+    final pid = id?.trim();
+    if (pid == null || pid.isEmpty) return null;
+    for (final row in _projects) {
+      if (row.id == pid) return row;
+    }
+    return null;
+  }
+
   List<SubprojectRecord> get subprojects => List.unmodifiable(_subprojects);
 
   /// Replace projects from the database after fetch or create.

@@ -260,7 +260,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         widget.projectId,
       );
       if (!mounted) return;
-      final visible = list.where((t) => _childTaskStatusRank(t) < 2).toList();
+      final visible = list.where((t) {
+        if (_childTaskStatusRank(t) >= 2) return false;
+        final subprojectId = t.subprojectId?.trim();
+        return subprojectId == null || subprojectId.isEmpty;
+      }).toList();
       _sortChildTasksForDetail(visible);
       setState(() => _tasks = visible);
     } catch (_) {}
@@ -406,6 +410,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final cb = p.createByStaffUuid?.trim();
     if (me == null || me.isEmpty || cb == null || cb.isEmpty) return false;
     return me == cb;
+  }
+
+  bool _isProjectMember(ProjectRecord p) {
+    final state = context.read<AppState>();
+    return p.isInvolvedStaff(
+      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
+      staffAppId: state.userStaffAppId,
+    );
   }
 
   String _formatDate(DateTime? d) {
@@ -2439,6 +2451,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     final state = context.watch<AppState>();
     final adminReadOnly = state.adminViewMode;
     final canEdit = !adminReadOnly && _isCreator(p);
+    final canCreateChildren = !adminReadOnly && _isProjectMember(p);
     if (canEdit) _ensureProjectAi();
     final creatorLabel = (p.createByDisplayName ?? '').trim().isNotEmpty
         ? p.createByDisplayName!.trim()
@@ -2548,7 +2561,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.pic),
           AsanaProjectSubprojectSection(
             projectId: widget.projectId,
-            canEdit: canEdit,
+            canEdit: canCreateChildren,
             saving: _saving,
             palette: widget.palette,
             onCreate: widget.onPushCreateSubproject,
@@ -2583,13 +2596,15 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           ),
           AsanaDetailSectionHeader(
             title: 'Tasks',
-            showAddButton: !adminReadOnly,
+            showAddButton: canCreateChildren,
             addTooltip: 'Create task',
-            onAdd: adminReadOnly || widget.onPushCreateTask == null
+            onAdd: !canCreateChildren || widget.onPushCreateTask == null
                 ? null
                 : (_) => widget.onPushCreateTask!(),
             addEnabled:
-                !adminReadOnly && !_saving && widget.onPushCreateTask != null,
+                canCreateChildren &&
+                !_saving &&
+                widget.onPushCreateTask != null,
           ),
           if (_tasks.isNotEmpty)
             LayoutBuilder(

@@ -592,6 +592,7 @@ class AsanaDetailSectionHeader extends StatelessWidget {
   const AsanaDetailSectionHeader({
     super.key,
     required this.title,
+    this.infoButton,
     this.showAddButton = false,
     this.onAdd,
     this.addEnabled = true,
@@ -601,6 +602,7 @@ class AsanaDetailSectionHeader extends StatelessWidget {
   });
 
   final String title;
+  final Widget? infoButton;
   final bool showAddButton;
   final void Function(BuildContext addButtonContext)? onAdd;
   final bool addEnabled;
@@ -615,6 +617,7 @@ class AsanaDetailSectionHeader extends StatelessWidget {
       child: Row(
         children: [
           Text(title, style: asanaDetailLabelStyle(context)),
+          if (infoButton != null) infoButton!,
           if (showAddButton) ...[
             const SizedBox(width: 8),
             AsanaDetailCircleAddButton(
@@ -1190,6 +1193,94 @@ class AsanaStatusInfoButton extends StatelessWidget {
             (
               'Paused',
               'Work is temporarily stopped because this $entityLabel or its parent project is paused.',
+            ),
+          ],
+        ),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
+}
+
+class AsanaRecurrenceInfoButton extends StatelessWidget {
+  const AsanaRecurrenceInfoButton({super.key, required this.palette});
+
+  final AsanaLandingPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What is make recurring?',
+      child: IconButton(
+        onPressed: () => _showAsanaFieldInfoDialog(
+          context: context,
+          palette: palette,
+          title: 'How to use Make recurring',
+          intro:
+              'Make recurring is available only when creating a task or sub-task. It creates several separate items from this one form, each with its own start and due date.',
+          sections: const [
+            (
+              'What it does',
+              'Turning it on opens the repeat settings. On Create, the app writes one task or sub-task for each occurrence.',
+            ),
+            (
+              'Repeat',
+              'Choose Daily, Weekly, Monthly, or Yearly, then set how often it repeats and when the series ends (by date or after a number of items).',
+            ),
+            (
+              'After create',
+              'The new items are not kept as a linked series. Edit or delete each one on its own.',
+            ),
+            (
+              'To be commenced',
+              'Make recurring is hidden when Commence is To be commenced, because those items do not have start and due dates yet.',
+            ),
+          ],
+        ),
+        icon: Icon(Icons.info_outline, size: 20, color: palette.accent),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        splashRadius: 18,
+      ),
+    );
+  }
+}
+
+class AsanaMilestoneInfoButton extends StatelessWidget {
+  const AsanaMilestoneInfoButton({super.key, required this.palette});
+
+  final AsanaLandingPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'What are milestones?',
+      child: IconButton(
+        onPressed: () => _showAsanaFieldInfoDialog(
+          context: context,
+          palette: palette,
+          title: 'How to use Milestones',
+          intro:
+              'Milestones are optional project steps. They describe the path of the project and how progress is measured.',
+          sections: const [
+            (
+              'What a milestone is',
+              'Each milestone is one project step. Give it a description and a percent of the whole project.',
+            ),
+            (
+              'Percentages',
+              'The percents of all milestones must add up to 100%.',
+            ),
+            (
+              'Progress',
+              'When a milestone is marked Achieved, its percent is added to the project progress shown on the project slide and project view.',
+            ),
+            (
+              'Completing the project',
+              'If milestones are on, the project can be marked Completed only when every milestone is achieved.',
             ),
           ],
         ),

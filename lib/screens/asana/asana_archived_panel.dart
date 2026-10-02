@@ -495,7 +495,7 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
                   _ArchiveTaskTableRow(
                     tableWidth: tableWidth,
                     color: widget.palette.tableColors.subtaskRow,
-                    letter: 'S',
+                    letter: 'ST',
                     completed: _subtaskCompleted(subtasks[i]),
                     deleted: subtasks[i].isDeleted,
                     name: subtasks[i].subtaskName.trim().isEmpty
@@ -651,7 +651,7 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
     return _archiveEntityRow(
       color: widget.palette.tableColors.subtaskRow,
       indentLevel: indentLevel,
-      letter: 'S',
+      letter: 'ST',
       deleted: subtask.isDeleted,
       completed: _subtaskCompleted(subtask),
       title: title,

@@ -43,6 +43,7 @@ class AsanaFilterDropdown extends StatelessWidget {
     required this.value,
     required this.onPressed,
     this.highlighted = false,
+    this.enabled = true,
     this.buttonWidth = 116,
   });
 
@@ -50,6 +51,7 @@ class AsanaFilterDropdown extends StatelessWidget {
   final String value;
   final void Function(BuildContext buttonContext) onPressed;
   final bool highlighted;
+  final bool enabled;
   final double buttonWidth;
 
   @override
@@ -75,10 +77,12 @@ class AsanaFilterDropdown extends StatelessWidget {
               return SizedBox(
                 width: buttonWidth,
                 child: OutlinedButton(
-                  onPressed: () {
-                    dismissAsanaCheckboxFilterPanels();
-                    onPressed(buttonContext);
-                  },
+                  onPressed: enabled
+                      ? () {
+                          dismissAsanaCheckboxFilterPanels();
+                          onPressed(buttonContext);
+                        }
+                      : null,
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
                     minimumSize: Size(buttonWidth, 34),
@@ -965,6 +969,112 @@ Future<DateTime?> showAsanaAnchoredSingleDatePicker({
   return asanaDateOnlyFromPicker(picked);
 }
 
+/// Anchored 24-hour hour / minute / second picker.
+Future<AsanaTimeOfDayHms?> showAsanaAnchoredTimePicker({
+  required BuildContext anchorContext,
+  int initialHour = 0,
+  int initialMinute = 0,
+  int initialSecond = 0,
+  String helpText = 'Select time',
+}) async {
+  final box = anchorContext.findRenderObject() as RenderBox?;
+  if (box == null || !box.hasSize) return null;
+
+  final offset = box.localToGlobal(Offset.zero);
+  final size = box.size;
+  final screen = MediaQuery.sizeOf(anchorContext);
+  const panelWidth = 380.0;
+  const panelHeight = 220.0;
+  final accent = Theme.of(anchorContext).colorScheme.primary;
+  final pickerTheme = Theme.of(anchorContext).copyWith(
+    colorScheme: Theme.of(
+      anchorContext,
+    ).colorScheme.copyWith(primary: accent, onPrimary: Colors.white),
+  );
+  var left = offset.dx;
+  if (left + panelWidth > screen.width - 8) {
+    left = screen.width - panelWidth - 8;
+  }
+  if (left < 8) left = 8;
+  var top = offset.dy + size.height + 4;
+  if (top + panelHeight > screen.height - 8) {
+    top = offset.dy - panelHeight - 4;
+  }
+  if (top < 8) top = 8;
+
+  return showGeneralDialog<AsanaTimeOfDayHms>(
+    context: anchorContext,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black26,
+    transitionDuration: Duration.zero,
+    pageBuilder: (dialogContext, animation, secondaryAnimation) {
+      return Stack(
+        children: [
+          Positioned(
+            left: left,
+            top: top,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              color: pickerTheme.colorScheme.surface,
+              child: Theme(
+                data: pickerTheme,
+                child: SizedBox(
+                  width: panelWidth,
+                  child: AsanaTimePickerPanel(
+                    accentColor: accent,
+                    initialHour: initialHour,
+                    initialMinute: initialMinute,
+                    initialSecond: initialSecond,
+                    helpText: helpText,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+/// Calendar day, then 24-hour time. Returns a UTC instant for HK wall time.
+Future<DateTime?> showAsanaAnchoredDateThenTimePicker({
+  required BuildContext anchorContext,
+  DateTime? initialUtc,
+  String dateHelpText = 'Select date',
+  String timeHelpText = 'Select time',
+}) async {
+  final hk = initialUtc == null
+      ? HkTime.wallClockNow
+      : HkTime.hkWallFromStoredUtc(initialUtc);
+  final date = await showAsanaAnchoredSingleDatePicker(
+    anchorContext: anchorContext,
+    initialDate: DateTime(hk.year, hk.month, hk.day),
+    helpText: dateHelpText,
+  );
+  if (date == null) return null;
+  if (!anchorContext.mounted) return null;
+  final time = await showAsanaAnchoredTimePicker(
+    anchorContext: anchorContext,
+    initialHour: hk.hour,
+    initialMinute: hk.minute,
+    initialSecond: hk.second,
+    helpText: timeHelpText,
+  );
+  if (time == null) return null;
+  return HkTime.utcFromHkWall(
+    year: date.year,
+    month: date.month,
+    day: date.day,
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+  );
+}
+
 /// One selectable row in [showAsanaAnchoredOptionMenu].
 class AsanaAnchoredOption<T> {
   const AsanaAnchoredOption({required this.value, required this.label});
@@ -993,33 +1103,33 @@ Future<T?> showAsanaAnchoredOptionMenu<T>({
         borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         color: Theme.of(anchorContext).colorScheme.surface,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: options
-              .map(
-                (o) => InkWell(
-                  onTap: () {
-                    picked = o.value;
-                    SchedulerBinding.instance.addPostFrameCallback((_) {
-                      close();
-                    });
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    child: Text(
-                      o.label,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                      style: asanaDetailValueStyle(anchorContext),
-                    ),
+        child: ListView(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          primary: false,
+          children: [
+            for (final o in options)
+              InkWell(
+                onTap: () {
+                  picked = o.value;
+                  SchedulerBinding.instance.addPostFrameCallback((_) {
+                    close();
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Text(
+                    o.label,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                    style: asanaDetailValueStyle(anchorContext),
                   ),
                 ),
-              )
-              .toList(),
+              ),
+          ],
         ),
       );
     },

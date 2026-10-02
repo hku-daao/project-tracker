@@ -15,6 +15,7 @@ import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_blocking_loading_overlay.dart';
+import 'asana_due_badge.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_task_filter.dart';
 import 'asana_name_freshness.dart';
@@ -578,6 +579,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                       _TableHeaderRow(
                         tableWidth: tableWidth,
                         flatList: widget.flatTasksAndSubtasks,
+                        fillColor: widget.palette.hierarchyHeaderColors.task,
                       ),
                       Divider(height: 1, color: Colors.grey.shade300),
                       Expanded(
@@ -675,6 +677,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                                 _ExpandableTaskTableRow(
                                   tableWidth: tableWidth,
                                   tableColors: tableColors,
+                                  headerFill: widget
+                                      .palette.hierarchyHeaderColors.subtask,
                                   task: t,
                                   appState: state,
                                   onOpenTask: widget.onOpenTask,
@@ -1263,24 +1267,27 @@ class _TaskTableLayout {
   double get submissionCol => submissionColWidth;
 }
 
-TextStyle? _taskTableHeaderStyle(BuildContext context) =>
-    asanaTableHeaderStyle(context);
-
 class _TableHeaderRow extends StatelessWidget {
-  const _TableHeaderRow({required this.tableWidth, this.flatList = false});
+  const _TableHeaderRow({
+    required this.tableWidth,
+    required this.fillColor,
+    this.flatList = false,
+  });
 
   final double tableWidth;
+  final Color fillColor;
   final bool flatList;
 
   @override
   Widget build(BuildContext context) {
     final cols = _TaskTableLayout(tableWidth);
-    final style = _taskTableHeaderStyle(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: _TaskTableLayout.hPad,
-        vertical: 10,
-      ),
+    final style = asanaTableHeaderStyle(
+      context,
+      color: asanaOnHeaderFill(fillColor),
+    );
+    return asanaTableHeaderShell(
+      fillColor: fillColor,
+      horizontalPad: _TaskTableLayout.hPad,
       child: Row(
         children: [
           SizedBox(
@@ -1307,56 +1314,56 @@ class _TableHeaderRow extends StatelessWidget {
             width: cols.dueCol,
             label: 'Due Date',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.projectCol,
             label: 'Project',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.creatorCol,
             label: 'Creator',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.picCol,
             label: 'PIC',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.priorityCol,
             label: 'Priority',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.statusCol,
             label: 'Status',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.commencementCol,
             label: 'Commence',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
         ],
       ),
@@ -1368,6 +1375,7 @@ class _ExpandableTaskTableRow extends StatelessWidget {
   const _ExpandableTaskTableRow({
     required this.tableWidth,
     required this.tableColors,
+    required this.headerFill,
     required this.task,
     required this.appState,
     required this.subtaskCount,
@@ -1381,6 +1389,7 @@ class _ExpandableTaskTableRow extends StatelessWidget {
 
   final double tableWidth;
   final AsanaTableColors tableColors;
+  final Color headerFill;
   final Task task;
   final AppState appState;
   final void Function(String taskId)? onOpenTask;
@@ -1433,7 +1442,10 @@ class _ExpandableTaskTableRow extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _SubtaskSectionHeader(tableWidth: tableWidth),
+                      _SubtaskSectionHeader(
+                        tableWidth: tableWidth,
+                        fillColor: headerFill,
+                      ),
                       if (expandedSubtasks.isEmpty)
                         Padding(
                           padding: EdgeInsets.fromLTRB(
@@ -1569,21 +1581,24 @@ class _SubtaskDataRow extends StatelessWidget {
 }
 
 class _SubtaskSectionHeader extends StatelessWidget {
-  const _SubtaskSectionHeader({required this.tableWidth});
+  const _SubtaskSectionHeader({
+    required this.tableWidth,
+    required this.fillColor,
+  });
 
   final double tableWidth;
+  final Color fillColor;
 
   @override
   Widget build(BuildContext context) {
     final cols = _TaskTableLayout(tableWidth);
-    final style = _taskTableHeaderStyle(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        _TaskTableLayout.hPad,
-        10,
-        _TaskTableLayout.hPad,
-        10,
-      ),
+    final style = asanaTableHeaderStyle(
+      context,
+      color: asanaOnHeaderFill(fillColor),
+    );
+    return asanaTableHeaderShell(
+      fillColor: fillColor,
+      horizontalPad: _TaskTableLayout.hPad,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1594,7 +1609,7 @@ class _SubtaskSectionHeader extends StatelessWidget {
           const SizedBox(width: _TaskTableLayout.typeColGap),
           SizedBox(
             width: cols.taskNameCol,
-            height: _TaskTableLayout.singleLineExtent,
+            height: kAsanaTableHeaderLineExtent,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1615,56 +1630,56 @@ class _SubtaskSectionHeader extends StatelessWidget {
             width: cols.dueCol,
             label: 'Due Date',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.projectCol,
             label: 'Project',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.creatorCol,
             label: 'Creator',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.picCol,
             label: 'PIC',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           asanaTextColumnGap(),
           asanaTableHeaderLabel(
             width: cols.priorityCol,
             label: 'Priority',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.statusCol,
             label: 'Status',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.commencementCol,
             label: 'Commence',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
           const SizedBox(width: _TaskTableLayout.chipColumnGap),
           asanaTableHeaderLabel(
             width: cols.submissionCol,
             label: 'Submission',
             style: style,
-            rowHeight: _TaskTableLayout.singleLineExtent,
+            rowHeight: kAsanaTableHeaderLineExtent,
           ),
         ],
       ),
@@ -1763,7 +1778,7 @@ class _ItemTableRow extends StatelessWidget {
     );
     final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
     final typeLetter = AsanaRowTypeLetter(
-      letter: isSubtask ? 'S' : 'T',
+      letter: isSubtask ? 'ST' : 'T',
       completed: completed,
       deleted: _rowDeleted(isSubtask: isSubtask, status: status),
     );
@@ -1981,7 +1996,7 @@ class _FlatMobileRow extends StatelessWidget {
     final metaLine = metaParts.join(' · ');
 
     final typeLetter = AsanaRowTypeLetter(
-      letter: isSubtask ? 'S' : 'T',
+      letter: isSubtask ? 'ST' : 'T',
       completed: completed,
       deleted: _rowDeleted(isSubtask: isSubtask, status: status),
     );
@@ -1996,7 +2011,7 @@ class _FlatMobileRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: 28,
+                width: 32,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: expandControl == null
@@ -2231,16 +2246,6 @@ bool _shouldShowDueDateBadge({
   return true;
 }
 
-String? _dueBadgeLabel(DateTime? d, {required bool showBadge}) {
-  if (!showBadge) return null;
-  if (d == null) return null;
-  final today = HkTime.todayDateOnlyHk();
-  final day = DateTime(d.year, d.month, d.day);
-  if (_sameCalendarDay(day, today)) return 'Due today';
-  if (day.isBefore(today)) return 'Overdue';
-  return null;
-}
-
 class _DueDateCell extends StatelessWidget {
   const _DueDateCell({
     required this.dueDate,
@@ -2254,7 +2259,13 @@ class _DueDateCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badge = _dueBadgeLabel(dueDate, showBadge: showBadge);
+    final badge = showBadge
+        ? asanaTaskViewDueLabel(
+            due: dueDate,
+            status: 'Incomplete',
+            submission: null,
+          )
+        : null;
     if (badge == null) {
       return Text(
         _formatDueDate(dueDate),
@@ -2262,9 +2273,6 @@ class _DueDateCell extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       );
     }
-    final overdue = badge == 'Overdue';
-    final bg = overdue ? const Color(0xFFFFEBEE) : const Color(0xFFFFF3E0);
-    final fg = overdue ? const Color(0xFFC62828) : const Color(0xFFE65100);
     return SizedBox(
       height: 32,
       child: Stack(
@@ -2281,23 +2289,7 @@ class _DueDateCell extends StatelessWidget {
           Positioned(
             top: -3,
             right: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(5),
-              ),
-              child: Text(
-                badge,
-                style: asanaTextStyle(
-                  Theme.of(context).textTheme.labelSmall,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  color: fg,
-                  height: 1.1,
-                ),
-              ),
-            ),
+            child: AsanaTaskViewDueLabel(label: badge),
           ),
         ],
       ),

@@ -57,4 +57,24 @@ class SubprojectRecord {
     final s = status.trim().toLowerCase();
     return s == 'completed' || s == 'complete';
   }
+
+  /// Creator, assignee, or PIC — matches `staff.id` and/or `staff.app_id`.
+  bool isInvolvedStaff({String? staffUuid, String? staffAppId}) {
+    bool hit(String? raw) {
+      final v = raw?.trim() ?? '';
+      if (v.isEmpty) return false;
+      final u = staffUuid?.trim() ?? '';
+      final a = staffAppId?.trim() ?? '';
+      return (u.isNotEmpty && v == u) || (a.isNotEmpty && v == a);
+    }
+
+    if (hit(createByStaffUuid)) return true;
+    for (final id in assigneeStaffUuids) {
+      if (hit(id)) return true;
+    }
+    for (final id in picStaffUuids) {
+      if (hit(id)) return true;
+    }
+    return false;
+  }
 }

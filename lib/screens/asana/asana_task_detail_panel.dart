@@ -8,6 +8,7 @@ import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
+import '../../models/subproject_record.dart';
 import '../../models/singular_comment.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/staff_for_assignment.dart';
@@ -151,6 +152,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   String _localCommencementStatus = commencementCommenced;
   DateTime? _startDate;
   DateTime? _dueDate;
+  DateTime? _completionDate;
   String? _selectedProjectId;
   String? _selectedSubprojectId;
   List<ProjectRecord> _myProjects = [];
@@ -773,6 +775,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     );
     _startDate = task.startDate;
     _dueDate = task.endDate;
+    _completionDate = task.completionDate;
     _selectedProjectId = task.projectId;
     _selectedSubprojectId = task.subprojectId;
     _selectedAssigneeIds
@@ -1109,8 +1112,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         return s == 'Not started' || s == 'In progress';
       }
 
+      final appId = state.userStaffAppId;
+      bool canLink(ProjectRecord p) {
+        if (p.staffMayLinkTasks(me!)) return true;
+        if (p.isInvolvedStaff(staffUuid: me, staffAppId: appId)) return true;
+        for (final sp in state.subprojectsForProject(p.id)) {
+          if (sp.isInvolvedStaff(staffUuid: me, staffAppId: appId)) return true;
+        }
+        return false;
+      }
+
       final linkable = canEditProject
-          ? all.where((p) => p.staffMayLinkTasks(me!)).where(eligible).toList()
+          ? all.where(canLink).where(eligible).toList()
           : <ProjectRecord>[];
       final pid = currentProjectId;
       if (pid != null && pid.isNotEmpty && !linkable.any((p) => p.id == pid)) {
@@ -1241,11 +1254,55 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _canEditMetadata(AppState state, Task task) =>
       (_isCreator(state, task) || _isPic(state, task)) && !_taskDeleted(task);
 
-  bool _canCreateSubtask(AppState state, Task task) =>
-      !_taskDeleted(task) &&
-      (_isCreator(state, task) ||
-          _isTaskAssignee(state, task) ||
-          _isPic(state, task));
+  bool _isProjectInvolved(AppState state, ProjectRecord? project) {
+    if (project == null) return false;
+    return project.isInvolvedStaff(
+      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
+      staffAppId: state.userStaffAppId,
+    );
+  }
+
+  bool _isSubprojectInvolved(AppState state, SubprojectRecord? subproject) {
+    if (subproject == null) return false;
+    return subproject.isInvolvedStaff(
+      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
+      staffAppId: state.userStaffAppId,
+    );
+  }
+
+  ProjectRecord? _projectFor(AppState state, String? projectId) {
+    final pid = projectId?.trim();
+    if (pid == null || pid.isEmpty) return null;
+    final fromState = state.projectById(pid);
+    if (fromState != null) return fromState;
+    for (final p in _myProjects) {
+      if (p.id == pid) return p;
+    }
+    return null;
+  }
+
+  bool _canCreateTaskInSelectedScope(AppState state) {
+    final pid = _selectedProjectId?.trim();
+    if (pid == null || pid.isEmpty) return true;
+    final project = _projectFor(state, pid);
+    final sid = _selectedSubprojectId?.trim();
+    if (sid == null || sid.isEmpty) {
+      return _isProjectInvolved(state, project);
+    }
+    return _isProjectInvolved(state, project) ||
+        _isSubprojectInvolved(state, state.subprojectById(sid));
+  }
+
+  bool _canCreateSubtask(AppState state, Task task) {
+    if (_taskDeleted(task)) return false;
+    if (_isCreator(state, task) ||
+        _isTaskAssignee(state, task) ||
+        _isPic(state, task)) {
+      return true;
+    }
+    return _isProjectInvolved(state, _projectFor(state, task.projectId)) ||
+        _isSubprojectInvolved(state, state.subprojectById(task.subprojectId));
+  }
 
   bool _canWriteComments(AppState state, Task task) =>
       (_isCreator(state, task) || _isTaskAssignee(state, task)) &&
@@ -1268,6 +1325,49 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   String _formatDateTime(DateTime? d) {
     if (d == null) return '';
     return HkTime.formatInstantAsHk(d, 'MMM d, yyyy HH:mm');
+  }
+
+  String _formatCompletionDateTime(DateTime? d) {
+    if (d == null) return '—';
+    return HkTime.formatInstantAsHk(d, 'MMM d, yyyy HH:mm:ss');
+  }
+
+  Future<void> _pickCompletionDate(
+    BuildContext anchorContext,
+    Task task,
+  ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
+    final state = context.read<AppState>();
+    if (!_isCreator(state, task) ||
+        !_taskCompleted(task) ||
+        _taskDeleted(task) ||
+        _saving) {
+      return;
+    }
+    final picked = await showAsanaAnchoredDateThenTimePicker(
+      anchorContext: anchorContext,
+      initialUtc: _completionDate ?? task.completionDate,
+      dateHelpText: 'Select completion date',
+      timeHelpText: 'Select completion time',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _completionDate = picked);
+  }
+
+  DateTime? _completionDateOverrideToSave(DateTime? original) {
+    if (_completionDate == null) return null;
+    if (original == null) return _completionDate;
+    final next = _completionDate!.toUtc();
+    final prev = original.toUtc();
+    if (next.year == prev.year &&
+        next.month == prev.month &&
+        next.day == prev.day &&
+        next.hour == prev.hour &&
+        next.minute == prev.minute &&
+        next.second == prev.second) {
+      return null;
+    }
+    return _completionDate;
   }
 
   void _showEmailWarning(String label, String error) {
@@ -1425,6 +1525,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       'dueDate',
       _formatDate(task.endDate),
       _formatDate(_dueDate),
+    );
+    _addChange(
+      changes,
+      'completionDate',
+      _formatCompletionDateTime(task.completionDate),
+      _formatCompletionDateTime(_completionDate),
     );
     _appendAttachmentChangesForEmail(changes);
     return changes;
@@ -2343,6 +2449,15 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     }
     if (!await _validateAssigneesAndPic()) return;
     if (!mounted) return;
+    if (!_canCreateTaskInSelectedScope(state)) {
+      await _showInfo(
+        'Not allowed',
+        _selectedSubprojectId?.trim().isNotEmpty == true
+            ? 'Only members of the project or sub-project (creator, assignee, or PIC) can create a task here.'
+            : 'Only members of the project (creator, assignee, or PIC) can create a task here.',
+      );
+      return;
+    }
     final complexity = _localComplexity?.trim();
     if (complexity == null || complexity.isEmpty) {
       await _showInfo(
@@ -2590,6 +2705,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 (_selectedSubprojectId?.trim().isNotEmpty ?? false)
             ? _selectedSubprojectId
             : null,
+        completionDateAt: _taskCompleted(task)
+            ? _completionDateOverrideToSave(task.completionDate)
+            : null,
       );
       if (err != null && mounted) {
         await _showInfo('Could not update task', err);
@@ -2647,6 +2765,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       state.replaceTask(updated);
       DatabaseService.invalidateSubtasksCacheForTask(task.id);
       await _loadSubtasks();
+      _notifyChanged();
       await _notifyEmail(
         'Task update email',
         (token) => BackendApi().notifyTaskUpdated(
@@ -3416,6 +3535,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ? _reasonController.text.trim()
           : null,
       commencementNote: _commencementNoteForSave(),
+      completionDate: _completionDate,
       updateDate: DateTime.now(),
       lastUpdated: DateTime.now(),
     );
@@ -4117,6 +4237,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               expanded: _recurrenceExpanded,
               draft: _recurrence,
               canEdit: canEdit && !_saving,
+              infoButton: AsanaRecurrenceInfoButton(palette: widget.palette),
               onToggle: _toggleRecurrence,
               onChanged: () => setState(() {}),
               onPickStartAt: _pickRecurrenceStartAt,
@@ -4577,11 +4698,22 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           if (_taskCompleted(task))
             AsanaDetailTwoColumnRow(
               label: 'Completion date',
-              child: AsanaDetailPlainValue(
-                text: task.completionDate == null
-                    ? '—'
-                    : _formatDateTime(task.completionDate),
-              ),
+              child: isCreator
+                  ? AsanaHoverTapValue(
+                      value: _formatCompletionDateTime(_completionDate),
+                      canEdit: !_saving,
+                      emptyPlaceholder: '—',
+                      maxLines: 2,
+                      softWrap: true,
+                      overflow: TextOverflow.visible,
+                      shrinkToContent: false,
+                      onTap: _saving
+                          ? null
+                          : (ctx) => _pickCompletionDate(ctx, task),
+                    )
+                  : AsanaDetailPlainValue(
+                      text: _formatCompletionDateTime(_completionDate),
+                    ),
             ),
           if (_loadingExtras)
             const LinearProgressIndicator()

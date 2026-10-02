@@ -7,31 +7,40 @@ import 'asana_theme.dart';
 /// Matches task table [bodyMedium] (~14px).
 const double kAsanaTableChipFontSize = 14;
 
-/// Left column marker: **T**ask, **S**ub-task, or **P**roject.
+/// Left column marker: **P**roject, **SP** sub-project, **T**ask, **ST** sub-task.
 class AsanaRowTypeLetter extends StatelessWidget {
   const AsanaRowTypeLetter({
     super.key,
     required this.letter,
     this.completed = false,
     this.deleted = false,
+    this.status,
   });
 
   final String letter;
   final bool completed;
   final bool deleted;
+  final String? status;
 
   @override
   Widget build(BuildContext context) {
-    final bg = deleted
-        ? const Color(0xFFFFEBEE)
-        : completed
-        ? const Color(0xFFE8F5E9)
-        : const Color(0xFFECEFF1);
-    final fg = deleted
-        ? const Color(0xFFC62828)
-        : completed
-        ? const Color(0xFF2E7D32)
-        : kAsanaTextPrimary;
+    final statusKey = status?.trim();
+    final Color bg;
+    final Color fg;
+    if (statusKey != null && statusKey.isNotEmpty) {
+      final style = AsanaStatusChip.statusStyle(statusKey);
+      bg = style.$2;
+      fg = style.$3;
+    } else if (deleted) {
+      bg = const Color(0xFFFFEBEE);
+      fg = const Color(0xFFC62828);
+    } else if (completed) {
+      bg = const Color(0xFFE8F5E9);
+      fg = const Color(0xFF2E7D32);
+    } else {
+      bg = const Color(0xFFECEFF1);
+      fg = kAsanaTextPrimary;
+    }
 
     final twoLetter = letter.trim().length > 1;
     return Container(

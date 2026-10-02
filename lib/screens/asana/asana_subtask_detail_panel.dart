@@ -232,6 +232,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   String _localCommencementStatus = commencementCommenced;
   DateTime? _startDate;
   DateTime? _dueDate;
+  DateTime? _completionDate;
   String? _draftStatus;
   DateTime _anchorCreateDate = HkTime.todayDateOnlyHk();
 
@@ -413,6 +414,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
             );
             _startDate = row?.startDate;
             _dueDate = row?.dueDate;
+            _completionDate = row?.completionDate;
             _draftStatus = row?.status;
           });
           await _loadParentContext(row?.taskId);
@@ -805,6 +807,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     );
     _addChange(changes, 'startDate', _date(s.startDate), _date(_startDate));
     _addChange(changes, 'dueDate', _date(s.dueDate), _date(_dueDate));
+    _addChange(
+      changes,
+      'completionDate',
+      HkTime.formatInstantAsHk(s.completionDate, 'MMM d, yyyy HH:mm:ss'),
+      HkTime.formatInstantAsHk(_completionDate, 'MMM d, yyyy HH:mm:ss'),
+    );
     _appendAttachmentChangesForEmail(changes);
     return changes;
   }
@@ -883,6 +891,31 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     final s = _subtask;
     if (s == null) return false;
     return _matchesCurrentStaff(state, s.createByStaffId);
+  }
+
+  bool _canCreateUnderParent(AppState state) {
+    final parent =
+        _parentTask ?? state.taskById(widget.parentTaskId ?? '');
+    if (parent == null) return false;
+    if (_matchesCurrentStaff(state, parent.createByAssigneeKey)) return true;
+    if (parent.assigneeIds.any((id) => _matchesCurrentStaff(state, id))) {
+      return true;
+    }
+    if (_matchesCurrentStaff(state, parent.pic)) return true;
+    final project = state.projectById(parent.projectId);
+    if (project != null &&
+        project.isInvolvedStaff(
+          staffUuid: state.effectiveStaffUuid ?? state.userStaffId,
+          staffAppId: state.userStaffAppId,
+        )) {
+      return true;
+    }
+    final subproject = state.subprojectById(parent.subprojectId);
+    return subproject != null &&
+        subproject.isInvolvedStaff(
+          staffUuid: state.effectiveStaffUuid ?? state.userStaffId,
+          staffAppId: state.userStaffAppId,
+        );
   }
 
   bool _isPic(AppState state, SingularSubtask s) {
@@ -1630,6 +1663,44 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     });
   }
 
+  Future<void> _pickCompletionDate(
+    BuildContext anchorContext,
+    SingularSubtask s,
+  ) async {
+    if (await _blockAdminReadOnlyWrite()) return;
+    final state = context.read<AppState>();
+    if (!_isCreator(state) ||
+        !_subtaskIsCompleted(s) ||
+        s.isDeleted ||
+        _saving) {
+      return;
+    }
+    final picked = await showAsanaAnchoredDateThenTimePicker(
+      anchorContext: anchorContext,
+      initialUtc: _completionDate ?? s.completionDate,
+      dateHelpText: 'Select completion date',
+      timeHelpText: 'Select completion time',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _completionDate = picked);
+  }
+
+  DateTime? _completionDateOverrideToSave(DateTime? original) {
+    if (_completionDate == null) return null;
+    if (original == null) return _completionDate;
+    final next = _completionDate!.toUtc();
+    final prev = original.toUtc();
+    if (next.year == prev.year &&
+        next.month == prev.month &&
+        next.day == prev.day &&
+        next.hour == prev.hour &&
+        next.minute == prev.minute &&
+        next.second == prev.second) {
+      return null;
+    }
+    return _completionDate;
+  }
+
   Future<void> _pickRecurrenceStartAt(BuildContext anchorContext) async {
     final picked = await showAsanaAnchoredSingleDatePicker(
       anchorContext: anchorContext,
@@ -2059,6 +2130,16 @@ Due: ${_date(p.endDate)}
     final s = _subtask;
     if (!_effectiveCreateMode && s == null) return;
     final state = context.read<AppState>();
+    if (_effectiveCreateMode && !_canCreateUnderParent(state)) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Not allowed',
+        content:
+            'Only members of the project, sub-project, or task (creator, assignee, or PIC) can create a sub-task.',
+        palette: widget.palette,
+      );
+      return;
+    }
 
     final newName = _nameController.text.trim();
     if (newName.isEmpty) {
@@ -2188,7 +2269,10 @@ Due: ${_date(p.endDate)}
                   : 'Created $createdCount of ${createPlans.length}. ${ins.error!}',
               palette: widget.palette,
             );
-            if (firstId != null) widget.onCreated?.call(firstId);
+            if (firstId != null) {
+              _notifyParentTaskOfSubtaskChange();
+              widget.onCreated?.call(firstId);
+            }
             return;
           }
           final newSubtaskId = ins.subtaskId;
@@ -2278,6 +2362,7 @@ Due: ${_date(p.endDate)}
         final newSubtaskId = firstId;
         if (mounted) {
           if (newSubtaskId != null && newSubtaskId.isNotEmpty) {
+            _notifyParentTaskOfSubtaskChange();
             widget.onCreated?.call(newSubtaskId);
             final row = await DatabaseService.fetchSubtaskById(newSubtaskId);
             if (!mounted) return;
@@ -2291,6 +2376,9 @@ Due: ${_date(p.endDate)}
                 _descController.text = stripInlineImageMarkers(row.description);
                 _reasonController.text = row.changeDueReason ?? '';
                 _commencementNoteController.text = row.commencementNote ?? '';
+                _startDate = row.startDate;
+                _dueDate = row.dueDate;
+                _completionDate = row.completionDate;
                 _draftStatus = row.status;
               });
               await _loadAttachments(row);
@@ -2329,6 +2417,9 @@ Due: ${_date(p.endDate)}
           updateCommencementNote: true,
           commencementNote: _commencementNoteForSave(),
           updaterStaffLookupKey: state.userStaffAppId,
+          completionDateAt: _subtaskIsCompleted(s)
+              ? _completionDateOverrideToSave(s.completionDate)
+              : null,
         );
         if (err != null && mounted) {
           await showAsanaInfoDialog(
@@ -3717,6 +3808,7 @@ Due: ${_date(p.endDate)}
   }) {
     if (state.adminViewMode) return const [];
     if (_effectiveCreateMode) {
+      if (!_canCreateUnderParent(state)) return const [];
       return [
         FilledButton(
           onPressed: _saving ? null : _save,
@@ -4190,6 +4282,7 @@ Due: ${_date(p.endDate)}
               expanded: _recurrenceExpanded,
               draft: _recurrence,
               canEdit: canEditDetails && !_saving,
+              infoButton: AsanaRecurrenceInfoButton(palette: widget.palette),
               onToggle: _toggleRecurrence,
               onChanged: () => setState(() {}),
               onPickStartAt: _pickRecurrenceStartAt,
@@ -4283,14 +4376,32 @@ Due: ${_date(p.endDate)}
             if (_subtaskIsCompleted(s))
               AsanaDetailTwoColumnRow(
                 label: 'Completion date',
-                child: AsanaDetailPlainValue(
-                  text: s?.completionDate == null
-                      ? '—'
-                      : HkTime.formatInstantAsHk(
-                          s!.completionDate,
-                          'MMM d, yyyy HH:mm',
-                        ),
-                ),
+                child: isCreator
+                    ? AsanaHoverTapValue(
+                        value: _completionDate == null
+                            ? '—'
+                            : HkTime.formatInstantAsHk(
+                                _completionDate,
+                                'MMM d, yyyy HH:mm:ss',
+                              ),
+                        canEdit: !_saving,
+                        emptyPlaceholder: '—',
+                        maxLines: 2,
+                        softWrap: true,
+                        overflow: TextOverflow.visible,
+                        shrinkToContent: false,
+                        onTap: _saving || s == null
+                            ? null
+                            : (ctx) => _pickCompletionDate(ctx, s),
+                      )
+                    : AsanaDetailPlainValue(
+                        text: _completionDate == null
+                            ? '—'
+                            : HkTime.formatInstantAsHk(
+                                _completionDate,
+                                'MMM d, yyyy HH:mm:ss',
+                              ),
+                      ),
               ),
           ],
           const Padding(

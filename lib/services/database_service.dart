@@ -2184,6 +2184,42 @@ class DatabaseService {
     );
   }
 
+  /// Sum of Active achieved milestone weights, keyed by project id.
+  static Future<Map<String, int>> fetchAchievedMilestonePercentByProject(
+    Iterable<String> projectIds,
+  ) async {
+    final ids = <String>{
+      for (final id in projectIds)
+        if (id.trim().isNotEmpty) id.trim(),
+    }.toList();
+    if (!_enabled || ids.isEmpty) return {};
+    final out = <String, int>{};
+    try {
+      const chunkSize = 200;
+      for (var i = 0; i < ids.length; i += chunkSize) {
+        final end = min(i + chunkSize, ids.length);
+        final res = await PostgrestClient.instance
+            .from('project_milestone')
+            .select('project_id, progress_percent')
+            .eq('status', 'Active')
+            .eq('achieved', true)
+            .inFilter('project_id', ids.sublist(i, end));
+        for (final raw in res as List) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final pid = row['project_id']?.toString().trim() ?? '';
+          if (pid.isEmpty) continue;
+          out[pid] = (out[pid] ?? 0) + _percentFromRow(row['progress_percent']);
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchAchievedMilestonePercentByProject: $e');
+    }
+    for (final key in out.keys.toList()) {
+      out[key] = out[key]!.clamp(0, 100);
+    }
+    return out;
+  }
+
   /// Active milestone steps for a project, display order.
   static Future<List<ProjectMilestone>> fetchProjectMilestones(
     String projectId,

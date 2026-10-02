@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +23,7 @@ import 'asana/asana_detail_selection.dart';
 import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
 import 'asana/asana_discussion_panel.dart';
+import 'asana/asana_guidance_panel.dart';
 import 'asana/asana_home_panel.dart';
 import 'asana/asana_map_panel.dart';
 import 'asana/asana_performance_panel.dart';
@@ -88,6 +91,20 @@ class AsanaLandingPalette {
   /// Task / sub-task / project table row backgrounds for this theme.
   final AsanaTableColors tableColors;
 
+  /// Seed for project-view P → SP → T → ST row tints.
+  Color get hierarchyRowSeed => darkChrome
+      ? Color.alphaBlend(accent.withValues(alpha: 0.28), banner)
+      : accent;
+
+  AsanaHierarchyRowColors get hierarchyRowColors =>
+      AsanaHierarchyRowColors.fromSeed(hierarchyRowSeed);
+
+  /// Project-view table headers follow the landing header; Charcoal uses black.
+  Color get tableHeaderSeed => darkChrome ? const Color(0xFF000000) : banner;
+
+  AsanaHierarchyHeaderColors get hierarchyHeaderColors =>
+      AsanaHierarchyHeaderColors.fromSeed(tableHeaderSeed);
+
   /// Home "People" metric chip (background, foreground).
   (Color bg, Color fg) homeMetricStyle(String metric, {bool subtask = false}) {
     if (subtask) {
@@ -121,7 +138,7 @@ class AsanaLandingPalette {
   /// Default: dark chrome + white content (matches Asana Inbox reference).
   static const asana = AsanaLandingPalette(
     id: 'Charcoal',
-    banner: Color(0xFF2A2B2C),
+    banner: Color(0xFF000000),
     sidebar: Color(0xFF2A2B2C),
     content: Color(0xFFFFFFFF),
     searchField: Color(0xFF353636),
@@ -281,6 +298,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool _themeMenuExpanded = false;
   final List<AsanaDetailSelection> _detailStack = [];
   int _detailRefreshToken = 0;
+  int _listRefreshGeneration = 0;
 
   static const List<String> _navItems = [
     'Home',
@@ -289,6 +307,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     'Projects',
     'Map',
     'Discussion',
+    'Guidance',
   ];
 
   AsanaLandingPalette get _palette => AsanaLandingPalette.byId(_themeId);
@@ -526,6 +545,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
         onOpenSubtask: (id) =>
             _openRootDetail(AsanaDetailSelection.subtask(id)),
+        onOpenSubproject: (subprojectId, projectId) =>
+            _openRootDetail(
+              AsanaDetailSelection.subproject(
+                subprojectId: subprojectId,
+                projectId: projectId,
+              ),
+            ),
         onCreateProject: adminViewMode
             ? null
             : () => _openRootDetail(const AsanaDetailSelection.createProject()),
@@ -579,6 +605,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
               ),
       );
     }
+    if (_selectedNav == 'Guidance') {
+      return AsanaGuidancePanel(palette: palette);
+    }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
@@ -588,6 +617,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             _openRootDetail(AsanaDetailSelection.subtask(id)),
         onOpenProject: (id) =>
             _openRootDetail(AsanaDetailSelection.project(id)),
+        onOpenSubproject: (subprojectId, projectId) =>
+            _openRootDetail(
+              AsanaDetailSelection.subproject(
+                subprojectId: subprojectId,
+                projectId: projectId,
+              ),
+            ),
       );
     }
     return ColoredBox(color: palette.content);
@@ -660,19 +696,18 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   }
 
   void _handleSubtaskCreated(String parentTaskId, String subtaskId) {
-    setState(() {
-      _detailRefreshToken++;
-    });
+    DatabaseService.invalidateSubtasksCacheForTask(parentTaskId);
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   void _handleSubtaskChanged() {
     dismissAsanaCheckboxFilterPanels();
-    setState(() => _detailRefreshToken++);
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   void _handleTaskChanged() {
     dismissAsanaCheckboxFilterPanels();
-    setState(() => _detailRefreshToken++);
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   void _handleTaskCreated(String taskId) {
@@ -687,9 +722,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
           ..clear()
           ..add(AsanaDetailSelection.task(taskId));
       }
-      _detailRefreshToken++;
     });
     _syncWebLocationToDetailStack();
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   void _handleDiscussionCreated() {
@@ -701,22 +736,45 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     _syncWebLocationToDetailStack();
   }
 
-  Future<void> _reloadProjectsAndSubprojects() async {
+  Future<void> _reloadProjectsSubprojectsAndTasks(int gen) async {
+    if (!PostgrestConfig.isConfigured) return;
     final state = context.read<AppState>();
-    final projects = await DatabaseService.fetchAllProjects();
-    final subprojects = await DatabaseService.fetchAllSubprojects();
-    if (!mounted) return;
-    state.applyProjects(projects);
-    state.applySubprojects(subprojects);
+    final adminAll = state.showAllDataAsAdmin;
+    final visibility = adminAll ? null : state.buildTaskFetchVisibility();
+    try {
+      final taskFuture = DatabaseService.fetchTasks(visibility: visibility);
+      final projectFuture = DatabaseService.fetchAllProjects();
+      final subprojectFuture = DatabaseService.fetchAllSubprojects();
+      final taskData = await taskFuture;
+      final projects = await projectFuture;
+      final subprojects = await subprojectFuture;
+      if (!mounted || gen != _listRefreshGeneration) return;
+      if (taskData != null) {
+        state.applyTasks(
+          taskData,
+          visibilityScoped:
+              !adminAll && visibility != null && visibility.isConfigured,
+        );
+      }
+      state.applyProjects(projects);
+      state.applySubprojects(subprojects);
+    } catch (e) {
+      debugPrint('Landing list reload after detail change failed: $e');
+    }
   }
 
-  void _handleProjectChanged() {
-    _reloadProjectsAndSubprojects();
+  Future<void> _refreshListsAfterDetailChange() async {
+    final gen = ++_listRefreshGeneration;
+    await _reloadProjectsSubprojectsAndTasks(gen);
+    if (!mounted || gen != _listRefreshGeneration) return;
     setState(() => _detailRefreshToken++);
   }
 
+  void _handleProjectChanged() {
+    unawaited(_refreshListsAfterDetailChange());
+  }
+
   void _handleSubprojectCreated(String projectId, String subprojectId) {
-    _reloadProjectsAndSubprojects();
     setState(() {
       if (_detailStack.isNotEmpty &&
           _detailStack.last is AsanaCreateSubprojectDetailSelection) {
@@ -729,20 +787,19 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             ),
           );
       }
-      _detailRefreshToken++;
     });
     _syncWebLocationToDetailStack();
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   void _handleProjectCreated(String projectId) {
-    _reloadProjectsAndSubprojects();
     setState(() {
       _detailStack
         ..clear()
         ..add(AsanaDetailSelection.project(projectId));
-      _detailRefreshToken++;
     });
     _syncWebLocationToDetailStack();
+    unawaited(_refreshListsAfterDetailChange());
   }
 
   @override

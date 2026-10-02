@@ -464,6 +464,15 @@ class _AsanaSubprojectDetailPanelState
     );
   }
 
+  bool _isParentProjectMember(AppState state) {
+    final project = state.projectById(widget.projectId);
+    if (project == null) return false;
+    return project.isInvolvedStaff(
+      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
+      staffAppId: state.userStaffAppId,
+    );
+  }
+
   bool _draftShowsAsWebsiteLink(_SubprojectAttachmentDraft draft) {
     if (draft.isPendingFile) return false;
     if (draft.isWebsiteLink) return true;
@@ -660,6 +669,13 @@ class _AsanaSubprojectDetailPanelState
     }
     if (_picAssigneeIds.isEmpty) {
       await _showInfo('PIC required', 'Select at least one PIC.');
+      return false;
+    }
+    if (_createMode && !_isParentProjectMember(state)) {
+      await _showInfo(
+        'Not allowed',
+        'Only the project creator, assignees, or PIC can create a sub-project.',
+      );
       return false;
     }
     return true;
@@ -1034,13 +1050,14 @@ class _AsanaSubprojectDetailPanelState
     final adminReadOnly = state.adminViewMode;
     final creator = _row?.createByStaffUuid?.trim();
     final me = _myStaffUuid?.trim();
-    final canEdit = !adminReadOnly &&
-        (_createMode ||
-            (me != null &&
-                me.isNotEmpty &&
-                creator != null &&
-                creator.isNotEmpty &&
-                me == creator));
+    final isCreator =
+        me != null &&
+        me.isNotEmpty &&
+        creator != null &&
+        creator.isNotEmpty &&
+        me == creator;
+    final canCreate = _createMode && _isParentProjectMember(state);
+    final canEdit = !adminReadOnly && (_createMode ? canCreate : isCreator);
     final displayStatus = _row?.isPaused == true ? 'Paused' : _draftStatus;
 
     return AsanaDetailSlideScaffold(
