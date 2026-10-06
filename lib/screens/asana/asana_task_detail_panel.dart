@@ -1157,44 +1157,39 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return x == y;
   }
 
-  bool _isCreator(AppState state, Task task) {
-    final mine = state.userStaffAppId?.trim();
-    final cb = task.createByAssigneeKey?.trim();
-    if (mine != null &&
-        mine.isNotEmpty &&
-        cb != null &&
-        cb.isNotEmpty &&
-        mine == cb) {
-      return true;
-    }
-    return _uuidEquals(_myStaffUuid, task.createByAssigneeKey);
-  }
-
-  bool _isTaskAssignee(AppState state, Task task) {
-    final mine = state.userStaffAppId?.trim();
-    if (mine != null && mine.isNotEmpty && task.assigneeIds.contains(mine)) {
-      return true;
-    }
-    for (final id in task.assigneeIds) {
-      if (_uuidEquals(id, _myStaffUuid)) return true;
+  bool _staffKeyIsCurrentUser(AppState state, String? staffKey) {
+    final key = staffKey?.trim();
+    if (key == null || key.isEmpty) return false;
+    final keyLower = key.toLowerCase();
+    final mine = <String>{
+      if ((state.effectiveStaffAppId ?? state.userStaffAppId)?.trim().isNotEmpty ==
+          true)
+        (state.effectiveStaffAppId ?? state.userStaffAppId)!.trim(),
+      if ((state.effectiveStaffUuid ?? state.userStaffId)?.trim().isNotEmpty ==
+          true)
+        (state.effectiveStaffUuid ?? state.userStaffId)!.trim(),
+      if (_myStaffUuid?.trim().isNotEmpty == true) _myStaffUuid!.trim(),
+    };
+    for (final candidate in mine) {
+      if (candidate.toLowerCase() == keyLower) return true;
     }
     return false;
   }
 
+  bool _isCreator(AppState state, Task task) {
+    return _staffKeyIsCurrentUser(state, task.createByAssigneeKey);
+  }
+
+  bool _isTaskAssignee(AppState state, Task task) {
+    return task.assigneeIds.any((id) => _staffKeyIsCurrentUser(state, id));
+  }
+
   bool _isPic(AppState state, Task task) {
-    final p = task.pic?.trim();
-    if (p == null || p.isEmpty) return false;
-    final mine = state.userStaffAppId?.trim();
-    if (mine != null && mine.isNotEmpty && mine == p) return true;
-    return _uuidEquals(p, _myStaffUuid);
+    return _staffKeyIsCurrentUser(state, task.pic);
   }
 
   bool _matchesCurrentStaffKey(AppState state, String? staffKey) {
-    final key = staffKey?.trim();
-    if (key == null || key.isEmpty) return false;
-    final mine = state.userStaffAppId?.trim();
-    if (mine != null && mine.isNotEmpty && key == mine) return true;
-    return _uuidEquals(key, _myStaffUuid);
+    return _staffKeyIsCurrentUser(state, staffKey);
   }
 
   bool _picSelfLockApplies(AppState state, Task? task) {
@@ -4519,14 +4514,20 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ),
           AsanaDetailSectionHeader(
             title: 'Sub-tasks',
-            showAddButton: true,
-            addTooltip: 'Create sub-task',
-            onAdd:
+            showAddButton:
+                !adminReadOnly &&
                 widget.onPushCreateSubtask != null &&
-                    !adminReadOnly &&
-                    _canCreateSubtask(state, task)
-                ? (_) => widget.onPushCreateSubtask!()
-                : null,
+                _canCreateSubtask(state, task),
+            addTooltip: singularTaskStatusIsCompleted(task)
+                ? 'Cannot create a sub-task on a completed task'
+                : 'Create sub-task',
+            onAdd:
+                widget.onPushCreateSubtask == null ||
+                    adminReadOnly ||
+                    !_canCreateSubtask(state, task) ||
+                    singularTaskStatusIsCompleted(task)
+                ? null
+                : (_) => widget.onPushCreateSubtask!(),
             addEnabled:
                 !adminReadOnly &&
                 _canCreateSubtask(state, task) &&

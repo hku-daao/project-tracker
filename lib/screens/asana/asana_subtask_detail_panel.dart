@@ -955,10 +955,19 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   bool _matchesCurrentStaff(AppState state, String? staffKey) {
     final key = staffKey?.trim();
     if (key == null || key.isEmpty) return false;
-    final myAppId = state.userStaffAppId?.trim();
-    if (myAppId != null && myAppId.isNotEmpty && myAppId == key) return true;
-    final myUuid = state.userStaffId?.trim();
-    return myUuid != null && myUuid.isNotEmpty && myUuid == key;
+    final keyLower = key.toLowerCase();
+    final mine = <String>{
+      if ((state.effectiveStaffAppId ?? state.userStaffAppId)?.trim().isNotEmpty ==
+          true)
+        (state.effectiveStaffAppId ?? state.userStaffAppId)!.trim(),
+      if ((state.effectiveStaffUuid ?? state.userStaffId)?.trim().isNotEmpty ==
+          true)
+        (state.effectiveStaffUuid ?? state.userStaffId)!.trim(),
+    };
+    for (final candidate in mine) {
+      if (candidate.toLowerCase() == keyLower) return true;
+    }
+    return false;
   }
 
   bool _isOwnComment(AppState state, SubtaskCommentRowDisplay comment) {
