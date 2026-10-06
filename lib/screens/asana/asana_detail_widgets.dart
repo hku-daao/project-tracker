@@ -597,6 +597,10 @@ class AsanaDetailSectionHeader extends StatelessWidget {
     this.onAdd,
     this.addEnabled = true,
     this.addTooltip = 'Add',
+    this.showClearButton = false,
+    this.onClear,
+    this.clearEnabled = true,
+    this.clearTooltip = 'Remove all',
     this.bottomPadding = 8,
     this.addAnchorLink,
   });
@@ -607,11 +611,16 @@ class AsanaDetailSectionHeader extends StatelessWidget {
   final void Function(BuildContext addButtonContext)? onAdd;
   final bool addEnabled;
   final String addTooltip;
+  final bool showClearButton;
+  final VoidCallback? onClear;
+  final bool clearEnabled;
+  final String clearTooltip;
   final double bottomPadding;
   final LayerLink? addAnchorLink;
 
   @override
   Widget build(BuildContext context) {
+    final canClear = showClearButton && clearEnabled && onClear != null;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPadding),
       child: Row(
@@ -625,6 +634,36 @@ class AsanaDetailSectionHeader extends StatelessWidget {
               enabled: addEnabled,
               tooltip: addTooltip,
               anchorLink: addAnchorLink,
+            ),
+          ],
+          if (showClearButton) ...[
+            const Spacer(),
+            Tooltip(
+              message: clearTooltip,
+              child: Material(
+                color: canClear
+                    ? const Color(0xFFECEFF1)
+                    : const Color(0xFFF5F6F7),
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: canClear ? onClear : null,
+                  customBorder: const CircleBorder(),
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Center(
+                      child: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: canClear
+                            ? kAsanaTextPrimary
+                            : kAsanaTextSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
         ],

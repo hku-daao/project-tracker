@@ -1262,10 +1262,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                                             onPushCreateTaskForProject:
                                                 adminViewMode
                                                 ? null
-                                                : (projectId) => _pushDetail(
+                                                : (projectId, {subprojectId}) =>
+                                                    _pushDetail(
                                                     AsanaDetailSelection.createTask(
                                                       initialProjectId:
                                                           projectId,
+                                                      initialSubprojectId:
+                                                          subprojectId,
                                                     ),
                                                   ),
                                             onPushTaskFromProject: (taskId) =>

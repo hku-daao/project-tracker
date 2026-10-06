@@ -970,6 +970,68 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _clearAllMilestones() async {
+    if (_saving || _milestoneDrafts.isEmpty) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove all milestones',
+      content:
+          'Remove every milestone from this project? The milestone section will be turned off.',
+      confirmText: 'Remove all',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    _setSaving(true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final state = context.read<AppState>();
+      for (final row in List<AsanaMilestoneDraft>.from(_milestoneDrafts)) {
+        final id = row.id?.trim();
+        if (id == null || id.isEmpty) continue;
+        final err = await DatabaseService.deleteProjectMilestone(
+          milestoneId: id,
+          projectId: widget.projectId,
+          updaterStaffLookupKey: state.userStaffAppId,
+        );
+        if (err != null) {
+          if (!mounted) return;
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Could not remove milestones',
+            content: err,
+            palette: widget.palette,
+          );
+          return;
+        }
+      }
+      final flagErr = await DatabaseService.updateProjectRow(
+        projectId: widget.projectId,
+        updateHasMilestone: true,
+        hasMilestone: false,
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (flagErr != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not update milestone setting',
+          content: flagErr,
+          palette: widget.palette,
+        );
+        return;
+      }
+      disposeAsanaMilestoneDrafts(_milestoneDrafts);
+      _milestoneDrafts.clear();
+      setState(() => _hasMilestone = false);
+      widget.onChanged?.call();
+      await _applyProjectsAndSubprojects(state);
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
+    }
+  }
+
   String _effectiveStatus(ProjectRecord p) => (_draftStatus ?? p.status).trim();
   String _displayStatus(ProjectRecord p) =>
       p.isPaused ? 'Paused' : _effectiveStatus(p);
@@ -2575,6 +2637,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             rows: _milestoneDrafts,
             onToggleEnabled: _toggleMilestones,
             onAdd: _addMilestoneDraft,
+            onClearAll: canEdit ? _clearAllMilestones : null,
             onAchievedToggled: _toggleMilestoneAchieved,
             onRemove: _removeMilestone,
             onRowSubmitted: _persistMilestoneRow,
@@ -2609,7 +2672,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
           if (_tasks.isNotEmpty)
             LayoutBuilder(
               builder: (context, constraints) {
-                return _ProjectDetailTaskList(
+                return AsanaSlideChildTaskList(
                   tasks: _tasks,
                   viewportWidth: constraints.maxWidth,
                   tableColors: widget.palette.tableColors,
@@ -2759,8 +2822,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 }
 
-class _ProjectDetailTaskList extends StatelessWidget {
-  const _ProjectDetailTaskList({
+class AsanaSlideChildTaskList extends StatelessWidget {
+  const AsanaSlideChildTaskList({
     required this.tasks,
     required this.viewportWidth,
     required this.tableColors,

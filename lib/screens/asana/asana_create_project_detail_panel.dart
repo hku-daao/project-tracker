@@ -428,6 +428,15 @@ class _AsanaCreateProjectDetailPanelState
     });
   }
 
+  void _clearAllMilestoneDrafts() {
+    if (_saving || _milestoneDrafts.isEmpty) return;
+    setState(() {
+      disposeAsanaMilestoneDrafts(_milestoneDrafts);
+      _milestoneDrafts.clear();
+      _hasMilestone = false;
+    });
+  }
+
   AsanaProjectAiFormSnapshot _aiFormSnapshot(AppState state) {
     final assigneesLabel = _visibleAssigneeIdsForPicker()
         .map((id) => _labelForAssigneeId(id, state))
@@ -1365,6 +1374,7 @@ class _AsanaCreateProjectDetailPanelState
             rows: _milestoneDrafts,
             onToggleEnabled: _toggleMilestones,
             onAdd: _addMilestoneDraft,
+            onClearAll: canEdit ? _clearAllMilestoneDrafts : null,
             onAchievedToggled: (row) {
               asanaToggleMilestoneAchieved(_milestoneDrafts, row);
               setState(() {});

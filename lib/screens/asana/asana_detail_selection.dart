@@ -10,8 +10,10 @@ sealed class AsanaDetailSelection {
       AsanaProjectDetailSelection;
   const factory AsanaDetailSelection.createSubtask(String parentTaskId) =
       AsanaCreateSubtaskDetailSelection;
-  const factory AsanaDetailSelection.createTask({String? initialProjectId}) =
-      AsanaCreateTaskDetailSelection;
+  const factory AsanaDetailSelection.createTask({
+    String? initialProjectId,
+    String? initialSubprojectId,
+  }) = AsanaCreateTaskDetailSelection;
   const factory AsanaDetailSelection.createProject() =
       AsanaCreateProjectDetailSelection;
   const factory AsanaDetailSelection.createDiscussion() =
@@ -45,8 +47,12 @@ final class AsanaCreateSubtaskDetailSelection extends AsanaDetailSelection {
 }
 
 final class AsanaCreateTaskDetailSelection extends AsanaDetailSelection {
-  const AsanaCreateTaskDetailSelection({this.initialProjectId});
+  const AsanaCreateTaskDetailSelection({
+    this.initialProjectId,
+    this.initialSubprojectId,
+  });
   final String? initialProjectId;
+  final String? initialSubprojectId;
 }
 
 final class AsanaCreateProjectDetailSelection extends AsanaDetailSelection {

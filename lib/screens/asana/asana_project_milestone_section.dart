@@ -473,6 +473,7 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
     required this.rows,
     this.onToggleEnabled,
     this.onAdd,
+    this.onClearAll,
     this.onAchievedToggled,
     this.onRemove,
     this.onRowSubmitted,
@@ -488,6 +489,7 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
   final List<AsanaMilestoneDraft> rows;
   final VoidCallback? onToggleEnabled;
   final VoidCallback? onAdd;
+  final VoidCallback? onClearAll;
   final void Function(AsanaMilestoneDraft row)? onAchievedToggled;
   final void Function(AsanaMilestoneDraft row)? onRemove;
   final void Function(AsanaMilestoneDraft row)? onRowSubmitted;
@@ -511,6 +513,11 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
             showAddButton: canEdit,
             addEnabled: !saving && (enabled ? rows.length < 20 : true),
             addTooltip: enabled ? 'Add milestone' : 'Add milestones',
+            showClearButton:
+                canEdit && enabled && rows.isNotEmpty && onClearAll != null,
+            clearEnabled: !saving,
+            clearTooltip: 'Remove all milestones',
+            onClear: onClearAll,
             bottomPadding: 0,
             onAdd: !saving
                 ? (_) {

@@ -40,7 +40,8 @@ class AsanaDetailSlidePanel extends StatefulWidget {
   final VoidCallback onPop;
   final void Function(String parentTaskId)? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
-  final void Function(String projectId)? onPushCreateTaskForProject;
+  final void Function(String projectId, {String? subprojectId})?
+      onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String projectId)? onPushCreateSubproject;
   final void Function(String subprojectId, String projectId)? onPushSubproject;
@@ -308,7 +309,8 @@ class _TaskWithOverlayStack extends StatelessWidget {
   final VoidCallback onPop;
   final void Function(String parentTaskId)? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
-  final void Function(String projectId)? onPushCreateTaskForProject;
+  final void Function(String projectId, {String? subprojectId})?
+      onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String projectId)? onPushCreateSubproject;
   final void Function(String subprojectId, String projectId)? onPushSubproject;
@@ -408,7 +410,8 @@ class _DetailOverlayLayer extends StatefulWidget {
   final VoidCallback onPop;
   final void Function(String parentTaskId)? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
-  final void Function(String projectId)? onPushCreateTaskForProject;
+  final void Function(String projectId, {String? subprojectId})?
+      onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String projectId)? onPushCreateSubproject;
   final void Function(String subprojectId, String projectId)? onPushSubproject;
@@ -520,7 +523,8 @@ class _ProjectWithOverlayStack extends StatelessWidget {
   final VoidCallback onPop;
   final void Function(String parentTaskId)? onPushCreateSubtask;
   final void Function(String subtaskId)? onPushSubtask;
-  final void Function(String projectId)? onPushCreateTaskForProject;
+  final void Function(String projectId, {String? subprojectId})?
+      onPushCreateTaskForProject;
   final void Function(String taskId)? onPushTaskFromProject;
   final void Function(String projectId)? onPushCreateSubproject;
   final void Function(String subprojectId, String projectId)? onPushSubproject;

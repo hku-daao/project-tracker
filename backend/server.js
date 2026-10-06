@@ -1481,20 +1481,26 @@ async function buildSubtaskUpdateDetailLines(dbClient, row, changeMap, extra = {
   const assigneeNames = await staffNamesForEmail(dbClient, collectSubtaskAssigneeStaffIds(row));
   const picName = await staffNameForEmail(dbClient, row.pic);
   let projectName = '';
+  let subprojectName = '';
   let parentTaskName = '';
   if (row.task_id) {
     const { data: taskRow } = await dbClient
       .from('task')
-      .select('task_name, project_id')
+      .select('task_name, project_id, subproject_id')
       .eq('id', row.task_id)
       .maybeSingle();
     parentTaskName = (taskRow?.task_name || '').toString().trim();
     projectName = await projectNameForEmail(dbClient, taskRow?.project_id);
+    subprojectName = await subprojectNameForEmail(
+      dbClient,
+      taskRow?.subproject_id,
+    );
   }
   const rows = [
     ['Subtask', changedValueHtml(changeMap.get('subtaskName'), row.subtask_name), changedValueText(changeMap.get('subtaskName'), row.subtask_name)],
     ['Description', changedValueHtml(changeMap.get('description'), row.description), changedValueText(changeMap.get('description'), row.description)],
     ['Project', changedValueHtml(changeMap.get('project'), projectName), changedValueText(changeMap.get('project'), projectName)],
+    ['Sub-project', escapeHtml(emailPlainValue(subprojectName)), emailPlainValue(subprojectName)],
     ['Task', escapeHtml(emailPlainValue(parentTaskName)), emailPlainValue(parentTaskName)],
     ['Creator', escapeHtml(emailPlainValue(creatorName)), emailPlainValue(creatorName)],
     ['Assignees', changedValueHtml(changeMap.get('assignees'), assigneeNames), changedValueText(changeMap.get('assignees'), assigneeNames)],

@@ -52,6 +52,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
     this.onCreated,
     this.onChanged,
     this.initialProjectId,
+    this.initialSubprojectId,
   }) : assert(createMode || taskId != null);
 
   final String? taskId;
@@ -64,6 +65,7 @@ class AsanaTaskDetailPanel extends StatefulWidget {
   final void Function(String subtaskId)? onPushSubtask;
   final void Function(String taskId)? onCreated;
   final String? initialProjectId;
+  final String? initialSubprojectId;
 
   @override
   State<AsanaTaskDetailPanel> createState() => _AsanaTaskDetailPanelState();
@@ -197,7 +199,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.taskId != widget.taskId ||
         oldWidget.createMode != widget.createMode ||
-        oldWidget.initialProjectId != widget.initialProjectId) {
+        oldWidget.initialProjectId != widget.initialProjectId ||
+        oldWidget.initialSubprojectId != widget.initialSubprojectId) {
       if (widget.createMode) {
         _resetCreateDraft();
       } else {
@@ -394,7 +397,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _selectedProjectId = initialProjectId == null || initialProjectId.isEmpty
         ? null
         : initialProjectId;
-    _selectedSubprojectId = null;
+    final initialSubprojectId = widget.initialSubprojectId?.trim();
+    _selectedSubprojectId =
+        initialSubprojectId == null || initialSubprojectId.isEmpty
+        ? null
+        : initialSubprojectId;
     _selectedAssigneeIds.clear();
     _picAssigneeId = null;
     _subtasks = [];

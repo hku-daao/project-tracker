@@ -8,6 +8,7 @@ import '../../config/postgrest_config.dart';
 import '../../models/singular_comment.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../models/subproject_record.dart';
+import '../../models/task.dart';
 import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_url_launch.dart';
@@ -20,6 +21,8 @@ import 'asana_attachment_menu.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
+import 'asana_project_detail_panel.dart';
+import 'asana_theme.dart';
 
 class _SubprojectAttachmentDraft {
   _SubprojectAttachmentDraft({
@@ -54,18 +57,24 @@ class AsanaSubprojectDetailPanel extends StatefulWidget {
     required this.projectId,
     this.subprojectId,
     this.createMode = false,
+    this.refreshToken = 0,
     required this.onClose,
     this.onCreated,
     this.onChanged,
+    this.onPushCreateTask,
+    this.onPushTask,
   });
 
   final AsanaLandingPalette palette;
   final String projectId;
   final String? subprojectId;
   final bool createMode;
+  final int refreshToken;
   final VoidCallback onClose;
   final void Function(String subprojectId)? onCreated;
   final VoidCallback? onChanged;
+  final VoidCallback? onPushCreateTask;
+  final void Function(String taskId)? onPushTask;
 
   @override
   State<AsanaSubprojectDetailPanel> createState() =>
@@ -86,6 +95,7 @@ class _AsanaSubprojectDetailPanelState
   bool _loading = false;
   String? _myStaffUuid;
   SubprojectRecord? _row;
+  List<Task> _tasks = [];
   bool _assigneePickerLoading = false;
   String? _assigneePickerError;
   List<OfficeOptionRow> _pickerOffices = [];
@@ -124,6 +134,18 @@ class _AsanaSubprojectDetailPanelState
       await _loadExisting();
     } else if (mounted) {
       setState(() {});
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AsanaSubprojectDetailPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.subprojectId != widget.subprojectId ||
+        oldWidget.projectId != widget.projectId) {
+      _bootstrap();
+    } else if (oldWidget.refreshToken != widget.refreshToken &&
+        !_createMode) {
+      _loadSubprojectTasks();
     }
   }
 
@@ -181,6 +203,7 @@ class _AsanaSubprojectDetailPanelState
       await _syncAssigneeKeys();
       await _loadAttachments();
       await _loadComments();
+      await _loadSubprojectTasks();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -471,6 +494,86 @@ class _AsanaSubprojectDetailPanelState
       staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
       staffAppId: state.userStaffAppId,
     );
+  }
+
+  bool _isSubprojectMember(AppState state) {
+    final row = _row;
+    if (row == null) return false;
+    return row.isInvolvedStaff(
+      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
+      staffAppId: state.userStaffAppId,
+    );
+  }
+
+  Future<void> _loadSubprojectTasks() async {
+    final sid = widget.subprojectId?.trim();
+    if (sid == null || sid.isEmpty || !PostgrestConfig.isConfigured) return;
+    try {
+      final list = await DatabaseService.fetchSingularTasksForProject(
+        widget.projectId,
+      );
+      if (!mounted) return;
+      final visible = list.where((t) {
+        if (_childTaskStatusRank(t) >= 2) return false;
+        return t.subprojectId?.trim() == sid;
+      }).toList();
+      _sortChildTasksForDetail(visible);
+      setState(() => _tasks = visible);
+    } catch (_) {}
+  }
+
+  bool _taskDeleted(Task t) {
+    final s = (t.dbStatus ?? '').trim().toLowerCase();
+    return s == 'deleted' || s == 'delete';
+  }
+
+  bool _taskCompleted(Task t) {
+    final s = (t.dbStatus ?? '').trim().toLowerCase();
+    return s == 'completed' || s == 'complete' || t.status == TaskStatus.done;
+  }
+
+  String _taskStatusLabel(Task t) {
+    if (_taskDeleted(t)) return 'Deleted';
+    final project = context.read<AppState>().projectById(widget.projectId);
+    if ((_row?.isPaused ?? false) || (project?.isPaused ?? false) || t.isPaused) {
+      return 'Paused';
+    }
+    final raw = t.dbStatus?.trim();
+    if (raw != null && raw.isNotEmpty) return raw;
+    return taskStatusDisplayNames[t.status] ?? 'Incomplete';
+  }
+
+  void _sortChildTasksForDetail(List<Task> list) {
+    list.sort((a, b) {
+      final status = _childTaskStatusRank(a).compareTo(_childTaskStatusRank(b));
+      if (status != 0) return status;
+      final due = _compareNullableDueDates(a.endDate, b.endDate);
+      if (due != 0) return due;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+  }
+
+  int _childTaskStatusRank(Task task) {
+    if (_taskDeleted(task)) return 3;
+    final status = _taskStatusLabel(task).trim().toLowerCase();
+    if (status == 'completed' || status == 'complete') return 1;
+    if (status == 'paused') return 2;
+    return 0;
+  }
+
+  int _compareNullableDueDates(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return DateUtils.dateOnly(a).compareTo(DateUtils.dateOnly(b));
+  }
+
+  String _formatShortDate(DateTime? d) {
+    if (d == null) return '—';
+    final today = HkTime.todayDateOnlyHk();
+    final day = DateTime(d.year, d.month, d.day);
+    if (day == today) return 'Today';
+    return HkTime.formatInstantAsHk(d, 'MMM d');
   }
 
   bool _draftShowsAsWebsiteLink(_SubprojectAttachmentDraft draft) {
@@ -1058,6 +1161,10 @@ class _AsanaSubprojectDetailPanelState
         me == creator;
     final canCreate = _createMode && _isParentProjectMember(state);
     final canEdit = !adminReadOnly && (_createMode ? canCreate : isCreator);
+    final canCreateChildren =
+        !_createMode &&
+        !adminReadOnly &&
+        (_isParentProjectMember(state) || _isSubprojectMember(state));
     final displayStatus = _row?.isPaused == true ? 'Paused' : _draftStatus;
 
     return AsanaDetailSlideScaffold(
@@ -1138,6 +1245,45 @@ class _AsanaSubprojectDetailPanelState
                               '',
                         ),
                 ),
+                if (!_createMode) ...[
+                  AsanaDetailSectionHeader(
+                    title: 'Tasks',
+                    showAddButton: canCreateChildren,
+                    addTooltip: 'Create task',
+                    onAdd: !canCreateChildren || widget.onPushCreateTask == null
+                        ? null
+                        : (_) => widget.onPushCreateTask!(),
+                    addEnabled:
+                        canCreateChildren &&
+                        !_saving &&
+                        widget.onPushCreateTask != null,
+                  ),
+                  if (_tasks.isNotEmpty)
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        return AsanaSlideChildTaskList(
+                          tasks: _tasks,
+                          viewportWidth: constraints.maxWidth,
+                          tableColors: widget.palette.tableColors,
+                          formatDue: _formatShortDate,
+                          statusLabel: _taskStatusLabel,
+                          isCompleted: _taskCompleted,
+                          isDeleted: _taskDeleted,
+                          onOpenTask: widget.onPushTask,
+                        );
+                      },
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        'No tasks yet',
+                        style: asanaDetailValueStyle(
+                          context,
+                        ).copyWith(color: kAsanaTextSecondary),
+                      ),
+                    ),
+                ],
                 AsanaDetailTwoColumnRow(
                   label: 'Status',
                   child: canEdit && !(_row?.isPaused ?? false)
