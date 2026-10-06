@@ -4518,20 +4518,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 !adminReadOnly &&
                 widget.onPushCreateSubtask != null &&
                 _canCreateSubtask(state, task),
-            addTooltip: singularTaskStatusIsCompleted(task)
-                ? 'Cannot create a sub-task on a completed task'
-                : 'Create sub-task',
+            addTooltip: 'Create sub-task',
             onAdd:
                 widget.onPushCreateSubtask == null ||
                     adminReadOnly ||
-                    !_canCreateSubtask(state, task) ||
-                    singularTaskStatusIsCompleted(task)
+                    !_canCreateSubtask(state, task)
                 ? null
                 : (_) => widget.onPushCreateSubtask!(),
             addEnabled:
                 !adminReadOnly &&
                 _canCreateSubtask(state, task) &&
-                !singularTaskStatusIsCompleted(task) &&
                 !_saving &&
                 widget.onPushCreateSubtask != null,
           ),
