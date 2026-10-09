@@ -12,7 +12,7 @@ class TaskFetchVisibility {
   final List<String> subordinateStaffAppIds;
   final List<String> subordinateStaffUuids;
 
-  /// All keys used in `task`/`subtask` `create_by`, `pic`, and `assignee_01`…`assignee_10`
+  /// All keys used in `task`/`subtask` `create_by`, `pic`, and `assignee_01`…`assignee_25`
   /// (uuid + app_id).
   Set<String> get lookupKeys {
     final out = <String>{};
@@ -34,7 +34,7 @@ class TaskFetchVisibility {
 
   bool get isConfigured => lookupKeys.isNotEmpty;
 
-  /// `staff.id` values for `assignee_01`…`assignee_10` (uuid columns).
+  /// `staff.id` values for `assignee_01`…`assignee_25` (uuid columns).
   Set<String> get staffUuidsForAssigneeFilter {
     final out = <String>{};
     void add(String? v) {

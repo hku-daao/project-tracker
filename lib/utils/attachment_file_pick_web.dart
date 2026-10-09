@@ -11,7 +11,10 @@ Future<PickedFileBytes?> pickOneFileWithBytes() async {
   return files.isEmpty ? null : files.first;
 }
 
-Future<List<PickedFileBytes>> pickFilesWithBytes({bool allowMultiple = true}) {
+Future<List<PickedFileBytes>> pickFilesWithBytes({
+  bool allowMultiple = true,
+  String accept = '*/*',
+}) {
   final completer = Completer<List<PickedFileBytes>>();
   var changeTriggered = false;
 
@@ -19,7 +22,7 @@ Future<List<PickedFileBytes>> pickFilesWithBytes({bool allowMultiple = true}) {
   // display:none. Use an off-screen, minimally opaque element instead.
   final input = html.FileUploadInputElement()
     ..multiple = allowMultiple
-    ..accept = '*/*'
+    ..accept = accept
     ..style.position = 'fixed'
     ..style.left = '0'
     ..style.top = '0'

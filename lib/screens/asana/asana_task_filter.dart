@@ -386,6 +386,13 @@ class AsanaTaskFilter {
         .toList();
   }
 
+  static String _searchDate(DateTime? value) {
+    if (value == null) return '';
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
+  }
+
   static String _nameFor(AppState state, String? staffKey) {
     final key = staffKey?.trim();
     if (key == null || key.isEmpty) return '';
@@ -399,17 +406,13 @@ class AsanaTaskFilter {
     List<String> tokens,
   ) {
     if (tokens.isEmpty) return false;
-    final haystack = values
-        .whereType<String>()
-        .map((v) => v.trim())
-        .where((v) => v.isNotEmpty)
-        .join(' ')
-        .toLowerCase();
-    if (haystack.isEmpty) return false;
-    for (final tkn in tokens) {
-      if (!haystack.contains(tkn)) return false;
+    final query = tokens.join(' ');
+    if (query.isEmpty) return false;
+    for (final raw in values) {
+      final field = raw?.trim().toLowerCase() ?? '';
+      if (field.isNotEmpty && field.contains(query)) return true;
     }
-    return true;
+    return false;
   }
 
   static bool taskSearchMatches(AppState state, Task t, List<String> tokens) {
@@ -423,6 +426,14 @@ class AsanaTaskFilter {
       t.createByAssigneeKey,
       t.pic,
       _nameFor(state, t.pic),
+      t.dbStatus,
+      t.complexity,
+      t.commencementStatus,
+      t.subprojectName,
+      t.changeDueReason,
+      t.pauseStatus,
+      _searchDate(t.startDate),
+      _searchDate(t.endDate),
       for (final id in t.assigneeIds) id,
       for (final id in t.assigneeIds) _nameFor(state, id),
     ], tokens);
@@ -441,6 +452,13 @@ class AsanaTaskFilter {
       s.createByStaffId,
       s.pic,
       _nameFor(state, s.pic),
+      s.status,
+      s.complexity,
+      s.commencementStatus,
+      s.changeDueReason,
+      s.pauseStatus,
+      _searchDate(s.startDate),
+      _searchDate(s.dueDate),
       for (final id in s.assigneeIds) id,
       for (final id in s.assigneeIds) _nameFor(state, id),
     ], tokens);

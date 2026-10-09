@@ -9,6 +9,7 @@ import '../../models/staff_for_assignment.dart';
 import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
@@ -618,16 +619,34 @@ class _AsanaCreateProjectDetailPanelState
     return [state.userStaffAppId, ..._picAssigneeIds, ..._assigneeIds];
   }
 
-  Future<void> _addFileAttachment() async {
-    final picked = await _withBlockingLoading(
-      AttachmentUploadService.pickFilesForUpload,
-    );
-    if (!mounted) return;
-    if (picked?.error != null) {
-      await _showInfo('Attachment upload failed', picked!.error!);
-      return;
+  Future<void> _addFileAttachment({List<PickedFileBytes>? dropped}) async {
+    late final List<({Uint8List bytes, String label})> files;
+    if (dropped != null) {
+      if (dropped.isEmpty) return;
+      files = [];
+      for (final file in dropped) {
+        final label = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
+        final sizeError = AttachmentUploadService.uploadSizeError(
+          file.bytes.length,
+          label,
+        );
+        if (sizeError != null) {
+          await _showInfo('Attachment upload failed', sizeError);
+          return;
+        }
+        files.add((bytes: file.bytes, label: label));
+      }
+    } else {
+      final picked = await _withBlockingLoading(
+        () => AttachmentUploadService.pickFilesForUpload(allowMultiple: true),
+      );
+      if (!mounted) return;
+      if (picked?.error != null) {
+        await _showInfo('Attachment upload failed', picked!.error!);
+        return;
+      }
+      files = picked?.files ?? const <({Uint8List bytes, String label})>[];
     }
-    final files = picked?.files ?? const <({Uint8List bytes, String label})>[];
     if (files.isEmpty) return;
     setState(() {
       for (final file in files) {
@@ -676,37 +695,46 @@ class _AsanaCreateProjectDetailPanelState
   Future<void> _stageInlineImage({
     required String entityType,
     required String entityId,
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
   }) async {
-    final picked = await _withBlockingLoading(pickOneFileWithBytes);
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
-      await _showInfo(
-        'Inline image upload failed',
-        'Could not read file data.',
-      );
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await _showInfo('Inline image upload failed', resolved.error!);
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
-    setState(
-      () => _pendingInlineImageAdds.add(
-        _CreateProjectInlineImageDraft(
-          id: id,
-          entityType: entityType,
-          entityId: entityId,
-          bytes: picked.bytes,
-          label: label,
-          mimeType: 'image/*',
-          sortOrder: _pendingInlineImageAdds
-              .where(
-                (draft) =>
-                    draft.entityType == entityType &&
-                    draft.entityId == entityId,
-              )
-              .length,
-        ),
-      ),
-    );
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == entityType && draft.entityId == entityId,
+          )
+          .length;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _CreateProjectInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: entityType,
+            entityId: entityId,
+            bytes: file.bytes,
+            label: label,
+            mimeType: 'image/*',
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await _showInfo('Inline image', resolved.warning!);
+    }
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
@@ -903,6 +931,7 @@ class _AsanaCreateProjectDetailPanelState
     required List<_CreateProjectAttachmentDraft> attachments,
     required String addTooltip,
     required void Function(BuildContext buttonContext)? onAdd,
+    void Function(List<PickedFileBytes> files)? onDropFiles,
     LayerLink? addAnchorLink,
     BuildContext? editAnchorContext,
   }) {
@@ -933,9 +962,13 @@ class _AsanaCreateProjectDetailPanelState
             ),
           ),
           Expanded(
-            child: _attachmentValueList(
-              attachments,
-              editAnchorContext: editAnchorContext,
+            child: asanaAttachmentValuesWithFileDrop(
+              enabled: onAdd != null && !_saving,
+              onDropFiles: onDropFiles,
+              child: _attachmentValueList(
+                attachments,
+                editAnchorContext: editAnchorContext,
+              ),
             ),
           ),
         ],
@@ -1059,11 +1092,12 @@ class _AsanaCreateProjectDetailPanelState
       );
       return;
     }
-    if (effectiveAssigneeIds.length > 20) {
+    if (effectiveAssigneeIds.length > DatabaseService.projectAssigneeSlotCount) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Too many assignees',
-        content: 'Select no more than 20 assignees.',
+        content:
+            'Select no more than ${DatabaseService.projectAssigneeSlotCount} assignees.',
         palette: widget.palette,
       );
       return;
@@ -1081,11 +1115,12 @@ class _AsanaCreateProjectDetailPanelState
         return;
       }
     }
-    if (_picAssigneeIds.length > 20) {
+    if (_picAssigneeIds.length > DatabaseService.projectPicSlotCount) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Too many PICs',
-        content: 'Select no more than 20 PICs.',
+        content:
+            'Select no more than ${DatabaseService.projectPicSlotCount} PICs.',
         palette: widget.palette,
       );
       return;
@@ -1308,15 +1343,25 @@ class _AsanaCreateProjectDetailPanelState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _descController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  showOutline: false,
-                  maxLines: 8,
-                  minLines: 1,
-                  style: asanaDetailMultilineValueStyle(context),
-                  hintText: 'Please fill in project description',
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'project_description',
+                    entityId: 'draft_description',
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _descController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    showOutline: false,
+                    maxLines: 8,
+                    minLines: 1,
+                    style: asanaDetailMultilineValueStyle(context),
+                    hintText: 'Please fill in project description',
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: canEdit && !_saving,
@@ -1445,6 +1490,9 @@ class _AsanaCreateProjectDetailPanelState
               attachments: _fileAttachments,
               addTooltip: 'Add file',
               onAdd: canEdit ? (_) => _addFileAttachment() : null,
+              onDropFiles: canEdit
+                  ? (files) => _addFileAttachment(dropped: files)
+                  : null,
             ),
           ),
           Builder(
@@ -1463,13 +1511,23 @@ class _AsanaCreateProjectDetailPanelState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _commentController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  maxLines: 5,
-                  minLines: 2,
-                  style: asanaDetailMultilineValueStyle(context),
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'project_comment',
+                    entityId: 'draft',
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _commentController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    maxLines: 5,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: canEdit && !_saving,

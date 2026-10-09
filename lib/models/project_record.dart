@@ -24,13 +24,13 @@ class ProjectRecord {
   final String id;
   final String name;
 
-  /// Ordered non-empty `staff.id` values from assignee_01...assignee_20.
+  /// Ordered non-empty `staff.id` values from assignee_01...assignee_60.
   final List<String> assigneeStaffUuids;
 
   /// Resolved assignee names (parallel to [assigneeStaffUuids] when known at fetch).
   final List<String> assigneeStaffDisplayNames;
 
-  /// Ordered non-empty `staff.id` values from pic_01...pic_20 (PICs ⊆ assignees).
+  /// Ordered non-empty `staff.id` values from pic_01...pic_60 (PICs ⊆ assignees).
   final List<String> picStaffUuids;
 
   /// Resolved PIC names (parallel to [picStaffUuids] when known at fetch).

@@ -8,6 +8,7 @@ Future<PickedFileBytes?> pickOneFileWithBytes() async {
 
 Future<List<PickedFileBytes>> pickFilesWithBytes({
   bool allowMultiple = true,
+  String accept = '*/*',
 }) async {
   throw UnsupportedError(
     'File picking is not supported on this platform build.',

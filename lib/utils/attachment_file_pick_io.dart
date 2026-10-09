@@ -24,9 +24,11 @@ Future<PickedFileBytes?> pickOneFileWithBytes() async {
 
 Future<List<PickedFileBytes>> pickFilesWithBytes({
   bool allowMultiple = true,
+  String accept = '*/*',
 }) async {
+  final images = accept.trim().toLowerCase().startsWith('image/');
   final pick = await FilePicker.pickFiles(
-    type: FileType.any,
+    type: images ? FileType.image : FileType.any,
     allowMultiple: allowMultiple,
     withData: false,
     compressionQuality: 0,

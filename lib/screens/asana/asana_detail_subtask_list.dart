@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../models/singular_subtask.dart';
 import '../../utils/hk_time.dart';
 import 'asana_theme.dart';
@@ -327,7 +328,9 @@ class AsanaDetailSubtaskList extends StatelessWidget {
                     SizedBox(
                       width: compactDueCol,
                       child: Text(
-                        _formatDue(s.dueDate),
+                        _formatDue(
+                          visibleScheduleDate(s.dueDate, s.commencementStatus),
+                        ),
                         style: rowValueStyle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

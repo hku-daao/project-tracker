@@ -1318,11 +1318,11 @@ function mailSubjectSingleLine(s) {
     .trim();
 }
 
-/** Deduped staff UUIDs from task.assignee_01 … assignee_10. */
+/** Deduped staff UUIDs from task.assignee_01 … assignee_25. */
 function collectTaskAssigneeStaffIds(taskRow) {
   const assigneeIds = [];
   const seen = new Set();
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 25; i++) {
     const key = `assignee_${String(i).padStart(2, '0')}`;
     const v = taskRow[key];
     if (v == null) continue;
@@ -1344,11 +1344,11 @@ function collectAssignmentRecipientStaffIds(row) {
   return ids;
 }
 
-/** Deduped staff UUIDs from project.assignee_01 ... assignee_20. */
+/** Deduped staff UUIDs from project.assignee_01 ... assignee_60. */
 function collectProjectAssigneeStaffIds(projectRow) {
   const assigneeIds = [];
   const seen = new Set();
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; i <= 60; i++) {
     const key = `assignee_${String(i).padStart(2, '0')}`;
     const v = (projectRow[key] || '').toString().trim();
     const k = v.toLowerCase();
@@ -1360,7 +1360,7 @@ function collectProjectAssigneeStaffIds(projectRow) {
 }
 
 /**
- * Default recipients for task-updated emails: assignee_01..10 with values plus
+ * Default recipients for task-updated emails: assignee_01..25 with values plus
  * create_by, deduped (normalized key -> canonical id string).
  * @param {Record<string, unknown>} taskRow
  * @returns {Map<string, string>}
@@ -3804,7 +3804,7 @@ async function runAssigneeOverdueTaskReminderJob() {
     const dueYmd = formatTaskDueDateYYYYMMDD(taskRow.due_date);
 
     let anySlotThisTask = false;
-    for (let slot = 1; slot <= 10; slot++) {
+    for (let slot = 1; slot <= 25; slot++) {
       const assigneeKey = `assignee_${String(slot).padStart(2, '0')}`;
       const sentCol = `${assigneeKey}_overdue_reminder_last_sent_on`;
       const staffId = (taskRow[assigneeKey] || '').toString().trim();
@@ -4087,7 +4087,7 @@ async function runAssigneeOverdueSubtaskReminderJob() {
     const dueYmd = formatTaskDueDateYYYYMMDD(row.due_date);
 
     let anySlotThisRow = false;
-    for (let slot = 1; slot <= 10; slot++) {
+    for (let slot = 1; slot <= 25; slot++) {
       const assigneeKey = `assignee_${String(slot).padStart(2, '0')}`;
       const sentCol = `${assigneeKey}_overdue_reminder_last_sent_on`;
       const staffId = (row[assigneeKey] || '').toString().trim();

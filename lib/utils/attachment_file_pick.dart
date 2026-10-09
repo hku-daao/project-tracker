@@ -13,5 +13,12 @@ Future<PickedFileBytes?> pickOneFileWithBytes() => impl.pickOneFileWithBytes();
 
 /// Multiple files as bytes. Used by attachment uploads so users can select
 /// several files in the native picker before saving.
-Future<List<PickedFileBytes>> pickFilesWithBytes({bool allowMultiple = true}) =>
-    impl.pickFilesWithBytes(allowMultiple: allowMultiple);
+/// [accept] is a file-input accept string, such as `image/*`.
+Future<List<PickedFileBytes>> pickFilesWithBytes({
+  bool allowMultiple = true,
+  String accept = '*/*',
+}) => impl.pickFilesWithBytes(allowMultiple: allowMultiple, accept: accept);
+
+/// Several image files for inline images in a description or comment.
+Future<List<PickedFileBytes>> pickInlineImageFiles() =>
+    pickFilesWithBytes(allowMultiple: true, accept: 'image/*');

@@ -419,7 +419,7 @@ class BackendApi {
   /// Sub-task update notification (`POST /api/notify/subtask-updated`).
   ///
   /// The server **only sends** when `subtask.update_by` is the sub-task **creator** (`create_by`)
-  /// and the signed-in user matches that staff row. Recipients: non-empty `assignee_01`…`assignee_10`
+  /// and the signed-in user matches that staff row. Recipients: non-empty `assignee_01`…`assignee_25`
   /// plus `create_by`, deduped.
   ///
   /// [changes]: `{ 'field': 'subtaskName'|'description'|'assignees'|'priority'|'startDate'|'dueDate', 'value': '...' }`.

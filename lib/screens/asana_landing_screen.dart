@@ -632,7 +632,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool get _searchAppliesToSelectedNav {
     return _selectedNav == 'All Tasks & Sub-tasks' ||
         _selectedNav == 'Tasks' ||
-        _selectedNav == 'Projects';
+        _selectedNav == 'Projects' ||
+        _selectedNav == 'Map';
   }
 
   /// One slide host for the whole open/close cycle (inner task panel keeps its own key).

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
@@ -453,7 +454,10 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
           completed: _taskCompleted(task),
           deleted: _taskDeleted(task),
           name: task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim(),
-          dueDate: task.endDate,
+          dueDate: visibleScheduleDate(
+            task.endDate,
+            task.commencementStatus,
+          ),
           projectName: task.projectName ?? '—',
           creator: _formatCreator(task.createByStaffName),
           pic: _formatPic(state, task.pic),
@@ -501,7 +505,10 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
                     name: subtasks[i].subtaskName.trim().isEmpty
                         ? '(Unnamed sub-task)'
                         : subtasks[i].subtaskName.trim(),
-                    dueDate: subtasks[i].dueDate,
+                    dueDate: visibleScheduleDate(
+                      subtasks[i].dueDate,
+                      subtasks[i].commencementStatus,
+                    ),
                     projectName: task.projectName ?? '—',
                     creator: _formatCreator(subtasks[i].createByStaffName),
                     pic: _formatPic(state, subtasks[i].pic),
@@ -589,7 +596,7 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
       completed: _taskCompleted(task),
       title: title,
       meta:
-          '${task.projectName?.trim().isNotEmpty == true ? '${task.projectName!.trim()} · ' : ''}Due ${_formatDate(task.endDate)}',
+          '${task.projectName?.trim().isNotEmpty == true ? '${task.projectName!.trim()} · ' : ''}Due ${_formatDate(visibleScheduleDate(task.endDate, task.commencementStatus))}',
       chips: [
         AsanaStatusChip(status: TaskListCard.statusLabel(task)),
         AsanaSubmissionChip(submission: task.submission),
@@ -655,7 +662,8 @@ class _AsanaArchivedPanelState extends State<AsanaArchivedPanel> {
       deleted: subtask.isDeleted,
       completed: _subtaskCompleted(subtask),
       title: title,
-      meta: 'Due ${_formatDate(subtask.dueDate)}',
+      meta:
+          'Due ${_formatDate(visibleScheduleDate(subtask.dueDate, subtask.commencementStatus))}',
       chips: [
         AsanaStatusChip(status: subtask.status),
         AsanaSubmissionChip(submission: subtask.submission),

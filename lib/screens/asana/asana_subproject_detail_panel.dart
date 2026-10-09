@@ -11,7 +11,11 @@ import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
+import '../../utils/attachment_file_pick.dart';
 import '../../utils/attachment_url_launch.dart';
+import '../../utils/file_drop_region.dart';
+import 'asana_inline_image_widgets.dart';
+import '../../utils/hierarchy_cascade.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_assignee_field.dart';
@@ -22,7 +26,29 @@ import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_detail_panel.dart';
+import 'asana_subproject_ai_assistant.dart';
+import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
+
+class _SubprojectInlineImageDraft {
+  _SubprojectInlineImageDraft({
+    required this.id,
+    required this.entityType,
+    required this.entityId,
+    required this.bytes,
+    required this.label,
+    this.mimeType = 'image/*',
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String entityType;
+  final String entityId;
+  final Uint8List bytes;
+  final String label;
+  final String mimeType;
+  final int sortOrder;
+}
 
 class _SubprojectAttachmentDraft {
   _SubprojectAttachmentDraft({
@@ -88,6 +114,10 @@ class _AsanaSubprojectDetailPanelState
   final _commentController = TextEditingController();
   final List<_SubprojectAttachmentDraft> _attachments = [];
   final List<ProjectCommentRowDisplay> _comments = [];
+  List<InlineAttachmentRow> _descriptionInlineImages = [];
+  final Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
+  final List<_SubprojectInlineImageDraft> _pendingInlineImageAdds = [];
+  final List<InlineAttachmentRow> _pendingInlineImageDeletes = [];
   DateTime? _startDate;
   DateTime? _endDate;
   String _draftStatus = 'Not started';
@@ -114,6 +144,7 @@ class _AsanaSubprojectDetailPanelState
   final LayerLink _attachmentAddAnchorLink = LayerLink();
   final GlobalKey _detailPopupWidthAlignKey = GlobalKey();
   int _anchoredPickerReopenBlockedUntilMs = 0;
+  AsanaTaskAiController? _subprojectAi;
 
   bool get _createMode => widget.createMode || widget.subprojectId == null;
 
@@ -142,9 +173,9 @@ class _AsanaSubprojectDetailPanelState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.subprojectId != widget.subprojectId ||
         oldWidget.projectId != widget.projectId) {
+      _subprojectAi?.clearAllSuggestions();
       _bootstrap();
-    } else if (oldWidget.refreshToken != widget.refreshToken &&
-        !_createMode) {
+    } else if (oldWidget.refreshToken != widget.refreshToken && !_createMode) {
       _loadSubprojectTasks();
     }
   }
@@ -159,6 +190,7 @@ class _AsanaSubprojectDetailPanelState
     }
     _assigneeSnapshot.dispose();
     _picSnapshot.dispose();
+    _subprojectAi?.dispose();
     super.dispose();
   }
 
@@ -202,6 +234,7 @@ class _AsanaSubprojectDetailPanelState
       });
       await _syncAssigneeKeys();
       await _loadAttachments();
+      await _loadDescriptionInlineImages();
       await _loadComments();
       await _loadSubprojectTasks();
     } finally {
@@ -241,6 +274,44 @@ class _AsanaSubprojectDetailPanelState
         _comments
           ..clear()
           ..addAll(list);
+      });
+      await _loadCommentInlineImages(list);
+    }
+  }
+
+  Future<void> _loadDescriptionInlineImages() async {
+    final id = widget.subprojectId?.trim();
+    if (id == null || id.isEmpty) {
+      if (mounted) setState(() => _descriptionInlineImages = []);
+      return;
+    }
+    final list = await DatabaseService.fetchInlineAttachments(
+      entityType: 'subproject_description',
+      entityId: id,
+    );
+    if (mounted) setState(() => _descriptionInlineImages = list);
+  }
+
+  Future<void> _loadCommentInlineImages(
+    List<ProjectCommentRowDisplay> comments,
+  ) async {
+    if (comments.isEmpty) {
+      if (mounted) setState(() => _commentInlineImages.clear());
+      return;
+    }
+    final next = <String, List<InlineAttachmentRow>>{};
+    for (final comment in comments) {
+      final list = await DatabaseService.fetchInlineAttachments(
+        entityType: 'subproject_comment',
+        entityId: comment.id,
+      );
+      if (list.isNotEmpty) next[comment.id] = list;
+    }
+    if (mounted) {
+      setState(() {
+        _commentInlineImages
+          ..clear()
+          ..addAll(next);
       });
     }
   }
@@ -535,7 +606,9 @@ class _AsanaSubprojectDetailPanelState
   String _taskStatusLabel(Task t) {
     if (_taskDeleted(t)) return 'Deleted';
     final project = context.read<AppState>().projectById(widget.projectId);
-    if ((_row?.isPaused ?? false) || (project?.isPaused ?? false) || t.isPaused) {
+    if ((_row?.isPaused ?? false) ||
+        (project?.isPaused ?? false) ||
+        t.isPaused) {
       return 'Paused';
     }
     final raw = t.dbStatus?.trim();
@@ -605,15 +678,216 @@ class _AsanaSubprojectDetailPanelState
     return [state.userStaffAppId, ..._picAssigneeIds, ..._assigneeIds];
   }
 
-  Future<void> _addFileAttachment() async {
-    final picked = await AttachmentUploadService.pickFilesForUpload();
+  String get _descriptionInlineEntityId =>
+      _createMode ? 'draft_description' : (widget.subprojectId?.trim() ?? '');
+
+  Future<void> _stageInlineImage({
+    required String entityType,
+    required String entityId,
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
+  }) async {
+    if (stateAdminBlocked()) return;
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
     if (!mounted) return;
-    if (picked.error != null) {
-      await _showInfo('Attachment upload failed', picked.error!);
+    if (resolved.error != null) {
+      await _showInfo('Inline image upload failed', resolved.error!);
       return;
     }
+    if (resolved.files.isEmpty) return;
     setState(() {
-      for (final file in picked.files) {
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == entityType && draft.entityId == entityId,
+          )
+          .length;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _SubprojectInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: entityType,
+            entityId: entityId,
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await _showInfo('Inline image', resolved.warning!);
+    }
+  }
+
+  bool stateAdminBlocked() => context.read<AppState>().adminViewMode;
+
+  void _removeInlineImagePreview(InlineImagePreviewItem image) {
+    if (context.read<AppState>().adminViewMode) return;
+    setState(() {
+      final saved = image.inlineAttachment;
+      if (saved != null) {
+        if (!_pendingInlineImageDeletes.any((row) => row.id == saved.id)) {
+          _pendingInlineImageDeletes.add(saved);
+        }
+      } else {
+        _pendingInlineImageAdds.removeWhere((draft) => draft.id == image.id);
+      }
+    });
+  }
+
+  List<InlineImagePreviewItem> _inlinePreviewItems({
+    required String entityType,
+    required String entityId,
+    required List<InlineAttachmentRow> saved,
+  }) {
+    final deletedIds = _pendingInlineImageDeletes.map((row) => row.id).toSet();
+    final savedItems = saved
+        .where((row) => !deletedIds.contains(row.id))
+        .map(
+          (row) => InlineImagePreviewItem(
+            id: row.id,
+            inlineAttachment: row,
+            url: row.url,
+            description: row.description,
+            mimeType: row.mimeType,
+            canRemove: true,
+          ),
+        );
+    final draftItems = _pendingInlineImageAdds
+        .where(
+          (draft) =>
+              draft.entityType == entityType && draft.entityId == entityId,
+        )
+        .map(
+          (draft) => InlineImagePreviewItem(
+            id: draft.id,
+            bytes: draft.bytes,
+            description: draft.label,
+            mimeType: draft.mimeType,
+            canRemove: true,
+          ),
+        );
+    return [...savedItems, ...draftItems];
+  }
+
+  Future<String?> _commitPendingInlineImages({
+    required String subprojectId,
+    required AppState state,
+    Map<String, String> entityIdOverrides = const {},
+  }) async {
+    for (final draft in List<_SubprojectInlineImageDraft>.from(
+      _pendingInlineImageAdds,
+    )) {
+      final resolvedEntityId =
+          entityIdOverrides[draft.entityId] ?? draft.entityId;
+      if (resolvedEntityId.trim().isEmpty ||
+          resolvedEntityId == 'draft' ||
+          resolvedEntityId == 'draft_description') {
+        continue;
+      }
+      final upload = await AttachmentUploadService.uploadBytesForSubproject(
+        subprojectId,
+        bytes: draft.bytes,
+        originalFilename: draft.label,
+        aclStaffKeys: _attachmentAclKeys(state),
+      );
+      if (upload.error != null) return upload.error;
+      final url = upload.url?.trim();
+      if (url == null || url.isEmpty) {
+        return 'Inline image upload did not return a download link.';
+      }
+      final ins = await DatabaseService.insertInlineAttachment(
+        entityType: draft.entityType,
+        entityId: resolvedEntityId,
+        url: url,
+        description: upload.label ?? draft.label,
+        mimeType: draft.mimeType,
+        creatorStaffLookupKey: state.userStaffAppId,
+        sortOrder: draft.sortOrder,
+      );
+      if (ins.error != null) return ins.error;
+    }
+    for (final row in List<InlineAttachmentRow>.from(
+      _pendingInlineImageDeletes,
+    )) {
+      final deleteErr = await AttachmentUploadService.deleteUploadedObjectByUrl(
+        row.url,
+      );
+      if (deleteErr != null) return deleteErr;
+      final markErr = await DatabaseService.markInlineAttachmentDeleted(row.id);
+      if (markErr != null) return markErr;
+    }
+    _pendingInlineImageAdds.clear();
+    _pendingInlineImageDeletes.clear();
+    return null;
+  }
+
+  Future<String?> _insertDraftComment(String subprojectId, AppState state) async {
+    final text = stripInlineImageMarkers(_commentController.text);
+    final hasImages = _pendingInlineImageAdds.any(
+      (draft) =>
+          draft.entityType == 'subproject_comment' && draft.entityId == 'draft',
+    );
+    if (text.isEmpty && !hasImages) return null;
+    final c = await DatabaseService.insertSubprojectCommentRow(
+      subprojectId: subprojectId,
+      description: text.isNotEmpty ? text : inlineImageOnlyCommentPlaceholder,
+      creatorStaffLookupKey: state.userStaffAppId,
+    );
+    if (c.error != null) {
+      await _showInfo('Could not add comment', c.error!);
+      return null;
+    }
+    final commentId = c.commentId;
+    if (commentId == null || commentId.isEmpty) {
+      await _showInfo(
+        'Could not add comment',
+        'The comment was not saved because the database did not return a comment id.',
+      );
+      return null;
+    }
+    _commentController.clear();
+    return commentId;
+  }
+
+  Future<void> _addFileAttachment({List<PickedFileBytes>? dropped}) async {
+    late final List<({Uint8List bytes, String label})> files;
+    if (dropped != null) {
+      if (dropped.isEmpty) return;
+      files = [];
+      for (final file in dropped) {
+        final label = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
+        final sizeError = AttachmentUploadService.uploadSizeError(
+          file.bytes.length,
+          label,
+        );
+        if (sizeError != null) {
+          await _showInfo('Attachment upload failed', sizeError);
+          return;
+        }
+        files.add((bytes: file.bytes, label: label));
+      }
+    } else {
+      final picked = await AttachmentUploadService.pickFilesForUpload(
+        allowMultiple: true,
+      );
+      if (!mounted) return;
+      if (picked.error != null) {
+        await _showInfo('Attachment upload failed', picked.error!);
+        return;
+      }
+      files = picked.files;
+    }
+    if (files.isEmpty) return;
+    setState(() {
+      for (final file in files) {
         final draft = _SubprojectAttachmentDraft(
           desc: file.label,
           mimeType: _attachmentMimeTypeFromName(file.label),
@@ -685,7 +959,10 @@ class _AsanaSubprojectDetailPanelState
       .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
       .toList();
 
-  Future<String?> _uploadPendingFiles(String subprojectId, AppState state) async {
+  Future<String?> _uploadPendingFiles(
+    String subprojectId,
+    AppState state,
+  ) async {
     for (final draft in _attachments) {
       if (!draft.isPendingFile) continue;
       final upload = await AttachmentUploadService.uploadBytesForSubproject(
@@ -770,8 +1047,23 @@ class _AsanaSubprojectDetailPanelState
       await _showInfo('Assignee required', 'Select at least one assignee.');
       return false;
     }
+    if (_effectiveAssigneeIdsForSave().length >
+        DatabaseService.projectAssigneeSlotCount) {
+      await _showInfo(
+        'Too many assignees',
+        'Select no more than ${DatabaseService.projectAssigneeSlotCount} assignees.',
+      );
+      return false;
+    }
     if (_picAssigneeIds.isEmpty) {
       await _showInfo('PIC required', 'Select at least one PIC.');
+      return false;
+    }
+    if (_picAssigneeIds.length > DatabaseService.projectPicSlotCount) {
+      await _showInfo(
+        'Too many PICs',
+        'Select no more than ${DatabaseService.projectPicSlotCount} PICs.',
+      );
       return false;
     }
     if (_createMode && !_isParentProjectMember(state)) {
@@ -813,6 +1105,7 @@ class _AsanaSubprojectDetailPanelState
         return;
       }
       final newId = ins.subprojectId;
+      _subprojectAi?.attachCreatedEntityId(newId ?? '');
       if (newId == null || newId.isEmpty) {
         await _showInfo(
           'Could not create sub-project',
@@ -829,18 +1122,26 @@ class _AsanaSubprojectDetailPanelState
           await _showInfo('Sub-project saved, attachments failed', attachErr);
         }
       }
-      final comment = _commentController.text.trim();
-      if (comment.isNotEmpty) {
-        final c = await DatabaseService.insertSubprojectCommentRow(
-          subprojectId: newId,
-          description: comment,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (c.error != null) {
-          await _showInfo('Sub-project saved, comment failed', c.error!);
-        }
+      final commentId = await _insertDraftComment(newId, state);
+      final hasDraftComment = _pendingInlineImageAdds.any(
+        (draft) =>
+            draft.entityType == 'subproject_comment' &&
+            draft.entityId == 'draft',
+      );
+      if (hasDraftComment && commentId == null) return;
+      final inlineErr = await _commitPendingInlineImages(
+        subprojectId: newId,
+        state: state,
+        entityIdOverrides: {
+          'draft_description': newId,
+          if (commentId != null) 'draft': commentId,
+        },
+      );
+      if (inlineErr != null) {
+        await _showInfo('Could not save inline image', inlineErr);
       }
       state.applySubprojects(await DatabaseService.fetchAllSubprojects());
+      _subprojectAi?.clearAllSuggestions();
       widget.onCreated?.call(newId);
       widget.onChanged?.call();
     } finally {
@@ -853,6 +1154,12 @@ class _AsanaSubprojectDetailPanelState
     final id = widget.subprojectId?.trim();
     if (id == null || id.isEmpty) return;
     if (!await _validate(state)) return;
+    final becomingCompleted =
+        _draftStatus == 'Completed' && _row?.isCompleted != true;
+    if (becomingCompleted &&
+        !await _confirmSubprojectCascade(id, HierarchyCascadeAction.complete)) {
+      return;
+    }
     setState(() => _saving = true);
     await AsanaBlockingLoadingOverlay.showAfterFrame(context);
     try {
@@ -890,21 +1197,28 @@ class _AsanaSubprojectDetailPanelState
           await _showInfo('Sub-project saved, attachments failed', attachErr);
         }
       }
-      final comment = _commentController.text.trim();
-      if (comment.isNotEmpty) {
-        final c = await DatabaseService.insertSubprojectCommentRow(
-          subprojectId: id,
-          description: comment,
-          creatorStaffLookupKey: state.userStaffAppId,
-        );
-        if (c.error != null) {
-          await _showInfo('Sub-project saved, comment failed', c.error!);
-        } else {
-          _commentController.clear();
-        }
+      final commentId = await _insertDraftComment(id, state);
+      final hasDraftComment = _pendingInlineImageAdds.any(
+        (draft) =>
+            draft.entityType == 'subproject_comment' &&
+            draft.entityId == 'draft',
+      );
+      if (hasDraftComment && commentId == null) return;
+      final inlineErr = await _commitPendingInlineImages(
+        subprojectId: id,
+        state: state,
+        entityIdOverrides: commentId == null
+            ? const {}
+            : {'draft': commentId},
+      );
+      if (inlineErr != null) {
+        await _showInfo('Could not save inline image', inlineErr);
+        return;
       }
       state.applySubprojects(await DatabaseService.fetchAllSubprojects());
+      await _loadDescriptionInlineImages();
       await _loadComments();
+      _subprojectAi?.clearAllSuggestions();
       widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -912,9 +1226,33 @@ class _AsanaSubprojectDetailPanelState
     }
   }
 
+  Future<bool> _confirmSubprojectCascade(
+    String id,
+    HierarchyCascadeAction action,
+  ) async {
+    final counts = await DatabaseService.countCascadeForSubproject(
+      subprojectId: id,
+      action: action,
+    );
+    if (!mounted) return false;
+    return confirmHierarchyCascadeIfNeeded(
+      context: context,
+      palette: widget.palette,
+      action: action,
+      parentKind: 'sub-project',
+      counts: counts,
+    );
+  }
+
   Future<void> _setPause(AppState state, {required bool paused}) async {
     final id = widget.subprojectId?.trim();
     if (id == null || id.isEmpty) return;
+    if (!await _confirmSubprojectCascade(
+      id,
+      paused ? HierarchyCascadeAction.pause : HierarchyCascadeAction.resume,
+    )) {
+      return;
+    }
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -933,6 +1271,7 @@ class _AsanaSubprojectDetailPanelState
       }
       state.applySubprojects(await DatabaseService.fetchAllSubprojects());
       await _loadExisting();
+      _subprojectAi?.clearAllSuggestions();
       widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -943,15 +1282,27 @@ class _AsanaSubprojectDetailPanelState
   Future<void> _delete(AppState state) async {
     final id = widget.subprojectId?.trim();
     if (id == null || id.isEmpty) return;
-    final ok = await showAsanaConfirmDialog(
-      context: context,
-      title: 'Remove sub-project',
-      content:
-          'Remove "${_nameController.text.trim()}"? Tasks under it stay on the project.',
-      confirmText: 'Remove',
-      isDestructive: true,
-      palette: widget.palette,
+    final counts = await DatabaseService.countCascadeForSubproject(
+      subprojectId: id,
+      action: HierarchyCascadeAction.delete,
     );
+    if (!mounted) return;
+    final ok = counts.hasChanges
+        ? await confirmHierarchyCascadeIfNeeded(
+            context: context,
+            palette: widget.palette,
+            action: HierarchyCascadeAction.delete,
+            parentKind: 'sub-project',
+            counts: counts,
+          )
+        : await showAsanaConfirmDialog(
+            context: context,
+            title: 'Remove sub-project',
+            content: 'Remove "${_nameController.text.trim()}"?',
+            confirmText: 'Remove',
+            isDestructive: true,
+            palette: widget.palette,
+          );
     if (ok != true) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -973,11 +1324,191 @@ class _AsanaSubprojectDetailPanelState
     }
   }
 
+  Future<void> _restore(AppState state) async {
+    final id = widget.subprojectId?.trim();
+    if (id == null || id.isEmpty) return;
+    if (state.adminViewMode) {
+      await _showInfo('Admin View', 'Admin View is read-only.');
+      return;
+    }
+    if (!await _confirmSubprojectCascade(id, HierarchyCascadeAction.restore)) {
+      return;
+    }
+    setState(() => _saving = true);
+    AsanaBlockingLoadingOverlay.show(context);
+    try {
+      final err = await DatabaseService.updateSubprojectRow(
+        subprojectId: id,
+        status: 'Not started',
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null) {
+        await _showInfo('Could not restore sub-project', err);
+        return;
+      }
+      final cascadeErr =
+          await DatabaseService.markTasksAndSubtasksRestoredForSubproject(
+            subprojectId: id,
+            updateByStaffLookupKey: state.userStaffAppId,
+          );
+      if (cascadeErr != null) {
+        await _showInfo(
+          'Sub-project restored, but child items were not fully restored',
+          cascadeErr,
+        );
+        return;
+      }
+      state.applySubprojects(await DatabaseService.fetchAllSubprojects());
+      await _loadExisting();
+      await _loadSubprojectTasks();
+      _subprojectAi?.clearAllSuggestions();
+      widget.onChanged?.call();
+    } finally {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  String _buildParentProjectContext(AppState state) {
+    final project = state.projectById(widget.projectId);
+    if (project == null) return '';
+    String ymd(DateTime? d) {
+      if (d == null) return '(empty)';
+      return '${d.year.toString().padLeft(4, '0')}-'
+          '${d.month.toString().padLeft(2, '0')}-'
+          '${d.day.toString().padLeft(2, '0')}';
+    }
+
+    final assignees = project.assigneeStaffDisplayNames
+        .where((n) => n.trim().isNotEmpty)
+        .join(', ');
+    final pics = project.picStaffDisplayNames
+        .where((n) => n.trim().isNotEmpty)
+        .join(', ');
+    final description = project.description.trim();
+    return '''
+Name: ${project.name.trim().isEmpty ? '(empty)' : project.name.trim()}
+Description: ${description.isEmpty ? '(empty)' : description}
+Status: ${project.isPaused ? 'Paused' : project.status}
+Start date: ${ymd(project.startDate)}
+Due date: ${ymd(project.endDate)}
+Assignees: ${assignees.isEmpty ? '(none)' : assignees}
+PIC: ${pics.isEmpty ? '(none)' : pics}
+''';
+  }
+
+  List<({String url, String description})> _websiteAttachmentsForAi() {
+    return _attachments
+        .where((a) => !a.isPendingFile && _draftShowsAsWebsiteLink(a))
+        .map(
+          (a) => (
+            url: a.urlController.text.trim(),
+            description: a.descController.text.trim(),
+          ),
+        )
+        .where((a) => a.url.isNotEmpty)
+        .toList();
+  }
+
+  AsanaSubprojectAiFormSnapshot _aiFormSnapshot(AppState state) {
+    final assigneesLabel = _visibleAssigneeIdsForPicker()
+        .map((id) => _labelForAssigneeId(id, state))
+        .join(', ');
+    final picLabel = _picAssigneeIds
+        .map((id) => _labelForAssigneeId(id, state))
+        .join(', ');
+    final staff = _pickerStaff
+        .map((s) => (id: s.assigneeId, name: s.name.trim()))
+        .where((s) => s.name.isNotEmpty)
+        .toList();
+    final paused = _row?.isPaused == true;
+    return AsanaSubprojectAiFormSnapshot(
+      name: _nameController.text.trim(),
+      description: _descController.text.trim(),
+      commentDraft: _commentController.text.trim(),
+      status: paused ? 'Paused' : _draftStatus,
+      startDate: _startDate,
+      dueDate: _endDate,
+      assigneesLabel: assigneesLabel,
+      picLabel: picLabel,
+      staff: staff,
+      selectedAssigneeIds: _visibleAssigneeIdsForPicker(),
+      selectedPicAssigneeIds: Set<String>.from(_picAssigneeIds),
+      websiteAttachments: _websiteAttachmentsForAi(),
+      parentProjectContext: _buildParentProjectContext(state),
+      statusLocked: paused,
+    );
+  }
+
+  AsanaSubprojectAiApply _aiApplyHandlers() {
+    return AsanaSubprojectAiApply(
+      applyName: (v) => setState(() => _nameController.text = v),
+      applyDescription: (v) => setState(() => _descController.text = v),
+      applyAssignees: (ids) => setState(() {
+        _assigneeIds
+          ..clear()
+          ..addAll(ids)
+          ..addAll(_picAssigneeIds);
+      }),
+      applyPic: (ids) => setState(() {
+        for (final id in _picAssigneeIds) {
+          _assigneeIds.remove(id);
+        }
+        _picAssigneeIds
+          ..clear()
+          ..addAll(ids);
+        _assigneeIds.addAll(_picAssigneeIds);
+      }),
+      applyStatus: (s) => setState(() => _draftStatus = s),
+      applyStartDate: (d) => setState(() => _startDate = d),
+      applyDueDate: (d) => setState(() => _endDate = d),
+      applyComment: (v) => setState(() => _commentController.text = v),
+      applyWebsiteLink: (url, desc) => setState(() {
+        _attachments.add(
+          _SubprojectAttachmentDraft(url: url, desc: desc, isWebsiteLink: true),
+        );
+      }),
+    );
+  }
+
+  void _ensureSubprojectAi(AppState state) {
+    _subprojectAi ??= AsanaTaskAiController(
+      mode: AsanaTaskAiAssistantMode.subprojectFields,
+      readOnly: () => _saving,
+      auditContext: () {
+        final current = context.read<AppState>();
+        return AsanaAiAuditContext(
+          entityType: 'subproject',
+          entityId: _createMode ? null : widget.subprojectId,
+          staffId: current.userStaffId,
+          staffDisplayName: _labelForAssigneeId(
+            current.userStaffAppId ?? '',
+            current,
+          ),
+          actionType: _createMode ? 'create' : 'update',
+        );
+      },
+      subprojectSnapshot: () => _aiFormSnapshot(context.read<AppState>()),
+      subprojectApply: _aiApplyHandlers(),
+    );
+  }
+
+  Widget _aiSuggestions(AsanaTaskAiFieldKey key) {
+    final c = _subprojectAi;
+    if (c == null) return const SizedBox.shrink();
+    return AsanaTaskAiInlineSuggestions(
+      controller: c,
+      fieldKey: key,
+      palette: widget.palette,
+    );
+  }
+
   Widget _footer(AppState state, bool canEdit) {
     final chrome = AsanaSlideChrome(widget.palette);
     if (!canEdit) return const SizedBox.shrink();
+    final Widget actions;
     if (_createMode) {
-      return AsanaDetailSlideFooter(
+      actions = AsanaDetailSlideFooter(
         backgroundColor: chrome.footer,
         borderColor: chrome.footerBorder,
         child: Row(
@@ -998,57 +1529,85 @@ class _AsanaSubprojectDetailPanelState
           ],
         ),
       );
-    }
-    final row = _row;
-    final buttons = <Widget>[
-      FilledButton(
-        onPressed: _saving ? null : () => _save(state),
-        style: AsanaTaskDetailActionStyles.updateFilled(
-          widget.palette,
-          context: context,
-        ),
-        child: Text(_saving ? 'Saving' : 'Update'),
-      ),
-    ];
-    if (row != null && !row.isDeleted && !row.isPaused && !row.isCompleted) {
-      buttons.add(
-        OutlinedButton(
-          onPressed: _saving ? null : () => _setPause(state, paused: true),
-          style: AsanaTaskDetailActionStyles.pauseOutlined(context: context),
-          child: const Text('Pause'),
+    } else {
+      final row = _row;
+      final deleted = row?.isDeleted == true;
+      final buttons = <Widget>[
+        if (!deleted)
+          FilledButton(
+            onPressed: _saving ? null : () => _save(state),
+            style: AsanaTaskDetailActionStyles.updateFilled(
+              widget.palette,
+              context: context,
+            ),
+            child: Text(_saving ? 'Saving' : 'Update'),
+          ),
+      ];
+      if (row != null && !row.isDeleted && !row.isPaused && !row.isCompleted) {
+        buttons.add(
+          OutlinedButton(
+            onPressed: _saving ? null : () => _setPause(state, paused: true),
+            style: AsanaTaskDetailActionStyles.pauseOutlined(context: context),
+            child: const Text('Pause'),
+          ),
+        );
+      }
+      if (row != null && !row.isDeleted && row.isPaused) {
+        buttons.add(
+          OutlinedButton(
+            onPressed: _saving ? null : () => _setPause(state, paused: false),
+            style: AsanaTaskDetailActionStyles.resumeOutlined(context: context),
+            child: const Text('Resume'),
+          ),
+        );
+      }
+      if (row != null && !row.isDeleted) {
+        buttons.add(
+          FilledButton(
+            onPressed: _saving ? null : () => _delete(state),
+            style: AsanaTaskDetailActionStyles.deleteFilled(context: context),
+            child: const Text('Delete'),
+          ),
+        );
+      }
+      if (row != null && row.isDeleted) {
+        buttons.add(
+          OutlinedButton(
+            onPressed: _saving ? null : () => _restore(state),
+            style: AsanaTaskDetailActionStyles.undoOutlined(
+              widget.palette,
+              context: context,
+            ),
+            child: const Text('Restore to Not started'),
+          ),
+        );
+      }
+      actions = AsanaDetailSlideFooter(
+        backgroundColor: chrome.footer,
+        borderColor: chrome.footerBorder,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: buttons,
+          ),
         ),
       );
     }
-    if (row != null && !row.isDeleted && row.isPaused) {
-      buttons.add(
-        OutlinedButton(
-          onPressed: _saving ? null : () => _setPause(state, paused: false),
-          style: AsanaTaskDetailActionStyles.resumeOutlined(context: context),
-          child: const Text('Resume'),
-        ),
-      );
-    }
-    if (row != null && !row.isDeleted) {
-      buttons.add(
-        FilledButton(
-          onPressed: _saving ? null : () => _delete(state),
-          style: AsanaTaskDetailActionStyles.deleteFilled(context: context),
-          child: const Text('Delete'),
-        ),
-      );
-    }
-    return AsanaDetailSlideFooter(
-      backgroundColor: chrome.footer,
-      borderColor: chrome.footerBorder,
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Wrap(
-          alignment: WrapAlignment.end,
-          spacing: 8,
-          runSpacing: 8,
-          children: buttons,
-        ),
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_subprojectAi != null)
+          AsanaTaskAiDock(
+            controller: _subprojectAi!,
+            palette: widget.palette,
+            footerBorder: chrome.footerBorder,
+          ),
+        actions,
+      ],
     );
   }
 
@@ -1057,6 +1616,7 @@ class _AsanaSubprojectDetailPanelState
     required List<_SubprojectAttachmentDraft> attachments,
     required String addTooltip,
     required void Function(BuildContext buttonContext)? onAdd,
+    void Function(List<PickedFileBytes> files)? onDropFiles,
     LayerLink? addAnchorLink,
     BuildContext? editAnchorContext,
     required bool canEdit,
@@ -1090,18 +1650,22 @@ class _AsanaSubprojectDetailPanelState
             ),
           ),
           Expanded(
-            child: attachments.isEmpty
-                ? const SizedBox.shrink()
-                : Column(
-                    children: [
-                      for (final draft in attachments)
-                        _attachmentTile(
-                          draft,
-                          editAnchorContext: editAnchorContext,
-                          canEdit: canEdit,
-                        ),
-                    ],
-                  ),
+            child: asanaAttachmentValuesWithFileDrop(
+              enabled: canEdit && !_saving,
+              onDropFiles: onDropFiles,
+              child: attachments.isEmpty
+                  ? const SizedBox.shrink()
+                  : Column(
+                      children: [
+                        for (final draft in attachments)
+                          _attachmentTile(
+                            draft,
+                            editAnchorContext: editAnchorContext,
+                            canEdit: canEdit,
+                          ),
+                      ],
+                    ),
+            ),
           ),
         ],
       ),
@@ -1166,6 +1730,8 @@ class _AsanaSubprojectDetailPanelState
         !adminReadOnly &&
         (_isParentProjectMember(state) || _isSubprojectMember(state));
     final displayStatus = _row?.isPaused == true ? 'Paused' : _draftStatus;
+    final parentProject = state.projectById(widget.projectId);
+    if (canEdit && !_loading) _ensureSubprojectAi(state);
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
@@ -1185,20 +1751,60 @@ class _AsanaSubprojectDetailPanelState
                   style: asanaDetailTitleStyle(context),
                   hintText: 'Please fill in sub-project name',
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.taskName),
                 const SizedBox(height: 12),
                 AsanaDetailLabelValue(
                   label: 'Description',
-                  child: AsanaHoverTextField(
-                    controller: _descController,
-                    canEdit: canEdit,
-                    readOnly: _saving,
-                    showOutline: false,
-                    maxLines: 8,
-                    minLines: 1,
-                    style: asanaDetailMultilineValueStyle(context),
-                    hintText: 'Please fill in sub-project description',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AsanaFileDropRegion(
+                        enabled: canEdit && !_saving,
+                        imagesOnly: true,
+                        onFiles: (files, rejected) => _stageInlineImage(
+                          entityType: 'subproject_description',
+                          entityId: _descriptionInlineEntityId,
+                          files: files,
+                          rejectedNonImages: rejected,
+                        ),
+                        child: AsanaHoverTextField(
+                          controller: _descController,
+                          canEdit: canEdit,
+                          readOnly: _saving,
+                          showOutline: false,
+                          maxLines: 8,
+                          minLines: 1,
+                          style: asanaDetailMultilineValueStyle(context),
+                          hintText: 'Please fill in sub-project description',
+                        ),
+                      ),
+                      if (canEdit)
+                        InlineImageToolbar(
+                          enabled: !_saving,
+                          onAdd: () => _stageInlineImage(
+                            entityType: 'subproject_description',
+                            entityId: _descriptionInlineEntityId,
+                          ),
+                        ),
+                      InlineImagePreviewList(
+                        images: _inlinePreviewItems(
+                          entityType: 'subproject_description',
+                          entityId: _descriptionInlineEntityId,
+                          saved: _descriptionInlineImages,
+                        ),
+                        onRemove: canEdit ? _removeInlineImagePreview : null,
+                      ),
+                    ],
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.description),
+                if (parentProject != null)
+                  AsanaDetailTwoColumnRow(
+                    label: 'Parent Project',
+                    child: AsanaDetailPlainValue(
+                      text: parentProject.name.trim(),
+                    ),
+                  ),
                 AsanaDetailTwoColumnRow(
                   label: 'Assignees',
                   child: KeyedSubtree(
@@ -1217,13 +1823,15 @@ class _AsanaSubprojectDetailPanelState
                             }),
                           )
                         : AsanaDetailPlainValue(
-                            text: _row?.assigneeStaffDisplayNames
+                            text:
+                                _row?.assigneeStaffDisplayNames
                                     .where((n) => n.trim().isNotEmpty)
                                     .join(', ') ??
                                 '',
                           ),
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.assignees),
                 AsanaDetailTwoColumnRow(
                   label: 'PIC',
                   child: canEdit
@@ -1239,12 +1847,14 @@ class _AsanaSubprojectDetailPanelState
                           }),
                         )
                       : AsanaDetailPlainValue(
-                          text: _row?.picStaffDisplayNames
+                          text:
+                              _row?.picStaffDisplayNames
                                   .where((n) => n.trim().isNotEmpty)
                                   .join(', ') ??
                               '',
                         ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.pic),
                 if (!_createMode) ...[
                   AsanaDetailSectionHeader(
                     title: 'Tasks',
@@ -1308,6 +1918,7 @@ class _AsanaSubprojectDetailPanelState
                         )
                       : AsanaDetailStatusPill(status: displayStatus),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.projectStatus),
                 AsanaDetailTwoColumnRow(
                   label: 'Start date',
                   child: AsanaHoverTapValue(
@@ -1320,6 +1931,7 @@ class _AsanaSubprojectDetailPanelState
                         : null,
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.startDate),
                 AsanaDetailTwoColumnRow(
                   label: 'Due date',
                   child: AsanaHoverTapValue(
@@ -1332,12 +1944,16 @@ class _AsanaSubprojectDetailPanelState
                         : null,
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.dueDate),
                 Builder(
                   builder: (anchorContext) => _attachmentTwoColumnRow(
                     label: 'Files',
                     attachments: _fileAttachments,
                     addTooltip: 'Add file',
                     onAdd: canEdit ? (_) => _addFileAttachment() : null,
+                    onDropFiles: canEdit
+                        ? (files) => _addFileAttachment(dropped: files)
+                        : null,
                     canEdit: canEdit,
                   ),
                 ),
@@ -1352,6 +1968,7 @@ class _AsanaSubprojectDetailPanelState
                     canEdit: canEdit,
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.websiteLink),
                 AsanaDetailLabelValue(
                   label: 'Comments',
                   child: Column(
@@ -1369,25 +1986,61 @@ class _AsanaSubprojectDetailPanelState
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                comment.description,
+                                stripInlineImageMarkers(comment.description),
                                 style: asanaDetailMultilineValueStyle(context),
+                              ),
+                              InlineImagePreviewList(
+                                images: _inlinePreviewItems(
+                                  entityType: 'subproject_comment',
+                                  entityId: comment.id,
+                                  saved:
+                                      _commentInlineImages[comment.id] ??
+                                      const [],
+                                ),
                               ),
                             ],
                           ),
                         ),
-                      if (canEdit)
-                        AsanaHoverTextField(
-                          controller: _commentController,
-                          canEdit: true,
-                          readOnly: _saving,
-                          maxLines: 5,
-                          minLines: 2,
-                          style: asanaDetailMultilineValueStyle(context),
-                          hintText: 'Add a comment',
+                      if (canEdit) ...[
+                        AsanaFileDropRegion(
+                          enabled: !_saving,
+                          imagesOnly: true,
+                          onFiles: (files, rejected) => _stageInlineImage(
+                            entityType: 'subproject_comment',
+                            entityId: 'draft',
+                            files: files,
+                            rejectedNonImages: rejected,
+                          ),
+                          child: AsanaHoverTextField(
+                            controller: _commentController,
+                            canEdit: true,
+                            readOnly: _saving,
+                            maxLines: 5,
+                            minLines: 2,
+                            style: asanaDetailMultilineValueStyle(context),
+                            hintText: 'Add a comment',
+                          ),
                         ),
+                        InlineImageToolbar(
+                          enabled: !_saving,
+                          onAdd: () => _stageInlineImage(
+                            entityType: 'subproject_comment',
+                            entityId: 'draft',
+                          ),
+                        ),
+                        InlineImagePreviewList(
+                          images: _inlinePreviewItems(
+                            entityType: 'subproject_comment',
+                            entityId: 'draft',
+                            saved: const [],
+                          ),
+                          onRemove: _removeInlineImagePreview,
+                        ),
+                      ],
                     ],
                   ),
                 ),
+                if (canEdit) _aiSuggestions(AsanaTaskAiFieldKey.comment),
               ],
             ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../asana_landing_screen.dart';
+import '../../utils/hierarchy_cascade.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -1039,6 +1040,26 @@ Future<bool?> showAsanaConfirmDialog({
       );
     },
   );
+}
+
+/// Returns true when there is no cascade, or the user confirms it.
+Future<bool> confirmHierarchyCascadeIfNeeded({
+  required BuildContext context,
+  required AsanaLandingPalette palette,
+  required HierarchyCascadeAction action,
+  required String parentKind,
+  required HierarchyCascadeCounts counts,
+}) async {
+  if (!counts.hasChanges) return true;
+  final ok = await showAsanaConfirmDialog(
+    context: context,
+    title: hierarchyCascadeTitle(action, parentKind),
+    content: hierarchyCascadeContent(action, counts),
+    confirmText: hierarchyCascadeConfirmText(action),
+    isDestructive: action == HierarchyCascadeAction.delete,
+    palette: palette,
+  );
+  return ok == true;
 }
 
 Future<void> showAsanaInfoDialog({

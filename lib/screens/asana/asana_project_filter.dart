@@ -250,6 +250,10 @@ class AsanaProjectFilter {
     return _containsAllTokens([
       s.name,
       s.description,
+      s.status,
+      s.pauseStatus,
+      _searchDate(s.startDate),
+      _searchDate(s.endDate),
       s.createByDisplayName,
       s.createByStaffUuid,
       subprojectCreatorLine(s, state),
@@ -342,6 +346,13 @@ class AsanaProjectFilter {
     return true;
   }
 
+  static String _searchDate(DateTime? value) {
+    if (value == null) return '';
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
+  }
+
   static List<String> searchTokens(String raw) {
     return raw
         .trim()
@@ -356,17 +367,13 @@ class AsanaProjectFilter {
     List<String> tokens,
   ) {
     if (tokens.isEmpty) return false;
-    final haystack = values
-        .whereType<String>()
-        .map((v) => v.trim())
-        .where((v) => v.isNotEmpty)
-        .join(' ')
-        .toLowerCase();
-    if (haystack.isEmpty) return false;
-    for (final tkn in tokens) {
-      if (!haystack.contains(tkn)) return false;
+    final query = tokens.join(' ');
+    if (query.isEmpty) return false;
+    for (final raw in values) {
+      final field = raw?.trim().toLowerCase() ?? '';
+      if (field.isNotEmpty && field.contains(query)) return true;
     }
-    return true;
+    return false;
   }
 
   static bool projectSearchMatches(
@@ -378,6 +385,10 @@ class AsanaProjectFilter {
     return _containsAllTokens([
       p.name,
       p.description,
+      p.status,
+      p.pauseStatus,
+      _searchDate(p.startDate),
+      _searchDate(p.endDate),
       p.createByDisplayName,
       p.createByStaffUuid,
       creatorLine(p, state),

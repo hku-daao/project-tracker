@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
@@ -1879,7 +1880,12 @@ class _ProjectTaskDataRow extends StatelessWidget {
                     SizedBox(
                       width: cols.dueCol,
                       child: Text(
-                        _formatDueDate(task.endDate),
+                        _formatDueDate(
+                          visibleScheduleDate(
+                            task.endDate,
+                            task.commencementStatus,
+                          ),
+                        ),
                         style: rowValueStyle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -2165,7 +2171,12 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
                     SizedBox(
                       width: cols.dueCol,
                       child: Text(
-                        _formatDueDate(subtask.dueDate),
+                        _formatDueDate(
+                          visibleScheduleDate(
+                            subtask.dueDate,
+                            subtask.commencementStatus,
+                          ),
+                        ),
                         style: rowValueStyle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -2904,8 +2915,14 @@ class _ProjectMobileTaskRow extends StatelessWidget {
               ? '—'
               : task.createByStaffName!.trim(),
           pic: _formatTaskPic(appState, task.pic),
-          startDate: task.startDate,
-          dueDate: task.endDate,
+          startDate: visibleScheduleDate(
+            task.startDate,
+            task.commencementStatus,
+          ),
+          dueDate: visibleScheduleDate(
+            task.endDate,
+            task.commencementStatus,
+          ),
           createdAt: task.createdAt,
           updatedAt: task.updateDate,
           completed: completed,
@@ -3009,8 +3026,14 @@ class _ProjectMobileSubtaskRow extends StatelessWidget {
           ? '—'
           : subtask.createByStaffName!.trim(),
       pic: _formatTaskPic(appState, subtask.pic),
-      startDate: subtask.startDate,
-      dueDate: subtask.dueDate,
+      startDate: visibleScheduleDate(
+        subtask.startDate,
+        subtask.commencementStatus,
+      ),
+      dueDate: visibleScheduleDate(
+        subtask.dueDate,
+        subtask.commencementStatus,
+      ),
       createdAt: subtask.createDate,
       updatedAt: subtask.updateDate,
       completed: completed,

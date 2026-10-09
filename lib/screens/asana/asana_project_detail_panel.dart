@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
@@ -14,7 +15,9 @@ import '../../services/backend_api.dart';
 import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import '../../utils/attachment_url_launch.dart';
+import '../../utils/hierarchy_cascade.dart';
 import '../../utils/hk_time.dart';
 import '../app_bootstrap.dart';
 import '../asana_landing_screen.dart';
@@ -801,36 +804,14 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     }
   }
 
-  Future<void> _toggleMilestones() async {
+  void _toggleMilestones() {
     if (_saving) return;
-    final enabled = !_hasMilestone;
-    final state = context.read<AppState>();
-    final err = await DatabaseService.updateProjectRow(
-      projectId: widget.projectId,
-      updateHasMilestone: true,
-      hasMilestone: enabled,
-      updateByStaffLookupKey: state.userStaffAppId,
-    );
-    if (!mounted) return;
-    if (err != null) {
-      await showAsanaInfoDialog(
-        context: context,
-        title: 'Could not update milestone setting',
-        content: err,
-        palette: widget.palette,
-      );
-      return;
-    }
-    setState(() => _hasMilestone = enabled);
-    if (enabled) {
-      await _reloadMilestoneDrafts();
-      if (!mounted) return;
-      if (_milestoneDrafts.isEmpty) {
+    setState(() {
+      _hasMilestone = !_hasMilestone;
+      if (_hasMilestone && _milestoneDrafts.isEmpty) {
         _milestoneDrafts.add(AsanaMilestoneDraft(progressPercent: 100));
       }
-      setState(() {});
-    }
-    await _applyProjectsAndSubprojects(state);
+    });
   }
 
   void _addMilestoneDraft() {
@@ -930,106 +911,58 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     }
   }
 
-  Future<void> _removeMilestone(AsanaMilestoneDraft row) async {
+  void _removeMilestone(AsanaMilestoneDraft row) {
     if (_saving) return;
-    final ok = await showAsanaConfirmDialog(
-      context: context,
-      title: 'Remove milestone',
-      content:
-          'Remove this milestone? It will no longer appear on the project.',
-      confirmText: 'Remove',
-      isDestructive: true,
-      palette: widget.palette,
-    );
-    if (ok != true || !mounted) return;
-    final id = row.id?.trim();
-    if (id == null || id.isEmpty) {
-      setState(() {
-        _milestoneDrafts.remove(row);
-        row.dispose();
-      });
-      return;
-    }
-    final state = context.read<AppState>();
-    final err = await DatabaseService.deleteProjectMilestone(
-      milestoneId: id,
-      projectId: widget.projectId,
-      updaterStaffLookupKey: state.userStaffAppId,
-    );
-    if (!mounted) return;
-    if (err != null) {
-      await showAsanaInfoDialog(
-        context: context,
-        title: 'Could not remove milestone',
-        content: err,
-        palette: widget.palette,
-      );
-      return;
-    }
-    await _reloadMilestoneDrafts();
-    if (mounted) setState(() {});
+    setState(() {
+      _milestoneDrafts.remove(row);
+      row.dispose();
+    });
   }
 
-  Future<void> _clearAllMilestones() async {
+  void _clearAllMilestones() {
     if (_saving || _milestoneDrafts.isEmpty) return;
-    final ok = await showAsanaConfirmDialog(
-      context: context,
-      title: 'Remove all milestones',
-      content:
-          'Remove every milestone from this project? The milestone section will be turned off.',
-      confirmText: 'Remove all',
-      isDestructive: true,
-      palette: widget.palette,
-    );
-    if (ok != true || !mounted) return;
-    _setSaving(true);
-    AsanaBlockingLoadingOverlay.show(context);
-    try {
-      final state = context.read<AppState>();
-      for (final row in List<AsanaMilestoneDraft>.from(_milestoneDrafts)) {
-        final id = row.id?.trim();
-        if (id == null || id.isEmpty) continue;
-        final err = await DatabaseService.deleteProjectMilestone(
-          milestoneId: id,
-          projectId: widget.projectId,
-          updaterStaffLookupKey: state.userStaffAppId,
-        );
-        if (err != null) {
-          if (!mounted) return;
-          await showAsanaInfoDialog(
-            context: context,
-            title: 'Could not remove milestones',
-            content: err,
-            palette: widget.palette,
-          );
-          return;
-        }
-      }
-      final flagErr = await DatabaseService.updateProjectRow(
-        projectId: widget.projectId,
-        updateHasMilestone: true,
-        hasMilestone: false,
-        updateByStaffLookupKey: state.userStaffAppId,
-      );
-      if (!mounted) return;
-      if (flagErr != null) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Could not update milestone setting',
-          content: flagErr,
-          palette: widget.palette,
-        );
-        return;
-      }
+    setState(() {
       disposeAsanaMilestoneDrafts(_milestoneDrafts);
       _milestoneDrafts.clear();
-      setState(() => _hasMilestone = false);
-      widget.onChanged?.call();
-      await _applyProjectsAndSubprojects(state);
-    } finally {
-      AsanaBlockingLoadingOverlay.hide();
-      if (mounted) _setSaving(false);
+      _hasMilestone = false;
+    });
+  }
+
+  Future<bool> _syncMilestonesOnSave(AppState state) async {
+    final existing = await DatabaseService.fetchProjectMilestones(
+      widget.projectId,
+    );
+    if (!mounted) return false;
+    final keepIds = <String>{};
+    if (_hasMilestone) {
+      for (final row in _milestoneDrafts) {
+        final id = row.id?.trim();
+        if (id != null && id.isNotEmpty) keepIds.add(id);
+      }
     }
+    for (final row in existing) {
+      if (keepIds.contains(row.id)) continue;
+      final err = await DatabaseService.deleteProjectMilestone(
+        milestoneId: row.id,
+        projectId: widget.projectId,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      if (err != null) {
+        if (!mounted) return false;
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Could not remove milestone',
+          content: err,
+          palette: widget.palette,
+        );
+        return false;
+      }
+    }
+    if (!_hasMilestone) return true;
+    for (final row in List<AsanaMilestoneDraft>.from(_milestoneDrafts)) {
+      if (!await _persistMilestoneRow(row, force: true)) return false;
+    }
+    return true;
   }
 
   String _effectiveStatus(ProjectRecord p) => (_draftStatus ?? p.status).trim();
@@ -1064,6 +997,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   bool _canRestoreProject(ProjectRecord p) =>
       _isCreator(p) && _effectiveStatus(p) == 'Deleted';
 
+  Future<bool> _confirmProjectCascade(HierarchyCascadeAction action) async {
+    final counts = await DatabaseService.countCascadeForProject(
+      projectId: widget.projectId,
+      action: action,
+    );
+    if (!mounted) return false;
+    return confirmHierarchyCascadeIfNeeded(
+      context: context,
+      palette: widget.palette,
+      action: action,
+      parentKind: 'project',
+      counts: counts,
+    );
+  }
+
   Future<void> _setProjectPause(
     AppState state,
     ProjectRecord p, {
@@ -1072,6 +1020,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(p) || _effectiveStatus(p) == 'Deleted') return;
     if (p.isPaused == paused) return;
+    if (!await _confirmProjectCascade(
+      paused ? HierarchyCascadeAction.pause : HierarchyCascadeAction.resume,
+    )) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -1095,6 +1048,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       }
       await _applyProjectsAndSubprojects(state);
       await _loadProject();
+      await _loadProjectTasks();
       widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -1104,15 +1058,28 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
   Future<void> _confirmDeleteProject(AppState state) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    final ok = await showAsanaConfirmDialog(
-      context: context,
-      title: 'Delete project',
-      content:
-          'Delete "${_project?.name ?? 'this project'}"? It will be moved to the Deleted status.',
-      confirmText: 'Delete',
-      isDestructive: true,
-      palette: widget.palette,
+    final counts = await DatabaseService.countCascadeForProject(
+      projectId: widget.projectId,
+      action: HierarchyCascadeAction.delete,
     );
+    if (!mounted) return;
+    final ok = counts.hasChanges
+        ? await confirmHierarchyCascadeIfNeeded(
+            context: context,
+            palette: widget.palette,
+            action: HierarchyCascadeAction.delete,
+            parentKind: 'project',
+            counts: counts,
+          )
+        : await showAsanaConfirmDialog(
+            context: context,
+            title: 'Delete project',
+            content:
+                'Delete "${_project?.name ?? 'this project'}"? It will be moved to the Deleted status.',
+            confirmText: 'Delete',
+            isDestructive: true,
+            palette: widget.palette,
+          );
     if (ok != true) return;
     if (!mounted) return;
     _setSaving(true);
@@ -1155,6 +1122,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       }
       await _applyProjectsAndSubprojects(state);
       await _loadProject();
+      await _loadProjectTasks();
       widget.onChanged?.call();
     } finally {
       AsanaBlockingLoadingOverlay.hide();
@@ -1165,6 +1133,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   Future<void> _restoreDeletedProject(AppState state, ProjectRecord p) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_canRestoreProject(p)) return;
+    if (!await _confirmProjectCascade(HierarchyCascadeAction.restore)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -1183,8 +1154,23 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
+      final cascadeErr = await DatabaseService.markHierarchyRestoredForProject(
+        projectId: widget.projectId,
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (!mounted) return;
+      if (cascadeErr != null) {
+        await showAsanaInfoDialog(
+          context: context,
+          title: 'Project restored, but child items were not fully restored',
+          content: cascadeErr,
+          palette: widget.palette,
+        );
+        return;
+      }
       await _applyProjectsAndSubprojects(state);
       await _loadProject();
+      await _loadProjectTasks();
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
     } finally {
@@ -1196,6 +1182,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   Future<void> _markCompleted(AppState state, ProjectRecord p) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_canMarkProjectComplete(p)) return;
+    if (!await _confirmProjectCascade(HierarchyCascadeAction.complete)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -1512,13 +1501,67 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     });
   }
 
-  Future<void> _addFileAttachment(ProjectRecord p) async {
+  Future<void> _addFileAttachment(
+    ProjectRecord p, {
+    List<PickedFileBytes>? dropped,
+  }) async {
     if (await _blockAdminReadOnlyWrite()) return;
     final state = context.read<AppState>();
+    if (dropped != null) {
+      if (dropped.isEmpty) return;
+      final uploaded = <({String url, String label})>[];
+      for (final file in dropped) {
+        final label = file.name.trim().isEmpty ? 'attachment' : file.name.trim();
+        final sizeError = AttachmentUploadService.uploadSizeError(
+          file.bytes.length,
+          label,
+        );
+        if (sizeError != null) {
+          await _showInfo('Attachment upload failed', sizeError);
+          return;
+        }
+        final upload = await _withBlockingLoading(
+          () => AttachmentUploadService.uploadBytesForProject(
+            p.id,
+            bytes: file.bytes,
+            originalFilename: label,
+            aclStaffKeys: _projectAttachmentAclKeys(state, p),
+          ),
+        );
+        if (upload == null || !mounted) return;
+        if (upload.error != null) {
+          await _showInfo('Attachment upload failed', upload.error!);
+          return;
+        }
+        final url = upload.url?.trim();
+        if (url == null || url.isEmpty) {
+          await _showInfo(
+            'Attachment upload failed',
+            'File upload did not return a download link.',
+          );
+          return;
+        }
+        uploaded.add((url: url, label: upload.label ?? label));
+      }
+      if (uploaded.isEmpty || !mounted) return;
+      setState(() {
+        for (final file in uploaded) {
+          _attachments.add(
+            _ProjectAttachmentDraft(
+              url: file.url,
+              desc: file.label,
+              mimeType: _attachmentMimeTypeFromName(file.label),
+            ),
+          );
+        }
+      });
+      return;
+    }
     final r = await _withBlockingLoading(
       () => AttachmentUploadService.pickUploadFilesForProject(
         p.id,
         aclStaffKeys: _projectAttachmentAclKeys(state, p),
+        allowMultiple: true,
       ),
     );
     if (!mounted) return;
@@ -1569,38 +1612,47 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   Future<void> _stageInlineImage({
     required String entityType,
     required String entityId,
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    final picked = await _withBlockingLoading(pickOneFileWithBytes);
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
-      await _showInfo(
-        'Inline image upload failed',
-        'Could not read file data.',
-      );
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await _showInfo('Inline image upload failed', resolved.error!);
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
-    setState(
-      () => _pendingInlineImageAdds.add(
-        _ProjectInlineImageDraft(
-          id: id,
-          entityType: entityType,
-          entityId: entityId,
-          bytes: picked.bytes,
-          label: label,
-          mimeType: 'image/*',
-          sortOrder: _pendingInlineImageAdds
-              .where(
-                (draft) =>
-                    draft.entityType == entityType &&
-                    draft.entityId == entityId,
-              )
-              .length,
-        ),
-      ),
-    );
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == entityType && draft.entityId == entityId,
+          )
+          .length;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _ProjectInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: entityType,
+            entityId: entityId,
+            bytes: file.bytes,
+            label: label,
+            mimeType: 'image/*',
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await _showInfo('Inline image', resolved.warning!);
+    }
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
@@ -1997,6 +2049,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required bool addEnabled,
     required String addTooltip,
     required void Function(BuildContext buttonContext)? onAdd,
+    void Function(List<PickedFileBytes> files)? onDropFiles,
     LayerLink? addAnchorLink,
     bool allowRemove = true,
     BuildContext? editAnchorContext,
@@ -2020,11 +2073,15 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             ),
           ),
           Expanded(
-            child: _attachmentValueList(
-              context,
-              attachments,
-              allowRemove: allowRemove,
-              editAnchorContext: editAnchorContext,
+            child: asanaAttachmentValuesWithFileDrop(
+              enabled: addEnabled,
+              onDropFiles: onDropFiles,
+              child: _attachmentValueList(
+                context,
+                attachments,
+                allowRemove: allowRemove,
+                editAnchorContext: editAnchorContext,
+              ),
             ),
           ),
         ],
@@ -2106,13 +2163,23 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
                 onFocusChange: (hasFocus) {
                   if (!hasFocus) _savePostedCommentOnBlur(comment);
                 },
-                child: AsanaHoverTextField(
-                  controller: _postedCommentControllers[comment.id]!,
-                  canEdit: true,
-                  readOnly: _saving || _savingPostedCommentId == comment.id,
-                  maxLines: 8,
-                  minLines: 2,
-                  style: asanaDetailMultilineValueStyle(context),
+                child: AsanaFileDropRegion(
+                  enabled: !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'project_comment',
+                    entityId: comment.id,
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _postedCommentControllers[comment.id]!,
+                    canEdit: true,
+                    readOnly: _saving || _savingPostedCommentId == comment.id,
+                    maxLines: 8,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
               ),
               InlineImageToolbar(
@@ -2332,11 +2399,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       );
       return;
     }
-    if (effectiveAssigneeIds.length > 20) {
+    if (effectiveAssigneeIds.length > DatabaseService.projectAssigneeSlotCount) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Too many assignees',
-        content: 'Select no more than 20 assignees.',
+        content:
+            'Select no more than ${DatabaseService.projectAssigneeSlotCount} assignees.',
         palette: widget.palette,
       );
       return;
@@ -2354,11 +2422,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         return;
       }
     }
-    if (_picAssigneeIds.length > 20) {
+    if (_picAssigneeIds.length > DatabaseService.projectPicSlotCount) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Too many PICs',
-        content: 'Select no more than 20 PICs.',
+        content:
+            'Select no more than ${DatabaseService.projectPicSlotCount} PICs.',
         palette: widget.palette,
       );
       return;
@@ -2391,6 +2460,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     if (status == 'Completed' && !_milestonesAllowComplete()) {
       await _showMilestonesRequiredForComplete();
       return;
+    }
+    final alreadyCompleted = p.status.trim().toLowerCase() == 'completed';
+    if (status == 'Completed' && !alreadyCompleted) {
+      if (!await _confirmProjectCascade(HierarchyCascadeAction.complete)) {
+        return;
+      }
     }
 
     _setSaving(true);
@@ -2439,11 +2514,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      if (_hasMilestone) {
-        for (final row in List<AsanaMilestoneDraft>.from(_milestoneDrafts)) {
-          if (!await _persistMilestoneRow(row, force: true)) return;
-        }
-      }
+      if (!await _syncMilestonesOnSave(state)) return;
       if (!await _saveDirtyPostedComments(state)) return;
       final hasDraftComment =
           stripInlineImageMarkers(_commentController.text).isNotEmpty ||
@@ -2554,15 +2625,25 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _descController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  showOutline: false,
-                  maxLines: 8,
-                  minLines: 1,
-                  style: asanaDetailMultilineValueStyle(context),
-                  hintText: 'Please fill in project description',
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'project_description',
+                    entityId: widget.projectId,
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _descController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    showOutline: false,
+                    maxLines: 8,
+                    minLines: 1,
+                    style: asanaDetailMultilineValueStyle(context),
+                    hintText: 'Please fill in project description',
+                  ),
                 ),
                 if (canEdit)
                   InlineImageToolbar(
@@ -2753,6 +2834,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
               addEnabled: canEdit && !_saving,
               addTooltip: 'Add file',
               onAdd: canEdit ? (_) => _addFileAttachment(p) : null,
+              onDropFiles: canEdit
+                  ? (files) => _addFileAttachment(p, dropped: files)
+                  : null,
               allowRemove: canEdit,
             ),
           ),
@@ -2788,13 +2872,23 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
                 for (final comment in _comments)
                   _buildCommentDisplayTile(comment),
                 if (canEdit) ...[
-                  AsanaHoverTextField(
-                    controller: _commentController,
-                    canEdit: true,
-                    readOnly: _saving,
-                    maxLines: 5,
-                    minLines: 2,
-                    style: asanaDetailMultilineValueStyle(context),
+                  AsanaFileDropRegion(
+                    enabled: !_saving,
+                    imagesOnly: true,
+                    onFiles: (files, rejected) => _stageInlineImage(
+                      entityType: 'project_comment',
+                      entityId: 'draft',
+                      files: files,
+                      rejectedNonImages: rejected,
+                    ),
+                    child: AsanaHoverTextField(
+                      controller: _commentController,
+                      canEdit: true,
+                      readOnly: _saving,
+                      maxLines: 5,
+                      minLines: 2,
+                      style: asanaDetailMultilineValueStyle(context),
+                    ),
                   ),
                   InlineImageToolbar(
                     enabled: !_saving,
@@ -2932,7 +3026,12 @@ class AsanaSlideChildTaskList extends StatelessWidget {
                     SizedBox(
                       width: dueCol,
                       child: Text(
-                        formatDue(task.endDate),
+                        formatDue(
+                          visibleScheduleDate(
+                            task.endDate,
+                            task.commencementStatus,
+                          ),
+                        ),
                         style: rowStyle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

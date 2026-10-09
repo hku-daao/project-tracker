@@ -16,6 +16,7 @@ import '../models/project_record.dart';
 import '../models/subproject_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
+import '../utils/hierarchy_cascade.dart';
 import '../utils/hk_time.dart';
 import 'task_fetch_visibility.dart';
 
@@ -117,6 +118,17 @@ class TasksLoadResult {
 }
 
 class DatabaseService {
+  /// `project` / `subproject` columns `assignee_01` … `assignee_60`.
+  static const int projectAssigneeSlotCount = 60;
+
+  /// `project` / `subproject` columns `pic_01` … `pic_60`.
+  /// Kept equal to [projectAssigneeSlotCount]; slot loops use that count.
+  static const int projectPicSlotCount = projectAssigneeSlotCount;
+
+  /// `task` / `subtask` columns `assignee_01` … `assignee_25`.
+  /// PIC remains the single `pic` column.
+  static const int taskAssigneeSlotCount = 25;
+
   static bool get _enabled => PostgrestConfig.isConfigured;
 
   /// Coalesces concurrent [fetchSubtasksForTask] calls for the same parent task id so landing
@@ -680,7 +692,7 @@ class DatabaseService {
       if (priority != null) map['priority'] = priority;
       if (complexity != null) map['complexity'] = complexity.trim();
       if (assigneeSlots != null) {
-        for (var i = 0; i < 10; i++) {
+        for (var i = 0; i < taskAssigneeSlotCount; i++) {
           final key = 'assignee_${(i + 1).toString().padLeft(2, '0')}';
           final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
           map[key] = (v == null || v.isEmpty) ? null : v;
@@ -783,6 +795,21 @@ class DatabaseService {
           taskId: taskId,
           updateByStaffLookupKey: updateByStaffLookupKey,
           completionDateAt: completionDateAt,
+        );
+        if (cascadeErr != null) return cascadeErr;
+      }
+      if (_isDeletedStatusValue(status)) {
+        final cascadeErr = await markSubtasksDeletedForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (cascadeErr != null) return cascadeErr;
+      }
+      if (updatePauseStatus) {
+        final cascadeErr = await setSubtasksPauseForParentTask(
+          taskId: taskId,
+          paused: pauseStatus?.trim() == 'Paused',
+          updateByStaffLookupKey: updateByStaffLookupKey,
         );
         if (cascadeErr != null) return cascadeErr;
       }
@@ -900,6 +927,106 @@ class DatabaseService {
     } catch (e) {
       return e.toString();
     }
+  }
+
+  /// Pause or resume every non-deleted [subtask] under [taskId].
+  static Future<String?> setSubtasksPauseForParentTask({
+    required String taskId,
+    required bool paused,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final tid = taskId.trim();
+    if (tid.isEmpty) return 'task id required';
+    try {
+      final rows = await _fetchSubtaskRawRowsForTask(tid);
+      final map = await _pauseStatusPatch(
+        paused: paused,
+        updateByStaffLookupKey: updateByStaffLookupKey,
+      );
+      for (final row in rows) {
+        if (!_subtaskRowStatusNotDeleted(row)) continue;
+        final sid = row['id']?.toString().trim();
+        if (sid == null || sid.isEmpty) continue;
+        await PostgrestClient.instance
+            .from('subtask')
+            .update(map)
+            .eq('id', sid);
+      }
+      invalidateSubtasksCacheForTask(tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Restore every deleted [subtask] under [taskId] to Incomplete.
+  static Future<String?> markSubtasksRestoredForParentTask({
+    required String taskId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final tid = taskId.trim();
+    if (tid.isEmpty) return 'task id required';
+    try {
+      final rows = await _fetchSubtaskRawRowsForTask(tid);
+      final map = await _restoredWorkStatusPatch(
+        updateByStaffLookupKey: updateByStaffLookupKey,
+      );
+      for (final row in rows) {
+        if (!_subtaskRowIsDeleted(row)) continue;
+        final sid = row['id']?.toString().trim();
+        if (sid == null || sid.isEmpty) continue;
+        await PostgrestClient.instance
+            .from('subtask')
+            .update(map)
+            .eq('id', sid);
+      }
+      invalidateSubtasksCacheForTask(tid);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static bool _isDeletedStatusValue(String? value) {
+    final s = value?.trim().toLowerCase() ?? '';
+    return s == 'deleted' || s == 'delete';
+  }
+
+  static Future<Map<String, dynamic>> _pauseStatusPatch({
+    required bool paused,
+    String? updateByStaffLookupKey,
+  }) async {
+    final map = <String, dynamic>{
+      'pause_status': paused ? 'Paused' : 'Not Paused',
+      'update_date': HkTime.timestampForDb(),
+    };
+    final lookup = updateByStaffLookupKey?.trim();
+    if (lookup != null && lookup.isNotEmpty) {
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId != null && staffId.isNotEmpty) {
+        map['update_by'] = staffId;
+      }
+    }
+    return map;
+  }
+
+  static Future<Map<String, dynamic>> _restoredWorkStatusPatch({
+    String? updateByStaffLookupKey,
+  }) async {
+    final map = <String, dynamic>{
+      'status': 'Incomplete',
+      'update_date': HkTime.timestampForDb(),
+    };
+    final lookup = updateByStaffLookupKey?.trim();
+    if (lookup != null && lookup.isNotEmpty) {
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId != null && staffId.isNotEmpty) {
+        map['update_by'] = staffId;
+      }
+    }
+    return map;
   }
 
   static bool _isCompletedStatusValue(String? value) {
@@ -1427,7 +1554,7 @@ class DatabaseService {
     final statusRaw = _dbStatusRawFromRow(row['status']);
 
     final assigneeIds = <String>[];
-    for (var i = 1; i <= 10; i++) {
+    for (var i = 1; i <= taskAssigneeSlotCount; i++) {
       final key = 'assignee_${i.toString().padLeft(2, '0')}';
       final v = row[key];
       if (v == null) continue;
@@ -1547,7 +1674,7 @@ class DatabaseService {
     if (id == null || id.isEmpty) return null;
     final assignees = <String>[];
     final assigneeNames = <String>[];
-    for (var i = 1; i <= 20; i++) {
+    for (var i = 1; i <= projectAssigneeSlotCount; i++) {
       final key = 'assignee_${i.toString().padLeft(2, '0')}';
       final v = row[key]?.toString().trim();
       if (v != null && v.isNotEmpty) {
@@ -1563,7 +1690,7 @@ class DatabaseService {
     }
     final picUuids = <String>[];
     final picNames = <String>[];
-    for (var i = 1; i <= 20; i++) {
+    for (var i = 1; i <= projectAssigneeSlotCount; i++) {
       final key = 'pic_${i.toString().padLeft(2, '0')}';
       final v = row[key]?.toString().trim();
       if (v != null && v.isNotEmpty) {
@@ -1994,12 +2121,162 @@ class DatabaseService {
     }
   }
 
-  /// Inserts [`project`] row; [assignees] are `staff.id` uuid strings (up to 20).
+  /// Pause or resume every non-deleted task under [projectId], then each
+  /// task's non-deleted sub-tasks.
+  static Future<String?> setTasksAndSubtasksPauseForProject({
+    required String projectId,
+    required bool paused,
+    String? updateByStaffLookupKey,
+  }) async {
+    return _setTasksAndSubtasksPause(
+      projectId: projectId,
+      paused: paused,
+      updateByStaffLookupKey: updateByStaffLookupKey,
+    );
+  }
+
+  /// Restore every deleted task under [projectId] to Incomplete, then restore
+  /// deleted sub-tasks under those tasks (and under remaining live tasks).
+  static Future<String?> markTasksAndSubtasksRestoredForProject({
+    required String projectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    return _restoreTasksAndSubtasks(
+      projectId: projectId,
+      updateByStaffLookupKey: updateByStaffLookupKey,
+    );
+  }
+
+  /// Restore deleted sub-projects under [projectId] to Not started, then
+  /// restore their tasks and sub-tasks.
+  static Future<String?> markHierarchyRestoredForProject({
+    required String projectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final pid = projectId.trim();
+    if (pid.isEmpty) return 'project id required';
+    try {
+      final rows = await fetchSubprojectsForProject(pid);
+      for (final row in rows) {
+        if (!row.isDeleted) continue;
+        final err = await updateSubprojectRow(
+          subprojectId: row.id,
+          status: 'Not started',
+          updaterStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (err != null) return err;
+      }
+      return markTasksAndSubtasksRestoredForProject(
+        projectId: pid,
+        updateByStaffLookupKey: updateByStaffLookupKey,
+      );
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> _setTasksAndSubtasksPause({
+    String? projectId,
+    String? subprojectId,
+    required bool paused,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    try {
+      final rows = await _fetchTaskRawRows(
+        projectId: projectId,
+        subprojectId: subprojectId,
+      );
+      final map = await _pauseStatusPatch(
+        paused: paused,
+        updateByStaffLookupKey: updateByStaffLookupKey,
+      );
+      for (final row in rows) {
+        final status = _dbStatusRawFromRow(row['status']).toLowerCase();
+        if (status == 'deleted' || status == 'delete') continue;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        await PostgrestClient.instance.from('task').update(map).eq('id', taskId);
+        final subErr = await setSubtasksPauseForParentTask(
+          taskId: taskId,
+          paused: paused,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (subErr != null) return subErr;
+      }
+      clearSubtaskListMemoryCache();
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> _restoreTasksAndSubtasks({
+    String? projectId,
+    String? subprojectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    try {
+      final rows = await _fetchTaskRawRows(
+        projectId: projectId,
+        subprojectId: subprojectId,
+      );
+      final map = await _restoredWorkStatusPatch(
+        updateByStaffLookupKey: updateByStaffLookupKey,
+      );
+      for (final row in rows) {
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        final status = _dbStatusRawFromRow(row['status']).toLowerCase();
+        if (status == 'deleted' || status == 'delete') {
+          await PostgrestClient.instance
+              .from('task')
+              .update(map)
+              .eq('id', taskId);
+        }
+        final subErr = await markSubtasksRestoredForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (subErr != null) return subErr;
+      }
+      clearSubtaskListMemoryCache();
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchTaskRawRows({
+    String? projectId,
+    String? subprojectId,
+  }) async {
+    final pid = projectId?.trim() ?? '';
+    final sid = subprojectId?.trim() ?? '';
+    if (pid.isEmpty && sid.isEmpty) return [];
+    final res = sid.isNotEmpty
+        ? await PostgrestClient.instance
+              .from('task')
+              .select()
+              .eq('subproject_id', sid)
+        : await PostgrestClient.instance
+              .from('task')
+              .select()
+              .eq('project_id', pid);
+    return [
+      for (final raw in (res as List))
+        Map<String, dynamic>.from(raw as Map),
+    ];
+  }
+
+  /// Inserts [`project`] row; [assignees] are `staff.id` uuid strings (up to [projectAssigneeSlotCount]).
   static Future<({String? error, String? projectId})> insertProjectRow({
     required String name,
     List<String?> assignees = const [],
 
-    /// [`staff.id`] uuids; persisted in `project.pic_01` ... `pic_20`.
+    /// [`staff.id`] uuids; persisted in `project.pic_01` ... `pic_60`.
     List<String> picStaffUuids = const [],
     String? description,
     DateTime? startDate,
@@ -2013,15 +2290,15 @@ class DatabaseService {
     if (n.isEmpty) return (error: 'Project name is required', projectId: null);
     try {
       var padded = List<String?>.from(assignees);
-      while (padded.length < 20) {
+      while (padded.length < projectAssigneeSlotCount) {
         padded.add(null);
       }
-      if (padded.length > 20) padded = padded.sublist(0, 20);
+      if (padded.length > projectAssigneeSlotCount) padded = padded.sublist(0, projectAssigneeSlotCount);
       final picPadded = List<String?>.from(picStaffUuids);
-      while (picPadded.length < 20) {
+      while (picPadded.length < projectPicSlotCount) {
         picPadded.add(null);
       }
-      if (picPadded.length > 20) picPadded.removeRange(20, picPadded.length);
+      if (picPadded.length > projectPicSlotCount) picPadded.removeRange(projectPicSlotCount, picPadded.length);
       final now = HkTime.timestampForDb();
       final map = <String, dynamic>{
         'name': n,
@@ -2045,13 +2322,13 @@ class DatabaseService {
       if (endDate != null) {
         map['end_date'] = HkTime.dateOnlyHkMidnightForDb(endDate);
       }
-      for (var i = 0; i < 20; i++) {
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final raw = padded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
         }
       }
-      for (var i = 0; i < 20; i++) {
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final raw = picPadded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['pic_${(i + 1).toString().padLeft(2, '0')}'] = raw;
@@ -2075,7 +2352,7 @@ class DatabaseService {
     String? description,
     List<String?>? assigneeSlots,
 
-    /// When non-null, replaces `project.pic_01` ... `pic_20` (`staff.id` uuids).
+    /// When non-null, replaces `project.pic_01` ... `pic_60` (`staff.id` uuids).
     List<String>? picStaffUuids,
     DateTime? startDate,
     DateTime? endDate,
@@ -2094,14 +2371,14 @@ class DatabaseService {
       if (name != null) map['name'] = name;
       if (description != null) map['description'] = description;
       if (assigneeSlots != null) {
-        for (var i = 0; i < 20; i++) {
+        for (var i = 0; i < projectAssigneeSlotCount; i++) {
           final key = 'assignee_${(i + 1).toString().padLeft(2, '0')}';
           final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
           map[key] = (v == null || v.isEmpty) ? null : v;
         }
       }
       if (picStaffUuids != null) {
-        for (var i = 0; i < 20; i++) {
+        for (var i = 0; i < projectAssigneeSlotCount; i++) {
           final key = 'pic_${(i + 1).toString().padLeft(2, '0')}';
           final v = i < picStaffUuids.length ? picStaffUuids[i].trim() : null;
           map[key] = (v == null || v.isEmpty) ? null : v;
@@ -2139,12 +2416,26 @@ class DatabaseService {
           .update(map)
           .eq('id', projectId);
       if (updatePauseStatus) {
+        final paused = pauseStatus?.trim() == 'Paused';
         final pauseErr = await setSubprojectsPauseForProject(
           projectId: projectId,
-          paused: pauseStatus?.trim() == 'Paused',
+          paused: paused,
           updateByStaffLookupKey: updateByStaffLookupKey,
         );
         if (pauseErr != null) return pauseErr;
+        final taskPauseErr = await setTasksAndSubtasksPauseForProject(
+          projectId: projectId,
+          paused: paused,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (taskPauseErr != null) return taskPauseErr;
+      }
+      if (_isDeletedStatusValue(status)) {
+        final cascadeErr = await markTasksAndSubtasksDeletedForProject(
+          projectId: projectId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+        if (cascadeErr != null) return cascadeErr;
       }
       if (_isCompletedStatusValue(status)) {
         final spErr = await markSubprojectsCompletedForProject(
@@ -2423,7 +2714,7 @@ class DatabaseService {
     final createBy = _nullableTrimmedString(row['create_by']);
     final assignees = <String>[];
     final assigneeNames = <String>[];
-    for (var i = 1; i <= 20; i++) {
+    for (var i = 1; i <= projectAssigneeSlotCount; i++) {
       final key = 'assignee_${i.toString().padLeft(2, '0')}';
       final v = row[key]?.toString().trim();
       if (v == null || v.isEmpty) continue;
@@ -2438,7 +2729,7 @@ class DatabaseService {
     }
     final picUuids = <String>[];
     final picNames = <String>[];
-    for (var i = 1; i <= 20; i++) {
+    for (var i = 1; i <= projectAssigneeSlotCount; i++) {
       final key = 'pic_${i.toString().padLeft(2, '0')}';
       final v = row[key]?.toString().trim();
       if (v == null || v.isEmpty) continue;
@@ -2558,22 +2849,22 @@ class DatabaseService {
         map['end_date'] = HkTime.dateOnlyHkMidnightForDb(endDate);
       }
       var padded = List<String?>.from(assignees);
-      while (padded.length < 20) {
+      while (padded.length < projectAssigneeSlotCount) {
         padded.add(null);
       }
-      if (padded.length > 20) padded = padded.sublist(0, 20);
-      for (var i = 0; i < 20; i++) {
+      if (padded.length > projectAssigneeSlotCount) padded = padded.sublist(0, projectAssigneeSlotCount);
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final raw = padded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
         }
       }
       final picPadded = List<String?>.from(picStaffUuids);
-      while (picPadded.length < 20) {
+      while (picPadded.length < projectPicSlotCount) {
         picPadded.add(null);
       }
-      if (picPadded.length > 20) picPadded.removeRange(20, picPadded.length);
-      for (var i = 0; i < 20; i++) {
+      if (picPadded.length > projectPicSlotCount) picPadded.removeRange(projectPicSlotCount, picPadded.length);
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final raw = picPadded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['pic_${(i + 1).toString().padLeft(2, '0')}'] = raw;
@@ -2637,14 +2928,14 @@ class DatabaseService {
     }
     if (sortOrder != null) map['sort_order'] = sortOrder;
     if (assigneeSlots != null) {
-      for (var i = 0; i < 20; i++) {
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final key = 'assignee_${(i + 1).toString().padLeft(2, '0')}';
         final v = i < assigneeSlots.length ? assigneeSlots[i]?.trim() : null;
         map[key] = (v == null || v.isEmpty) ? null : v;
       }
     }
     if (picStaffUuids != null) {
-      for (var i = 0; i < 20; i++) {
+      for (var i = 0; i < projectAssigneeSlotCount; i++) {
         final key = 'pic_${(i + 1).toString().padLeft(2, '0')}';
         final v = i < picStaffUuids.length ? picStaffUuids[i].trim() : null;
         map[key] = (v == null || v.isEmpty) ? null : v;
@@ -2661,6 +2952,21 @@ class DatabaseService {
     if (map.isEmpty) return null;
     try {
       await PostgrestClient.instance.from('subproject').update(map).eq('id', id);
+      if (updatePauseStatus) {
+        final pauseErr = await setTasksAndSubtasksPauseForSubproject(
+          subprojectId: id,
+          paused: pauseStatus?.trim() == 'Paused',
+          updateByStaffLookupKey: updaterStaffLookupKey,
+        );
+        if (pauseErr != null) return pauseErr;
+      }
+      if (_isDeletedStatusValue(status)) {
+        final cascadeErr = await markTasksAndSubtasksDeletedForSubproject(
+          subprojectId: id,
+          updateByStaffLookupKey: updaterStaffLookupKey,
+        );
+        if (cascadeErr != null) return cascadeErr;
+      }
       if (_isCompletedStatusValue(status)) {
         return markTasksAndSubtasksCompletedForSubproject(
           subprojectId: id,
@@ -2681,10 +2987,6 @@ class DatabaseService {
     final id = subprojectId.trim();
     if (id.isEmpty) return 'Invalid sub-project';
     try {
-      await PostgrestClient.instance
-          .from('task')
-          .update({'subproject_id': null})
-          .eq('subproject_id', id);
       return updateSubprojectRow(
         subprojectId: id,
         status: 'Deleted',
@@ -2692,6 +2994,191 @@ class DatabaseService {
       );
     } catch (e) {
       return e.toString();
+    }
+  }
+
+  static Future<String?> setTasksAndSubtasksPauseForSubproject({
+    required String subprojectId,
+    required bool paused,
+    String? updateByStaffLookupKey,
+  }) async {
+    return _setTasksAndSubtasksPause(
+      subprojectId: subprojectId,
+      paused: paused,
+      updateByStaffLookupKey: updateByStaffLookupKey,
+    );
+  }
+
+  static Future<String?> markTasksAndSubtasksDeletedForSubproject({
+    required String subprojectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final sid = subprojectId.trim();
+    if (sid.isEmpty) return 'sub-project id required';
+    try {
+      final rows = await _fetchTaskRawRows(subprojectId: sid);
+      final lookup = updateByStaffLookupKey?.trim();
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      };
+      if (lookup != null && lookup.isNotEmpty) {
+        final staffId = await _staffRowIdForAssigneeKey(lookup);
+        if (staffId != null && staffId.isNotEmpty) {
+          map['update_by'] = staffId;
+        }
+      }
+      for (final row in rows) {
+        final status = _dbStatusRawFromRow(row['status']).toLowerCase();
+        if (status == 'deleted' || status == 'delete') continue;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        await PostgrestClient.instance
+            .from('task')
+            .update(map)
+            .eq('id', taskId);
+        await markSubtasksDeletedForParentTask(
+          taskId: taskId,
+          updateByStaffLookupKey: updateByStaffLookupKey,
+        );
+      }
+      clearSubtaskListMemoryCache();
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> markTasksAndSubtasksRestoredForSubproject({
+    required String subprojectId,
+    String? updateByStaffLookupKey,
+  }) async {
+    return _restoreTasksAndSubtasks(
+      subprojectId: subprojectId,
+      updateByStaffLookupKey: updateByStaffLookupKey,
+    );
+  }
+
+  static bool _hierarchyRecordWouldChange({
+    required bool deleted,
+    required bool completed,
+    required bool paused,
+    required HierarchyCascadeAction action,
+  }) {
+    switch (action) {
+      case HierarchyCascadeAction.complete:
+        return !deleted && !completed;
+      case HierarchyCascadeAction.delete:
+        return !deleted;
+      case HierarchyCascadeAction.pause:
+        return !deleted && !paused;
+      case HierarchyCascadeAction.resume:
+        return !deleted && paused;
+      case HierarchyCascadeAction.restore:
+        return deleted;
+    }
+  }
+
+  static bool _hierarchyMapWouldChange(
+    Map<String, dynamic> row,
+    HierarchyCascadeAction action,
+  ) {
+    final status = _dbStatusRawFromRow(row['status']);
+    return _hierarchyRecordWouldChange(
+      deleted: _isDeletedStatusValue(status),
+      completed: _isCompletedStatusValue(status),
+      paused:
+          (row['pause_status']?.toString().trim().toLowerCase() ?? '') ==
+          'paused',
+      action: action,
+    );
+  }
+
+  static Future<int> _countSubtasksThatWouldChange(
+    String taskId,
+    HierarchyCascadeAction action,
+  ) async {
+    final rows = await _fetchSubtaskRawRowsForTask(taskId);
+    var n = 0;
+    for (final row in rows) {
+      if (_hierarchyMapWouldChange(row, action)) n += 1;
+    }
+    return n;
+  }
+
+  static Future<HierarchyCascadeCounts> countCascadeForTask({
+    required String taskId,
+    required HierarchyCascadeAction action,
+  }) async {
+    if (!_enabled) return const HierarchyCascadeCounts();
+    final tid = taskId.trim();
+    if (tid.isEmpty) return const HierarchyCascadeCounts();
+    try {
+      return HierarchyCascadeCounts(
+        subtasks: await _countSubtasksThatWouldChange(tid, action),
+      );
+    } catch (_) {
+      return const HierarchyCascadeCounts();
+    }
+  }
+
+  static Future<HierarchyCascadeCounts> countCascadeForSubproject({
+    required String subprojectId,
+    required HierarchyCascadeAction action,
+  }) async {
+    if (!_enabled) return const HierarchyCascadeCounts();
+    final sid = subprojectId.trim();
+    if (sid.isEmpty) return const HierarchyCascadeCounts();
+    try {
+      var tasks = 0;
+      var subtasks = 0;
+      for (final row in await _fetchTaskRawRows(subprojectId: sid)) {
+        if (_hierarchyMapWouldChange(row, action)) tasks += 1;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        subtasks += await _countSubtasksThatWouldChange(taskId, action);
+      }
+      return HierarchyCascadeCounts(tasks: tasks, subtasks: subtasks);
+    } catch (_) {
+      return const HierarchyCascadeCounts();
+    }
+  }
+
+  static Future<HierarchyCascadeCounts> countCascadeForProject({
+    required String projectId,
+    required HierarchyCascadeAction action,
+  }) async {
+    if (!_enabled) return const HierarchyCascadeCounts();
+    final pid = projectId.trim();
+    if (pid.isEmpty) return const HierarchyCascadeCounts();
+    try {
+      var subprojects = 0;
+      for (final row in await fetchSubprojectsForProject(pid)) {
+        if (_hierarchyRecordWouldChange(
+          deleted: row.isDeleted,
+          completed: row.isCompleted,
+          paused: row.isPaused,
+          action: action,
+        )) {
+          subprojects += 1;
+        }
+      }
+      var tasks = 0;
+      var subtasks = 0;
+      for (final row in await _fetchTaskRawRows(projectId: pid)) {
+        if (_hierarchyMapWouldChange(row, action)) tasks += 1;
+        final taskId = row['id']?.toString().trim();
+        if (taskId == null || taskId.isEmpty) continue;
+        subtasks += await _countSubtasksThatWouldChange(taskId, action);
+      }
+      return HierarchyCascadeCounts(
+        subprojects: subprojects,
+        tasks: tasks,
+        subtasks: subtasks,
+      );
+    } catch (_) {
+      return const HierarchyCascadeCounts();
     }
   }
 
@@ -3447,7 +3934,7 @@ class DatabaseService {
         () => db.from('subtask').select('task_id').inFilter('pic', keys),
       ),
     ];
-    for (var i = 1; i <= 10; i++) {
+    for (var i = 1; i <= taskAssigneeSlotCount; i++) {
       final col = 'assignee_${i.toString().padLeft(2, '0')}';
       futures.add(
         runQuery(
@@ -3506,7 +3993,7 @@ class DatabaseService {
     }
 
     if (assigneeUuids.isNotEmpty) {
-      for (var i = 1; i <= 10; i++) {
+      for (var i = 1; i <= taskAssigneeSlotCount; i++) {
         final col = 'assignee_${i.toString().padLeft(2, '0')}';
         futures.add(
           runQuery(
@@ -3570,7 +4057,7 @@ class DatabaseService {
   /// Loads tasks from the database.
   ///
   /// When [visibility] is set, only singular `task` rows are fetched where
-  /// `create_by` or any `assignee_01`…`assignee_10` matches the supervisor or
+  /// `create_by` or any `assignee_01`…`assignee_25` matches the supervisor or
   /// a subordinate (`staff.app_id` or `staff.id`), or the person is PIC /
   /// assignee on a child `subtask`. Legacy plural `tasks` is skipped.
   static Future<TasksLoadResult?> fetchTasks({
@@ -3690,33 +4177,33 @@ class DatabaseService {
   static Future<List<String?>> assigneeSlotsForTask(
     List<String> staffKeys,
   ) async {
-    if (!_enabled) return List<String?>.filled(10, null);
+    if (!_enabled) return List<String?>.filled(taskAssigneeSlotCount, null);
     final out = <String?>[];
-    for (final key in staffKeys.take(10)) {
+    for (final key in staffKeys.take(taskAssigneeSlotCount)) {
       final id = await _staffRowIdForAssigneeKey(key);
       out.add(id);
     }
-    while (out.length < 10) {
+    while (out.length < taskAssigneeSlotCount) {
       out.add(null);
     }
-    return out.take(10).toList();
+    return out.take(taskAssigneeSlotCount).toList();
   }
 
   /// Maps assignee keys (`staff.app_id` or `staff.id` uuid) to `staff.id`
-  /// for `project.assignee_01` ... `project.assignee_20`.
+  /// for `project.assignee_01` ... `project.assignee_60`.
   static Future<List<String?>> assigneeSlotsForProject(
     List<String> staffKeys,
   ) async {
-    if (!_enabled) return List<String?>.filled(20, null);
+    if (!_enabled) return List<String?>.filled(projectAssigneeSlotCount, null);
     final out = <String?>[];
-    for (final key in staffKeys.take(20)) {
+    for (final key in staffKeys.take(projectAssigneeSlotCount)) {
       final id = await _staffRowIdForAssigneeKey(key);
       out.add(id);
     }
-    while (out.length < 20) {
+    while (out.length < projectAssigneeSlotCount) {
       out.add(null);
     }
-    return out.take(20).toList();
+    return out.take(projectAssigneeSlotCount).toList();
   }
 
   /// Returns [staff.app_id] when set, else [staffUuid] — matches how [Task.assigneeIds] is stored after fetch.
@@ -3794,7 +4281,7 @@ class DatabaseService {
   }
 
   /// Inserts one row into the singular [`task`] table (not legacy [`tasks`]).
-  /// [assignees] — up to 10 values, each the string form of **`staff.id`** (uuid).
+  /// [assignees] — up to [taskAssigneeSlotCount] values, each the string form of **`staff.id`** (uuid).
   /// [status] — must match your DB `task.status` constraint (default `Incomplete`).
   /// [creatorStaffLookupKey] — `staff.app_id` or `staff.id` (uuid); sets `create_by` to
   /// resolved **`staff.id`** and `create_date` to now. `update_by` / `update_date` left unset (NULL).
@@ -3832,11 +4319,11 @@ class DatabaseService {
     if (name.isEmpty) return (error: 'task_name is required', taskId: null);
     try {
       var padded = List<String?>.from(assignees);
-      while (padded.length < 10) {
+      while (padded.length < taskAssigneeSlotCount) {
         padded.add(null);
       }
-      if (padded.length > 10) {
-        padded = padded.sublist(0, 10);
+      if (padded.length > taskAssigneeSlotCount) {
+        padded = padded.sublist(0, taskAssigneeSlotCount);
       }
       final s = status.trim();
       if (s.isEmpty) return (error: 'status is required', taskId: null);
@@ -3876,7 +4363,7 @@ class DatabaseService {
       if (dueDate != null) {
         map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
       }
-      for (var i = 0; i < 10; i++) {
+      for (var i = 0; i < taskAssigneeSlotCount; i++) {
         final raw = padded[i]?.trim();
         if (raw != null && raw.isNotEmpty) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = raw;
@@ -4157,7 +4644,7 @@ class DatabaseService {
     final taskId = row['task_id']?.toString() ?? '';
     if (id.isEmpty || taskId.isEmpty) return null;
     final assigneeIds = <String>[];
-    for (var i = 1; i <= 10; i++) {
+    for (var i = 1; i <= taskAssigneeSlotCount; i++) {
       final key = 'assignee_${i.toString().padLeft(2, '0')}';
       final v = row[key];
       if (v == null) continue;
@@ -4295,7 +4782,7 @@ class DatabaseService {
     List<String?> staffKeys,
   ) async {
     final out = <String?>[];
-    for (final key in staffKeys.take(10)) {
+    for (final key in staffKeys.take(taskAssigneeSlotCount)) {
       final lookup = key?.trim();
       if (lookup == null || lookup.isEmpty) {
         out.add(null);
@@ -4303,7 +4790,7 @@ class DatabaseService {
       }
       out.add(await _staffRowIdForAssigneeKey(lookup));
     }
-    while (out.length < 10) {
+    while (out.length < taskAssigneeSlotCount) {
       out.add(null);
     }
     return out;
@@ -4660,7 +5147,7 @@ class DatabaseService {
       if (dueDate != null) {
         map['due_date'] = HkTime.dateOnlyHkMidnightForDb(dueDate);
       }
-      for (var i = 0; i < 10; i++) {
+      for (var i = 0; i < taskAssigneeSlotCount; i++) {
         final staffId = assigneeStaffIds[i]?.trim();
         if (staffId != null && staffId.isNotEmpty) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] = staffId;
@@ -4782,7 +5269,7 @@ class DatabaseService {
         final assigneeStaffIds = await _staffRowIdSlotsForAssigneeKeys(
           assigneeSlots,
         );
-        for (var i = 0; i < 10; i++) {
+        for (var i = 0; i < taskAssigneeSlotCount; i++) {
           map['assignee_${(i + 1).toString().padLeft(2, '0')}'] =
               assigneeStaffIds[i];
         }

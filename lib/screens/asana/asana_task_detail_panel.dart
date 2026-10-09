@@ -18,11 +18,13 @@ import '../../services/attachment_upload_service.dart';
 import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../utils/due_span_policy.dart';
+import '../../utils/hierarchy_cascade.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/holiday_date_picker.dart';
 import '../../utils/singular_workflow_guards.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
 import 'asana_attachment_draft_tile.dart';
@@ -1662,15 +1664,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 onFocusChange: (hasFocus) {
                   if (!hasFocus) _savePostedCommentOnBlur(c);
                 },
-                child: AsanaHoverTextField(
-                  controller: _postedCommentControllers[c.id]!,
-                  canEdit: true,
-                  readOnly: _saving || _savingPostedCommentId == c.id,
-                  maxLines: 8,
-                  minLines: 2,
-                  style: asanaDetailMultilineValueStyle(
-                    context,
-                  ).copyWith(color: kAsanaTextPrimary),
+                child: AsanaFileDropRegion(
+                  enabled: !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'task_comment',
+                    entityId: c.id,
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _postedCommentControllers[c.id]!,
+                    canEdit: true,
+                    readOnly: _saving || _savingPostedCommentId == c.id,
+                    maxLines: 8,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(
+                      context,
+                    ).copyWith(color: kAsanaTextPrimary),
+                  ),
                 ),
               ),
               InlineImageToolbar(
@@ -2048,15 +2060,71 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return [state.userStaffAppId, picKey, ..._effectiveAssigneeIdsForSave()];
   }
 
-  Future<void> _addFileAttachment({Task? task}) async {
+  Future<void> _addFileAttachment({
+    Task? task,
+    List<PickedFileBytes>? dropped,
+  }) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (task != null) {
       final state = context.read<AppState>();
       final picKey = _picAssigneeId ?? task.pic ?? '';
+      if (dropped != null) {
+        if (dropped.isEmpty) return;
+        final uploaded = <({String url, String label})>[];
+        for (final file in dropped) {
+          final label = file.name.trim().isEmpty
+              ? 'attachment'
+              : file.name.trim();
+          final sizeError = AttachmentUploadService.uploadSizeError(
+            file.bytes.length,
+            label,
+          );
+          if (sizeError != null) {
+            await _showInfo('Attachment upload failed', sizeError);
+            return;
+          }
+          final upload = await _withBlockingLoading(
+            () => AttachmentUploadService.uploadBytesForTask(
+              task.id,
+              bytes: file.bytes,
+              originalFilename: label,
+              aclStaffKeys: _createAttachmentAclKeys(state, picKey),
+            ),
+          );
+          if (upload == null || !mounted) return;
+          if (upload.error != null) {
+            await _showInfo('Attachment upload failed', upload.error!);
+            return;
+          }
+          final url = upload.url?.trim();
+          if (url == null || url.isEmpty) {
+            await _showInfo(
+              'Attachment upload failed',
+              'File upload did not return a download link.',
+            );
+            return;
+          }
+          uploaded.add((url: url, label: upload.label ?? label));
+        }
+        if (!mounted || uploaded.isEmpty) return;
+        setState(() {
+          for (final file in uploaded) {
+            _attachments.add(
+              _AttachmentDraft(
+                url: file.url,
+                desc: file.label,
+                mimeType: _attachmentMimeTypeFromName(file.label),
+              ),
+            );
+          }
+        });
+        return;
+      }
       final r = await _withBlockingLoading(
         () => AttachmentUploadService.pickUploadFilesForTask(
           task.id,
           aclStaffKeys: _createAttachmentAclKeys(state, picKey),
+          allowMultiple: true,
         ),
       );
       if (!mounted) return;
@@ -2078,19 +2146,39 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         }
       });
     } else {
-      final picked = await _withBlockingLoading(
-        AttachmentUploadService.pickFilesForUpload,
-      );
-      if (!mounted) return;
-      if (picked?.error != null) {
-        await _showInfo('Attachment upload failed', picked!.error!);
-        return;
+      late final List<({Uint8List bytes, String label})> staged;
+      if (dropped != null) {
+        if (dropped.isEmpty) return;
+        staged = [];
+        for (final file in dropped) {
+          final label = file.name.trim().isEmpty
+              ? 'attachment'
+              : file.name.trim();
+          final sizeError = AttachmentUploadService.uploadSizeError(
+            file.bytes.length,
+            label,
+          );
+          if (sizeError != null) {
+            await _showInfo('Attachment upload failed', sizeError);
+            return;
+          }
+          staged.add((bytes: file.bytes, label: label));
+        }
+      } else {
+        final picked = await _withBlockingLoading(
+          () => AttachmentUploadService.pickFilesForUpload(allowMultiple: true),
+        );
+        if (!mounted) return;
+        if (picked?.error != null) {
+          await _showInfo('Attachment upload failed', picked!.error!);
+          return;
+        }
+        staged = picked?.files ?? const <({Uint8List bytes, String label})>[];
       }
-      final files =
-          picked?.files ?? const <({Uint8List bytes, String label})>[];
-      if (files.isEmpty) return;
+      if (!mounted) return;
+      if (staged.isEmpty) return;
       setState(() {
-        for (final file in files) {
+        for (final file in staged) {
           _attachments.add(
             _AttachmentDraft(
               pendingBytes: file.bytes,
@@ -2154,37 +2242,46 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _stageInlineImage({
     required String entityType,
     required String entityId,
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    final picked = await _withBlockingLoading(pickOneFileWithBytes);
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
-      await _showInfo(
-        'Inline image upload failed',
-        'Could not read file data.',
-      );
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await _showInfo('Inline image upload failed', resolved.error!);
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    final id = 'draft_${DateTime.now().microsecondsSinceEpoch}';
-    setState(
-      () => _pendingInlineImageAdds.add(
-        _InlineImageDraft(
-          id: id,
-          entityType: entityType,
-          entityId: entityId,
-          bytes: picked.bytes,
-          label: label,
-          sortOrder: _pendingInlineImageAdds
-              .where(
-                (draft) =>
-                    draft.entityType == entityType &&
-                    draft.entityId == entityId,
-              )
-              .length,
-        ),
-      ),
-    );
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == entityType && draft.entityId == entityId,
+          )
+          .length;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _InlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: entityType,
+            entityId: entityId,
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await _showInfo('Inline image', resolved.warning!);
+    }
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
@@ -2324,6 +2421,13 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     final assigneeIds = _effectiveAssigneeIdsForSave();
     if (assigneeIds.isEmpty) {
       await _showInfo('Assignee required', 'Select at least one assignee.');
+      return false;
+    }
+    if (assigneeIds.length > DatabaseService.taskAssigneeSlotCount) {
+      await _showInfo(
+        'Too many assignees',
+        'Select no more than ${DatabaseService.taskAssigneeSlotCount} assignees.',
+      );
       return false;
     }
     if (assigneeIds.length == 1 && _picAssigneeId == null) {
@@ -3061,9 +3165,30 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     return true;
   }
 
+  Future<bool> _confirmTaskCascade(
+    String taskId,
+    HierarchyCascadeAction action,
+  ) async {
+    final counts = await DatabaseService.countCascadeForTask(
+      taskId: taskId,
+      action: action,
+    );
+    if (!mounted) return false;
+    return confirmHierarchyCascadeIfNeeded(
+      context: context,
+      palette: widget.palette,
+      action: action,
+      parentKind: 'task',
+      counts: counts,
+    );
+  }
+
   Future<void> _markCompleted(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
+    if (!await _confirmTaskCascade(task.id, HierarchyCascadeAction.complete)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -3301,6 +3426,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _undoDeleted(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
+    if (!await _confirmTaskCascade(task.id, HierarchyCascadeAction.restore)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -3317,6 +3445,17 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       );
       if (err != null && mounted) {
         await _showInfo('Could not restore task', err);
+        return;
+      }
+      final cascadeErr = await DatabaseService.markSubtasksRestoredForParentTask(
+        taskId: task.id,
+        updateByStaffLookupKey: state.userStaffAppId,
+      );
+      if (cascadeErr != null && mounted) {
+        await _showInfo(
+          'Task restored, but sub-tasks were not fully restored',
+          cascadeErr,
+        );
         return;
       }
       if (!await _commitExistingTaskInlineChanges(state, task)) return;
@@ -3349,14 +3488,27 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   Future<void> _deleteTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
-    final go = await showAsanaConfirmDialog(
-      context: context,
-      title: 'Delete task?',
-      content: 'This marks the task as deleted.',
-      confirmText: 'Delete',
-      isDestructive: true,
-      palette: widget.palette,
+    final counts = await DatabaseService.countCascadeForTask(
+      taskId: task.id,
+      action: HierarchyCascadeAction.delete,
     );
+    if (!mounted) return;
+    final go = counts.hasChanges
+        ? await confirmHierarchyCascadeIfNeeded(
+            context: context,
+            palette: widget.palette,
+            action: HierarchyCascadeAction.delete,
+            parentKind: 'task',
+            counts: counts,
+          )
+        : await showAsanaConfirmDialog(
+            context: context,
+            title: 'Delete task?',
+            content: 'This marks the task as deleted.',
+            confirmText: 'Delete',
+            isDestructive: true,
+            palette: widget.palette,
+          );
     if (go != true || !mounted) return;
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -3421,6 +3573,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       return;
     }
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
+    if (!await _confirmTaskCascade(task.id, HierarchyCascadeAction.pause)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -3443,6 +3598,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
       }
       state.replaceTask(composite.updatedTask.copyWith(pauseStatus: 'Paused'));
       _notifyChanged();
+      await _loadSubtasks();
       await _notifyEmail(
         'Task paused email',
         (token) => BackendApi().notifyTaskPaused(
@@ -3463,6 +3619,9 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_isCreator(state, task) || !_taskPaused(task)) return;
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
+    if (!await _confirmTaskCascade(task.id, HierarchyCascadeAction.resume)) {
+      return;
+    }
     _setSaving(true);
     AsanaBlockingLoadingOverlay.show(context);
     try {
@@ -3487,6 +3646,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         composite.updatedTask.copyWith(pauseStatus: 'Not Paused'),
       );
       _notifyChanged();
+      await _loadSubtasks();
       await _notifyEmail(
         'Task resumed email',
         (token) => BackendApi().notifyTaskResumed(
@@ -3688,6 +3848,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     required bool addEnabled,
     required String addTooltip,
     required void Function(BuildContext buttonContext)? onAdd,
+    void Function(List<PickedFileBytes> files)? onDropFiles,
     LayerLink? addAnchorLink,
     bool allowRemove = true,
     BuildContext? editAnchorContext,
@@ -3711,12 +3872,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             ),
           ),
           Expanded(
-            child: _attachmentValueList(
-              context,
-              attachments,
-              createMode: createMode,
-              allowRemove: allowRemove,
-              editAnchorContext: editAnchorContext,
+            child: asanaAttachmentValuesWithFileDrop(
+              enabled: addEnabled,
+              onDropFiles: onDropFiles,
+              child: _attachmentValueList(
+                context,
+                attachments,
+                createMode: createMode,
+                allowRemove: allowRemove,
+                editAnchorContext: editAnchorContext,
+              ),
             ),
           ),
         ],
@@ -4071,15 +4236,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _descController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  showOutline: false,
-                  maxLines: 8,
-                  minLines: 3,
-                  hintText: 'Please fill in task description',
-                  style: asanaDetailMultilineValueStyle(context),
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'task_description',
+                    entityId: 'draft_description',
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _descController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    showOutline: false,
+                    maxLines: 8,
+                    minLines: 3,
+                    hintText: 'Please fill in task description',
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: canEdit && !_saving,
@@ -4285,6 +4460,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             addEnabled: canEdit && !_saving,
             addTooltip: 'Add file',
             onAdd: (_) => _addFileAttachment(),
+            onDropFiles: (files) => _addFileAttachment(dropped: files),
             allowRemove: canEdit,
           ),
           _attachmentTwoColumnRow(
@@ -4305,15 +4481,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _commentController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  showOutline: true,
-                  maxLines: 4,
-                  minLines: 2,
-                  hintText: 'Optional comment',
-                  style: asanaDetailMultilineValueStyle(context),
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'task_comment',
+                    entityId: 'draft',
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _commentController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    showOutline: true,
+                    maxLines: 4,
+                    minLines: 2,
+                    hintText: 'Optional comment',
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: canEdit && !_saving,
@@ -4445,15 +4631,25 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _descController,
-                  canEdit: canEdit,
-                  readOnly: _saving,
-                  showOutline: false,
-                  maxLines: 8,
-                  minLines: 2,
-                  hintText: 'Please fill in task description',
-                  style: asanaDetailMultilineValueStyle(context),
+                AsanaFileDropRegion(
+                  enabled: canEdit && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'task_description',
+                    entityId: task.id,
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _descController,
+                    canEdit: canEdit,
+                    readOnly: _saving,
+                    showOutline: false,
+                    maxLines: 8,
+                    minLines: 2,
+                    hintText: 'Please fill in task description',
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
                 if (canEdit)
                   InlineImageToolbar(
@@ -4733,6 +4929,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                   !_saving,
               addTooltip: 'Add file',
               onAdd: (_) => _addFileAttachment(task: task),
+              onDropFiles: (files) =>
+                  _addFileAttachment(task: task, dropped: files),
               allowRemove: !adminReadOnly && _canEditAttachments(state, task),
             ),
             Builder(
@@ -4766,13 +4964,23 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (!adminReadOnly && _canWriteComments(state, task)) ...[
-                  AsanaHoverTextField(
-                    controller: _commentController,
-                    canEdit: true,
-                    readOnly: _saving,
-                    maxLines: 4,
-                    minLines: 2,
-                    style: asanaDetailMultilineValueStyle(context),
+                  AsanaFileDropRegion(
+                    enabled: !_saving,
+                    imagesOnly: true,
+                    onFiles: (files, rejected) => _stageInlineImage(
+                      entityType: 'task_comment',
+                      entityId: 'draft',
+                      files: files,
+                      rejectedNonImages: rejected,
+                    ),
+                    child: AsanaHoverTextField(
+                      controller: _commentController,
+                      canEdit: true,
+                      readOnly: _saving,
+                      maxLines: 4,
+                      minLines: 2,
+                      style: asanaDetailMultilineValueStyle(context),
+                    ),
                   ),
                   InlineImageToolbar(
                     enabled: !_saving,

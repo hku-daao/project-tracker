@@ -18,6 +18,12 @@ class AttachmentUploadService {
 
   static const int _maxBytes = 10 * 1024 * 1024;
   static const String _maxSizeLabel = '10 MB';
+
+  static String? uploadSizeError(int byteLength, String label) {
+    if (byteLength <= _maxBytes) return null;
+    final name = label.trim().isEmpty ? 'attachment' : label.trim();
+    return 'File "$name" is larger than $_maxSizeLabel. It was not uploaded or saved.';
+  }
   static const int aclMetadataSlotCount = 10;
   static const String storageMetadataOriginalFileNameKey = 'originalFileName';
 

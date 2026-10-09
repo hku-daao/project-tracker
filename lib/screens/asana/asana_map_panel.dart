@@ -6,17 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../config/dev_auth_context.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/subproject_record.dart';
 import '../../models/task.dart';
+import '../../priority.dart';
 import '../../services/asana_filter_cookie_storage.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_date_range_picker.dart';
-import 'asana_due_badge.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
 import 'asana_task_filter.dart';
@@ -46,7 +47,8 @@ class AsanaMapPanel extends StatefulWidget {
   State<AsanaMapPanel> createState() => _AsanaMapPanelState();
 }
 
-class _AsanaMapPanelState extends State<AsanaMapPanel> {
+class _AsanaMapPanelState extends State<AsanaMapPanel>
+    with TickerProviderStateMixin {
   final Map<String, List<SingularSubtask>> _subtasksByTask = {};
   final Set<String> _expandedProjectIds = {};
   final Set<String> _expandedTaskIds = {};
@@ -81,6 +83,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   DateTime? _subtaskExpectedDueEnd;
   String _sortKey = 'due_asc';
   bool _showProjectsWithoutTasks = true;
+  final _saved = _MapAdvancedSettings();
+  _MapDisplayMode _displayMode = _MapDisplayMode.all;
+  late final AnimationController _filterPaneController;
   String _dataSig = '';
   int _loadGeneration = 0;
   bool _loadingSubtasks = false;
@@ -95,10 +100,20 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   @override
   void initState() {
     super.initState();
+    _filterPaneController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
     _loadSavedFilters();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _refreshSubtasks();
     });
+  }
+
+  @override
+  void dispose() {
+    _filterPaneController.dispose();
+    super.dispose();
   }
 
   void _loadSavedFilters() {
@@ -113,83 +128,142 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   }
 
   void _applyFilters(VoidCallback apply) {
-    setState(apply);
+    setState(() {
+      apply();
+      if (_displayMode == _MapDisplayMode.advanced) {
+        _copySavedAdvancedToLive();
+      }
+    });
     _persistFilters();
   }
 
   Map<String, dynamic> _toCookieJson() => {
-    'projectCreatorTeamIds': _projectCreatorTeamIds.toList(),
     'projectCreatorIds': _projectCreatorIds.toList(),
     'projectPicIds': _projectPicIds.toList(),
-    'projectStatuses': _projectStatuses.toList(),
-    'subprojectCreatorTeamIds': _subprojectCreatorTeamIds.toList(),
-    'subprojectCreatorIds': _subprojectCreatorIds.toList(),
-    'subprojectPicIds': _subprojectPicIds.toList(),
-    'subprojectStatuses': _subprojectStatuses.toList(),
-    'subprojectStartMonth': _subprojectStartMonth?.millisecondsSinceEpoch,
-    'subprojectEndMonth': _subprojectEndMonth?.millisecondsSinceEpoch,
-    'taskCreatorTeamIds': _taskCreatorTeamIds.toList(),
-    'taskCreatorIds': _taskCreatorIds.toList(),
-    'taskPicIds': _taskPicIds.toList(),
-    'taskStatuses': _taskStatuses.toList(),
-    'subtaskCreatorTeamIds': _subtaskCreatorTeamIds.toList(),
-    'subtaskCreatorIds': _subtaskCreatorIds.toList(),
-    'subtaskPicIds': _subtaskPicIds.toList(),
-    'subtaskStatuses': _subtaskStatuses.toList(),
-    'projectStartMonth': _projectStartMonth?.millisecondsSinceEpoch,
-    'projectEndMonth': _projectEndMonth?.millisecondsSinceEpoch,
-    'taskCompletedStart': _taskCompletedStart?.millisecondsSinceEpoch,
-    'taskCompletedEnd': _taskCompletedEnd?.millisecondsSinceEpoch,
-    'taskExpectedDueStart': _taskExpectedDueStart?.millisecondsSinceEpoch,
-    'taskExpectedDueEnd': _taskExpectedDueEnd?.millisecondsSinceEpoch,
-    'subtaskCompletedStart': _subtaskCompletedStart?.millisecondsSinceEpoch,
-    'subtaskCompletedEnd': _subtaskCompletedEnd?.millisecondsSinceEpoch,
-    'subtaskExpectedDueStart': _subtaskExpectedDueStart?.millisecondsSinceEpoch,
-    'subtaskExpectedDueEnd': _subtaskExpectedDueEnd?.millisecondsSinceEpoch,
-    'sortKey': _sortKey,
-    'showProjectsWithoutTasks': _showProjectsWithoutTasks,
+    'displayMode': switch (_displayMode) {
+      _MapDisplayMode.all => 'all',
+      _MapDisplayMode.progress => 'progress',
+      _MapDisplayMode.advanced => 'advanced',
+    },
+    'advanced': _saved.toJson(),
   };
 
   void _applyCookieJson(Map<String, dynamic> data) {
-    _replaceStringSet(_projectCreatorTeamIds, data['projectCreatorTeamIds']);
     _replaceStringSet(_projectCreatorIds, data['projectCreatorIds']);
     _replaceStringSet(_projectPicIds, data['projectPicIds']);
-    _replaceStringSet(_projectStatuses, data['projectStatuses']);
-    _replaceStringSet(_subprojectCreatorTeamIds, data['subprojectCreatorTeamIds']);
-    _replaceStringSet(_subprojectCreatorIds, data['subprojectCreatorIds']);
-    _replaceStringSet(_subprojectPicIds, data['subprojectPicIds']);
-    _replaceStringSet(_subprojectStatuses, data['subprojectStatuses']);
-    _subprojectStartMonth = _dateFromMs(data['subprojectStartMonth']);
-    _subprojectEndMonth = _dateFromMs(data['subprojectEndMonth']);
-    _replaceStringSet(_taskCreatorTeamIds, data['taskCreatorTeamIds']);
-    _replaceStringSet(_taskCreatorIds, data['taskCreatorIds']);
-    _replaceStringSet(_taskPicIds, data['taskPicIds']);
-    _replaceStringSet(_taskStatuses, data['taskStatuses']);
-    _replaceStringSet(_subtaskCreatorTeamIds, data['subtaskCreatorTeamIds']);
-    _replaceStringSet(_subtaskCreatorIds, data['subtaskCreatorIds']);
-    _replaceStringSet(_subtaskPicIds, data['subtaskPicIds']);
-    _replaceStringSet(_subtaskStatuses, data['subtaskStatuses']);
-    _projectStartMonth = _dateFromMs(data['projectStartMonth']);
-    _projectEndMonth = _dateFromMs(data['projectEndMonth']);
-    _taskCompletedStart = _dateFromMs(data['taskCompletedStart']);
-    _taskCompletedEnd = _dateFromMs(data['taskCompletedEnd']);
-    _taskExpectedDueStart = _dateFromMs(data['taskExpectedDueStart']);
-    _taskExpectedDueEnd = _dateFromMs(data['taskExpectedDueEnd']);
-    _subtaskCompletedStart = _dateFromMs(data['subtaskCompletedStart']);
-    _subtaskCompletedEnd = _dateFromMs(data['subtaskCompletedEnd']);
-    _subtaskExpectedDueStart = _dateFromMs(data['subtaskExpectedDueStart']);
-    _subtaskExpectedDueEnd = _dateFromMs(data['subtaskExpectedDueEnd']);
-    final rawSortKey = data['sortKey'] as String?;
-    if (rawSortKey == 'due_asc' ||
-        rawSortKey == 'due_desc' ||
-        rawSortKey == 'created_desc' ||
-        rawSortKey == 'created_asc' ||
-        rawSortKey == 'name_asc' ||
-        rawSortKey == 'name_desc') {
-      _sortKey = rawSortKey!;
+    final advancedRaw = data['advanced'];
+    if (advancedRaw is Map) {
+      _saved.loadJson(Map<String, dynamic>.from(advancedRaw), _dateFromMs);
+    } else if (data['displayMode'] == 'advanced' ||
+        (data['displayMode'] == null && _cookieHasBeyondPeople(data))) {
+      _saved.loadJson(data, _dateFromMs);
     }
-    _showProjectsWithoutTasks =
-        data['showProjectsWithoutTasks'] as bool? ?? _showProjectsWithoutTasks;
+    _displayMode = switch (data['displayMode']) {
+      'progress' => _MapDisplayMode.progress,
+      'advanced' => _MapDisplayMode.advanced,
+      'all' => _MapDisplayMode.all,
+      _ => _saved.hasAnyFilter
+          ? _MapDisplayMode.advanced
+          : _MapDisplayMode.all,
+    };
+    _applyDisplayModeToLive();
+  }
+
+  bool _cookieHasBeyondPeople(Map<String, dynamic> data) {
+    bool filled(Object? value) => value is List && value.isNotEmpty;
+    return filled(data['projectCreatorTeamIds']) ||
+        filled(data['projectStatuses']) ||
+        data['projectStartMonth'] != null ||
+        data['projectEndMonth'] != null ||
+        filled(data['subprojectCreatorTeamIds']) ||
+        filled(data['subprojectCreatorIds']) ||
+        filled(data['subprojectPicIds']) ||
+        filled(data['subprojectStatuses']) ||
+        data['subprojectStartMonth'] != null ||
+        data['subprojectEndMonth'] != null ||
+        filled(data['taskCreatorTeamIds']) ||
+        filled(data['taskCreatorIds']) ||
+        filled(data['taskPicIds']) ||
+        filled(data['taskStatuses']) ||
+        filled(data['subtaskCreatorTeamIds']) ||
+        filled(data['subtaskCreatorIds']) ||
+        filled(data['subtaskPicIds']) ||
+        filled(data['subtaskStatuses']) ||
+        data['taskCompletedStart'] != null ||
+        data['taskCompletedEnd'] != null ||
+        data['taskExpectedDueStart'] != null ||
+        data['taskExpectedDueEnd'] != null ||
+        data['subtaskCompletedStart'] != null ||
+        data['subtaskCompletedEnd'] != null ||
+        data['subtaskExpectedDueStart'] != null ||
+        data['subtaskExpectedDueEnd'] != null ||
+        data['showProjectsWithoutTasks'] == false ||
+        (data['sortKey'] is String && data['sortKey'] != 'due_asc');
+  }
+
+  void _copySet(Set<String> target, Set<String> source) {
+    target
+      ..clear()
+      ..addAll(source);
+  }
+
+  void _copySavedAdvancedToLive() {
+    _copySet(_projectCreatorTeamIds, _saved.projectCreatorTeamIds);
+    _copySet(_projectStatuses, _saved.projectStatuses);
+    _projectStartMonth = _saved.projectStartMonth;
+    _projectEndMonth = _saved.projectEndMonth;
+    _copySet(_subprojectCreatorTeamIds, _saved.subprojectCreatorTeamIds);
+    _copySet(_subprojectCreatorIds, _saved.subprojectCreatorIds);
+    _copySet(_subprojectPicIds, _saved.subprojectPicIds);
+    _copySet(_subprojectStatuses, _saved.subprojectStatuses);
+    _subprojectStartMonth = _saved.subprojectStartMonth;
+    _subprojectEndMonth = _saved.subprojectEndMonth;
+    _copySet(_taskCreatorTeamIds, _saved.taskCreatorTeamIds);
+    _copySet(_taskCreatorIds, _saved.taskCreatorIds);
+    _copySet(_taskPicIds, _saved.taskPicIds);
+    _copySet(_taskStatuses, _saved.taskStatuses);
+    _copySet(_subtaskCreatorTeamIds, _saved.subtaskCreatorTeamIds);
+    _copySet(_subtaskCreatorIds, _saved.subtaskCreatorIds);
+    _copySet(_subtaskPicIds, _saved.subtaskPicIds);
+    _copySet(_subtaskStatuses, _saved.subtaskStatuses);
+    _taskCompletedStart = _saved.taskCompletedStart;
+    _taskCompletedEnd = _saved.taskCompletedEnd;
+    _taskExpectedDueStart = _saved.taskExpectedDueStart;
+    _taskExpectedDueEnd = _saved.taskExpectedDueEnd;
+    _subtaskCompletedStart = _saved.subtaskCompletedStart;
+    _subtaskCompletedEnd = _saved.subtaskCompletedEnd;
+    _subtaskExpectedDueStart = _saved.subtaskExpectedDueStart;
+    _subtaskExpectedDueEnd = _saved.subtaskExpectedDueEnd;
+    _sortKey = _saved.sortKey;
+    _showProjectsWithoutTasks = _saved.showProjectsWithoutTasks;
+  }
+
+  void _applyDisplayModeToLive() {
+    switch (_displayMode) {
+      case _MapDisplayMode.all:
+        _clearFiltersBeyondProjectPeople();
+      case _MapDisplayMode.progress:
+        _writeProgressPresetToLive();
+      case _MapDisplayMode.advanced:
+        _copySavedAdvancedToLive();
+    }
+  }
+
+  void _writeProgressPresetToLive() {
+    final today = HkTime.todayDateOnlyHk();
+    final past = today.subtract(const Duration(days: 14));
+    final next = today.add(const Duration(days: 14));
+    _clearFiltersBeyondProjectPeople();
+    _setWorkStatuses(_taskStatuses, _WorkStatusMode.both);
+    _taskCompletedStart = past;
+    _taskCompletedEnd = today;
+    _taskExpectedDueStart = today;
+    _taskExpectedDueEnd = next;
+    _setWorkStatuses(_subtaskStatuses, _WorkStatusMode.both);
+    _subtaskCompletedStart = past;
+    _subtaskCompletedEnd = today;
+    _subtaskExpectedDueStart = today;
+    _subtaskExpectedDueEnd = next;
   }
 
   void _replaceStringSet(Set<String> target, Object? value) {
@@ -282,11 +356,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       if (_hasProjectFilters && !_passesProjectFilters(state, project)) {
         continue;
       }
-      final projectSearch =
-          _matches(project.name, query) ||
-          _matches(_projectPicLabel(project), query) ||
-          _matches(project.status, query);
-
       final visibleSps = <SubprojectRecord>[];
       for (final sp in state.subprojectsForProject(project.id)) {
         if (sp.isDeleted || sp.isPaused) continue;
@@ -312,11 +381,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         if (activeSp != null && !visibleSpIds.contains(activeSp.id)) {
           continue;
         }
-        final taskPic = _staffName(state, task.pic);
-        final taskSearch =
-            _matches(task.name, query) ||
-            _matches(taskPic, query) ||
-            _matches(taskStatus, query);
         final subtaskNodes = <SingularSubtask>[];
         for (final subtask
             in _subtasksByTask[task.id] ?? const <SingularSubtask>[]) {
@@ -330,24 +394,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               !_passesSubtaskFilters(state, subtask, subStatus)) {
             continue;
           }
-          final subPic = _staffName(state, subtask.pic);
-          final subSearch =
-              _matches(subtask.subtaskName, query) ||
-              _matches(subPic, query) ||
-              _matches(subStatus, query);
-          if (!_passesSearch(
-            subSearch || taskSearch || projectSearch,
-            query,
-          )) {
-            continue;
-          }
           subtaskNodes.add(subtask);
-        }
-        if (!_passesSearch(
-          taskSearch || projectSearch || subtaskNodes.isNotEmpty,
-          query,
-        )) {
-          continue;
         }
         taskNodes.add(_TaskMapNode(task: task, subtasks: subtaskNodes));
       }
@@ -356,10 +403,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         final hasTasks = taskNodes.any(
           (n) => n.task.subprojectId?.trim() == sp.id,
         );
-        final spSearch = _matches(sp.name, query) || _matches(sp.status, query);
-        if (!_passesSearch(spSearch || projectSearch || hasTasks, query)) {
-          return true;
-        }
         return !hasTasks && !_showProjectsWithoutTasks;
       });
       if (taskNodes.isEmpty &&
@@ -367,8 +410,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
           !_showProjectsWithoutTasks) {
         continue;
       }
-      if (!_passesSearch(
-        projectSearch || taskNodes.isNotEmpty || visibleSps.isNotEmpty,
+      if (!_projectTreeMatchesSearch(
+        state,
+        project,
+        visibleSps,
+        taskNodes,
         query,
       )) {
         continue;
@@ -406,11 +452,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, task);
       final taskGroupHit =
           _hasTaskFilters && _passesTaskFilters(state, task, taskStatus);
-      final taskPic = _staffName(state, task.pic);
-      final taskSearch =
-          _matches(task.name, query) ||
-          _matches(taskPic, query) ||
-          _matches(taskStatus, query);
       final subtaskNodes = <SingularSubtask>[];
       for (final subtask in subtasks) {
         if (_isMapHiddenSubtask(state, task, subtask)) continue;
@@ -423,16 +464,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             !_passesSubtaskFilters(state, subtask, subStatus)) {
           continue;
         }
-        final subPic = _staffName(state, subtask.pic);
-        final subSearch =
-            _matches(subtask.subtaskName, query) ||
-            _matches(subPic, query) ||
-            _matches(subStatus, query);
-        if (!_passesSearch(subSearch || taskSearch, query)) continue;
         subtaskNodes.add(subtask);
       }
       if (_hasTaskFilters && !taskGroupHit) continue;
-      if (!_passesSearch(taskSearch || subtaskNodes.isNotEmpty, query)) {
+      if (!_standaloneTaskMatchesSearch(state, task, taskStatus, subtaskNodes, query)) {
         continue;
       }
       subtaskNodes.sort((a, b) => _compareSubtasks(state, task, a, b));
@@ -485,8 +520,6 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   bool get _subtaskExpectedDueEngaged =>
       _subtaskExpectedDueStart != null || _subtaskExpectedDueEnd != null;
-
-  bool _passesSearch(bool matches, String query) => query.isEmpty || matches;
 
   bool _passesProjectFilters(AppState state, ProjectRecord project) {
     final projectStatus = project.isPaused ? 'Paused' : project.status;
@@ -587,40 +620,44 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   Future<void> _pickProjectMonthRange(BuildContext anchorContext) async {
     final picked = await showAsanaAnchoredMonthRangePicker(
       anchorContext: anchorContext,
-      startMonth: _projectStartMonth,
-      endMonth: _projectEndMonth,
+      startMonth: _saved.projectStartMonth,
+      endMonth: _saved.projectEndMonth,
       helpText: 'Project start month range',
     );
     if (!mounted || picked == null) return;
     _applyFilters(() {
       if (picked.cleared || picked.range == null) {
-        _projectStartMonth = null;
-        _projectEndMonth = null;
+        _saved.projectStartMonth = null;
+        _saved.projectEndMonth = null;
         return;
       }
       final range = picked.range!;
-      _projectStartMonth = DateTime(range.start.year, range.start.month, 1);
-      _projectEndMonth = DateTime(range.end.year, range.end.month, 1);
+      _saved.projectStartMonth = DateTime(range.start.year, range.start.month, 1);
+      _saved.projectEndMonth = DateTime(range.end.year, range.end.month, 1);
     });
   }
 
   Future<void> _pickSubprojectMonthRange(BuildContext anchorContext) async {
     final picked = await showAsanaAnchoredMonthRangePicker(
       anchorContext: anchorContext,
-      startMonth: _subprojectStartMonth,
-      endMonth: _subprojectEndMonth,
+      startMonth: _saved.subprojectStartMonth,
+      endMonth: _saved.subprojectEndMonth,
       helpText: 'Sub-project start month range',
     );
     if (!mounted || picked == null) return;
     _applyFilters(() {
       if (picked.cleared || picked.range == null) {
-        _subprojectStartMonth = null;
-        _subprojectEndMonth = null;
+        _saved.subprojectStartMonth = null;
+        _saved.subprojectEndMonth = null;
         return;
       }
       final range = picked.range!;
-      _subprojectStartMonth = DateTime(range.start.year, range.start.month, 1);
-      _subprojectEndMonth = DateTime(range.end.year, range.end.month, 1);
+      _saved.subprojectStartMonth = DateTime(
+        range.start.year,
+        range.start.month,
+        1,
+      );
+      _saved.subprojectEndMonth = DateTime(range.end.year, range.end.month, 1);
     });
   }
 
@@ -763,52 +800,59 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
 
   void _onTaskDatesChanged() {
     _syncWorkStatusFromDates(
-      statuses: _taskStatuses,
-      completedEngaged: _taskCompletedDateEngaged,
-      expectedDueEngaged: _taskExpectedDueEngaged,
+      statuses: _saved.taskStatuses,
+      completedEngaged:
+          _saved.taskCompletedStart != null || _saved.taskCompletedEnd != null,
+      expectedDueEngaged:
+          _saved.taskExpectedDueStart != null ||
+          _saved.taskExpectedDueEnd != null,
     );
   }
 
   void _onSubtaskDatesChanged() {
     _syncWorkStatusFromDates(
-      statuses: _subtaskStatuses,
-      completedEngaged: _subtaskCompletedDateEngaged,
-      expectedDueEngaged: _subtaskExpectedDueEngaged,
+      statuses: _saved.subtaskStatuses,
+      completedEngaged:
+          _saved.subtaskCompletedStart != null ||
+          _saved.subtaskCompletedEnd != null,
+      expectedDueEngaged:
+          _saved.subtaskExpectedDueStart != null ||
+          _saved.subtaskExpectedDueEnd != null,
     );
   }
 
   void _onTaskStatusChanged() {
     _syncDatesFromWorkStatus(
-      statuses: _taskStatuses,
-      completedStart: _taskCompletedStart,
-      completedEnd: _taskCompletedEnd,
-      expectedDueStart: _taskExpectedDueStart,
-      expectedDueEnd: _taskExpectedDueEnd,
+      statuses: _saved.taskStatuses,
+      completedStart: _saved.taskCompletedStart,
+      completedEnd: _saved.taskCompletedEnd,
+      expectedDueStart: _saved.taskExpectedDueStart,
+      expectedDueEnd: _saved.taskExpectedDueEnd,
       setCompleted: (start, end) {
-        _taskCompletedStart = start;
-        _taskCompletedEnd = end;
+        _saved.taskCompletedStart = start;
+        _saved.taskCompletedEnd = end;
       },
       setExpectedDue: (start, end) {
-        _taskExpectedDueStart = start;
-        _taskExpectedDueEnd = end;
+        _saved.taskExpectedDueStart = start;
+        _saved.taskExpectedDueEnd = end;
       },
     );
   }
 
   void _onSubtaskStatusChanged() {
     _syncDatesFromWorkStatus(
-      statuses: _subtaskStatuses,
-      completedStart: _subtaskCompletedStart,
-      completedEnd: _subtaskCompletedEnd,
-      expectedDueStart: _subtaskExpectedDueStart,
-      expectedDueEnd: _subtaskExpectedDueEnd,
+      statuses: _saved.subtaskStatuses,
+      completedStart: _saved.subtaskCompletedStart,
+      completedEnd: _saved.subtaskCompletedEnd,
+      expectedDueStart: _saved.subtaskExpectedDueStart,
+      expectedDueEnd: _saved.subtaskExpectedDueEnd,
       setCompleted: (start, end) {
-        _subtaskCompletedStart = start;
-        _subtaskCompletedEnd = end;
+        _saved.subtaskCompletedStart = start;
+        _saved.subtaskCompletedEnd = end;
       },
       setExpectedDue: (start, end) {
-        _subtaskExpectedDueStart = start;
-        _subtaskExpectedDueEnd = end;
+        _saved.subtaskExpectedDueStart = start;
+        _saved.subtaskExpectedDueEnd = end;
       },
     );
   }
@@ -958,9 +1002,321 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     return AsanaTaskFilter.subtaskEffectivelyPaused(state, parent, subtask);
   }
 
-  bool _matches(String? value, String query) {
+  bool _anyFieldMatches(Iterable<String?> fields, String query) {
     if (query.isEmpty) return true;
-    return (value ?? '').toLowerCase().contains(query);
+    for (final raw in fields) {
+      final value = raw?.trim().toLowerCase() ?? '';
+      if (value.isNotEmpty && value.contains(query)) return true;
+    }
+    return false;
+  }
+
+  String _searchDate(DateTime? value) {
+    if (value == null) return '';
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
+  }
+
+  bool _projectFieldsMatch(AppState state, ProjectRecord project, String query) {
+    return _anyFieldMatches([
+      project.name,
+      project.description,
+      project.isPaused ? 'Paused' : project.status,
+      project.pauseStatus,
+      project.createByDisplayName,
+      _searchDate(project.startDate),
+      _searchDate(project.endDate),
+      ...project.assigneeStaffDisplayNames,
+      ...project.picStaffDisplayNames,
+      for (final id in project.assigneeStaffUuids) _staffName(state, id),
+      for (final id in project.picStaffUuids) _staffName(state, id),
+    ], query);
+  }
+
+  bool _subprojectFieldsMatch(
+    AppState state,
+    SubprojectRecord subproject,
+    String query,
+  ) {
+    return _anyFieldMatches([
+      subproject.name,
+      subproject.description,
+      subproject.isPaused ? 'Paused' : subproject.status,
+      subproject.pauseStatus,
+      subproject.createByDisplayName,
+      _searchDate(subproject.startDate),
+      _searchDate(subproject.endDate),
+      ...subproject.assigneeStaffDisplayNames,
+      ...subproject.picStaffDisplayNames,
+      for (final id in subproject.assigneeStaffUuids) _staffName(state, id),
+      for (final id in subproject.picStaffUuids) _staffName(state, id),
+    ], query);
+  }
+
+  bool _taskFieldsMatch(
+    AppState state,
+    Task task,
+    String status,
+    String query,
+  ) {
+    return _anyFieldMatches([
+      task.name,
+      task.description,
+      status,
+      task.dbStatus,
+      task.complexity,
+      task.commencementStatus,
+      task.pauseStatus,
+      task.projectName,
+      task.projectDescription,
+      task.subprojectName,
+      task.createByStaffName,
+      task.changeDueReason,
+      priorityToDisplayName(task.priority),
+      _searchDate(task.startDate),
+      _searchDate(task.endDate),
+      _staffName(state, task.pic),
+      for (final id in task.assigneeIds) _staffName(state, id),
+    ], query);
+  }
+
+  bool _subtaskFieldsMatch(
+    AppState state,
+    SingularSubtask subtask,
+    String status,
+    String query,
+  ) {
+    return _anyFieldMatches([
+      subtask.subtaskName,
+      subtask.description,
+      status,
+      subtask.status,
+      subtask.complexity,
+      subtask.commencementStatus,
+      subtask.pauseStatus,
+      subtask.createByStaffName,
+      subtask.changeDueReason,
+      priorityToDisplayName(subtask.priority),
+      _searchDate(subtask.startDate),
+      _searchDate(subtask.dueDate),
+      _staffName(state, subtask.pic),
+      for (final id in subtask.assigneeIds) _staffName(state, id),
+    ], query);
+  }
+
+  bool _projectTreeMatchesSearch(
+    AppState state,
+    ProjectRecord project,
+    List<SubprojectRecord> subprojects,
+    List<_TaskMapNode> taskNodes,
+    String query,
+  ) {
+    if (query.isEmpty) return true;
+    if (_projectFieldsMatch(state, project, query)) return true;
+    for (final subproject in subprojects) {
+      if (_subprojectFieldsMatch(state, subproject, query)) return true;
+    }
+    for (final node in taskNodes) {
+      final taskStatus = AsanaTaskFilter.taskDisplayStatus(state, node.task);
+      if (_taskFieldsMatch(state, node.task, taskStatus, query)) return true;
+      for (final subtask in node.subtasks) {
+        final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
+          state,
+          node.task,
+          subtask,
+        );
+        if (_subtaskFieldsMatch(state, subtask, subStatus, query)) return true;
+      }
+    }
+    return false;
+  }
+
+  bool _standaloneTaskMatchesSearch(
+    AppState state,
+    Task task,
+    String taskStatus,
+    List<SingularSubtask> subtasks,
+    String query,
+  ) {
+    if (query.isEmpty) return true;
+    if (_taskFieldsMatch(state, task, taskStatus, query)) return true;
+    for (final subtask in subtasks) {
+      final subStatus = AsanaTaskFilter.subtaskDisplayStatus(
+        state,
+        task,
+        subtask,
+      );
+      if (_subtaskFieldsMatch(state, subtask, subStatus, query)) return true;
+    }
+    return false;
+  }
+
+  void _clearFiltersBeyondProjectPeople() {
+    _projectCreatorTeamIds.clear();
+    _projectStatuses.clear();
+    _subprojectCreatorTeamIds.clear();
+    _subprojectCreatorIds.clear();
+    _subprojectPicIds.clear();
+    _subprojectStatuses.clear();
+    _subprojectStartMonth = null;
+    _subprojectEndMonth = null;
+    _taskCreatorTeamIds.clear();
+    _taskCreatorIds.clear();
+    _taskPicIds.clear();
+    _taskStatuses.clear();
+    _subtaskCreatorTeamIds.clear();
+    _subtaskCreatorIds.clear();
+    _subtaskPicIds.clear();
+    _subtaskStatuses.clear();
+    _projectStartMonth = null;
+    _projectEndMonth = null;
+    _taskCompletedStart = null;
+    _taskCompletedEnd = null;
+    _taskExpectedDueStart = null;
+    _taskExpectedDueEnd = null;
+    _subtaskCompletedStart = null;
+    _subtaskCompletedEnd = null;
+    _subtaskExpectedDueStart = null;
+    _subtaskExpectedDueEnd = null;
+    _sortKey = 'due_asc';
+    _showProjectsWithoutTasks = true;
+  }
+
+  void _applyDisplayAll() {
+    _applyFilters(() {
+      _displayMode = _MapDisplayMode.all;
+      _clearFiltersBeyondProjectPeople();
+    });
+  }
+
+  void _applyProgressReport() {
+    _applyFilters(() {
+      _displayMode = _MapDisplayMode.progress;
+      _writeProgressPresetToLive();
+    });
+  }
+
+  void _selectAdvancedMode() {
+    _applyFilters(() => _displayMode = _MapDisplayMode.advanced);
+  }
+
+  void _openAdvancedPanel() {
+    _filterPaneController.forward();
+  }
+
+  void _closeAdvancedPanel() {
+    _filterPaneController.reverse();
+  }
+
+  void _clearSimpleMapFilters() {
+    _applyFilters(() {
+      _projectCreatorIds.clear();
+      _projectPicIds.clear();
+      _displayMode = _MapDisplayMode.all;
+      _clearFiltersBeyondProjectPeople();
+    });
+  }
+
+  void _clearAllMapFilters() {
+    _applyFilters(() {
+      _projectCreatorIds.clear();
+      _projectPicIds.clear();
+      _saved.resetToAll();
+      _clearFiltersBeyondProjectPeople();
+      _displayMode = _MapDisplayMode.all;
+    });
+    _filterPaneController.reverse();
+  }
+
+  Widget _simpleMapFilters(AppState state) {
+    return AsanaPanelFilterToolbar(
+      palette: widget.palette,
+      createLabel: '',
+      onCreate: null,
+      alignFiltersLeft: true,
+      alignClearWithControls: true,
+      padding: const EdgeInsets.fromLTRB(16, 6, 8, 4),
+      onClearAll: _clearSimpleMapFilters,
+      trailing: _mapCustomizeControls(),
+      filterChildren: [
+        AsanaFilterDropdown(
+          title: 'Project Creator',
+          value: _filterLabel(_projectCreatorIds, (id) {
+            final names = _projectCreatorDisplayNames(state);
+            return names[id] ?? _staffName(state, id);
+          }),
+          buttonWidth: 160,
+          onPressed: (anchor) => _showFilterMenu(
+            anchorContext: anchor,
+            options: _staffOptions(
+              state,
+              _projectCreatorKeys(state),
+              displayNames: _projectCreatorDisplayNames(state),
+            ),
+            selected: _projectCreatorIds,
+            apply: (value) => _projectCreatorIds
+              ..clear()
+              ..addAll(value),
+          ),
+        ),
+        AsanaFilterDropdown(
+          title: 'Project PIC',
+          value: _filterLabel(_projectPicIds, (id) {
+            final names = _projectPicDisplayNames(state);
+            return names[id] ?? _staffName(state, id);
+          }),
+          buttonWidth: 160,
+          onPressed: (anchor) => _showFilterMenu(
+            anchorContext: anchor,
+            options: _staffOptions(
+              state,
+              _projectPicKeys(state),
+              displayNames: _projectPicDisplayNames(state),
+            ),
+            selected: _projectPicIds,
+            apply: (value) => _projectPicIds
+              ..clear()
+              ..addAll(value),
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _MapDisplayChoice(
+              palette: widget.palette,
+              label: 'All',
+              width: _kMapModeButtonWidth,
+              selected: _displayMode == _MapDisplayMode.all,
+              onTap: _applyDisplayAll,
+            ),
+            _MapDisplayChoice(
+              palette: widget.palette,
+              label: 'Reporting',
+              width: _kMapModeButtonWidth,
+              selected: _displayMode == _MapDisplayMode.progress,
+              onTap: _applyProgressReport,
+            ),
+            _MapDisplayChoice(
+              palette: widget.palette,
+              label: 'Customized',
+              width: _kMapModeButtonWidth,
+              selected: _displayMode == _MapDisplayMode.advanced,
+              onTap: _selectAdvancedMode,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _mapCustomizeControls() {
+    return _MapPlainButton(
+      palette: widget.palette,
+      label: 'Customize Filters >>',
+      onTap: _openAdvancedPanel,
+    );
   }
 
   int _compareText(String a, String b) {
@@ -1521,7 +1877,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   String _statusLabelFor(String key) => AsanaStatusChip.statusStyle(key).$1;
 
   String _sortLabel() {
-    switch (_sortKey) {
+    switch (_saved.sortKey) {
       case 'due_desc':
         return 'Due date ↓';
       case 'created_desc':
@@ -1550,7 +1906,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ],
     );
     if (selected == null || !mounted) return;
-    _applyFilters(() => _showProjectsWithoutTasks = selected);
+    _applyFilters(() => _saved.showProjectsWithoutTasks = selected);
   }
 
   Future<void> _showSortMenu(BuildContext buttonContext) async {
@@ -1569,7 +1925,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ],
     );
     if (selected == null || !mounted) return;
-    _applyFilters(() => _sortKey = selected);
+    _applyFilters(() => _saved.sortKey = selected);
   }
 
   RelativeRect _menuPosition(BuildContext buttonContext) {
@@ -1657,12 +2013,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
-                    'Project, Task and Sub-task Map',
+                    'Project, Sub-project, Task and Sub-task Map',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -1680,136 +2036,72 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               ],
             ),
           ),
-          AsanaPanelFilterToolbar(
+          _MapFilterPaneSlide(
+            animation: _filterPaneController,
+            simple: _simpleMapFilters(state),
+            advanced: AsanaPanelFilterToolbar(
             palette: widget.palette,
             createLabel: '',
             onCreate: null,
             alignFiltersLeft: true,
-            onClearAll: () {
-              _applyFilters(() {
-                _projectCreatorTeamIds.clear();
-                _projectCreatorIds.clear();
-                _projectPicIds.clear();
-                _projectStatuses.clear();
-                _subprojectCreatorTeamIds.clear();
-                _subprojectCreatorIds.clear();
-                _subprojectPicIds.clear();
-                _subprojectStatuses.clear();
-                _subprojectStartMonth = null;
-                _subprojectEndMonth = null;
-                _taskCreatorTeamIds.clear();
-                _taskCreatorIds.clear();
-                _taskPicIds.clear();
-                _taskStatuses.clear();
-                _subtaskCreatorTeamIds.clear();
-                _subtaskCreatorIds.clear();
-                _subtaskPicIds.clear();
-                _subtaskStatuses.clear();
-                _projectStartMonth = null;
-                _projectEndMonth = null;
-                _taskCompletedStart = null;
-                _taskCompletedEnd = null;
-                _taskExpectedDueStart = null;
-                _taskExpectedDueEnd = null;
-                _subtaskCompletedStart = null;
-                _subtaskCompletedEnd = null;
-                _subtaskExpectedDueStart = null;
-                _subtaskExpectedDueEnd = null;
-                _sortKey = 'due_asc';
-                _showProjectsWithoutTasks = true;
-              });
-            },
+            alignClearWithControls: true,
+            padding: const EdgeInsets.fromLTRB(8, 6, 16, 4),
+            onClearAll: _clearAllMapFilters,
+            leading: _MapBackStrip(
+              palette: widget.palette,
+              onTap: _closeAdvancedPanel,
+            ),
             filterChildren: [
               AsanaFilterDropdown(
                 title: 'Project Creator Team',
-                value: _filterLabel(_projectCreatorTeamIds, state.teamNameById),
+                value: _filterLabel(_saved.projectCreatorTeamIds, state.teamNameById),
                 buttonWidth: 168,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _projectCreatorKeys(state)),
-                  selected: _projectCreatorTeamIds,
-                  apply: (value) => _projectCreatorTeamIds
-                    ..clear()
-                    ..addAll(value),
-                ),
-              ),
-              AsanaFilterDropdown(
-                title: 'Project Creator',
-                value: _filterLabel(_projectCreatorIds, (id) {
-                  final names = _projectCreatorDisplayNames(state);
-                  return names[id] ?? _staffName(state, id);
-                }),
-                buttonWidth: 140,
-                onPressed: (anchor) => _showFilterMenu(
-                  anchorContext: anchor,
-                  options: _staffOptions(
-                    state,
-                    _projectCreatorKeys(state),
-                    displayNames: _projectCreatorDisplayNames(state),
-                  ),
-                  selected: _projectCreatorIds,
-                  apply: (value) => _projectCreatorIds
-                    ..clear()
-                    ..addAll(value),
-                ),
-              ),
-              AsanaFilterDropdown(
-                title: 'Project PIC',
-                value: _filterLabel(_projectPicIds, (id) {
-                  final names = _projectPicDisplayNames(state);
-                  return names[id] ?? _staffName(state, id);
-                }),
-                buttonWidth: 140,
-                onPressed: (anchor) => _showFilterMenu(
-                  anchorContext: anchor,
-                  options: _staffOptions(
-                    state,
-                    _projectPicKeys(state),
-                    displayNames: _projectPicDisplayNames(state),
-                  ),
-                  selected: _projectPicIds,
-                  apply: (value) => _projectPicIds
+                  selected: _saved.projectCreatorTeamIds,
+                  apply: (value) => _saved.projectCreatorTeamIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Project Status',
-                value: _filterLabel(_projectStatuses, _statusLabelFor),
+                value: _filterLabel(_saved.projectStatuses, _statusLabelFor),
                 buttonWidth: 118,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _statusOptionsFrom(_projectStatusValues(state)),
-                  selected: _projectStatuses,
-                  apply: (value) => _projectStatuses
+                  selected: _saved.projectStatuses,
+                  apply: (value) => _saved.projectStatuses
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Project Started From',
-                value: _projectMonthFilterLabel(_projectStartMonth),
+                value: _projectMonthFilterLabel(_saved.projectStartMonth),
                 buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
               ),
               AsanaFilterDropdown(
                 title: 'Project Started To',
-                value: _projectMonthFilterLabel(_projectEndMonth),
+                value: _projectMonthFilterLabel(_saved.projectEndMonth),
                 buttonWidth: 136,
                 onPressed: _pickProjectMonthRange,
               ),
               AsanaFilterDropdown(
                 title: 'Sub-project Creator Team',
                 value: _filterLabel(
-                  _subprojectCreatorTeamIds,
+                  _saved.subprojectCreatorTeamIds,
                   state.teamNameById,
                 ),
                 buttonWidth: 186,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _subprojectCreatorKeys(state)),
-                  selected: _subprojectCreatorTeamIds,
-                  apply: (value) => _subprojectCreatorTeamIds
+                  selected: _saved.subprojectCreatorTeamIds,
+                  apply: (value) => _saved.subprojectCreatorTeamIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1817,22 +2109,22 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Sub-project Creator',
                 value: _filterLabel(
-                  _subprojectCreatorIds,
+                  _saved.subprojectCreatorIds,
                   (id) => _staffName(state, id),
                 ),
                 buttonWidth: 154,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _staffOptions(state, _subprojectCreatorKeys(state)),
-                  selected: _subprojectCreatorIds,
-                  apply: (value) => _subprojectCreatorIds
+                  selected: _saved.subprojectCreatorIds,
+                  apply: (value) => _saved.subprojectCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Sub-project PIC',
-                value: _filterLabel(_subprojectPicIds, (id) {
+                value: _filterLabel(_saved.subprojectPicIds, (id) {
                   final names = _subprojectPicDisplayNames(state);
                   return names[id] ?? _staffName(state, id);
                 }),
@@ -1844,34 +2136,34 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                     _subprojectPicKeys(state),
                     displayNames: _subprojectPicDisplayNames(state),
                   ),
-                  selected: _subprojectPicIds,
-                  apply: (value) => _subprojectPicIds
+                  selected: _saved.subprojectPicIds,
+                  apply: (value) => _saved.subprojectPicIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Sub-project Status',
-                value: _filterLabel(_subprojectStatuses, _statusLabelFor),
+                value: _filterLabel(_saved.subprojectStatuses, _statusLabelFor),
                 buttonWidth: 148,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _statusOptionsFrom(_subprojectStatusValues(state)),
-                  selected: _subprojectStatuses,
-                  apply: (value) => _subprojectStatuses
+                  selected: _saved.subprojectStatuses,
+                  apply: (value) => _saved.subprojectStatuses
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Sub-project Started From',
-                value: _projectMonthFilterLabel(_subprojectStartMonth),
+                value: _projectMonthFilterLabel(_saved.subprojectStartMonth),
                 buttonWidth: 168,
                 onPressed: _pickSubprojectMonthRange,
               ),
               AsanaFilterDropdown(
                 title: 'Sub-project Started To',
-                value: _projectMonthFilterLabel(_subprojectEndMonth),
+                value: _projectMonthFilterLabel(_saved.subprojectEndMonth),
                 buttonWidth: 168,
                 onPressed: _pickSubprojectMonthRange,
               ),
@@ -1879,13 +2171,13 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             secondRowFilterChildren: [
               AsanaFilterDropdown(
                 title: 'Task Creator Team',
-                value: _filterLabel(_taskCreatorTeamIds, state.teamNameById),
+                value: _filterLabel(_saved.taskCreatorTeamIds, state.teamNameById),
                 buttonWidth: 156,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _taskCreatorKeys(state)),
-                  selected: _taskCreatorTeamIds,
-                  apply: (value) => _taskCreatorTeamIds
+                  selected: _saved.taskCreatorTeamIds,
+                  apply: (value) => _saved.taskCreatorTeamIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -1893,61 +2185,61 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Task Creator',
                 value: _filterLabel(
-                  _taskCreatorIds,
+                  _saved.taskCreatorIds,
                   (id) => _staffName(state, id),
                 ),
                 buttonWidth: 126,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _staffOptions(state, _taskCreatorKeys(state)),
-                  selected: _taskCreatorIds,
-                  apply: (value) => _taskCreatorIds
+                  selected: _saved.taskCreatorIds,
+                  apply: (value) => _saved.taskCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Task PIC',
-                value: _filterLabel(_taskPicIds, (id) => _staffName(state, id)),
+                value: _filterLabel(_saved.taskPicIds, (id) => _staffName(state, id)),
                 buttonWidth: 126,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _staffOptions(state, _taskPicKeys(state)),
-                  selected: _taskPicIds,
-                  apply: (value) => _taskPicIds
+                  selected: _saved.taskPicIds,
+                  apply: (value) => _saved.taskPicIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Task Status',
-                value: _workStatusFilterLabel(_taskStatuses),
+                value: _workStatusFilterLabel(_saved.taskStatuses),
                 buttonWidth: 109,
                 onPressed: (anchor) => _showWorkStatusMenu(
                   buttonContext: anchor,
                   statusValues: _taskStatusValues(state),
-                  statuses: _taskStatuses,
+                  statuses: _saved.taskStatuses,
                   afterApply: _onTaskStatusChanged,
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Task Completed From',
                 value: _completedDateLabelForStatus(
-                  _taskCompletedStart,
-                  _taskStatuses,
+                  _saved.taskCompletedStart,
+                  _saved.taskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_taskStatuses) !=
+                    _classifyWorkStatus(_saved.taskStatuses) !=
                     _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _taskCompletedStart,
-                  end: _taskCompletedEnd,
+                  start: _saved.taskCompletedStart,
+                  end: _saved.taskCompletedEnd,
                   helpText: 'Task completed date range',
                   apply: (start, end) {
-                    _taskCompletedStart = start;
-                    _taskCompletedEnd = end;
+                    _saved.taskCompletedStart = start;
+                    _saved.taskCompletedEnd = end;
                     _onTaskDatesChanged();
                   },
                 ),
@@ -1955,21 +2247,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Task Completed To',
                 value: _completedDateLabelForStatus(
-                  _taskCompletedEnd,
-                  _taskStatuses,
+                  _saved.taskCompletedEnd,
+                  _saved.taskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_taskStatuses) !=
+                    _classifyWorkStatus(_saved.taskStatuses) !=
                     _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _taskCompletedStart,
-                  end: _taskCompletedEnd,
+                  start: _saved.taskCompletedStart,
+                  end: _saved.taskCompletedEnd,
                   helpText: 'Task completed date range',
                   apply: (start, end) {
-                    _taskCompletedStart = start;
-                    _taskCompletedEnd = end;
+                    _saved.taskCompletedStart = start;
+                    _saved.taskCompletedEnd = end;
                     _onTaskDatesChanged();
                   },
                 ),
@@ -1977,21 +2269,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Task Expected Due From',
                 value: _expectedDueLabelForStatus(
-                  _taskExpectedDueStart,
-                  _taskStatuses,
+                  _saved.taskExpectedDueStart,
+                  _saved.taskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_taskStatuses) !=
+                    _classifyWorkStatus(_saved.taskStatuses) !=
                     _WorkStatusMode.completed,
                 buttonWidth: 168,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _taskExpectedDueStart,
-                  end: _taskExpectedDueEnd,
+                  start: _saved.taskExpectedDueStart,
+                  end: _saved.taskExpectedDueEnd,
                   helpText: 'Task expected due date range',
                   apply: (start, end) {
-                    _taskExpectedDueStart = start;
-                    _taskExpectedDueEnd = end;
+                    _saved.taskExpectedDueStart = start;
+                    _saved.taskExpectedDueEnd = end;
                     _onTaskDatesChanged();
                   },
                 ),
@@ -1999,21 +2291,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Task Expected Due To',
                 value: _expectedDueLabelForStatus(
-                  _taskExpectedDueEnd,
-                  _taskStatuses,
+                  _saved.taskExpectedDueEnd,
+                  _saved.taskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_taskStatuses) !=
+                    _classifyWorkStatus(_saved.taskStatuses) !=
                     _WorkStatusMode.completed,
                 buttonWidth: 168,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _taskExpectedDueStart,
-                  end: _taskExpectedDueEnd,
+                  start: _saved.taskExpectedDueStart,
+                  end: _saved.taskExpectedDueEnd,
                   helpText: 'Task expected due date range',
                   apply: (start, end) {
-                    _taskExpectedDueStart = start;
-                    _taskExpectedDueEnd = end;
+                    _saved.taskExpectedDueStart = start;
+                    _saved.taskExpectedDueEnd = end;
                     _onTaskDatesChanged();
                   },
                 ),
@@ -2021,15 +2313,15 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Sub-task Creator Team',
                 value: _filterLabel(
-                  _subtaskCreatorTeamIds,
+                  _saved.subtaskCreatorTeamIds,
                   state.teamNameById,
                 ),
                 buttonWidth: 172,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _teamOptions(state, _subtaskCreatorKeys(state)),
-                  selected: _subtaskCreatorTeamIds,
-                  apply: (value) => _subtaskCreatorTeamIds
+                  selected: _saved.subtaskCreatorTeamIds,
+                  apply: (value) => _saved.subtaskCreatorTeamIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -2037,15 +2329,15 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Sub-task Creator',
                 value: _filterLabel(
-                  _subtaskCreatorIds,
+                  _saved.subtaskCreatorIds,
                   (id) => _staffName(state, id),
                 ),
                 buttonWidth: 140,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _staffOptions(state, _subtaskCreatorKeys(state)),
-                  selected: _subtaskCreatorIds,
-                  apply: (value) => _subtaskCreatorIds
+                  selected: _saved.subtaskCreatorIds,
+                  apply: (value) => _saved.subtaskCreatorIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -2053,48 +2345,48 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Sub-task PIC',
                 value: _filterLabel(
-                  _subtaskPicIds,
+                  _saved.subtaskPicIds,
                   (id) => _staffName(state, id),
                 ),
                 buttonWidth: 126,
                 onPressed: (anchor) => _showFilterMenu(
                   anchorContext: anchor,
                   options: _staffOptions(state, _subtaskPicKeys(state)),
-                  selected: _subtaskPicIds,
-                  apply: (value) => _subtaskPicIds
+                  selected: _saved.subtaskPicIds,
+                  apply: (value) => _saved.subtaskPicIds
                     ..clear()
                     ..addAll(value),
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Subtask Status',
-                value: _workStatusFilterLabel(_subtaskStatuses),
+                value: _workStatusFilterLabel(_saved.subtaskStatuses),
                 buttonWidth: 118,
                 onPressed: (anchor) => _showWorkStatusMenu(
                   buttonContext: anchor,
                   statusValues: _subtaskStatusValues(state),
-                  statuses: _subtaskStatuses,
+                  statuses: _saved.subtaskStatuses,
                   afterApply: _onSubtaskStatusChanged,
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Subtask Completed From',
                 value: _completedDateLabelForStatus(
-                  _subtaskCompletedStart,
-                  _subtaskStatuses,
+                  _saved.subtaskCompletedStart,
+                  _saved.subtaskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _classifyWorkStatus(_saved.subtaskStatuses) !=
                     _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _subtaskCompletedStart,
-                  end: _subtaskCompletedEnd,
+                  start: _saved.subtaskCompletedStart,
+                  end: _saved.subtaskCompletedEnd,
                   helpText: 'Subtask completed date range',
                   apply: (start, end) {
-                    _subtaskCompletedStart = start;
-                    _subtaskCompletedEnd = end;
+                    _saved.subtaskCompletedStart = start;
+                    _saved.subtaskCompletedEnd = end;
                     _onSubtaskDatesChanged();
                   },
                 ),
@@ -2102,21 +2394,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Subtask Completed To',
                 value: _completedDateLabelForStatus(
-                  _subtaskCompletedEnd,
-                  _subtaskStatuses,
+                  _saved.subtaskCompletedEnd,
+                  _saved.subtaskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _classifyWorkStatus(_saved.subtaskStatuses) !=
                     _WorkStatusMode.incomplete,
                 buttonWidth: 148,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _subtaskCompletedStart,
-                  end: _subtaskCompletedEnd,
+                  start: _saved.subtaskCompletedStart,
+                  end: _saved.subtaskCompletedEnd,
                   helpText: 'Subtask completed date range',
                   apply: (start, end) {
-                    _subtaskCompletedStart = start;
-                    _subtaskCompletedEnd = end;
+                    _saved.subtaskCompletedStart = start;
+                    _saved.subtaskCompletedEnd = end;
                     _onSubtaskDatesChanged();
                   },
                 ),
@@ -2124,21 +2416,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Subtask Expected Due From',
                 value: _expectedDueLabelForStatus(
-                  _subtaskExpectedDueStart,
-                  _subtaskStatuses,
+                  _saved.subtaskExpectedDueStart,
+                  _saved.subtaskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _classifyWorkStatus(_saved.subtaskStatuses) !=
                     _WorkStatusMode.completed,
                 buttonWidth: 176,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _subtaskExpectedDueStart,
-                  end: _subtaskExpectedDueEnd,
+                  start: _saved.subtaskExpectedDueStart,
+                  end: _saved.subtaskExpectedDueEnd,
                   helpText: 'Subtask expected due date range',
                   apply: (start, end) {
-                    _subtaskExpectedDueStart = start;
-                    _subtaskExpectedDueEnd = end;
+                    _saved.subtaskExpectedDueStart = start;
+                    _saved.subtaskExpectedDueEnd = end;
                     _onSubtaskDatesChanged();
                   },
                 ),
@@ -2146,30 +2438,30 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               AsanaFilterDropdown(
                 title: 'Subtask Expected Due To',
                 value: _expectedDueLabelForStatus(
-                  _subtaskExpectedDueEnd,
-                  _subtaskStatuses,
+                  _saved.subtaskExpectedDueEnd,
+                  _saved.subtaskStatuses,
                 ),
                 enabled:
-                    _classifyWorkStatus(_subtaskStatuses) !=
+                    _classifyWorkStatus(_saved.subtaskStatuses) !=
                     _WorkStatusMode.completed,
                 buttonWidth: 176,
                 onPressed: (anchor) => _pickCompletedDateRange(
                   anchorContext: anchor,
-                  start: _subtaskExpectedDueStart,
-                  end: _subtaskExpectedDueEnd,
+                  start: _saved.subtaskExpectedDueStart,
+                  end: _saved.subtaskExpectedDueEnd,
                   helpText: 'Subtask expected due date range',
                   apply: (start, end) {
-                    _subtaskExpectedDueStart = start;
-                    _subtaskExpectedDueEnd = end;
+                    _saved.subtaskExpectedDueStart = start;
+                    _saved.subtaskExpectedDueEnd = end;
                     _onSubtaskDatesChanged();
                   },
                 ),
               ),
               AsanaFilterDropdown(
                 title: 'Projects Without Tasks',
-                value: _showProjectsWithoutTasks ? 'Show' : 'Hide',
+                value: _saved.showProjectsWithoutTasks ? 'Show' : 'Hide',
                 buttonWidth: 168,
-                highlighted: !_showProjectsWithoutTasks,
+                highlighted: !_saved.showProjectsWithoutTasks,
                 onPressed: _showEmptyProjectsMenu,
               ),
               AsanaFilterDropdown(
@@ -2179,6 +2471,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 onPressed: _showSortMenu,
               ),
             ],
+            ),
           ),
           Expanded(
             child: AsanaPanelListSurface(
@@ -2728,12 +3021,18 @@ _DiagramNode _taskDiagramNode({
     completed: _mapBlockIsCompleted(taskStatus),
     detailLabel: _mapBlockDetailLabel(
       taskStatus,
-      taskNode.task.endDate,
+      visibleScheduleDate(
+        taskNode.task.endDate,
+        taskNode.task.commencementStatus,
+      ),
       taskNode.task.submission,
       completionDate: taskNode.task.completionDate,
       submitDate: taskNode.task.submitDate,
     ),
-    dueDate: taskNode.task.endDate,
+    dueDate: visibleScheduleDate(
+      taskNode.task.endDate,
+      taskNode.task.commencementStatus,
+    ),
     submission: taskNode.task.submission,
     onTap: () => onOpenTask?.call(taskNode.task.id),
     canExpand: hasSubtasks,
@@ -2759,12 +3058,18 @@ _DiagramNode _taskDiagramNode({
               completed: _mapBlockIsCompleted(subStatus),
               detailLabel: _mapBlockDetailLabel(
                 subStatus,
-                subtask.dueDate,
+                visibleScheduleDate(
+                  subtask.dueDate,
+                  subtask.commencementStatus,
+                ),
                 subtask.submission,
                 completionDate: subtask.completionDate,
                 submitDate: subtask.submitDate,
               ),
-              dueDate: subtask.dueDate,
+              dueDate: visibleScheduleDate(
+                subtask.dueDate,
+                subtask.commencementStatus,
+              ),
               submission: subtask.submission,
               onTap: () => onOpenSubtask?.call(subtask.id),
               children: const [],
@@ -3411,16 +3716,10 @@ class _DiagramBox extends StatelessWidget {
       );
     }
 
-    final cornerBadge =
-        item.node.type == _DiagramNodeType.project ||
-            item.node.type == _DiagramNodeType.subproject
-        ? null
-        : AsanaDueBadge.labelFor(
-            due: item.node.dueDate,
-            status: item.node.status,
-            submission: item.node.submission,
-            completed: item.node.completed,
-          );
+    final showStatusBadge =
+        item.node.type == _DiagramNodeType.task ||
+        item.node.type == _DiagramNodeType.subtask;
+    final statusIcon = _mapStatusIcon(item.node);
     Widget inner = sideExpand
         ? Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3466,21 +3765,40 @@ class _DiagramBox extends StatelessWidget {
           top: letterTop,
           left: -6,
           height: letterHeight,
-          child: AsanaRowTypeLetter(
-            letter: item.node.type.letter,
-            completed: item.node.completed,
-            status: item.node.status,
+          child: _MapThemeBadge(
+            palette: palette,
+            width: item.node.type.letter.length > 1 ? 30 : 24,
+            tooltip: switch (item.node.type) {
+              _DiagramNodeType.project => 'Project',
+              _DiagramNodeType.subproject => 'Sub-project',
+              _DiagramNodeType.task => 'Task',
+              _DiagramNodeType.subtask => 'Sub-task',
+              _DiagramNodeType.levelSpacer => '',
+            },
+            child: Text(
+              item.node.type.letter,
+              style: TextStyle(
+                fontSize: item.node.type.letter.length > 1 ? 10 : 12,
+                fontWeight: FontWeight.w700,
+                color: _mapBadgeForeground(palette),
+                height: 1,
+              ),
+            ),
           ),
         ),
-        if (cornerBadge != null)
+        if (showStatusBadge)
           Positioned(
             top: letterTop,
             right: -6,
             height: letterHeight,
-            child: AsanaDueBadge(
-              label: cornerBadge,
-              fontSize: 9 * 1.3,
-              height: letterHeight,
+            child: _MapThemeBadge(
+              palette: palette,
+              tooltip: _mapStatusTooltip(item.node),
+              child: Icon(
+                statusIcon,
+                size: 16,
+                color: _mapBadgeForeground(palette),
+              ),
             ),
           ),
       ],
@@ -3748,4 +4066,577 @@ class _TaskMapNode {
 
   final Task task;
   final List<SingularSubtask> subtasks;
+}
+
+enum _MapDisplayMode { all, progress, advanced }
+
+/// Mode buttons are the same width: 65% of the Project Creator dropdown.
+const double _kMapModeButtonWidth = 160 * 0.65;
+
+/// Same metrics as [AsanaFilterDropdown] so the map mode buttons match
+/// the dropdown boxes after compact visual-density adjustment.
+ButtonStyle _mapFilterButtonStyle({
+  required Color background,
+  required Color foreground,
+  BorderSide? side,
+  double minWidth = 0,
+}) {
+  return OutlinedButton.styleFrom(
+    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+    minimumSize: Size(minWidth, 34),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+    backgroundColor: background,
+    foregroundColor: foreground,
+    side: side,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  );
+}
+
+Color _mapBadgeForeground(AsanaLandingPalette palette) {
+  if (palette.id == 'Classic') return Colors.white;
+  return palette.onBanner;
+}
+
+class _MapAdvancedSettings {
+  final Set<String> projectCreatorTeamIds = {};
+  final Set<String> projectStatuses = {};
+  DateTime? projectStartMonth;
+  DateTime? projectEndMonth;
+  final Set<String> subprojectCreatorTeamIds = {};
+  final Set<String> subprojectCreatorIds = {};
+  final Set<String> subprojectPicIds = {};
+  final Set<String> subprojectStatuses = {};
+  DateTime? subprojectStartMonth;
+  DateTime? subprojectEndMonth;
+  final Set<String> taskCreatorTeamIds = {};
+  final Set<String> taskCreatorIds = {};
+  final Set<String> taskPicIds = {};
+  final Set<String> taskStatuses = {};
+  final Set<String> subtaskCreatorTeamIds = {};
+  final Set<String> subtaskCreatorIds = {};
+  final Set<String> subtaskPicIds = {};
+  final Set<String> subtaskStatuses = {};
+  DateTime? taskCompletedStart;
+  DateTime? taskCompletedEnd;
+  DateTime? taskExpectedDueStart;
+  DateTime? taskExpectedDueEnd;
+  DateTime? subtaskCompletedStart;
+  DateTime? subtaskCompletedEnd;
+  DateTime? subtaskExpectedDueStart;
+  DateTime? subtaskExpectedDueEnd;
+  String sortKey = 'due_asc';
+  bool showProjectsWithoutTasks = true;
+
+  bool get hasAnyFilter =>
+      projectCreatorTeamIds.isNotEmpty ||
+      projectStatuses.isNotEmpty ||
+      projectStartMonth != null ||
+      projectEndMonth != null ||
+      subprojectCreatorTeamIds.isNotEmpty ||
+      subprojectCreatorIds.isNotEmpty ||
+      subprojectPicIds.isNotEmpty ||
+      subprojectStatuses.isNotEmpty ||
+      subprojectStartMonth != null ||
+      subprojectEndMonth != null ||
+      taskCreatorTeamIds.isNotEmpty ||
+      taskCreatorIds.isNotEmpty ||
+      taskPicIds.isNotEmpty ||
+      taskStatuses.isNotEmpty ||
+      subtaskCreatorTeamIds.isNotEmpty ||
+      subtaskCreatorIds.isNotEmpty ||
+      subtaskPicIds.isNotEmpty ||
+      subtaskStatuses.isNotEmpty ||
+      taskCompletedStart != null ||
+      taskCompletedEnd != null ||
+      taskExpectedDueStart != null ||
+      taskExpectedDueEnd != null ||
+      subtaskCompletedStart != null ||
+      subtaskCompletedEnd != null ||
+      subtaskExpectedDueStart != null ||
+      subtaskExpectedDueEnd != null ||
+      !showProjectsWithoutTasks ||
+      sortKey != 'due_asc';
+
+  void resetToAll() {
+    projectCreatorTeamIds.clear();
+    projectStatuses.clear();
+    projectStartMonth = null;
+    projectEndMonth = null;
+    subprojectCreatorTeamIds.clear();
+    subprojectCreatorIds.clear();
+    subprojectPicIds.clear();
+    subprojectStatuses.clear();
+    subprojectStartMonth = null;
+    subprojectEndMonth = null;
+    taskCreatorTeamIds.clear();
+    taskCreatorIds.clear();
+    taskPicIds.clear();
+    taskStatuses.clear();
+    subtaskCreatorTeamIds.clear();
+    subtaskCreatorIds.clear();
+    subtaskPicIds.clear();
+    subtaskStatuses.clear();
+    taskCompletedStart = null;
+    taskCompletedEnd = null;
+    taskExpectedDueStart = null;
+    taskExpectedDueEnd = null;
+    subtaskCompletedStart = null;
+    subtaskCompletedEnd = null;
+    subtaskExpectedDueStart = null;
+    subtaskExpectedDueEnd = null;
+    sortKey = 'due_asc';
+    showProjectsWithoutTasks = true;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'projectCreatorTeamIds': projectCreatorTeamIds.toList(),
+    'projectStatuses': projectStatuses.toList(),
+    'projectStartMonth': projectStartMonth?.millisecondsSinceEpoch,
+    'projectEndMonth': projectEndMonth?.millisecondsSinceEpoch,
+    'subprojectCreatorTeamIds': subprojectCreatorTeamIds.toList(),
+    'subprojectCreatorIds': subprojectCreatorIds.toList(),
+    'subprojectPicIds': subprojectPicIds.toList(),
+    'subprojectStatuses': subprojectStatuses.toList(),
+    'subprojectStartMonth': subprojectStartMonth?.millisecondsSinceEpoch,
+    'subprojectEndMonth': subprojectEndMonth?.millisecondsSinceEpoch,
+    'taskCreatorTeamIds': taskCreatorTeamIds.toList(),
+    'taskCreatorIds': taskCreatorIds.toList(),
+    'taskPicIds': taskPicIds.toList(),
+    'taskStatuses': taskStatuses.toList(),
+    'subtaskCreatorTeamIds': subtaskCreatorTeamIds.toList(),
+    'subtaskCreatorIds': subtaskCreatorIds.toList(),
+    'subtaskPicIds': subtaskPicIds.toList(),
+    'subtaskStatuses': subtaskStatuses.toList(),
+    'taskCompletedStart': taskCompletedStart?.millisecondsSinceEpoch,
+    'taskCompletedEnd': taskCompletedEnd?.millisecondsSinceEpoch,
+    'taskExpectedDueStart': taskExpectedDueStart?.millisecondsSinceEpoch,
+    'taskExpectedDueEnd': taskExpectedDueEnd?.millisecondsSinceEpoch,
+    'subtaskCompletedStart': subtaskCompletedStart?.millisecondsSinceEpoch,
+    'subtaskCompletedEnd': subtaskCompletedEnd?.millisecondsSinceEpoch,
+    'subtaskExpectedDueStart': subtaskExpectedDueStart?.millisecondsSinceEpoch,
+    'subtaskExpectedDueEnd': subtaskExpectedDueEnd?.millisecondsSinceEpoch,
+    'sortKey': sortKey,
+    'showProjectsWithoutTasks': showProjectsWithoutTasks,
+  };
+
+  void loadJson(Map<String, dynamic> data, DateTime? Function(Object?) dateOf) {
+    void sets(Set<String> target, Object? value) {
+      target
+        ..clear()
+        ..addAll({
+          for (final e in value is List ? value : const [])
+            if (e != null) e.toString(),
+        });
+    }
+
+    sets(projectCreatorTeamIds, data['projectCreatorTeamIds']);
+    sets(projectStatuses, data['projectStatuses']);
+    projectStartMonth = dateOf(data['projectStartMonth']);
+    projectEndMonth = dateOf(data['projectEndMonth']);
+    sets(subprojectCreatorTeamIds, data['subprojectCreatorTeamIds']);
+    sets(subprojectCreatorIds, data['subprojectCreatorIds']);
+    sets(subprojectPicIds, data['subprojectPicIds']);
+    sets(subprojectStatuses, data['subprojectStatuses']);
+    subprojectStartMonth = dateOf(data['subprojectStartMonth']);
+    subprojectEndMonth = dateOf(data['subprojectEndMonth']);
+    sets(taskCreatorTeamIds, data['taskCreatorTeamIds']);
+    sets(taskCreatorIds, data['taskCreatorIds']);
+    sets(taskPicIds, data['taskPicIds']);
+    sets(taskStatuses, data['taskStatuses']);
+    sets(subtaskCreatorTeamIds, data['subtaskCreatorTeamIds']);
+    sets(subtaskCreatorIds, data['subtaskCreatorIds']);
+    sets(subtaskPicIds, data['subtaskPicIds']);
+    sets(subtaskStatuses, data['subtaskStatuses']);
+    taskCompletedStart = dateOf(data['taskCompletedStart']);
+    taskCompletedEnd = dateOf(data['taskCompletedEnd']);
+    taskExpectedDueStart = dateOf(data['taskExpectedDueStart']);
+    taskExpectedDueEnd = dateOf(data['taskExpectedDueEnd']);
+    subtaskCompletedStart = dateOf(data['subtaskCompletedStart']);
+    subtaskCompletedEnd = dateOf(data['subtaskCompletedEnd']);
+    subtaskExpectedDueStart = dateOf(data['subtaskExpectedDueStart']);
+    subtaskExpectedDueEnd = dateOf(data['subtaskExpectedDueEnd']);
+    final rawSortKey = data['sortKey'];
+    if (rawSortKey == 'due_asc' ||
+        rawSortKey == 'due_desc' ||
+        rawSortKey == 'created_desc' ||
+        rawSortKey == 'created_asc' ||
+        rawSortKey == 'name_asc' ||
+        rawSortKey == 'name_desc') {
+      sortKey = rawSortKey;
+    }
+    showProjectsWithoutTasks =
+        data['showProjectsWithoutTasks'] as bool? ?? showProjectsWithoutTasks;
+  }
+}
+
+class _MapButtonPaint {
+  const _MapButtonPaint({
+    required this.background,
+    required this.foreground,
+    required this.side,
+  });
+
+  final Color background;
+  final Color foreground;
+  final BorderSide side;
+}
+
+_MapButtonPaint _mapChoicePaint(
+  AsanaLandingPalette palette, {
+  required bool selected,
+}) {
+  if (!selected && palette.id == 'Charcoal') {
+    final box = _DiagramBoxStyle.forType(_DiagramNodeType.subtask, palette);
+    return _MapButtonPaint(
+      background: box.background,
+      foreground: box.text,
+      side: BorderSide(color: box.border),
+    );
+  }
+  return _MapButtonPaint(
+    background: selected ? palette.accent : palette.sidebar,
+    foreground: selected ? palette.onBanner : palette.onSidebar,
+    side: BorderSide(color: palette.accent, width: selected ? 0 : 1.5),
+  );
+}
+
+_MapButtonPaint _mapCustomizePaint(AsanaLandingPalette palette) {
+  if (palette.id == 'Charcoal') {
+    final box = _DiagramBoxStyle.forType(_DiagramNodeType.project, palette);
+    return _MapButtonPaint(
+      background: box.background,
+      foreground: box.text,
+      side: BorderSide(color: box.border),
+    );
+  }
+  return _MapButtonPaint(
+    background: palette.sidebar,
+    foreground: palette.onSidebar,
+    side: BorderSide(color: palette.accent, width: 1.5),
+  );
+}
+
+class _MapDisplayChoice extends StatelessWidget {
+  const _MapDisplayChoice({
+    required this.palette,
+    required this.label,
+    required this.width,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final AsanaLandingPalette palette;
+  final String label;
+  final double width;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final paint = _mapChoicePaint(palette, selected: selected);
+    final background = paint.background;
+    final foreground = paint.foreground;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: SizedBox(
+        width: width,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: _mapFilterButtonStyle(
+            background: background,
+            foreground: foreground,
+            minWidth: width,
+            side: paint.side,
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: foreground,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPlainButton extends StatelessWidget {
+  const _MapPlainButton({
+    required this.palette,
+    required this.label,
+    required this.onTap,
+  });
+
+  final AsanaLandingPalette palette;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final paint = _mapCustomizePaint(palette);
+    return OutlinedButton(
+      onPressed: onTap,
+      style: _mapFilterButtonStyle(
+        background: paint.background,
+        foreground: paint.foreground,
+        side: paint.side,
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: paint.foreground,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _MapBackStrip extends StatelessWidget {
+  const _MapBackStrip({required this.palette, required this.onTap});
+
+  final AsanaLandingPalette palette;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Back to main filters',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Center(
+              child: Text(
+                '<<',
+                style: TextStyle(
+                  color: palette.accent,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 18,
+                  height: 1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapThemeBadge extends StatelessWidget {
+  const _MapThemeBadge({
+    required this.palette,
+    required this.child,
+    required this.tooltip,
+    this.width = 24,
+  });
+
+  final AsanaLandingPalette palette;
+  final Widget child;
+  final String tooltip;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: width,
+        height: 24,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: palette.accent,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: palette.banner),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+IconData _mapStatusIcon(_DiagramNode node) {
+  final status = node.status.trim().toLowerCase();
+  if (node.completed || status == 'completed' || status == 'complete') {
+    return Icons.circle_outlined;
+  }
+  if (status == 'deleted' || status == 'delete') return Icons.close;
+  if (status == 'paused') return Icons.pause;
+  if (status == 'not started') return Icons.hourglass_empty;
+  if (status == 'in progress') return Icons.play_arrow;
+  if ((node.submission ?? '').trim().toLowerCase() == 'submitted') {
+    return Icons.outbox;
+  }
+  final due = node.dueDate;
+  if (due != null && (status == 'incomplete' || status.isEmpty)) {
+    final today = HkTime.todayDateOnlyHk();
+    final day = DateTime(due.year, due.month, due.day);
+    if (day == today) return Icons.today;
+    if (day.isBefore(today)) return Icons.priority_high;
+  }
+  return Icons.build;
+}
+
+String _mapStatusTooltip(_DiagramNode node) {
+  final status = node.status.trim();
+  if (node.completed || status.toLowerCase() == 'completed') return 'Completed';
+  if ((node.submission ?? '').trim().toLowerCase() == 'submitted') {
+    return 'Submitted';
+  }
+  final due = node.dueDate;
+  final key = status.toLowerCase();
+  if (due != null && (key == 'incomplete' || key.isEmpty)) {
+    final today = HkTime.todayDateOnlyHk();
+    final day = DateTime(due.year, due.month, due.day);
+    if (day == today) return 'Due today';
+    if (day.isBefore(today)) return 'Overdue';
+    return 'Incomplete';
+  }
+  if (status.isEmpty) return 'Incomplete';
+  return status;
+}
+
+/// Slides the one-row map filters and the taller advanced filters, and
+/// sizes the strip to the pane that is on screen.
+class _MapFilterPaneSlide extends StatefulWidget {
+  const _MapFilterPaneSlide({
+    required this.animation,
+    required this.simple,
+    required this.advanced,
+  });
+
+  final Animation<double> animation;
+  final Widget simple;
+  final Widget advanced;
+
+  @override
+  State<_MapFilterPaneSlide> createState() => _MapFilterPaneSlideState();
+}
+
+class _MapFilterPaneSlideState extends State<_MapFilterPaneSlide> {
+  double? _simpleHeight;
+  double? _advancedHeight;
+
+  void _remember(bool advanced, Size size) {
+    final next = size.height;
+    if (next <= 0) return;
+    if (advanced) {
+      if (_advancedHeight == next) return;
+      setState(() => _advancedHeight = next);
+    } else {
+      if (_simpleHeight == next) return;
+      setState(() => _simpleHeight = next);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return AnimatedBuilder(
+          animation: widget.animation,
+          builder: (context, _) {
+            final t = widget.animation.value;
+            final simpleH = _simpleHeight;
+            final advancedH = _advancedHeight;
+            if (simpleH == null || advancedH == null) {
+              final showAdvanced = t >= 0.5;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _hiddenMeasure(
+                    widget.simple,
+                    (size) => _remember(false, size),
+                  ),
+                  _hiddenMeasure(
+                    widget.advanced,
+                    (size) => _remember(true, size),
+                  ),
+                  showAdvanced ? widget.advanced : widget.simple,
+                ],
+              );
+            }
+            final height = simpleH + (advancedH - simpleH) * t;
+            return ClipRect(
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    Positioned(
+                      left: -t * width,
+                      top: 0,
+                      width: width,
+                      child: _ReportSize(
+                        onChange: (size) => _remember(false, size),
+                        child: widget.simple,
+                      ),
+                    ),
+                    Positioned(
+                      left: (1 - t) * width,
+                      top: 0,
+                      width: width,
+                      child: _ReportSize(
+                        onChange: (size) => _remember(true, size),
+                        child: widget.advanced,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ReportSize extends StatefulWidget {
+  const _ReportSize({required this.onChange, required this.child});
+
+  final ValueChanged<Size> onChange;
+  final Widget child;
+
+  @override
+  State<_ReportSize> createState() => _ReportSizeState();
+}
+
+class _ReportSizeState extends State<_ReportSize> {
+  Size? _last;
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      final size = box.size;
+      if (_last == size) return;
+      _last = size;
+      widget.onChange(size);
+    });
+    return widget.child;
+  }
+}
+
+Widget _hiddenMeasure(Widget child, ValueChanged<Size> onSize) {
+  return SizedBox(
+    height: 0,
+    child: OverflowBox(
+      alignment: Alignment.topLeft,
+      minHeight: 0,
+      maxHeight: double.infinity,
+      child: _ReportSize(onChange: onSize, child: child),
+    ),
+  );
 }

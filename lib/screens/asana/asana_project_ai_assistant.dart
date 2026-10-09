@@ -123,6 +123,9 @@ class AsanaProjectAiSuggestionBuilder {
     required AsanaProjectAiFormSnapshot form,
     required AsanaProjectAiApply apply,
     String userPrompt = '',
+    bool suggestMilestones = true,
+    String nothingInferredMessage =
+        'No project fields could be inferred from this prompt. Try being more specific.',
   }) {
     final lines = <AsanaTaskAiSuggestionLine>[];
 
@@ -358,13 +361,17 @@ class AsanaProjectAiSuggestionBuilder {
       }
     }
 
-    var suggestedMilestones = asanaParseSuggestedMilestones(
-      raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
-    );
-    if (suggestedMilestones.isEmpty && userPrompt.trim().isNotEmpty) {
+    var suggestedMilestones = suggestMilestones
+        ? asanaParseSuggestedMilestones(
+            raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
+          )
+        : const <AsanaSuggestedMilestone>[];
+    if (suggestMilestones &&
+        suggestedMilestones.isEmpty &&
+        userPrompt.trim().isNotEmpty) {
       suggestedMilestones = asanaInferMilestonesFromPrompt(userPrompt);
     }
-    if (suggestedMilestones.isNotEmpty) {
+    if (suggestMilestones && suggestedMilestones.isNotEmpty) {
       apply.ensureMilestoneSlots(suggestedMilestones.length);
       for (var i = 0; i < suggestedMilestones.length; i++) {
         final item = suggestedMilestones[i];
@@ -386,7 +393,8 @@ class AsanaProjectAiSuggestionBuilder {
             ),
           );
         }
-        if (current == null || current.progressPercent != item.progressPercent) {
+        if (current == null ||
+            current.progressPercent != item.progressPercent) {
           lines.add(
             AsanaTaskAiSuggestionLine.adopt(
               fieldKey: AsanaTaskAiFieldKey.milestonePercent,
@@ -404,13 +412,10 @@ class AsanaProjectAiSuggestionBuilder {
       }
     }
 
+    asanaDropDescriptionWithoutName(lines);
     final hasAdopt = lines.any((l) => l.adoptable);
     if (!hasAdopt && lines.isEmpty) {
-      return [
-        const AsanaTaskAiSuggestionLine.info(
-          'No project fields could be inferred from this prompt. Try being more specific.',
-        ),
-      ];
+      return [AsanaTaskAiSuggestionLine.info(nothingInferredMessage)];
     }
     if (!hasAdopt && lines.every((l) => !l.adoptable)) {
       lines.add(

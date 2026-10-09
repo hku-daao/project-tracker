@@ -163,6 +163,10 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
     this.secondRowFilterChildren,
     this.thirdRowFilterChildren,
     this.alignFiltersLeft = false,
+    this.padding,
+    this.leading,
+    this.trailing,
+    this.alignClearWithControls = false,
   });
 
   final AsanaLandingPalette palette;
@@ -173,6 +177,12 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
   final List<Widget>? thirdRowFilterChildren;
   final bool alignFiltersLeft;
   final VoidCallback onClearAll;
+  final EdgeInsetsGeometry? padding;
+  final Widget? leading;
+  final Widget? trailing;
+
+  /// Sizes Clear all to the filter boxes and drops the extra top offset.
+  final bool alignClearWithControls;
 
   @override
   State<AsanaPanelFilterToolbar> createState() =>
@@ -181,14 +191,10 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
 
 class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
   final _filterScrollController = ScrollController();
-  final _secondRowScrollController = ScrollController();
-  final _thirdRowScrollController = ScrollController();
 
   @override
   void dispose() {
     _filterScrollController.dispose();
-    _secondRowScrollController.dispose();
-    _thirdRowScrollController.dispose();
     super.dispose();
   }
 
@@ -228,10 +234,37 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
     );
   }
 
+  /// One horizontal scroller so every filter row moves together.
+  Widget _linkedFilterRows(List<List<Widget>> rows) {
+    return Align(
+      alignment: widget.alignFiltersLeft
+          ? Alignment.centerLeft
+          : Alignment.centerRight,
+      child: _scrollableFilters(
+        Column(
+          crossAxisAlignment: widget.alignFiltersLeft
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.end,
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0) const SizedBox(height: 10),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: rows[i],
+              ),
+            ],
+          ],
+        ),
+        controller: _filterScrollController,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: widget.padding ?? const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 760;
@@ -243,6 +276,14 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   onPressed: widget.onCreate!,
                 );
           final clearButton = TextButton(
+            style: widget.alignClearWithControls
+                ? TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    minimumSize: const Size(0, 34),
+                  )
+                : null,
             onPressed: widget.onClearAll,
             child: const Text('Clear all'),
           );
@@ -252,18 +293,45 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
           final hasThirdRow = thirdRow != null && thirdRow.isNotEmpty;
           final clearAtEndOfFirstRow =
               hasSecondRow || hasThirdRow || widget.alignFiltersLeft;
+          final clearChild = widget.alignClearWithControls
+              ? clearButton
+              : Padding(
+                  padding: const EdgeInsets.only(top: 18),
+                  child: clearButton,
+                );
           final firstRowChildren = [
             ...widget.filterChildren,
-            if (clearAtEndOfFirstRow)
-              Padding(
-                padding: const EdgeInsets.only(top: 18),
-                child: clearButton,
-              ),
+            if (clearAtEndOfFirstRow) clearChild,
           ];
-          final firstRow = _filterRow(
+          final rowGroups = <List<Widget>>[
             firstRowChildren,
-            controller: _filterScrollController,
+            if (secondRow != null && secondRow.isNotEmpty) secondRow,
+            if (thirdRow != null && thirdRow.isNotEmpty) thirdRow,
+          ];
+          final filters = rowGroups.length > 1
+              ? _linkedFilterRows(rowGroups)
+              : _filterRow(
+                  firstRowChildren,
+                  controller: _filterScrollController,
+                );
+          final chromeRow = Row(
+            crossAxisAlignment: widget.leading != null
+                ? CrossAxisAlignment.stretch
+                : CrossAxisAlignment.end,
+            children: [
+              if (widget.leading != null) ...[
+                widget.leading!,
+                const SizedBox(width: 16),
+              ],
+              Expanded(child: filters),
+              if (widget.trailing != null) widget.trailing!,
+            ],
           );
+          final withChrome = widget.leading == null && widget.trailing == null
+              ? filters
+              : widget.leading != null
+              ? IntrinsicHeight(child: chromeRow)
+              : chromeRow;
 
           if (clearAtEndOfFirstRow) {
             return Column(
@@ -276,21 +344,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   ),
                   const SizedBox(height: 10),
                 ],
-                firstRow,
-                if (hasSecondRow) ...[
-                  const SizedBox(height: 10),
-                  _filterRow(
-                    secondRow,
-                    controller: _secondRowScrollController,
-                  ),
-                ],
-                if (hasThirdRow) ...[
-                  const SizedBox(height: 10),
-                  _filterRow(
-                    thirdRow,
-                    controller: _thirdRowScrollController,
-                  ),
-                ],
+                withChrome,
               ],
             );
           }
@@ -301,7 +355,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
               children: [
                 Row(children: [createButton, const Spacer(), clearButton]),
                 const SizedBox(height: 10),
-                firstRow,
+                filters,
               ],
             );
           }
@@ -311,7 +365,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             children: [
               createButton,
               const SizedBox(width: 12),
-              Expanded(child: firstRow),
+              Expanded(child: filters),
               Padding(
                 padding: const EdgeInsets.only(top: 18, left: 8),
                 child: clearButton,

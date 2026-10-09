@@ -9,6 +9,7 @@ import '../../priority.dart';
 import '../../services/llm_service.dart';
 import '../../services/database_service.dart';
 import 'asana_project_ai_assistant.dart';
+import 'asana_subproject_ai_assistant.dart';
 import 'asana_project_milestone_section.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
@@ -250,6 +251,8 @@ class AsanaTaskAiFormSnapshot {
   static String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+  static String relativeDateInstruction() => _relativeDateInstruction();
+
   static String _relativeDateInstruction() {
     final today = HkTime.todayDateOnlyHk();
     final nextMonday = _nextWeekday(today, DateTime.monday);
@@ -282,6 +285,7 @@ enum AsanaTaskAiAssistantMode {
   taskFields,
   commentOnly,
   projectFields,
+  subprojectFields,
   subtaskFields,
 }
 
@@ -472,15 +476,16 @@ class AsanaSubtaskAiSuggestionBuilder {
     }
 
     var datesBlocked = false;
-    final recurrenceOn = AsanaTaskAiSuggestionBuilder.appendRecurrenceSuggestions(
-      lines: lines,
-      raw: raw['recurrence'],
-      canSuggest: form.canSuggestRecurrence,
-      currentEnabled: form.recurrenceEnabled,
-      currentDraft: form.recurrence,
-      apply: applyRecurrence,
-      userPrompt: userPrompt,
-    );
+    final recurrenceOn =
+        AsanaTaskAiSuggestionBuilder.appendRecurrenceSuggestions(
+          lines: lines,
+          raw: raw['recurrence'],
+          canSuggest: form.canSuggestRecurrence,
+          currentEnabled: form.recurrenceEnabled,
+          currentDraft: form.recurrence,
+          apply: applyRecurrence,
+          userPrompt: userPrompt,
+        );
     if (recurrenceOn) {
       datesBlocked = true;
     } else if (proposedStart != null &&
@@ -834,6 +839,7 @@ class AsanaSubtaskAiSuggestionBuilder {
       }
     }
 
+    asanaDropDescriptionWithoutName(lines);
     if (lines.isEmpty) {
       return [
         const AsanaTaskAiSuggestionLine.info(
@@ -843,6 +849,15 @@ class AsanaSubtaskAiSuggestionBuilder {
     }
     return lines;
   }
+}
+
+/// A description suggestion is only shown together with a name suggestion.
+void asanaDropDescriptionWithoutName(List<AsanaTaskAiSuggestionLine> lines) {
+  final hasName = lines.any(
+    (line) => line.adoptable && line.fieldKey == AsanaTaskAiFieldKey.taskName,
+  );
+  if (hasName) return;
+  lines.removeWhere((line) => line.fieldKey == AsanaTaskAiFieldKey.description);
 }
 
 /// Context for comment-only assistant.
@@ -1284,6 +1299,7 @@ class AsanaTaskAiSuggestionBuilder {
       );
     }
 
+    asanaDropDescriptionWithoutName(lines);
     final hasAdopt = lines.any((l) => l.adoptable);
     if (!hasAdopt && lines.isEmpty) {
       return [
@@ -1730,6 +1746,8 @@ class AsanaTaskAiController extends ChangeNotifier {
     this.onApplyWebsiteLink,
     this.projectSnapshot,
     this.projectApply,
+    this.subprojectSnapshot,
+    this.subprojectApply,
     this.subtaskSnapshot,
     this.onApplySubtaskName,
     this.onApplySubtaskDescription,
@@ -1748,6 +1766,8 @@ class AsanaTaskAiController extends ChangeNotifier {
              ? formSnapshot != null && apply != null
              : mode == AsanaTaskAiAssistantMode.projectFields
              ? projectSnapshot != null && projectApply != null
+             : mode == AsanaTaskAiAssistantMode.subprojectFields
+             ? subprojectSnapshot != null && subprojectApply != null
              : mode == AsanaTaskAiAssistantMode.subtaskFields
              ? subtaskSnapshot != null && onApplyComment != null
              : commentSnapshot != null && onApplyComment != null,
@@ -1762,6 +1782,8 @@ class AsanaTaskAiController extends ChangeNotifier {
   final void Function(String url, String description)? onApplyWebsiteLink;
   final AsanaProjectAiFormSnapshot Function()? projectSnapshot;
   final AsanaProjectAiApply? projectApply;
+  final AsanaSubprojectAiFormSnapshot Function()? subprojectSnapshot;
+  final AsanaSubprojectAiApply? subprojectApply;
   final AsanaSubtaskAiFormSnapshot Function()? subtaskSnapshot;
   final void Function(String name)? onApplySubtaskName;
   final void Function(String description)? onApplySubtaskDescription;
@@ -2050,8 +2072,8 @@ class AsanaTaskAiController extends ChangeNotifier {
           formContext: form.buildLlmContext(),
         );
         if (asanaParseSuggestedMilestones(
-              raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
-            ).isEmpty) {
+          raw['milestones'] ?? raw['milestone'] ?? raw['steps'],
+        ).isEmpty) {
           final inferred = asanaInferMilestonesFromPrompt(prompt);
           if (inferred.isNotEmpty) {
             raw['hasMilestone'] = true;
@@ -2069,6 +2091,19 @@ class AsanaTaskAiController extends ChangeNotifier {
           form: form,
           apply: projectApply!,
           userPrompt: prompt,
+        );
+        overallFeedback = deriveOverallFeedback(raw, lines);
+        unawaited(_recordAudit(prompt: prompt, raw: raw));
+      } else if (mode == AsanaTaskAiAssistantMode.subprojectFields) {
+        final form = subprojectSnapshot!();
+        final raw = await LlmService.suggestAsanaSubprojectDraft(
+          userPrompt: prompt,
+          formContext: form.buildLlmContext(),
+        );
+        lines = AsanaSubprojectAiSuggestionBuilder.build(
+          raw: raw,
+          form: form,
+          apply: subprojectApply!,
         );
         overallFeedback = deriveOverallFeedback(raw, lines);
         unawaited(_recordAudit(prompt: prompt, raw: raw));
@@ -2192,6 +2227,7 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
     final mode = widget.controller.mode;
     final commentOnly = mode == AsanaTaskAiAssistantMode.commentOnly;
     final projectOnly = mode == AsanaTaskAiAssistantMode.projectFields;
+    final subprojectOnly = mode == AsanaTaskAiAssistantMode.subprojectFields;
 
     return Material(
       color: colors.boxBackground,
@@ -2277,6 +2313,7 @@ class _AsanaTaskAiDockState extends State<AsanaTaskAiDock> {
                       colors: colors,
                       commentOnly: commentOnly,
                       projectOnly: projectOnly,
+                      subprojectOnly: subprojectOnly,
                     ),
                   ),
               ],
@@ -2295,6 +2332,7 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
     required this.colors,
     required this.commentOnly,
     required this.projectOnly,
+    required this.subprojectOnly,
   });
 
   final AsanaTaskAiController controller;
@@ -2302,6 +2340,7 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
   final AsanaTaskAiColors colors;
   final bool commentOnly;
   final bool projectOnly;
+  final bool subprojectOnly;
 
   bool _enterSubmitsPrompt(BuildContext context) {
     if (!kIsWeb) return false;
@@ -2326,6 +2365,8 @@ class _AsanaTaskAiPromptContent extends StatelessWidget {
                   ? 'This assistant helps you write a better comment.'
                   : projectOnly
                   ? 'Describe the project, then tap Analyse. Suggestions appear on matching fields.'
+                  : subprojectOnly
+                  ? 'Describe the sub-project, then tap Analyse. Suggestions appear on matching fields.'
                   : 'Describe the task, then tap Analyse. Suggestions appear on matching fields.',
               style: asanaDetailLabelStyle(context),
             ),

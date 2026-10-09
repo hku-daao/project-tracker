@@ -20,6 +20,7 @@ import '../../utils/due_span_policy.dart';
 import '../../utils/hk_time.dart';
 import '../../utils/attachment_url_launch.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import '../asana_landing_screen.dart';
 import 'asana_attachment_draft_tile.dart';
 import 'asana_attachment_menu.dart';
@@ -609,13 +610,23 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
                   _savePostedCommentOnBlur(state, comment);
                 }
               },
-              child: AsanaHoverTextField(
-                controller: _postedCommentControllers[comment.id]!,
-                canEdit: true,
-                readOnly: _saving || _savingPostedCommentId == comment.id,
-                maxLines: 8,
-                minLines: 2,
-                style: asanaDetailMultilineValueStyle(context),
+              child: AsanaFileDropRegion(
+                enabled: !_saving && subtask != null,
+                imagesOnly: true,
+                onFiles: (files, rejected) => _stageInlineImage(
+                  entityType: 'subtask_comment',
+                  entityId: comment.id,
+                  files: files,
+                  rejectedNonImages: rejected,
+                ),
+                child: AsanaHoverTextField(
+                  controller: _postedCommentControllers[comment.id]!,
+                  canEdit: true,
+                  readOnly: _saving || _savingPostedCommentId == comment.id,
+                  maxLines: 8,
+                  minLines: 2,
+                  style: asanaDetailMultilineValueStyle(context),
+                ),
               ),
             ),
             InlineImageToolbar(
@@ -2172,6 +2183,17 @@ Due: ${_date(p.endDate)}
       return;
     }
     if (canEditDetails &&
+        effectiveAssigneeIds.length > DatabaseService.taskAssigneeSlotCount) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Too many assignees',
+        content:
+            'Select no more than ${DatabaseService.taskAssigneeSlotCount} assignees.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (canEditDetails &&
         effectiveAssigneeIds.length == 1 &&
         _picAssigneeId == null) {
       _picAssigneeId = effectiveAssigneeIds.first;
@@ -2568,6 +2590,19 @@ Due: ${_date(p.endDate)}
       return null;
     }
     if (canEditDetails &&
+        effectiveAssigneeIds.length > DatabaseService.taskAssigneeSlotCount) {
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Too many assignees',
+        content:
+            'Select no more than ${DatabaseService.taskAssigneeSlotCount} assignees.',
+        palette: widget.palette,
+      );
+      return null;
+    }
+    if (canEditDetails &&
         effectiveAssigneeIds.length == 1 &&
         _picAssigneeId == null) {
       _picAssigneeId = effectiveAssigneeIds.first;
@@ -2796,6 +2831,17 @@ Due: ${_date(p.endDate)}
         context: context,
         title: 'Assignee required',
         content: 'Select at least one assignee before continuing.',
+        palette: widget.palette,
+      );
+      return;
+    }
+    if (canEditDetails &&
+        effectiveAssigneeIds.length > DatabaseService.taskAssigneeSlotCount) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Too many assignees',
+        content:
+            'Select no more than ${DatabaseService.taskAssigneeSlotCount} assignees.',
         palette: widget.palette,
       );
       return;
@@ -3236,27 +3282,51 @@ Due: ${_date(p.endDate)}
     );
   }
 
-  Future<void> _addFileAttachment() async {
+  Future<void> _addFileAttachment({List<PickedFileBytes>? dropped}) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (widget.createMode) {
-      final picked = await _withBlockingLoading(
-        AttachmentUploadService.pickFilesForUpload,
-      );
-      if (!mounted) return;
-      if (picked?.error != null) {
-        await showAsanaInfoDialog(
-          context: context,
-          title: 'Attachment upload failed',
-          content: picked!.error!,
-          palette: widget.palette,
+      late final List<({Uint8List bytes, String label})> staged;
+      if (dropped != null) {
+        if (dropped.isEmpty) return;
+        staged = [];
+        for (final file in dropped) {
+          final label = file.name.trim().isEmpty
+              ? 'attachment'
+              : file.name.trim();
+          final sizeError = AttachmentUploadService.uploadSizeError(
+            file.bytes.length,
+            label,
+          );
+          if (sizeError != null) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Attachment upload failed',
+              content: sizeError,
+              palette: widget.palette,
+            );
+            return;
+          }
+          staged.add((bytes: file.bytes, label: label));
+        }
+      } else {
+        final picked = await _withBlockingLoading(
+          () => AttachmentUploadService.pickFilesForUpload(allowMultiple: true),
         );
-        return;
+        if (!mounted) return;
+        if (picked?.error != null) {
+          await showAsanaInfoDialog(
+            context: context,
+            title: 'Attachment upload failed',
+            content: picked!.error!,
+            palette: widget.palette,
+          );
+          return;
+        }
+        staged = picked?.files ?? const <({Uint8List bytes, String label})>[];
       }
-      final files =
-          picked?.files ?? const <({Uint8List bytes, String label})>[];
-      if (files.isEmpty) return;
+      if (!mounted || staged.isEmpty) return;
       setState(() {
-        for (final file in files) {
+        for (final file in staged) {
           _attachments.add(
             _SubtaskAttachmentDraft(
               pendingBytes: file.bytes,
@@ -3271,10 +3341,75 @@ Due: ${_date(p.endDate)}
       final s = _subtask;
       if (s == null) return;
       final state = context.read<AppState>();
+      if (dropped != null) {
+        if (dropped.isEmpty) return;
+        final uploaded = <({String url, String label})>[];
+        for (final file in dropped) {
+          final label = file.name.trim().isEmpty
+              ? 'attachment'
+              : file.name.trim();
+          final sizeError = AttachmentUploadService.uploadSizeError(
+            file.bytes.length,
+            label,
+          );
+          if (sizeError != null) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Attachment upload failed',
+              content: sizeError,
+              palette: widget.palette,
+            );
+            return;
+          }
+          final upload = await _withBlockingLoading(
+            () => AttachmentUploadService.uploadBytesForSubtask(
+              s.id,
+              bytes: file.bytes,
+              originalFilename: label,
+              aclStaffKeys: _subtaskAttachmentAclKeys(state),
+            ),
+          );
+          if (upload == null || !mounted) return;
+          if (upload.error != null) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Attachment upload failed',
+              content: upload.error!,
+              palette: widget.palette,
+            );
+            return;
+          }
+          final url = upload.url?.trim();
+          if (url == null || url.isEmpty) {
+            await showAsanaInfoDialog(
+              context: context,
+              title: 'Attachment upload failed',
+              content: 'File upload did not return a download link.',
+              palette: widget.palette,
+            );
+            return;
+          }
+          uploaded.add((url: url, label: upload.label ?? label));
+        }
+        if (!mounted || uploaded.isEmpty) return;
+        setState(() {
+          for (final file in uploaded) {
+            _attachments.add(
+              _SubtaskAttachmentDraft(
+                url: file.url,
+                desc: file.label,
+                mimeType: _attachmentMimeTypeFromName(file.label),
+              ),
+            );
+          }
+        });
+        return;
+      }
       final r = await _withBlockingLoading(
         () => AttachmentUploadService.pickUploadFilesForSubtask(
           s.id,
           aclStaffKeys: _subtaskAttachmentAclKeys(state),
+          allowMultiple: true,
         ),
       );
       if (!mounted) return;
@@ -3361,38 +3496,56 @@ Due: ${_date(p.endDate)}
   Future<void> _stageInlineImage({
     required String entityType,
     required String entityId,
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    final picked = await _withBlockingLoading(pickOneFileWithBytes);
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
       await showAsanaInfoDialog(
         context: context,
         title: 'Inline image upload failed',
-        content: 'Could not read file data.',
+        content: resolved.error!,
         palette: widget.palette,
       );
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    setState(
-      () => _pendingInlineImageAdds.add(
-        _SubtaskInlineImageDraft(
-          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          entityType: entityType,
-          entityId: entityId,
-          bytes: picked.bytes,
-          label: label,
-          sortOrder: _pendingInlineImageAdds
-              .where(
-                (draft) =>
-                    draft.entityType == entityType &&
-                    draft.entityId == entityId,
-              )
-              .length,
-        ),
-      ),
-    );
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == entityType && draft.entityId == entityId,
+          )
+          .length;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _SubtaskInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: entityType,
+            entityId: entityId,
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Inline image',
+        content: resolved.warning!,
+        palette: widget.palette,
+      );
+    }
   }
 
   bool _canRemoveInlineAttachment(InlineAttachmentRow row) {
@@ -3719,6 +3872,7 @@ Due: ${_date(p.endDate)}
     required bool addEnabled,
     required String addTooltip,
     required void Function(BuildContext buttonContext)? onAdd,
+    void Function(List<PickedFileBytes> files)? onDropFiles,
     LayerLink? addAnchorLink,
     bool allowRemove = true,
     BuildContext? editAnchorContext,
@@ -3742,12 +3896,16 @@ Due: ${_date(p.endDate)}
             ),
           ),
           Expanded(
-            child: _attachmentValueList(
-              context,
-              attachments,
-              allowRemove,
-              createMode: createMode,
-              editAnchorContext: editAnchorContext,
+            child: asanaAttachmentValuesWithFileDrop(
+              enabled: addEnabled,
+              onDropFiles: onDropFiles,
+              child: _attachmentValueList(
+                context,
+                attachments,
+                allowRemove,
+                createMode: createMode,
+                editAnchorContext: editAnchorContext,
+              ),
             ),
           ),
         ],
@@ -4056,15 +4214,27 @@ Due: ${_date(p.endDate)}
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _descController,
-                  canEdit: canEditDetails,
-                  readOnly: _saving,
-                  showOutline: false,
-                  maxLines: 8,
-                  minLines: 2,
-                  style: asanaDetailMultilineValueStyle(context),
-                  hintText: 'Please fill in sub-task description',
+                AsanaFileDropRegion(
+                  enabled: canEditDetails && !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'subtask_description',
+                    entityId: _effectiveCreateMode
+                        ? 'draft_description'
+                        : (s?.id ?? ''),
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _descController,
+                    canEdit: canEditDetails,
+                    readOnly: _saving,
+                    showOutline: false,
+                    maxLines: 8,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                    hintText: 'Please fill in sub-task description',
+                  ),
                 ),
                 if (_effectiveCreateMode)
                   InlineImageToolbar(
@@ -4347,6 +4517,7 @@ Due: ${_date(p.endDate)}
             addEnabled: canEditAttachments && !_saving,
             addTooltip: 'Add file',
             onAdd: (_) => _addFileAttachment(),
+            onDropFiles: (files) => _addFileAttachment(dropped: files),
             allowRemove: canEditAttachments,
           ),
           Builder(
@@ -4427,13 +4598,23 @@ Due: ${_date(p.endDate)}
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _commentController,
-                  canEdit: true,
-                  readOnly: _saving,
-                  maxLines: 8,
-                  minLines: 2,
-                  hintText: 'Ask a question or post an update...',
+                AsanaFileDropRegion(
+                  enabled: !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'subtask_comment',
+                    entityId: 'draft',
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _commentController,
+                    canEdit: true,
+                    readOnly: _saving,
+                    maxLines: 8,
+                    minLines: 2,
+                    hintText: 'Ask a question or post an update...',
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: !_saving,

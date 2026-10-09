@@ -14,6 +14,16 @@ String normalizeCommencementStatus(String? value) {
   return commencementCommenced;
 }
 
+bool isToBeCommenced(String? value) =>
+    normalizeCommencementStatus(value) == commencementToBeCommenced;
+
+/// Start/due can stay stored on a To be commenced row; list and nested views
+/// treat them as unset so other people see an empty date.
+DateTime? visibleScheduleDate(DateTime? date, String? commencementStatus) {
+  if (isToBeCommenced(commencementStatus)) return null;
+  return date;
+}
+
 /// True when the prompt clearly asks for Commence = To be commenced.
 bool asanaPromptImpliesToBeCommenced(String? prompt) {
   final v = (prompt ?? '').trim().toLowerCase();

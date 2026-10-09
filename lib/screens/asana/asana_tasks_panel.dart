@@ -1777,6 +1777,7 @@ class _ItemTableRow extends StatelessWidget {
       isSubtask: isSubtask,
     );
     final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;
+    final visibleDue = visibleScheduleDate(dueDate, commencementStatus);
     final typeLetter = AsanaRowTypeLetter(
       letter: isSubtask ? 'ST' : 'T',
       completed: completed,
@@ -1845,7 +1846,7 @@ class _ItemTableRow extends StatelessWidget {
                 SizedBox(
                   width: cols.dueCol,
                   child: _DueDateCell(
-                    dueDate: dueDate,
+                    dueDate: visibleDue,
                     style: rowValueStyle,
                     showBadge: _shouldShowDueDateBadge(
                       status: status,
@@ -1962,7 +1963,13 @@ class _FlatMobileRow extends StatelessWidget {
               ? '(Unnamed sub-task)'
               : subtask!.subtaskName.trim())
         : (task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim());
-    final dueDate = isSubtask ? subtask!.dueDate : task.endDate;
+    final commencementStatus = isSubtask
+        ? subtask!.commencementStatus
+        : task.commencementStatus;
+    final dueDate = visibleScheduleDate(
+      isSubtask ? subtask!.dueDate : task.endDate,
+      commencementStatus,
+    );
     final creator = isSubtask
         ? subtask!.createByStaffName
         : task.createByStaffName;
@@ -1974,9 +1981,6 @@ class _FlatMobileRow extends StatelessWidget {
             subtask!,
           )
         : AsanaTaskFilter.taskDisplayStatus(context.read<AppState>(), task);
-    final commencementStatus = isSubtask
-        ? subtask!.commencementStatus
-        : task.commencementStatus;
     final submission = isSubtask ? subtask!.submission : task.submission;
     final projectName = task.projectName?.trim() ?? '';
     final rowBg = isSubtask ? tableColors.subtaskRow : tableColors.taskRow;

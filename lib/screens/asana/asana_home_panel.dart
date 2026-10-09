@@ -1281,7 +1281,10 @@ class _HomeWorkItem {
   }
 
   String? get pic => isSubtask ? subtask!.pic : task.pic;
-  DateTime? get dueDate => isSubtask ? subtask!.dueDate : task.endDate;
+  DateTime? get dueDate => visibleScheduleDate(
+    isSubtask ? subtask!.dueDate : task.endDate,
+    isSubtask ? subtask!.commencementStatus : task.commencementStatus,
+  );
   String? get submission => isSubtask ? subtask!.submission : task.submission;
   String? get creatorName =>
       isSubtask ? subtask!.createByStaffName : task.createByStaffName;

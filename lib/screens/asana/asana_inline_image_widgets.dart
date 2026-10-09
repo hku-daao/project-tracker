@@ -4,7 +4,9 @@ import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
+import '../../utils/attachment_file_pick.dart';
 import '../../utils/attachment_open_bytes.dart';
 import '../../utils/attachment_url_launch.dart';
 import 'asana_blocking_loading_overlay.dart';
@@ -15,6 +17,75 @@ final RegExp _inlineImageMarkerPattern = RegExp(
 );
 
 const String inlineImageOnlyCommentPlaceholder = '[inline-image]';
+
+bool isInlineImageFile(String name, {String? mimeType}) {
+  final type = mimeType?.toLowerCase().trim() ?? '';
+  if (type.startsWith('image/')) return true;
+  final n = name.toLowerCase();
+  return n.endsWith('.png') ||
+      n.endsWith('.jpg') ||
+      n.endsWith('.jpeg') ||
+      n.endsWith('.gif') ||
+      n.endsWith('.webp') ||
+      n.endsWith('.bmp') ||
+      n.endsWith('.heic') ||
+      n.endsWith('.heif');
+}
+
+/// [dropped] null opens the image picker and allows several files.
+/// An empty dropped list does not open the picker.
+Future<({List<PickedFileBytes> files, String? error, String? warning})>
+resolveInlineImageFiles({
+  List<PickedFileBytes>? dropped,
+  int rejectedNonImages = 0,
+}) async {
+  final source = dropped ?? await pickInlineImageFiles();
+  if (source.isEmpty) {
+    return (
+      files: const <PickedFileBytes>[],
+      error: rejectedNonImages > 0
+          ? 'Only image files can be added here.'
+          : null,
+      warning: null,
+    );
+  }
+  final images = <PickedFileBytes>[];
+  var skipped = rejectedNonImages;
+  for (final file in source) {
+    final label = file.name.trim().isEmpty ? 'image' : file.name.trim();
+    if (!isInlineImageFile(label)) {
+      skipped++;
+      continue;
+    }
+    final sizeError = AttachmentUploadService.uploadSizeError(
+      file.bytes.length,
+      label,
+    );
+    if (sizeError != null) {
+      return (
+        files: const <PickedFileBytes>[],
+        error: sizeError,
+        warning: null,
+      );
+    }
+    if (file.bytes.isEmpty) continue;
+    images.add(file);
+  }
+  if (images.isEmpty) {
+    return (
+      files: const <PickedFileBytes>[],
+      error: 'Only image files can be added here.',
+      warning: null,
+    );
+  }
+  return (
+    files: images,
+    error: null,
+    warning: skipped > 0
+        ? 'Some files were skipped because they are not images.'
+        : null,
+  );
+}
 
 String stripInlineImageMarkers(String text) {
   return text

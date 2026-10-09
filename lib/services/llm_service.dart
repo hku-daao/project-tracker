@@ -152,6 +152,7 @@ Schema:
 Rules:
 - The user is already working inside a task create/edit slide. Treat every prompt as an attempt to fill or improve this task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains task details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
+- REQUIRED — name with description: if you set description, you MUST also set name. Never suggest a description change by itself. The name must be a non-null title that fits the new description, and it must differ from the current name (tighten or clarify it when the current title is close).
 - For optional structured fields (project, assignees, PIC, priority, commencementStatus, dates, reason, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
 - REQUIRED — commencementStatus: if the user says the work has not commenced, is not yet commenced, not commenced yet, yet to commence, has not started, not started yet, should wait, or should not start yet, you MUST set commencementStatus to exactly "To be commenced". Do not omit this field. Do not use "Commenced" for those phrases. "not yet commenced" and "to be commenced" always mean "To be commenced".
 - commencementStatus: use "Commenced" when the prompt says work has started, is ongoing, is already underway, or has already commenced.
@@ -266,6 +267,7 @@ Schema:
 Rules:
 - The user is already working inside a project create/edit slide. Treat every prompt as an attempt to fill or improve this project form. Always set "related": true.
 - Always try to suggest at least one useful field. Prefer name and description when the prompt contains project details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
+- REQUIRED — name with description: if you set description, you MUST also set name. Never suggest a description change by itself. The name must be a non-null title that fits the new description, and it must differ from the current name (tighten or clarify it when the current title is close).
 - For optional structured fields (status, assigneeNames, picNames, startDate, dueDate, comment, websiteLinks, hasMilestone, milestones), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
 - REQUIRED — Milestones: if the prompt says milestone/milestones/phase/step/deliverable, OR lists 2+ pieces of work ("one is …, one is …", "first… second…", numbered steps), you MUST set "hasMilestone": true AND fill "milestones" with those steps. Do not stop at name and description in that case. Name/description AND milestones should all be set.
 - When suggesting milestones, fill 1–20 items. Each item needs a clear description (keep the user's wording as a sentence) and progressPercent as an integer 0–100.
@@ -295,6 +297,81 @@ Rules:
       ..writeln(
         'If this prompt lists project steps or says milestone, your JSON must include hasMilestone=true and a milestones array. Name and description alone are not enough.',
       );
+
+    final body = jsonEncode({
+      'model': _effectiveModel,
+      'messages': [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user.toString()},
+      ],
+      'temperature': 0.2,
+    });
+
+    return _chatCompletionJsonObject(body);
+  }
+
+  /// Structured sub-project field suggestions for the Asana sub-project slide.
+  static Future<Map<String, dynamic>> suggestAsanaSubprojectDraft({
+    required String userPrompt,
+    required String formContext,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(_missingConfigMessage);
+    }
+    final trimmed = userPrompt.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Prompt is empty');
+    }
+
+    const system = '''
+You help users fill a sub-project form in a workplace project tracker.
+Reply with ONLY one JSON object (no markdown, no code fences).
+
+Schema:
+{
+  "related": true or false,
+  "message": "optional short note when nothing can be suggested",
+  "overallComment": "when you suggest any field change: 1-3 sentences summarizing what you inferred (required if any name/description/comment/status/assigneeNames/picNames/startDate/dueDate/websiteLinks are set)",
+  "name": "string or null",
+  "description": "string or null",
+  "comment": "comment body for the Comments field (posted when the user saves), or null",
+  "status": "Not started" or "In progress" or "Completed" or null,
+  "assigneeNames": ["names from available staff list"] or [],
+  "picNames": ["names from available staff list"] or [],
+  "startDate": "YYYY-MM-DD" or null,
+  "dueDate": "YYYY-MM-DD" or null,
+  "websiteLinks": [
+    { "url": "https://...", "description": "short label for the link" }
+  ] or []
+}
+
+Rules:
+- The user is already working inside a sub-project create/edit slide. Treat every prompt as an attempt to fill or improve this sub-project form. Always set "related": true.
+- Always try to suggest at least one useful field. Prefer name and description when the prompt contains sub-project details; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values and the parent project.
+- REQUIRED — name with description: if you set description, you MUST also set name. Never suggest a description change by itself. The name must be a non-null title that fits the new description, and it must differ from the current name (tighten or clarify it when the current title is close).
+- Use the parent project details only as read-only context so the sub-project fits that project. Never suggest changing the parent project, and do not invent tasks, milestones, priority, complexity, commencement, or recurrence. This form does not have those fields.
+- For optional structured fields (status, assigneeNames, picNames, startDate, dueDate, comment, websiteLinks), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
+- Avoid echoing unchanged values: compare each field to "Current sub-project form values" in context. If a suggested value would be identical to what is already on the form, improve/expand it when reasonable; otherwise omit that specific field.
+- The description should be useful scope for this slice of the parent project, not just a repeat of the name or a copy of the parent project description.
+- Use assignee and PIC names only from the provided staff list.
+- assigneeNames: full resulting visible assignee list when the user changes assignees. Never include PIC names in assigneeNames.
+- If the user mentions exactly one person as assignee / owner / responsible / PIC, set picNames to that person only and leave assigneeNames empty or omit it. Do not also suggest that person as an assignee.
+- If the user mentions two or more people, put PIC(s) in picNames only and the other people in assigneeNames.
+- Dates must be YYYY-MM-DD. startDate must be on or before dueDate when both are set.
+- Relative dates such as "today", "tomorrow", "next week", "next Monday", or weekdays MUST be calculated from "Today (Hong Kong)" and the relative date reference in the context, not from existing form dates.
+- status must be exactly one of: Not started, In progress, Completed.
+- Do not set status to Paused. Pausing is a separate button. If the context says status is locked because the sub-project is paused, omit status.
+- comment: text for the Comments field. When the user asks to write, add, or improve a comment, set comment to the full suggested text. Compare to "comment (draft)" in context; omit if identical.
+- Website links: when the user mentions one or more URLs (http/https or bare domains), add each as an entry in websiteLinks with a concise description. Use full https URLs when possible. Do not repeat URLs already listed under "Current website link attachments" in context. Omit websiteLinks when no URLs are mentioned.
+- overallComment: required whenever you output at least one non-null field suggestion. Summarize the intended updates in plain language and how they relate to the parent project when that context matters.
+- You are suggesting values only; the user adopts them. Do not mention overwriting.
+''';
+
+    final user = StringBuffer()
+      ..writeln(formContext.trim())
+      ..writeln()
+      ..writeln('User prompt:')
+      ..writeln(trimmed);
 
     final body = jsonEncode({
       'model': _effectiveModel,
@@ -422,6 +499,7 @@ Schema:
 Rules:
 - The user is already working inside a sub-task create/edit slide. Treat every prompt as an attempt to fill or improve this sub-task form. Always set "related": true.
 - Always try to suggest at least one useful field. Prioritize suggesting BOTH name and description when the prompt provides enough sub-task detail; if the prompt is vague, make a best-effort improvement based on the prompt plus current form values.
+- REQUIRED — name with description: if you set description, you MUST also set name. Never suggest a description change by itself. The name must be a non-null title that fits the new description, and it must differ from the current name (tighten or clarify it when the current title is close). If the context says the name field is not modifiable, omit description as well.
 - For optional structured fields (assigneeNames, picName, priority, commencementStatus, dates, reason, comment, websiteLinks, recurrence), suggest them when the prompt mentions or implies them. Use null or omit fields you cannot infer.
 - REQUIRED — commencementStatus: if the user says the work has not commenced, is not yet commenced, not commenced yet, yet to commence, has not started, not started yet, should wait, or should not start yet, you MUST set commencementStatus to exactly "To be commenced". Do not omit this field. Do not use "Commenced" for those phrases. "not yet commenced" and "to be commenced" always mean "To be commenced".
 - commencementStatus: use "Commenced" when the prompt says work has started, is ongoing, is already underway, or has already commenced.
