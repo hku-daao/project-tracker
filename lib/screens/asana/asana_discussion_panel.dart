@@ -9,6 +9,7 @@ import '../../services/attachment_upload_service.dart';
 import '../../services/database_service.dart';
 import '../../services/llm_service.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart'
@@ -21,6 +22,7 @@ import 'asana_detail_widgets.dart'
         AsanaDetailTwoColumnRow,
         AsanaHoverTextField,
         AsanaHoverTapValue,
+        showAsanaInfoDialog,
         asanaDetailLabelStyle,
         asanaDetailMultilineValueStyle,
         asanaDetailTitleStyle,
@@ -721,24 +723,52 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     });
   }
 
-  Future<void> _addDraftReplyInlineImage() async {
-    final picked = await pickOneFileWithBytes();
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
-      await _showError('Could not read file data.');
+  Future<void> _addDraftReplyInlineImage({
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
+  }) async {
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await _showInlineImageNotice(
+        'Could not add inline image',
+        resolved.error!,
+      );
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
+    if (resolved.files.isEmpty) return;
     setState(() {
-      _pendingReplyInlineImageAdds.add(
-        _ForumInlineImageDraft(
-          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          bytes: picked.bytes,
-          label: label,
-          sortOrder: _pendingReplyInlineImageAdds.length,
-        ),
-      );
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      var order = _pendingReplyInlineImageAdds.length;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingReplyInlineImageAdds.add(
+          _ForumInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
     });
+    if (resolved.warning != null && mounted) {
+      await _showInlineImageNotice('Inline image', resolved.warning!);
+    }
+  }
+
+  Future<void> _showInlineImageNotice(String title, String content) async {
+    if (!mounted) return;
+    await showAsanaInfoDialog(
+      context: context,
+      title: title,
+      content: content,
+      palette: widget.palette,
+    );
   }
 
   void _removeDraftReplyInlineImage(InlineImagePreviewItem image) {
@@ -1597,22 +1627,49 @@ class _ForumEditSlideState extends State<_ForumEditSlide> {
     super.dispose();
   }
 
-  Future<void> _addContentInlineImage() async {
-    final picked = await pickOneFileWithBytes();
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) return;
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    setState(() {
-      _pendingInlineImageAdds.add(
-        _ForumInlineImageDraft(
-          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          bytes: picked.bytes,
-          label: label,
-          sortOrder:
-              widget.inlineImages.length + _pendingInlineImageAdds.length,
-        ),
+  Future<void> _addContentInlineImage({
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
+  }) async {
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Could not add inline image',
+        content: resolved.error!,
+        palette: widget.palette,
       );
+      return;
+    }
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      var order = widget.inlineImages.length + _pendingInlineImageAdds.length;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _ForumInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
     });
+    if (resolved.warning != null && mounted) {
+      await showAsanaInfoDialog(
+        context: context,
+        title: 'Inline image',
+        content: resolved.warning!,
+        palette: widget.palette,
+      );
+    }
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
@@ -1970,16 +2027,24 @@ Current forum draft:
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        AsanaHoverTextField(
-                          controller: _contentController,
-                          canEdit: true,
-                          readOnly: widget.saving,
-                          showOutline: true,
-                          maxLines: 12,
-                          minLines: 6,
-                          hintText:
-                              'Share your suggestion, issue report, feature idea, or announcement details.',
-                          style: asanaDetailMultilineValueStyle(context),
+                        AsanaFileDropRegion(
+                          enabled: !widget.saving,
+                          imagesOnly: true,
+                          onFiles: (files, rejected) => _addContentInlineImage(
+                            files: files,
+                            rejectedNonImages: rejected,
+                          ),
+                          child: AsanaHoverTextField(
+                            controller: _contentController,
+                            canEdit: true,
+                            readOnly: widget.saving,
+                            showOutline: true,
+                            maxLines: 12,
+                            minLines: 6,
+                            hintText:
+                                'Share your suggestion, issue report, feature idea, or announcement details.',
+                            style: asanaDetailMultilineValueStyle(context),
+                          ),
                         ),
                         InlineImageToolbar(
                           enabled: !widget.saving,
@@ -2571,7 +2636,11 @@ class _ThreadDetail extends StatelessWidget {
   final VoidCallback onCancelReply;
   final VoidCallback onAcceptReplyAiSuggestion;
   final VoidCallback onDismissReplyAiSuggestion;
-  final VoidCallback onAddReplyInlineImage;
+  final void Function({
+    List<PickedFileBytes>? files,
+    int rejectedNonImages,
+  })
+  onAddReplyInlineImage;
   final void Function(InlineImagePreviewItem image) onRemoveReplyInlineImage;
   final Future<void> Function(ForumPost post) onAskReplyAi;
   final Future<void> Function(ForumPost post) onSubmitReply;
@@ -2863,7 +2932,11 @@ class _ReplySlideComposer extends StatefulWidget {
   final VoidCallback onAskAi;
   final VoidCallback onAcceptAiSuggestion;
   final VoidCallback onDismissAiSuggestion;
-  final VoidCallback onAddInlineImage;
+  final void Function({
+    List<PickedFileBytes>? files,
+    int rejectedNonImages,
+  })
+  onAddInlineImage;
   final void Function(InlineImagePreviewItem image) onRemoveInlineImage;
   final VoidCallback onCancel;
   final VoidCallback onSubmit;
@@ -2948,28 +3021,42 @@ class _ReplySlideComposerState extends State<_ReplySlideComposer> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  TextField(
-                    controller: widget.controller,
-                    autofocus: true,
-                    readOnly: widget.saving,
-                    minLines: 3,
-                    maxLines: 8,
-                    decoration: InputDecoration(
-                      hintText: 'Write a reply...',
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFF6B7280)),
+                  AsanaFileDropRegion(
+                    enabled: !widget.saving,
+                    imagesOnly: true,
+                    onFiles: (files, rejected) => widget.onAddInlineImage(
+                      files: files,
+                      rejectedNonImages: rejected,
+                    ),
+                    child: TextField(
+                      controller: widget.controller,
+                      autofocus: true,
+                      readOnly: widget.saving,
+                      minLines: 3,
+                      maxLines: 8,
+                      decoration: InputDecoration(
+                        hintText: 'Write a reply...',
+                        isDense: true,
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE5E7EB),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE5E7EB),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF6B7280),
+                          ),
+                        ),
                       ),
                     ),
                   ),

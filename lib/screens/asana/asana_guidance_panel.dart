@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../priority.dart';
 import '../asana_landing_screen.dart';
-import 'asana_due_badge.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
@@ -200,7 +199,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Map',
                         body:
-                            'Map draws the same hierarchy as pictures: project, then sub-project if there is one, then task, then sub-task. On a phone the tree goes left to right; on a wide screen it goes top to bottom. Each block has a P / SP / T / ST label. Task and sub-task blocks also show Completed, Submitted, Overdue, Due Today, or Incomplete. Filters at the top (status, completed dates, expected due dates, creator team) control which blocks appear. Click a block to open its slide.',
+                            'Map draws the same hierarchy as pictures: project, then sub-project if there is one, then task, then sub-task. On a phone the tree goes left to right; on a wide screen it goes top to bottom. Each block has a P / SP / T / ST label. Task and sub-task blocks also show a status icon in the top-right corner: an open circle for completed, a box for submitted, an exclamation mark for overdue, a calendar for due today, and a wrench for incomplete. Filters at the top (status, completed dates, expected due dates, creator team) control which blocks appear. Click a block to open its slide.',
                         figure: _MapFigure(palette: palette),
                       ),
                       const SizedBox(height: 16),
@@ -225,19 +224,8 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Status',
                         body:
-                            'Status is the workflow state. You do not type Completed into this field; it changes when work is accepted through the workflow. Paused appears when the item, or its parent project or sub-project, is paused. Deleted items leave the normal active lists.\n\nTasks and sub-tasks use Incomplete, Completed, Paused, and Deleted. Projects and sub-projects use Not started, In progress, Completed, Paused, and Deleted.\n\nMap blocks can also show Overdue, Due Today, or Submitted. Those are due-date and submission labels, not the Status field.',
-                        figure: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: const [
-                            AsanaStatusChip(status: 'Incomplete'),
-                            AsanaStatusChip(status: 'Completed'),
-                            AsanaStatusChip(status: 'Not started'),
-                            AsanaStatusChip(status: 'In progress'),
-                            AsanaStatusChip(status: 'Paused'),
-                            AsanaStatusChip(status: 'Deleted'),
-                          ],
-                        ),
+                            'Status is the workflow state. You do not type Completed into this field; it changes when work is accepted through the workflow. Paused appears when the item, or its parent project or sub-project, is paused. Deleted items leave the normal active lists.\n\nTasks and sub-tasks use Incomplete, Completed, Paused, and Deleted. Projects and sub-projects use Not started, In progress, Completed, Paused, and Deleted.\n\nOn the map, a task or sub-task shows a corner icon for that state: a wrench for incomplete, an open circle for completed, an hourglass for not started, a play arrow for in progress, a pause mark for paused, and a cross for deleted. The same corner also shows a calendar for due today, an exclamation mark for overdue, and a box for submitted. Those three come from the due date and the submission, not from the Status field.',
+                        figure: _StatusFigure(palette: palette),
                       ),
                       const SizedBox(height: 16),
                       _section(
@@ -414,7 +402,7 @@ class _GuideSectionCard extends StatelessWidget {
             if (letter != null)
               Row(
                 children: [
-                  AsanaRowTypeLetter(letter: letter!, status: 'Incomplete'),
+                  _GuideTypeLetter(palette: palette, letter: letter!),
                   const SizedBox(width: 10),
                   Text(title, style: titleStyle),
                 ],
@@ -436,6 +424,207 @@ class _GuideSectionCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Accent badge used for the map’s top-left letter and top-right status icon.
+class _GuideCornerBadge extends StatelessWidget {
+  const _GuideCornerBadge({
+    required this.palette,
+    required this.tooltip,
+    required this.child,
+    this.width = 24,
+  });
+
+  final AsanaLandingPalette palette;
+  final String tooltip;
+  final Widget child;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: width,
+        height: 24,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: palette.accent,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: palette.banner),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+Color _guideBadgeInk(AsanaLandingPalette palette) {
+  if (palette.id == 'Classic') return Colors.white;
+  final accentLum = palette.accent.computeLuminance();
+  final inkLum = palette.onBanner.computeLuminance();
+  if ((accentLum - inkLum).abs() < 0.25) {
+    return accentLum > 0.45 ? const Color(0xFF1A1A1A) : Colors.white;
+  }
+  return palette.onBanner;
+}
+
+String _guideLetterName(String letter) {
+  switch (letter) {
+    case 'P':
+      return 'Project';
+    case 'SP':
+      return 'Sub-project';
+    case 'T':
+      return 'Task';
+    case 'ST':
+      return 'Sub-task';
+    default:
+      return letter;
+  }
+}
+
+class _GuideTypeLetter extends StatelessWidget {
+  const _GuideTypeLetter({required this.palette, required this.letter});
+
+  final AsanaLandingPalette palette;
+  final String letter;
+
+  @override
+  Widget build(BuildContext context) {
+    final twoLetter = letter.trim().length > 1;
+    return _GuideCornerBadge(
+      palette: palette,
+      tooltip: _guideLetterName(letter),
+      width: twoLetter ? 30 : 24,
+      child: Text(
+        letter,
+        style: TextStyle(
+          fontSize: twoLetter ? 10 : 12,
+          fontWeight: FontWeight.w700,
+          color: _guideBadgeInk(palette),
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
+/// Same corner mark the map draws on a task or sub-task block.
+class _GuideStatusIcon extends StatelessWidget {
+  const _GuideStatusIcon({required this.palette, required this.label});
+
+  final AsanaLandingPalette palette;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return _GuideCornerBadge(
+      palette: palette,
+      tooltip: label,
+      child: Icon(_iconFor(label), size: 18, color: _guideBadgeInk(palette)),
+    );
+  }
+
+  static IconData _iconFor(String label) {
+    switch (label) {
+      case 'Completed':
+        return Icons.circle_outlined;
+      case 'Submitted':
+        return Icons.outbox;
+      case 'Overdue':
+        return Icons.priority_high;
+      case 'Due Today':
+      case 'Due today':
+        return Icons.today;
+      case 'Paused':
+        return Icons.pause;
+      case 'Deleted':
+        return Icons.close;
+      case 'Not started':
+        return Icons.hourglass_empty;
+      case 'In progress':
+        return Icons.play_arrow;
+      case 'Incomplete':
+      default:
+        return Icons.build;
+    }
+  }
+}
+
+class _StatusFigure extends StatelessWidget {
+  const _StatusFigure({required this.palette});
+
+  final AsanaLandingPalette palette;
+
+  static const _fieldStatuses = [
+    'Incomplete',
+    'Completed',
+    'Not started',
+    'In progress',
+    'Paused',
+    'Deleted',
+  ];
+
+  static const _mapCorners = [
+    'Incomplete',
+    'Completed',
+    'Not started',
+    'In progress',
+    'Paused',
+    'Deleted',
+    'Due today',
+    'Overdue',
+    'Submitted',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final caption = asanaTextStyle(
+      Theme.of(context).textTheme.labelLarge,
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: kAsanaTextPrimary,
+    );
+    final name = asanaTextStyle(
+      Theme.of(context).textTheme.bodyMedium,
+      fontSize: 13,
+      color: kAsanaTextPrimary,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Status field', style: caption),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final status in _fieldStatuses)
+              AsanaStatusChip(status: status),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text('Map corner', style: caption),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 14,
+          runSpacing: 10,
+          children: [
+            for (final label in _mapCorners)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _GuideStatusIcon(palette: palette, label: label),
+                  const SizedBox(width: 6),
+                  Text(label, style: name),
+                ],
+              ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -507,15 +696,15 @@ class _GuideBlock extends StatelessWidget {
             ),
           ),
           Positioned(
-            top: -10,
-            left: -4,
-            child: AsanaRowTypeLetter(letter: letter, status: 'Incomplete'),
+            top: -14,
+            left: -6,
+            child: _GuideTypeLetter(palette: palette, letter: letter),
           ),
           if (badge != null)
             Positioned(
-              top: -10,
-              right: -4,
-              child: AsanaDueBadge(label: badge!, height: 24, fontSize: 10),
+              top: -14,
+              right: -6,
+              child: _GuideStatusIcon(palette: palette, label: badge!),
             ),
         ],
       ),
@@ -806,9 +995,9 @@ class _MiniTree extends StatelessWidget {
                 padding: EdgeInsets.only(left: i * 22.0),
                 child: Row(
                   children: [
-                    AsanaRowTypeLetter(
+                    _GuideTypeLetter(
+                      palette: palette,
                       letter: children[i].letter,
-                      status: 'Incomplete',
                     ),
                     const SizedBox(width: 8),
                     Text(

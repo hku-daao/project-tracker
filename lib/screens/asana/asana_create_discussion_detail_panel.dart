@@ -10,6 +10,7 @@ import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../services/llm_service.dart';
 import '../../utils/attachment_file_pick.dart';
+import '../../utils/file_drop_region.dart';
 import '../asana_landing_screen.dart';
 import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
@@ -341,35 +342,47 @@ Current forum draft:
     );
   }
 
-  Future<void> _addDraftContentInlineImage() async {
-    final picked = await pickOneFileWithBytes();
-    if (!mounted || picked == null) return;
-    if (picked.bytes.isEmpty) {
-      await _showInfo(
-        'Inline image upload failed',
-        'Could not read file data.',
-      );
+  Future<void> _addDraftContentInlineImage({
+    List<PickedFileBytes>? files,
+    int rejectedNonImages = 0,
+  }) async {
+    final resolved = await resolveInlineImageFiles(
+      dropped: files,
+      rejectedNonImages: rejectedNonImages,
+    );
+    if (!mounted) return;
+    if (resolved.error != null) {
+      await _showInfo('Could not add inline image', resolved.error!);
       return;
     }
-    final label = picked.name.trim().isNotEmpty ? picked.name.trim() : 'image';
-    setState(
-      () => _pendingInlineImageAdds.add(
-        _ForumInlineImageDraft(
-          id: 'draft_${DateTime.now().microsecondsSinceEpoch}',
-          entityType: 'forum_post_content',
-          entityId: 'draft_content',
-          bytes: picked.bytes,
-          label: label,
-          sortOrder: _pendingInlineImageAdds
-              .where(
-                (draft) =>
-                    draft.entityType == 'forum_post_content' &&
-                    draft.entityId == 'draft_content',
-              )
-              .length,
-        ),
-      ),
-    );
+    if (resolved.files.isEmpty) return;
+    setState(() {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      var order = _pendingInlineImageAdds
+          .where(
+            (draft) =>
+                draft.entityType == 'forum_post_content' &&
+                draft.entityId == 'draft_content',
+          )
+          .length;
+      for (final file in resolved.files) {
+        final label = file.name.trim().isNotEmpty ? file.name.trim() : 'image';
+        _pendingInlineImageAdds.add(
+          _ForumInlineImageDraft(
+            id: 'draft_${stamp}_$order',
+            entityType: 'forum_post_content',
+            entityId: 'draft_content',
+            bytes: file.bytes,
+            label: label,
+            sortOrder: order,
+          ),
+        );
+        order++;
+      }
+    });
+    if (resolved.warning != null && mounted) {
+      await _showInfo('Inline image', resolved.warning!);
+    }
   }
 
   void _removeInlineImagePreview(InlineImagePreviewItem image) {
@@ -489,16 +502,24 @@ Current forum draft:
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AsanaHoverTextField(
-                  controller: _contentController,
-                  canEdit: true,
-                  readOnly: _saving,
-                  showOutline: true,
-                  maxLines: 12,
-                  minLines: 6,
-                  hintText:
-                      'Share your suggestion, issue report, feature idea, or announcement details.',
-                  style: asanaDetailMultilineValueStyle(context),
+                AsanaFileDropRegion(
+                  enabled: !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _addDraftContentInlineImage(
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _contentController,
+                    canEdit: true,
+                    readOnly: _saving,
+                    showOutline: true,
+                    maxLines: 12,
+                    minLines: 6,
+                    hintText:
+                        'Share your suggestion, issue report, feature idea, or announcement details.',
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
                 ),
                 InlineImageToolbar(
                   enabled: !_saving,
