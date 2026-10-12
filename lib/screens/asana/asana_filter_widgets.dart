@@ -385,11 +385,13 @@ class AsanaPanelListSurface extends StatelessWidget {
     required this.palette,
     required this.child,
     this.margin = const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    this.clipBehavior = Clip.antiAlias,
   });
 
   final AsanaLandingPalette palette;
   final Widget child;
   final EdgeInsets margin;
+  final Clip clipBehavior;
 
   @override
   Widget build(BuildContext context) {
@@ -398,7 +400,7 @@ class AsanaPanelListSurface extends StatelessWidget {
       child: Material(
         color: palette.listSurface,
         borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
+        clipBehavior: clipBehavior,
         elevation: 0,
         child: child,
       ),

@@ -2476,6 +2476,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
           Expanded(
             child: AsanaPanelListSurface(
               palette: widget.palette,
+              clipBehavior: Clip.none,
               child: nodes.isEmpty && standaloneTasks.isEmpty
                   ? Center(
                       child: Text(
@@ -3790,13 +3791,14 @@ class _DiagramBox extends StatelessWidget {
           Positioned(
             top: letterTop,
             right: -6,
+            width: 24,
             height: letterHeight,
             child: _MapThemeBadge(
               palette: palette,
               tooltip: _mapStatusTooltip(item.node),
               child: Icon(
                 statusIcon,
-                size: 16,
+                size: 18,
                 color: _mapBadgeForeground(palette),
               ),
             ),
@@ -4094,8 +4096,17 @@ ButtonStyle _mapFilterButtonStyle({
 }
 
 Color _mapBadgeForeground(AsanaLandingPalette palette) {
+  // Corner badges are filled with the theme accent. Pick the ink that
+  // stays readable on that fill. Classic stays white, as requested.
   if (palette.id == 'Classic') return Colors.white;
-  return palette.onBanner;
+  final accent = palette.accent;
+  final onBanner = palette.onBanner;
+  final accentLum = accent.computeLuminance();
+  final inkLum = onBanner.computeLuminance();
+  if ((accentLum - inkLum).abs() < 0.25) {
+    return accentLum > 0.45 ? const Color(0xFF1A1A1A) : Colors.white;
+  }
+  return onBanner;
 }
 
 class _MapAdvancedSettings {
