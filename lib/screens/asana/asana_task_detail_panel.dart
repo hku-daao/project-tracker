@@ -3219,16 +3219,45 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         await _showInfo('Could not mark task completed', err);
         return;
       }
-      state.replaceTask(
-        composite.updatedTask.copyWith(
-          dbStatus: 'Completed',
-          status: TaskStatus.done,
-          submission: 'Accepted',
-          completionDate: completedAt,
-        ),
+      final completedTask = composite.updatedTask.copyWith(
+        dbStatus: 'Completed',
+        status: TaskStatus.done,
+        submission: 'Accepted',
+        completionDate: completedAt,
+        lastUpdated: DateTime.now(),
       );
-      await _loadSubtasks();
+      state.upsertTask(completedTask);
+      if (mounted) {
+        setState(() => _completionDate = completedAt);
+      }
+      // Invalidate the list reload started by Create before the next await.
+      // That reload can still be in flight and would put the incomplete row
+      // back over this completed one.
       _notifyChanged();
+      await _loadSubtasks();
+      final fresh = await DatabaseService.fetchSingularTaskModelById(task.id);
+      if (fresh != null) {
+        final freshStatus = (fresh.dbStatus ?? '').trim().toLowerCase();
+        final rowAlreadyCompleted =
+            freshStatus == 'completed' || freshStatus == 'complete';
+        final shown = fresh.copyWith(
+          dbStatus: rowAlreadyCompleted ? fresh.dbStatus : 'Completed',
+          status: TaskStatus.done,
+          submission: rowAlreadyCompleted &&
+                  (fresh.submission ?? '').trim().isNotEmpty
+              ? fresh.submission
+              : 'Accepted',
+          completionDate: fresh.completionDate ?? completedAt,
+          lastUpdated: rowAlreadyCompleted
+              ? (fresh.lastUpdated ?? fresh.updateDate ?? DateTime.now())
+              : DateTime.now(),
+        );
+        state.upsertTask(shown);
+        if (mounted) {
+          _syncFromTask();
+          setState(() {});
+        }
+      }
       await _notifyEmail(
         'Task accepted email',
         (token) => BackendApi().notifyTaskAccepted(
@@ -3617,7 +3646,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   Future<void> _resumeTask(AppState state, Task task) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    if (!_isCreator(state, task) || !_taskPaused(task)) return;
+    if ((!_isCreator(state, task) && !_isPic(state, task)) ||
+        !_taskPaused(task) ||
+        _taskProjectPaused(state, task) ||
+        _taskSubprojectPaused(state, task)) {
+      return;
+    }
     if (await _suggestComplexityBeforeTaskWorkflowIfEmpty(state)) return;
     if (!await _confirmTaskCascade(task.id, HierarchyCascadeAction.resume)) {
       return;
@@ -4554,7 +4588,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           !_taskDeleted(task) &&
           !effectivelyPaused &&
           !_taskCompleted(task),
-      canResume: isCreator && _taskPaused(task),
+      canResume:
+          (isCreator || isPic) &&
+          _taskPaused(task) &&
+          !_taskProjectPaused(state, task) &&
+          !_taskSubprojectPaused(state, task),
       workflowPaused: effectivelyPaused,
     );
 
@@ -4598,7 +4636,11 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
                 !_taskDeleted(task) &&
                 !effectivelyPaused &&
                 !_taskCompleted(task),
-            canResume: isCreator && _taskPaused(task),
+            canResume:
+          (isCreator || isPic) &&
+          _taskPaused(task) &&
+          !_taskProjectPaused(state, task) &&
+          !_taskSubprojectPaused(state, task),
             workflowPaused: effectivelyPaused,
           )
         : null;
@@ -5107,7 +5149,7 @@ class _ActionBar extends StatelessWidget {
     if (!deleted && isCreator && canMarkComplete) return true;
     if (!deleted && isCreator && canUndoAcceptOrReturn) return true;
     if (!deleted && isCreator && canPause) return true;
-    if (!deleted && isCreator && canResume) return true;
+    if (!deleted && canResume) return true;
     if (!workflowPaused && !deleted && isPic && _canPicSubmit(task)) {
       return true;
     }
@@ -5187,7 +5229,7 @@ class _ActionBar extends StatelessWidget {
         ),
       );
     }
-    if (!deleted && isCreator && canResume) {
+    if (!deleted && canResume) {
       buttons.add(
         OutlinedButton(
           onPressed: saving ? null : onResume,

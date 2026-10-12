@@ -415,6 +415,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     return me == cb;
   }
 
+  bool _isProjectPic(ProjectRecord p) {
+    final state = context.read<AppState>();
+    final uuid = (_myStaffUuid ?? state.effectiveStaffUuid)?.trim() ?? '';
+    final appId =
+        (state.effectiveStaffAppId ?? state.userStaffAppId)?.trim() ?? '';
+    bool hit(String? raw) {
+      final v = raw?.trim() ?? '';
+      if (v.isEmpty) return false;
+      return (uuid.isNotEmpty && v == uuid) ||
+          (appId.isNotEmpty && v == appId);
+    }
+
+    return p.picStaffUuids.any(hit);
+  }
+
   bool _isProjectMember(ProjectRecord p) {
     final state = context.read<AppState>();
     return p.isInvolvedStaff(
@@ -1018,7 +1033,10 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required bool paused,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    if (!_isCreator(p) || _effectiveStatus(p) == 'Deleted') return;
+    final canChangePause = paused
+        ? _isCreator(p)
+        : (_isCreator(p) || _isProjectPic(p));
+    if (!canChangePause || _effectiveStatus(p) == 'Deleted') return;
     if (p.isPaused == paused) return;
     if (!await _confirmProjectCascade(
       paused ? HierarchyCascadeAction.pause : HierarchyCascadeAction.resume,
@@ -2278,10 +2296,35 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required ProjectRecord p,
     required AppState state,
   }) {
-    if (!canEdit) return null;
     final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
     final deleted = _effectiveStatus(p) == 'Deleted';
+    final canResume = !deleted && (_isCreator(p) || _isProjectPic(p)) && p.isPaused;
+    if (!canEdit && !canResume) return null;
     final buttons = <Widget>[];
+    if (!canEdit) {
+      buttons.add(
+        OutlinedButton(
+          onPressed: _saving
+              ? null
+              : () => _setProjectPause(state, p, paused: false),
+          style: AsanaTaskDetailActionStyles.resumeOutlined(context: context),
+          child: const Text('Resume'),
+        ),
+      );
+      return AsanaDetailSlideFooter(
+        backgroundColor: chrome.footer,
+        borderColor: chrome.footerBorder,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: buttons,
+          ),
+        ),
+      );
+    }
     if (!deleted) {
       buttons.add(
         FilledButton(
@@ -2317,7 +2360,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         ),
       );
     }
-    if (!deleted && _isCreator(p) && p.isPaused) {
+    if (canResume) {
       buttons.add(
         OutlinedButton(
           onPressed: _saving

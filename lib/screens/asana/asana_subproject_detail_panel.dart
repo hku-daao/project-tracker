@@ -1503,9 +1503,9 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
     );
   }
 
-  Widget _footer(AppState state, bool canEdit) {
+  Widget _footer(AppState state, bool canEdit, {required bool canResume}) {
     final chrome = AsanaSlideChrome(widget.palette);
-    if (!canEdit) return const SizedBox.shrink();
+    if (!canEdit && !canResume) return const SizedBox.shrink();
     final Widget actions;
     if (_createMode) {
       actions = AsanaDetailSlideFooter(
@@ -1533,7 +1533,7 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
       final row = _row;
       final deleted = row?.isDeleted == true;
       final buttons = <Widget>[
-        if (!deleted)
+        if (canEdit && !deleted)
           FilledButton(
             onPressed: _saving ? null : () => _save(state),
             style: AsanaTaskDetailActionStyles.updateFilled(
@@ -1543,7 +1543,11 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
             child: Text(_saving ? 'Saving' : 'Update'),
           ),
       ];
-      if (row != null && !row.isDeleted && !row.isPaused && !row.isCompleted) {
+      if (canEdit &&
+          row != null &&
+          !row.isDeleted &&
+          !row.isPaused &&
+          !row.isCompleted) {
         buttons.add(
           OutlinedButton(
             onPressed: _saving ? null : () => _setPause(state, paused: true),
@@ -1552,7 +1556,7 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
           ),
         );
       }
-      if (row != null && !row.isDeleted && row.isPaused) {
+      if (canResume) {
         buttons.add(
           OutlinedButton(
             onPressed: _saving ? null : () => _setPause(state, paused: false),
@@ -1561,7 +1565,7 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
           ),
         );
       }
-      if (row != null && !row.isDeleted) {
+      if (canEdit && row != null && !row.isDeleted) {
         buttons.add(
           FilledButton(
             onPressed: _saving ? null : () => _delete(state),
@@ -1570,7 +1574,7 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
           ),
         );
       }
-      if (row != null && row.isDeleted) {
+      if (canEdit && row != null && row.isDeleted) {
         buttons.add(
           OutlinedButton(
             onPressed: _saving ? null : () => _restore(state),
@@ -1725,17 +1729,39 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
         me == creator;
     final canCreate = _createMode && _isParentProjectMember(state);
     final canEdit = !adminReadOnly && (_createMode ? canCreate : isCreator);
+    final meUuid =
+        (_myStaffUuid ?? state.effectiveStaffUuid ?? state.userStaffId)
+            ?.trim() ??
+        '';
+    final meApp =
+        (state.effectiveStaffAppId ?? state.userStaffAppId)?.trim() ?? '';
+    bool staffHit(String? raw) {
+      final v = raw?.trim() ?? '';
+      if (v.isEmpty) return false;
+      return (meUuid.isNotEmpty && v == meUuid) ||
+          (meApp.isNotEmpty && v == meApp);
+    }
+
+    final isPic = _row?.picStaffUuids.any(staffHit) ?? false;
+    final parentProject = state.projectById(widget.projectId);
+    final canResume =
+        !adminReadOnly &&
+        !_createMode &&
+        _row != null &&
+        !_row!.isDeleted &&
+        _row!.isPaused &&
+        parentProject?.isPaused != true &&
+        (isCreator || isPic);
     final canCreateChildren =
         !_createMode &&
         !adminReadOnly &&
         (_isParentProjectMember(state) || _isSubprojectMember(state));
     final displayStatus = _row?.isPaused == true ? 'Paused' : _draftStatus;
-    final parentProject = state.projectById(widget.projectId);
     if (canEdit && !_loading) _ensureSubprojectAi(state);
 
     return AsanaDetailSlideScaffold(
       backgroundColor: chrome.body,
-      footer: _footer(state, canEdit),
+      footer: _footer(state, canEdit, canResume: canResume),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(

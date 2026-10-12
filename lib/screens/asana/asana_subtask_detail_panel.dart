@@ -1826,6 +1826,14 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
         _parentProjectPaused(state);
   }
 
+  bool _parentBlocksSubtaskResume(AppState state) {
+    if (_parentTask?.isPaused ?? false) return true;
+    if (_parentProjectPaused(state)) return true;
+    final sid = _parentTask?.subprojectId?.trim();
+    if (sid == null || sid.isEmpty) return false;
+    return state.subprojectById(sid)?.isPaused ?? false;
+  }
+
   String _subtaskDisplayStatus(AppState state, SingularSubtask? s) {
     if (s != null && _subtaskEffectivelyPaused(state, s)) return 'Paused';
     return _draftStatus ?? s?.status ?? 'Todo';
@@ -1842,7 +1850,15 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     required bool paused,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    if (!_isCreator(state) || s.isDeleted || s.isPaused == paused) return;
+    final canChangePause = paused
+        ? _isCreator(state)
+        : (_isCreator(state) || _isPic(state, s));
+    if (!canChangePause ||
+        s.isDeleted ||
+        s.isPaused == paused ||
+        (!paused && _parentBlocksSubtaskResume(state))) {
+      return;
+    }
     if (await _suggestComplexityBeforeSubtaskWorkflowIfEmpty(state)) return;
     setState(() => _saving = true);
     AsanaBlockingLoadingOverlay.show(context);
@@ -4061,6 +4077,20 @@ Due: ${_date(p.endDate)}
         ),
       );
     }
+    if ((isCreator || isPic) &&
+        !deleted &&
+        s.isPaused &&
+        !_parentBlocksSubtaskResume(state)) {
+      buttons.add(
+        OutlinedButton(
+          onPressed: _saving
+              ? null
+              : () => _setSubtaskPause(state, s, paused: false),
+          style: AsanaTaskDetailActionStyles.resumeOutlined(context: context),
+          child: const Text('Resume'),
+        ),
+      );
+    }
     if (isCreator) {
       if (!deleted && !effectivelyPaused && !s.isPaused) {
         buttons.add(
@@ -4070,17 +4100,6 @@ Due: ${_date(p.endDate)}
                 : () => _setSubtaskPause(state, s, paused: true),
             style: AsanaTaskDetailActionStyles.pauseOutlined(context: context),
             child: const Text('Pause'),
-          ),
-        );
-      }
-      if (!deleted && s.isPaused) {
-        buttons.add(
-          OutlinedButton(
-            onPressed: _saving
-                ? null
-                : () => _setSubtaskPause(state, s, paused: false),
-            style: AsanaTaskDetailActionStyles.resumeOutlined(context: context),
-            child: const Text('Resume'),
           ),
         );
       }
