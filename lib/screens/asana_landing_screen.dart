@@ -10,6 +10,7 @@ import '../config/dev_auth_context.dart';
 import '../config/postgrest_config.dart';
 import '../models/staff_for_assignment.dart';
 import '../services/asana_filter_cookie_storage.dart';
+import '../services/backend_api.dart';
 import '../services/database_service.dart';
 import '../services/sso_auth_service.dart';
 import '../services/task_fetch_visibility.dart';
@@ -28,6 +29,7 @@ import 'asana/asana_home_panel.dart';
 import 'asana/asana_map_panel.dart';
 import 'asana/asana_performance_panel.dart';
 import 'asana/asana_projects_panel.dart';
+import 'asana/asana_staff_admin_panel.dart';
 import 'asana/asana_tasks_panel.dart';
 import 'asana/asana_theme.dart';
 
@@ -296,6 +298,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool? _sidebarOpenOverride;
   double? _lastScreenWidth;
   bool _themeMenuExpanded = false;
+  bool _showStaffNav = false;
   final List<AsanaDetailSelection> _detailStack = [];
   int _detailRefreshToken = 0;
   int _listRefreshGeneration = 0;
@@ -608,6 +611,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (_selectedNav == 'Guidance') {
       return AsanaGuidancePanel(palette: palette);
     }
+    if (_selectedNav == 'Staff' && _showStaffNav) {
+      return AsanaStaffAdminPanel(palette: palette);
+    }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
         palette: palette,
@@ -823,7 +829,20 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       if (mounted && context.read<AppState>().adminViewMode) {
         _loadAdminViewAsStaff();
       }
+      _loadStaffNav();
     });
+  }
+
+  Future<void> _loadStaffNav() async {
+    final token = await activeUserIdToken();
+    if (!mounted || token == null) return;
+    final result = await BackendApi().staffAdminRequest(
+      idToken: token,
+      method: 'GET',
+      path: '/api/staff-admin/context',
+    );
+    if (!mounted) return;
+    setState(() => _showStaffNav = result.error == null && result.data != null);
   }
 
   void _applyInitialNavFromView() {
@@ -891,7 +910,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             children: [
-              for (final label in _navItems)
+              for (final label in [
+                ..._navItems,
+                if (_showStaffNav) 'Staff',
+              ])
                 _SidebarNavTile(
                   label: label,
                   palette: palette,

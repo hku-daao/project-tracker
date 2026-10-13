@@ -854,4 +854,34 @@ class BackendApi {
     commentAddedText: commentAddedText,
     extraRecipientStaffKeys: extraRecipientStaffKeys,
   );
+
+  Future<({Map<String, dynamic>? data, String? error})> staffAdminRequest({
+    required String idToken,
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final request = http.Request(method, url(path));
+      request.headers['Authorization'] = 'Bearer $idToken';
+      request.headers['Content-Type'] = 'application/json';
+      if (body != null) request.body = jsonEncode(body);
+      final sent = await request.send().timeout(const Duration(seconds: 60));
+      final text = await sent.stream.bytesToString();
+      Map<String, dynamic>? json;
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map<String, dynamic>) json = decoded;
+      } catch (_) {}
+      if (sent.statusCode >= 200 && sent.statusCode < 300) {
+        return (data: json ?? <String, dynamic>{}, error: null);
+      }
+      return (
+        data: null,
+        error: json?['error']?.toString() ?? 'HTTP ${sent.statusCode}',
+      );
+    } catch (e) {
+      return (data: null, error: e.toString());
+    }
+  }
 }

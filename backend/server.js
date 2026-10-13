@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const { createDb } = require('./db');
 const localFiles = require('./local_files');
 const oidcAuth = require('./oidc_auth');
+const staffAdminApi = require('./staff_admin_api');
 const smtpMail = require('./smtp_mail');
 
 const NOTIFICATION_EMAIL_FROM = (process.env.SMTP_FROM || '').trim();
@@ -68,10 +69,15 @@ const TASK_UPDATE_NOTIFY_MAX_CHANGES = 8;
 const TASK_UPDATE_NOTIFY_MAX_VALUE_LEN = 4000;
 const TASK_UPDATE_NOTIFY_MAX_COMMENT_LEN = 8000;
 
-const LLM_PROXY_BASE_URL = String(
-  process.env.LLM_PROXY_BASE_URL ||
-    process.env.OLLAMA_LLM_BASE_URL ||
-    '',
+const DEEPSEEK_API_KEY = String(process.env.DEEPSEEK_API_KEY || '').trim();
+const DEEPSEEK_BASE_URL = String(
+  process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+).trim().replace(/\/+$/, '');
+const DEEPSEEK_MODEL = String(process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim();
+const LLM_PROXY_BASE_URL = (
+  DEEPSEEK_API_KEY
+    ? DEEPSEEK_BASE_URL
+    : String(process.env.LLM_PROXY_BASE_URL || process.env.OLLAMA_LLM_BASE_URL || '')
 ).trim().replace(/\/+$/, '');
 const LLM_PROXY_TIMEOUT_MS = Number(process.env.LLM_PROXY_TIMEOUT_MS || 120000);
 
@@ -893,16 +899,23 @@ async function handleLlmChatCompletionsProxy(req, res) {
     const body = await readBody(req);
     const upstreamBody = {
       stream: false,
-      think: false,
       ...(body || {}),
     };
+    const headers = { 'Content-Type': 'application/json' };
+    if (DEEPSEEK_API_KEY) {
+      delete upstreamBody.think;
+      upstreamBody.model = DEEPSEEK_MODEL;
+      headers.Authorization = `Bearer ${DEEPSEEK_API_KEY}`;
+    } else {
+      upstreamBody.think = false;
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), LLM_PROXY_TIMEOUT_MS);
     let upstream;
     try {
       upstream = await fetch(`${LLM_PROXY_BASE_URL}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(upstreamBody),
         signal: controller.signal,
       });
@@ -8865,6 +8878,15 @@ const server = http.createServer(async (req, res) => {
   }
   if (path === '/api/staff' && req.method === 'GET') {
     await handleApiStaff(req, res);
+    return;
+  }
+  if (path.startsWith('/api/staff-admin')) {
+    await staffAdminApi.handle(req, res, {
+      pool: pgPool,
+      verifySession: verifyFirebaseToken,
+      sendJson,
+      readBody,
+    });
     return;
   }
   if (path === '/api/llm/chat/completions' && req.method === 'POST') {

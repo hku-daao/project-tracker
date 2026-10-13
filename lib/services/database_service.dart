@@ -4031,7 +4031,8 @@ class DatabaseService {
     return (rows: rows, viaSubtask: viaSubtask);
   }
 
-  /// Rows in [subordinate] where [supervisor_id] is the supervisor's `staff.app_id`.
+  /// Subordinates of [supervisorAppId]: stored `subordinate` rows, plus staff in
+  /// offices whose `boss_office_id` is this person's office (`subordinate_effective`).
   static Future<List<String>> fetchSubordinateAppIdsForSupervisor(
     String supervisorAppId,
   ) async {
@@ -4040,13 +4041,15 @@ class DatabaseService {
     if (s.isEmpty) return [];
     try {
       final res = await PostgrestClient.instance
-          .from('subordinate')
+          .from('subordinate_effective')
           .select('subordinate_id')
           .eq('supervisor_id', s);
+      final seen = <String>{};
       final out = <String>[];
       for (final row in (res as List)) {
         final id = (row as Map)['subordinate_id']?.toString().trim();
-        if (id != null && id.isNotEmpty) out.add(id);
+        if (id == null || id.isEmpty) continue;
+        if (seen.add(id.toLowerCase())) out.add(id);
       }
       return out;
     } catch (_) {

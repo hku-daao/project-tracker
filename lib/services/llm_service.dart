@@ -6,7 +6,7 @@ import '../commencement_status.dart';
 import '../config/local_llm_config.dart';
 import '../screens/asana/asana_recurrence.dart';
 
-/// Task AI assistant — HKU IT Vertex AI Qwen (OpenAI-compatible chat completions).
+/// Task AI assistant. The browser calls this app's backend, which calls Deepseek.
 ///
 /// Configure via [LocalLlmConfig] and `scripts/local_llm.env`.
 /// Build with `./scripts/run_offline_dev.sh` or:
