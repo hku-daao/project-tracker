@@ -56,6 +56,8 @@ class AppState extends ChangeNotifier {
   String? _adminViewAsStaffAppId;
   String? _adminViewAsStaffUuid;
   String? _adminViewAsStaffName;
+  String? _adminViewAsRole;
+  List<String> _adminViewAsOfficeIds = [];
   String? _staffAdminRole;
 
   StaffTeamLookupResult? get revampStaffLookup => _revampStaffLookup;
@@ -84,24 +86,52 @@ class AppState extends ChangeNotifier {
   /// the staff list until it is on.
   bool get superAdminToolsOpen => _superAdminToolsOpen && isSuperAdmin;
 
-  bool get showPerformanceNav => isPerformanceAdmin || superAdminToolsOpen;
+  /// While viewing as someone, the left menu follows that person's role.
+  bool get showPerformanceNav {
+    if (adminDebugViewAsActive) {
+      return _adminViewAsRole == 'super_admin' ||
+          _adminViewAsRole == 'performance_admin';
+    }
+    return isPerformanceAdmin || superAdminToolsOpen;
+  }
+
+  bool get showPeopleNav {
+    if (adminDebugViewAsActive) {
+      return _adminViewAsRole == 'super_admin' ||
+          _adminViewAsRole == 'office_admin';
+    }
+    return isSuperAdmin || isOfficeAdmin;
+  }
 
   bool get showStaffViewAsMenu => superAdminToolsOpen;
 
   List<String> _staffAdminOfficeIds = [];
 
-  List<String> get staffAdminOfficeIds =>
-      List.unmodifiable(_staffAdminOfficeIds);
+  List<String> get staffAdminOfficeIds {
+    if (adminDebugViewAsActive &&
+        _adminViewAsRole != null &&
+        _adminViewAsRole != 'super_admin') {
+      return List.unmodifiable(_adminViewAsOfficeIds);
+    }
+    return List.unmodifiable(_staffAdminOfficeIds);
+  }
 
   bool get adminDebugViewAsActive =>
       superAdminToolsOpen &&
       (_adminViewAsStaffAppId?.trim().isNotEmpty == true);
 
-  /// Super admin sees every office until they choose someone in the staff list.
-  bool get showAllDataAsAdmin => isSuperAdmin && !adminDebugViewAsActive;
+  /// Every office when the signed-in super admin is on Super Admin, or when
+  /// the person in the dropdown is themselves a super admin.
+  bool get showAllDataAsAdmin {
+    if (adminDebugViewAsActive) return _adminViewAsRole == 'super_admin';
+    return isSuperAdmin;
+  }
 
   String? get adminViewAsStaffAppId =>
       adminDebugViewAsActive ? _adminViewAsStaffAppId?.trim() : null;
+
+  String? get adminViewAsStaffUuid =>
+      adminDebugViewAsActive ? _adminViewAsStaffUuid?.trim() : null;
 
   String? get adminViewAsStaffName =>
       adminDebugViewAsActive ? _adminViewAsStaffName?.trim() : null;
@@ -121,6 +151,8 @@ class AppState extends ChangeNotifier {
       _adminViewAsStaffAppId = null;
       _adminViewAsStaffUuid = null;
       _adminViewAsStaffName = null;
+      _adminViewAsRole = null;
+      _adminViewAsOfficeIds = [];
       _subordinateAppIds = List<String>.from(_actualSubordinateAppIds);
       _subordinateStaffUuids = List<String>.from(_actualSubordinateStaffUuids);
     }
@@ -155,6 +187,8 @@ class AppState extends ChangeNotifier {
     required String staffAppId,
     String? staffUuid,
     String? staffName,
+    String? staffAdminRole,
+    List<String> staffAdminOfficeIds = const [],
     List<String> subordinateAppIds = const [],
     List<String> subordinateStaffUuids = const [],
   }) {
@@ -162,6 +196,12 @@ class AppState extends ChangeNotifier {
     _adminViewAsStaffAppId = staffAppId.trim();
     _adminViewAsStaffUuid = staffUuid?.trim();
     _adminViewAsStaffName = staffName?.trim();
+    final role = staffAdminRole?.trim();
+    _adminViewAsRole = (role == null || role.isEmpty) ? null : role;
+    _adminViewAsOfficeIds = [
+      for (final id in staffAdminOfficeIds)
+        if (id.trim().isNotEmpty) id.trim(),
+    ];
     _subordinateAppIds = List<String>.from(subordinateAppIds);
     _subordinateStaffUuids = List<String>.from(subordinateStaffUuids);
     notifyListeners();
@@ -171,10 +211,14 @@ class AppState extends ChangeNotifier {
     final changed =
         _adminViewAsStaffAppId != null ||
         _adminViewAsStaffUuid != null ||
-        _adminViewAsStaffName != null;
+        _adminViewAsStaffName != null ||
+        _adminViewAsRole != null ||
+        _adminViewAsOfficeIds.isNotEmpty;
     _adminViewAsStaffAppId = null;
     _adminViewAsStaffUuid = null;
     _adminViewAsStaffName = null;
+    _adminViewAsRole = null;
+    _adminViewAsOfficeIds = [];
     _subordinateAppIds = List<String>.from(_actualSubordinateAppIds);
     _subordinateStaffUuids = List<String>.from(_actualSubordinateStaffUuids);
     if (!changed) return;

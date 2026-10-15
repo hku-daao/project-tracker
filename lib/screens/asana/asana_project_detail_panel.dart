@@ -430,6 +430,9 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     return p.picStaffUuids.any(hit);
   }
 
+  bool _canManageProject(ProjectRecord p) =>
+      _isCreator(p) || _isProjectPic(p);
+
   bool _isProjectMember(ProjectRecord p) {
     final state = context.read<AppState>();
     return p.isInvolvedStaff(
@@ -1000,17 +1003,17 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   bool _canMarkProjectComplete(ProjectRecord p) =>
-      _isCreator(p) &&
+      _canManageProject(p) &&
       !p.isPaused &&
       _effectiveStatus(p) != 'Completed' &&
       _effectiveStatus(p) != 'Deleted' &&
       _milestonesAllowComplete();
 
   bool _canDeleteProject(ProjectRecord p) =>
-      _isCreator(p) && _effectiveStatus(p) != 'Deleted';
+      _canManageProject(p) && _effectiveStatus(p) != 'Deleted';
 
   bool _canRestoreProject(ProjectRecord p) =>
-      _isCreator(p) && _effectiveStatus(p) == 'Deleted';
+      _canManageProject(p) && _effectiveStatus(p) == 'Deleted';
 
   Future<bool> _confirmProjectCascade(HierarchyCascadeAction action) async {
     final counts = await DatabaseService.countCascadeForProject(
@@ -1033,9 +1036,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     required bool paused,
   }) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    final canChangePause = paused
-        ? _isCreator(p)
-        : (_isCreator(p) || _isProjectPic(p));
+    final canChangePause = _canManageProject(p);
     if (!canChangePause || _effectiveStatus(p) == 'Deleted') return;
     if (p.isPaused == paused) return;
     if (!await _confirmProjectCascade(
@@ -2347,7 +2348,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       );
     }
     if (!deleted &&
-        _isCreator(p) &&
+        _canManageProject(p) &&
         !p.isPaused &&
         _effectiveStatus(p) != 'Completed') {
       buttons.add(
@@ -2421,7 +2422,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
   Future<void> _save(AppState state, ProjectRecord p) async {
     if (await _blockAdminReadOnlyWrite()) return;
-    if (!_isCreator(p)) return;
+    if (!_canManageProject(p)) return;
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       await showAsanaInfoDialog(
@@ -2626,7 +2627,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
 
     final state = context.watch<AppState>();
     final adminReadOnly = state.adminViewMode;
-    final canEdit = !adminReadOnly && _isCreator(p);
+    final canEdit = !adminReadOnly && _canManageProject(p);
     final canCreateChildren = !adminReadOnly && _isProjectMember(p);
     if (canEdit) _ensureProjectAi();
     final creatorLabel = (p.createByDisplayName ?? '').trim().isNotEmpty

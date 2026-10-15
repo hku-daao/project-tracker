@@ -1728,7 +1728,6 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
         creator.isNotEmpty &&
         me == creator;
     final canCreate = _createMode && _isParentProjectMember(state);
-    final canEdit = !adminReadOnly && (_createMode ? canCreate : isCreator);
     final meUuid =
         (_myStaffUuid ?? state.effectiveStaffUuid ?? state.userStaffId)
             ?.trim() ??
@@ -1743,6 +1742,8 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
     }
 
     final isPic = _row?.picStaffUuids.any(staffHit) ?? false;
+    final canEdit =
+        !adminReadOnly && (_createMode ? canCreate : (isCreator || isPic));
     final parentProject = state.projectById(widget.projectId);
     final canResume =
         !adminReadOnly &&

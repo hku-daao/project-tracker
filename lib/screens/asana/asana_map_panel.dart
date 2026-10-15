@@ -32,6 +32,7 @@ class AsanaMapPanel extends StatefulWidget {
     required this.searchQuery,
     this.refreshToken = 0,
     this.onOpenProject,
+    this.onOpenSubproject,
     this.onOpenTask,
     this.onOpenSubtask,
   });
@@ -40,6 +41,7 @@ class AsanaMapPanel extends StatefulWidget {
   final String searchQuery;
   final int refreshToken;
   final void Function(String projectId)? onOpenProject;
+  final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
 
@@ -2508,6 +2510,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
                               expandedTaskIds: _mapExpandedTaskIds,
                               onToggleTaskSubtasks: _toggleMapTaskSubtasks,
                               onOpenProject: widget.onOpenProject,
+                              onOpenSubproject: widget.onOpenSubproject,
                               onOpenTask: widget.onOpenTask,
                               onOpenSubtask: widget.onOpenSubtask,
                             );
@@ -2801,6 +2804,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
     required this.expandedTaskIds,
     required this.onToggleTaskSubtasks,
     this.onOpenProject,
+    this.onOpenSubproject,
     this.onOpenTask,
     this.onOpenSubtask,
   });
@@ -2819,6 +2823,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
   final Set<String> expandedTaskIds;
   final void Function(String taskId) onToggleTaskSubtasks;
   final void Function(String projectId)? onOpenProject;
+  final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
 
@@ -2846,7 +2851,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
           ],
           expandedTaskIds: expandedTaskIds,
           onToggleTaskSubtasks: onToggleTaskSubtasks,
-          onOpenProject: onOpenProject,
+          onOpenSubproject: onOpenSubproject,
           onOpenTask: onOpenTask,
           onOpenSubtask: onOpenSubtask,
         ),
@@ -2958,7 +2963,7 @@ _DiagramNode _subprojectDiagramNode({
   required List<_TaskMapNode> taskNodes,
   required Set<String> expandedTaskIds,
   required void Function(String taskId) onToggleTaskSubtasks,
-  void Function(String projectId)? onOpenProject,
+  void Function(String subprojectId, String projectId)? onOpenSubproject,
   void Function(String taskId)? onOpenTask,
   void Function(String subtaskId)? onOpenSubtask,
 }) {
@@ -2975,7 +2980,7 @@ _DiagramNode _subprojectDiagramNode({
     status: status,
     completed: _mapBlockIsCompleted(status),
     detailLabel: AsanaStatusChip.statusStyle(status).$1,
-    onTap: () => onOpenProject?.call(project.id),
+    onTap: () => onOpenSubproject?.call(subproject.id, project.id),
     children: [
       for (final taskNode in taskNodes)
         _taskDiagramNode(

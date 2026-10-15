@@ -102,9 +102,16 @@ class _LinkRow {
 enum _ReportingMode { supervisor, subordinate }
 
 class AsanaStaffAdminPanel extends StatefulWidget {
-  const AsanaStaffAdminPanel({super.key, required this.palette});
+  const AsanaStaffAdminPanel({
+    super.key,
+    required this.palette,
+    this.viewAsStaffId,
+  });
 
   final AsanaLandingPalette palette;
+
+  /// When a super admin is viewing as someone, People uses that person's offices.
+  final String? viewAsStaffId;
 
   @override
   State<AsanaStaffAdminPanel> createState() => _AsanaStaffAdminPanelState();
@@ -154,7 +161,11 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
         _error = null;
       });
     }
-    final result = await _request('GET', '/api/staff-admin/context');
+    final viewAs = widget.viewAsStaffId?.trim();
+    final path = (viewAs == null || viewAs.isEmpty)
+        ? '/api/staff-admin/context'
+        : '/api/staff-admin/context?viewAsStaffId=${Uri.encodeQueryComponent(viewAs)}';
+    final result = await _request('GET', path);
     if (!mounted) return;
     if (result.error != null || result.data == null) {
       final message = result.error ?? 'Could not load People.';

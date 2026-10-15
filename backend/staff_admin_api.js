@@ -36,19 +36,7 @@ function parseStaffEmail(raw) {
   return { email, local: local.toLowerCase() };
 }
 
-async function loadActor(pool, email) {
-  const candidates = emailCandidates(email);
-  if (candidates.length === 0) return null;
-  const staff = await pool.query(
-    `SELECT id, email, name, app_id
-     FROM staff
-     WHERE lower(email) = ANY($1::text[])
-     ORDER BY CASE WHEN lower(email) = $2 THEN 0 ELSE 1 END
-     LIMIT 1`,
-    [candidates, String(email || '').trim().toLowerCase()],
-  );
-  const row = staff.rows[0];
-  if (!row) return null;
+async function actorFromStaffRow(pool, row) {
   const grants = await pool.query(
     `SELECT role, office_id
      FROM staff_admin
@@ -83,6 +71,37 @@ async function loadActor(pool, email) {
     performanceOfficeIds,
     role,
   };
+}
+
+async function loadActor(pool, email) {
+  const candidates = emailCandidates(email);
+  if (candidates.length === 0) return null;
+  const staff = await pool.query(
+    `SELECT id, email, name, app_id
+     FROM staff
+     WHERE lower(email) = ANY($1::text[])
+     ORDER BY CASE WHEN lower(email) = $2 THEN 0 ELSE 1 END
+     LIMIT 1`,
+    [candidates, String(email || '').trim().toLowerCase()],
+  );
+  const row = staff.rows[0];
+  if (!row) return null;
+  return actorFromStaffRow(pool, row);
+}
+
+async function loadActorByStaffId(pool, staffId) {
+  const id = String(staffId || '').trim();
+  if (!id) return null;
+  const staff = await pool.query(
+    `SELECT id, email, name, app_id
+     FROM staff
+     WHERE id = $1
+     LIMIT 1`,
+    [id],
+  );
+  const row = staff.rows[0];
+  if (!row) return null;
+  return actorFromStaffRow(pool, row);
 }
 
 async function loadScope(pool, actor) {
@@ -205,17 +224,36 @@ async function handle(req, res, ctx) {
 
   try {
     if (path === '/api/staff-admin/context' && req.method === 'GET') {
-      if (actor.role === 'performance_admin') {
+      let subject = actor;
+      const viewAsStaffId = String(
+        url.searchParams.get('viewAsStaffId') || '',
+      ).trim();
+      if (viewAsStaffId && actor.superAdmin) {
+        subject = await loadActorByStaffId(pool, viewAsStaffId);
+      }
+      if (!subject) {
         sendJson(req, res, 200, {
-          role: 'performance_admin',
-          officeIds: actor.performanceOfficeIds,
+          role: null,
+          officeIds: [],
+          offices: [],
+          teams: [],
+          staff: [],
+          links: [],
+          impliedLinks: [],
         });
         return;
       }
-      const scope = await loadScope(pool, actor);
-      scope.officeIds = actor.superAdmin
+      if (subject.role === 'performance_admin') {
+        sendJson(req, res, 200, {
+          role: 'performance_admin',
+          officeIds: subject.performanceOfficeIds,
+        });
+        return;
+      }
+      const scope = await loadScope(pool, subject);
+      scope.officeIds = subject.superAdmin
         ? scope.offices.map((o) => o.officeId)
-        : actor.officeIds;
+        : subject.officeIds;
       sendJson(req, res, 200, scope);
       return;
     }

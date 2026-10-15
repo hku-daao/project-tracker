@@ -117,6 +117,14 @@ class TasksLoadResult {
   static const empty = TasksLoadResult(tasks: []);
 }
 
+/// Role and offices a staff member would see after signing in.
+class StaffAdminGrantView {
+  const StaffAdminGrantView({required this.role, required this.officeIds});
+
+  final String role;
+  final List<String> officeIds;
+}
+
 class DatabaseService {
   /// `project` / `subproject` columns `assignee_01` … `assignee_60`.
   static const int projectAssigneeSlotCount = 60;
@@ -4029,6 +4037,60 @@ class DatabaseService {
       'via subtask=${viaSubtask.length})',
     );
     return (rows: rows, viaSubtask: viaSubtask);
+  }
+
+  /// `staff.id` (lower case) → the role that person would have after sign-in.
+  /// A super admin grant wins, then office admin, then performance admin.
+  static Future<Map<String, StaffAdminGrantView>>
+  fetchStaffAdminRoleByStaffId() async {
+    if (!_enabled) return {};
+    final db = PostgrestClient.instance;
+    final res = await db.from('staff_admin').select('staff_id, role, office_id');
+    final rows = <String, List<({String role, String officeId})>>{};
+    for (final raw in (res as List)) {
+      if (raw is! Map) continue;
+      final id = raw['staff_id']?.toString().trim().toLowerCase();
+      final role = raw['role']?.toString().trim();
+      if (id == null || id.isEmpty || role == null || role.isEmpty) continue;
+      rows.putIfAbsent(id, () => []).add((
+        role: role,
+        officeId: raw['office_id']?.toString().trim() ?? '',
+      ));
+    }
+    final map = <String, StaffAdminGrantView>{};
+    for (final entry in rows.entries) {
+      final grants = entry.value;
+      if (grants.any((g) => g.role == 'super_admin')) {
+        map[entry.key] = const StaffAdminGrantView(
+          role: 'super_admin',
+          officeIds: [],
+        );
+        continue;
+      }
+      final officeIds = [
+        for (final g in grants)
+          if (g.role == 'office_admin' && g.officeId.isNotEmpty) g.officeId,
+      ];
+      if (officeIds.isNotEmpty) {
+        map[entry.key] = StaffAdminGrantView(
+          role: 'office_admin',
+          officeIds: officeIds,
+        );
+        continue;
+      }
+      final performanceIds = [
+        for (final g in grants)
+          if (g.role == 'performance_admin' && g.officeId.isNotEmpty)
+            g.officeId,
+      ];
+      if (performanceIds.isNotEmpty) {
+        map[entry.key] = StaffAdminGrantView(
+          role: 'performance_admin',
+          officeIds: performanceIds,
+        );
+      }
+    }
+    return map;
   }
 
   /// Subordinates of [supervisorAppId]: stored `subordinate` rows, plus every

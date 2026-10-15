@@ -290,6 +290,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   final ValueNotifier<AsanaAssigneePickerSnapshot> _adminViewAsSnapshot =
       ValueNotifier(const AsanaAssigneePickerSnapshot(loading: true));
   List<StaffForAssignment> _adminViewAsStaff = const [];
+  Map<String, StaffAdminGrantView> _adminViewAsRoleByStaffId = const {};
   bool _adminViewAsLoading = false;
 
   String _selectedNav = 'Home';
@@ -297,7 +298,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool? _sidebarOpenOverride;
   double? _lastScreenWidth;
   bool _themeMenuExpanded = false;
-  bool _showStaffNav = false;
   final List<AsanaDetailSelection> _detailStack = [];
   int _detailRefreshToken = 0;
   int _listRefreshGeneration = 0;
@@ -331,10 +331,14 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     _publishAdminViewAsSnapshot();
     try {
       final data = await DatabaseService.fetchStaffAssigneePickerData();
+      final roles = await DatabaseService.fetchStaffAdminRoleByStaffId();
       if (!mounted) return;
       final staff = List<StaffForAssignment>.from(data.staff)
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      setState(() => _adminViewAsStaff = staff);
+      setState(() {
+        _adminViewAsStaff = staff;
+        _adminViewAsRoleByStaffId = roles;
+      });
     } catch (e) {
       debugPrint('Admin view-as staff load failed: $e');
     } finally {
@@ -403,14 +407,32 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
           subordinateStaffAppIds: subIds,
         );
     if (!mounted) return;
+    final staffUuid = (visibility.supervisorStaffUuid ?? staff.staffUuid)
+        ?.trim()
+        .toLowerCase();
+    final grant = staffUuid == null
+        ? null
+        : _adminViewAsRoleByStaffId[staffUuid];
     state.setAdminDebugViewAs(
       staffAppId: staff.assigneeId,
       staffUuid: visibility.supervisorStaffUuid ?? staff.staffUuid,
       staffName: staff.name,
+      staffAdminRole: grant?.role,
+      staffAdminOfficeIds: grant?.officeIds ?? const [],
       subordinateAppIds: visibility.subordinateStaffAppIds,
       subordinateStaffUuids: visibility.subordinateStaffUuids,
     );
-    await _reloadForAdminViewAsChange(visibility: visibility, adminAll: false);
+    if (!state.showPerformanceNav &&
+        (_selectedNav == 'Group Performance' ||
+            _selectedNav == 'Individual Performance')) {
+      setState(() => _selectedNav = 'Home');
+    } else if (!state.showPeopleNav && _selectedNav == 'People') {
+      setState(() => _selectedNav = 'Home');
+    }
+    await _reloadForAdminViewAsChange(
+      visibility: visibility,
+      adminAll: grant?.role == 'super_admin',
+    );
     _dismissAllDetails();
   }
 
@@ -573,6 +595,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
         onOpenSubtask: (id) =>
             _openRootDetail(AsanaDetailSelection.subtask(id)),
+        onOpenSubproject: (subprojectId, projectId) => _openRootDetail(
+          AsanaDetailSelection.subproject(
+            subprojectId: subprojectId,
+            projectId: projectId,
+          ),
+        ),
       );
     }
     if (_selectedNav == 'Archived') {
@@ -614,8 +642,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (_selectedNav == 'Guidance') {
       return AsanaGuidancePanel(palette: palette);
     }
-    if (_selectedNav == 'People' && _showStaffNav) {
-      return AsanaStaffAdminPanel(palette: palette);
+    if (_selectedNav == 'People' && state.showPeopleNav) {
+      return AsanaStaffAdminPanel(
+        key: ValueKey(state.adminViewAsStaffUuid ?? 'self'),
+        palette: palette,
+        viewAsStaffId: state.adminViewAsStaffUuid,
+      );
     }
     if (_selectedNav == 'Home') {
       return AsanaHomePanel(
@@ -852,7 +884,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     ];
     final state = context.read<AppState>();
     state.setStaffAdminRole(role, officeIds: officeIds);
-    setState(() => _showStaffNav = role == 'super_admin' || role == 'office_admin');
     if (role == 'super_admin') {
       var toolsOpen = false;
       try {
@@ -965,7 +996,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             children: [
               for (final label in [
                 ..._navItems,
-                if (_showStaffNav) 'People',
+                if (context.watch<AppState>().showPeopleNav) 'People',
               ])
                 _SidebarNavTile(
                   label: label,
@@ -1677,7 +1708,8 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
           displayName.isNotEmpty ? displayName : '?',
         );
         final toolsOpen = state.superAdminToolsOpen;
-        final avatarText = toolsOpen ? 'Admin' : initials;
+        final viewingAsStaff = state.adminDebugViewAsActive;
+        final avatarText = toolsOpen && !viewingAsStaff ? 'Admin' : initials;
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: Row(
@@ -1697,7 +1729,7 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
                     avatarText,
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.labelLarge,
-                      fontSize: toolsOpen ? 11 : 14,
+                      fontSize: toolsOpen && !viewingAsStaff ? 11 : 14,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                       height: 1,
@@ -1705,7 +1737,7 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
                   ),
                 ),
               ),
-              if (toolsOpen) ...[
+              if (toolsOpen && !viewingAsStaff) ...[
                 const SizedBox(width: 8),
                 Text(
                   'Super admin',

@@ -77,20 +77,9 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     });
     try {
       final state = context.read<AppState>();
-      var ids = taskIds;
-      if (state.isSuperAdmin && !state.showAllDataAsAdmin) {
-        final allTasks = await DatabaseService.fetchTasks(visibility: null);
-        final projects = await DatabaseService.fetchAllProjects();
-        _fullTasks = allTasks?.tasks ?? const [];
-        _fullProjects = projects;
-        ids = [
-          for (final task in _fullTasks!)
-            if (task.id.trim().isNotEmpty) task.id.trim(),
-        ];
-      } else {
-        _fullTasks = null;
-        _fullProjects = null;
-      }
+      final ids = taskIds;
+      _fullTasks = null;
+      _fullProjects = null;
       final picker = await DatabaseService.fetchStaffAssigneePickerData();
       final subtasks =
           await DatabaseService.fetchSubtasksGroupedIncludingDeleted(ids);
@@ -593,7 +582,7 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    if (!state.canViewPerformance) {
+    if (!state.showPerformanceNav) {
       return ColoredBox(color: widget.palette.content);
     }
     if (_loading) {
