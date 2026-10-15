@@ -434,6 +434,7 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
   required BuildContext anchorContext,
   required List<AsanaFilterCheckboxOption> options,
   required Set<String> initialSelection,
+  bool singleSelect = false,
 }) {
   dismissAsanaCheckboxFilterPanels();
   final completer = Completer<Set<String>?>();
@@ -509,6 +510,7 @@ Future<Set<String>?> showAsanaCheckboxFilterPanel({
               child: _CheckboxFilterPanelBody(
                 options: options,
                 initialSelection: initialSelection,
+                singleSelect: singleSelect,
                 onDone: (newSelection) => close(newSelection),
               ),
             ),
@@ -540,11 +542,13 @@ class _CheckboxFilterPanelBody extends StatefulWidget {
     required this.options,
     required this.initialSelection,
     required this.onDone,
+    this.singleSelect = false,
   });
 
   final List<AsanaFilterCheckboxOption> options;
   final Set<String> initialSelection;
   final void Function(Set<String>) onDone;
+  final bool singleSelect;
 
   @override
   State<_CheckboxFilterPanelBody> createState() =>
@@ -569,6 +573,11 @@ class _CheckboxFilterPanelBodyState extends State<_CheckboxFilterPanelBody> {
 
   void _toggle(String key, bool checked) {
     setState(() {
+      if (widget.singleSelect) {
+        _selected.clear();
+        if (checked) _selected.add(key);
+        return;
+      }
       _selected.remove('all');
       _selected.remove('__all__');
       if (checked) {

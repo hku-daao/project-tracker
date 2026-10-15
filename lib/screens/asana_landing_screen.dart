@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
 import '../config/postgrest_config.dart';
@@ -318,7 +317,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   void _publishAdminViewAsSnapshot() {
     final adminOption = const StaffForAssignment(
       assigneeId: _adminViewAsAdminKey,
-      name: 'Admin (default)',
+      name: 'Super Admin',
     );
     _adminViewAsSnapshot.value = AsanaAssigneePickerSnapshot(
       loading: _adminViewAsLoading,
@@ -452,34 +451,36 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     final state = context.watch<AppState>();
     final label = state.adminViewAsStaffName?.trim().isNotEmpty == true
         ? state.adminViewAsStaffName!.trim()
-        : 'Admin (default)';
+        : 'Super Admin';
     return CompositedTransformTarget(
       link: _adminViewAsAnchorLink,
       child: Builder(
         builder: (anchorContext) {
+          final ink = palette.searchField.computeLuminance() > 0.45
+              ? const Color(0xFF1A1A1A)
+              : Colors.white;
           return Material(
             color: palette.searchField,
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
               onTap: () => _openAdminViewAsPicker(anchorContext),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 188, maxWidth: 260),
+              child: SizedBox(
+                width: 220,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
                     vertical: 8,
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         Icons.person_search_outlined,
                         size: 16,
-                        color: palette.onBanner,
+                        color: ink,
                       ),
                       const SizedBox(width: 6),
-                      Flexible(
+                      Expanded(
                         child: Text(
                           label,
                           maxLines: 1,
@@ -488,7 +489,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                             Theme.of(anchorContext).textTheme.bodySmall,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: palette.onBanner,
+                            color: ink,
                           ),
                         ),
                       ),
@@ -496,7 +497,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                       Icon(
                         Icons.keyboard_arrow_down,
                         size: 16,
-                        color: palette.onBanner,
+                        color: ink,
                       ),
                     ],
                   ),
@@ -522,7 +523,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     required AsanaLandingPalette palette,
     required String searchQuery,
   }) {
-    final adminViewMode = context.watch<AppState>().adminViewMode;
+    final state = context.watch<AppState>();
+    final adminViewMode = state.adminViewMode;
+    final showPerformanceNav = state.showPerformanceNav;
     if (_selectedNav == 'Tasks' || _selectedNav == 'All Tasks & Sub-tasks') {
       return AsanaTasksPanel(
         key: ValueKey(_selectedNav),
@@ -584,13 +587,13 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             _openRootDetail(AsanaDetailSelection.subtask(id)),
       );
     }
-    if (adminViewMode && _selectedNav == 'Group Performance') {
+    if (showPerformanceNav && _selectedNav == 'Group Performance') {
       return AsanaPerformancePanel(
         palette: palette,
         viewMode: AsanaPerformanceViewMode.group,
       );
     }
-    if (adminViewMode && _selectedNav == 'Individual Performance') {
+    if (showPerformanceNav && _selectedNav == 'Individual Performance') {
       return AsanaPerformancePanel(
         palette: palette,
         viewMode: AsanaPerformanceViewMode.individual,
@@ -611,7 +614,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (_selectedNav == 'Guidance') {
       return AsanaGuidancePanel(palette: palette);
     }
-    if (_selectedNav == 'Staff' && _showStaffNav) {
+    if (_selectedNav == 'People' && _showStaffNav) {
       return AsanaStaffAdminPanel(palette: palette);
     }
     if (_selectedNav == 'Home') {
@@ -826,9 +829,6 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       if (kIsWeb) {
         _syncWebLocationToDetailStack();
       }
-      if (mounted && context.read<AppState>().adminViewMode) {
-        _loadAdminViewAsStaff();
-      }
       _loadStaffNav();
     });
   }
@@ -842,7 +842,60 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       path: '/api/staff-admin/context',
     );
     if (!mounted) return;
-    setState(() => _showStaffNav = result.error == null && result.data != null);
+    final data = result.error == null ? result.data : null;
+    final role = data?['role']?.toString();
+    final officeIds = <String>[
+      if (data?['officeIds'] is List)
+        for (final item in data!['officeIds'] as List)
+          if (item != null && item.toString().trim().isNotEmpty)
+            item.toString().trim(),
+    ];
+    final state = context.read<AppState>();
+    state.setStaffAdminRole(role, officeIds: officeIds);
+    setState(() => _showStaffNav = role == 'super_admin' || role == 'office_admin');
+    if (role == 'super_admin') {
+      var toolsOpen = false;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        toolsOpen = prefs.getBool(AppState.superAdminToolsStorageKey) ?? false;
+      } catch (e) {
+        debugPrint('Super admin tools restore failed: $e');
+      }
+      if (!mounted) return;
+      state.setSuperAdminToolsOpen(toolsOpen);
+      if (toolsOpen) _loadAdminViewAsStaff();
+      if (!state.adminDebugViewAsActive) {
+        await _reloadForAdminViewAsChange(visibility: null, adminAll: true);
+      }
+    }
+  }
+
+  Future<void> _onSuperAdminToolsChanged(
+    bool open, {
+    required bool reloadOwnTasks,
+  }) async {
+    if (!open) {
+      setState(() {
+        if (_selectedNav == 'Group Performance' ||
+            _selectedNav == 'Individual Performance') {
+          _selectedNav = 'Home';
+        }
+      });
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(AppState.superAdminToolsStorageKey, open);
+    } catch (e) {
+      debugPrint('Super admin tools persist failed: $e');
+    }
+    if (!mounted) return;
+    if (open) {
+      _loadAdminViewAsStaff();
+      return;
+    }
+    if (reloadOwnTasks) {
+      await _reloadForAdminViewAsChange(visibility: null, adminAll: true);
+    }
   }
 
   void _applyInitialNavFromView() {
@@ -912,7 +965,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             children: [
               for (final label in [
                 ..._navItems,
-                if (_showStaffNav) 'Staff',
+                if (_showStaffNav) 'People',
               ])
                 _SidebarNavTile(
                   label: label,
@@ -934,7 +987,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                     _syncWebLocationToDetailStack();
                   },
                 ),
-              if (context.watch<AppState>().adminViewMode)
+              if (context.watch<AppState>().showPerformanceNav)
                 for (final label in const [
                   'Group Performance',
                   'Individual Performance',
@@ -975,7 +1028,10 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             ],
           ),
         ),
-        _SidebarUserAvatar(palette: palette),
+        _SidebarUserAvatar(
+          palette: palette,
+          onToolsChanged: _onSuperAdminToolsChanged,
+        ),
       ],
     );
   }
@@ -983,7 +1039,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = _palette;
-    final adminViewMode = context.watch<AppState>().adminViewMode;
+    final state = context.watch<AppState>();
+    final adminViewMode = state.adminViewMode;
+    final showStaffViewAsMenu = state.showStaffViewAsMenu;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final sidebarOverlay = screenWidth < _kSidebarAutoHideWidth;
     final sidebarOpen = _sidebarOpenOverride ?? !sidebarOverlay;
@@ -1109,7 +1167,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                               : const SizedBox.shrink(),
                         ),
                       ),
-                      if (adminViewMode) ...[
+                      if (showStaffViewAsMenu) ...[
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: _buildAdminViewAsButton(palette),
@@ -1547,19 +1605,24 @@ class _SidebarNavTile extends StatelessWidget {
 
 /// Bottom-left sidebar avatar with staff initials (e.g. Ken Lee → KL) and log out button.
 class _SidebarUserAvatar extends StatefulWidget {
-  const _SidebarUserAvatar({required this.palette});
+  const _SidebarUserAvatar({
+    required this.palette,
+    required this.onToolsChanged,
+  });
 
   final AsanaLandingPalette palette;
+  final Future<void> Function(bool open, {required bool reloadOwnTasks})
+  onToolsChanged;
 
   @override
   State<_SidebarUserAvatar> createState() => _SidebarUserAvatarState();
 }
 
 class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
-  static const int _adminTapCount = 5;
-  static const Duration _adminTapWindow = Duration(seconds: 2);
+  static const int _toolsTapCount = 5;
+  static const Duration _toolsTapWindow = Duration(seconds: 2);
 
-  final List<DateTime> _adminTapTimes = [];
+  final List<DateTime> _toolsTapTimes = [];
 
   Future<void> _confirmLogOut(BuildContext context) async {
     AsanaBlockingLoadingOverlay.hideAll();
@@ -1583,24 +1646,18 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
 
   Future<void> _handleAvatarTap(BuildContext context) async {
     final state = context.read<AppState>();
-    if (!state.canUseAdminViewMode) return;
+    if (!state.isSuperAdmin) return;
 
     final now = DateTime.now();
-    _adminTapTimes.removeWhere((t) => now.difference(t) > _adminTapWindow);
-    _adminTapTimes.add(now);
-    if (_adminTapTimes.length < _adminTapCount) return;
-    _adminTapTimes.clear();
+    _toolsTapTimes.removeWhere((t) => now.difference(t) > _toolsTapWindow);
+    _toolsTapTimes.add(now);
+    if (_toolsTapTimes.length < _toolsTapCount) return;
+    _toolsTapTimes.clear();
 
-    final next = !state.adminViewMode;
-    state.setAdminViewMode(next);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(AppState.adminViewStorageKey, next);
-    } catch (e) {
-      debugPrint('Admin view mode persist failed: $e');
-    }
-    if (!context.mounted) return;
-    await SsoAuthService.navigateHome();
+    final next = !state.superAdminToolsOpen;
+    final reloadOwnTasks = !next && state.adminDebugViewAsActive;
+    state.setSuperAdminToolsOpen(next);
+    await widget.onToolsChanged(next, reloadOwnTasks: reloadOwnTasks);
   }
 
   @override
@@ -1619,8 +1676,8 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
         final initials = asanaStaffInitials(
           displayName.isNotEmpty ? displayName : '?',
         );
-        final avatarText = state.adminViewMode ? 'Admin' : initials;
-
+        final toolsOpen = state.superAdminToolsOpen;
+        final avatarText = toolsOpen ? 'Admin' : initials;
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: Row(
@@ -1640,7 +1697,7 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
                     avatarText,
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.labelLarge,
-                      fontSize: state.adminViewMode ? 11 : 14,
+                      fontSize: toolsOpen ? 11 : 14,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                       height: 1,
@@ -1648,10 +1705,10 @@ class _SidebarUserAvatarState extends State<_SidebarUserAvatar> {
                   ),
                 ),
               ),
-              if (state.adminViewMode) ...[
+              if (toolsOpen) ...[
                 const SizedBox(width: 8),
                 Text(
-                  'Admin View',
+                  'Super admin',
                   style: asanaTextStyle(
                     Theme.of(context).textTheme.labelSmall,
                     fontSize: 11,

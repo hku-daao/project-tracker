@@ -502,9 +502,7 @@ class _AsanaHomePanelState extends State<AsanaHomePanel> {
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
     final searchTokens = AsanaProjectFilter.searchTokens(widget.searchQuery);
     final adminViewMode = state.showAllDataAsAdmin;
-    final greetingName = adminViewMode
-        ? 'Administrator'
-        : _greetingDisplayName(state);
+    final greetingName = _greetingDisplayName(state);
     final greeting = '${_greetingPhrase()}, $greetingName';
 
     final all = _activeSingularTasks(state);
@@ -1556,38 +1554,57 @@ class _HomePeopleRow extends StatelessWidget {
     final nameStyle = asanaTableRowNameStyle(
       context,
     )?.copyWith(fontWeight: summary.isSelf ? FontWeight.w700 : FontWeight.w600);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+    final name = Text(
+      summary.name,
+      style: nameStyle,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+    final metrics = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              summary.name,
-              style: nameStyle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 12),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerRight,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _countBlock('Tasks', summary.taskCounts, forSubtasks: false),
-                const SizedBox(width: 10),
-                _countBlock(
-                  'Sub-tasks',
-                  summary.subtaskCounts,
-                  forSubtasks: true,
-                ),
-              ],
-            ),
+          _countBlock('Tasks', summary.taskCounts, forSubtasks: false),
+          const SizedBox(width: 10),
+          _countBlock(
+            'Sub-tasks',
+            summary.subtaskCounts,
+            forSubtasks: true,
           ),
         ],
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 520) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                name,
+                const SizedBox(height: 8),
+                metrics,
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: name),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: metrics,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

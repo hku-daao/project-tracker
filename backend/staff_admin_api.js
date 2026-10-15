@@ -63,12 +63,25 @@ async function loadActor(pool, email) {
         .map((g) => String(g.office_id)),
     ),
   ];
-  if (!superAdmin && officeIds.length === 0) return null;
+  const performanceOfficeIds = [
+    ...new Set(
+      grants.rows
+        .filter((g) => g.role === 'performance_admin' && g.office_id)
+        .map((g) => String(g.office_id)),
+    ),
+  ];
+  let role = null;
+  if (superAdmin) role = 'super_admin';
+  else if (officeIds.length > 0) role = 'office_admin';
+  else if (performanceOfficeIds.length > 0) role = 'performance_admin';
+  if (!role) return null;
   return {
     staffId: row.id,
     email: row.email,
     superAdmin,
     officeIds,
+    performanceOfficeIds,
+    role,
   };
 }
 
@@ -136,7 +149,7 @@ async function loadScope(pool, actor) {
   const impliedLinks = linkRows(implied.rows);
 
   return {
-    role: actor.superAdmin ? 'super_admin' : 'office_admin',
+    role: actor.role,
     offices: visibleOffices.map((o) => ({
       officeId: o.office_id,
       officeName: o.office_name || o.office_id,
@@ -192,7 +205,22 @@ async function handle(req, res, ctx) {
 
   try {
     if (path === '/api/staff-admin/context' && req.method === 'GET') {
-      sendJson(req, res, 200, await loadScope(pool, actor));
+      if (actor.role === 'performance_admin') {
+        sendJson(req, res, 200, {
+          role: 'performance_admin',
+          officeIds: actor.performanceOfficeIds,
+        });
+        return;
+      }
+      const scope = await loadScope(pool, actor);
+      scope.officeIds = actor.superAdmin
+        ? scope.offices.map((o) => o.officeId)
+        : actor.officeIds;
+      sendJson(req, res, 200, scope);
+      return;
+    }
+    if (actor.role === 'performance_admin') {
+      sendJson(req, res, 403, { error: 'You do not have access to Staff.' });
       return;
     }
     if (path === '/api/staff-admin/staff' && req.method === 'POST') {
@@ -220,6 +248,10 @@ async function handle(req, res, ctx) {
     }
     if (path === '/api/staff-admin/subordinates' && req.method === 'PUT') {
       await setSubordinates(pool, actor, await readBody(req), sendJson, req, res);
+      return;
+    }
+    if (path === '/api/staff-admin/supervisors' && req.method === 'PUT') {
+      await setSupervisors(pool, actor, await readBody(req), sendJson, req, res);
       return;
     }
     sendJson(req, res, 404, { error: 'Not found' });
@@ -255,12 +287,48 @@ async function createStaff(pool, actor, body, sendJson, req, res) {
     return;
   }
   const active = body.active !== false;
-  await pool.query(
-    `INSERT INTO staff (name, email, app_id, team_id, active)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [name, parsed.email, parsed.local, team.teamId, active],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO staff (name, email, app_id, team_id, active)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [name, parsed.email, parsed.local, team.teamId, active],
+    );
+    await linkNewStaffToAdmins(client, parsed.local, team.officeId);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
   sendJson(req, res, 200, { ok: true });
+}
+
+async function linkNewStaffToAdmins(client, appId, officeId) {
+  const subordinateId = String(appId || '').trim();
+  if (!subordinateId) return;
+  const office = String(officeId || '').trim();
+  await client.query(
+    `INSERT INTO subordinate (supervisor_id, subordinate_id)
+     SELECT DISTINCT admin.app_id, $1
+     FROM staff_admin grant_row
+     JOIN staff admin ON admin.id = grant_row.staff_id
+     WHERE admin.app_id IS NOT NULL
+       AND btrim(admin.app_id) <> ''
+       AND lower(admin.app_id) <> lower($1)
+       AND (
+         grant_row.role = 'super_admin'
+         OR (
+           grant_row.role IN ('office_admin', 'performance_admin')
+           AND btrim($2) <> ''
+           AND lower(grant_row.office_id) = lower($2)
+         )
+       )
+     ON CONFLICT ON CONSTRAINT unique_supervisor_subordinate DO NOTHING`,
+    [subordinateId, office],
+  );
 }
 
 async function updateStaff(pool, actor, staffId, body, sendJson, req, res) {
@@ -454,12 +522,15 @@ async function setSubordinates(pool, actor, body, sendJson, req, res) {
     const stored = subordinates.filter(
       (person) => !impliedAppIds.has(String(person.appId).trim().toLowerCase()),
     );
-    if (inScopeAppIds.length > 0) {
+    const deletable = inScopeAppIds.filter(
+      (id) => !impliedAppIds.has(id.toLowerCase()),
+    );
+    if (deletable.length > 0) {
       await client.query(
         `DELETE FROM subordinate
          WHERE lower(supervisor_id) = lower($1)
            AND lower(subordinate_id) = ANY($2::text[])`,
-        [supervisor.appId, inScopeAppIds.map((id) => id.toLowerCase())],
+        [supervisor.appId, deletable.map((id) => id.toLowerCase())],
       );
     }
     for (const person of stored) {
@@ -468,6 +539,74 @@ async function setSubordinates(pool, actor, body, sendJson, req, res) {
          VALUES ($1, $2)
          ON CONFLICT ON CONSTRAINT unique_supervisor_subordinate DO NOTHING`,
         [supervisor.appId, person.appId],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  sendJson(req, res, 200, { ok: true });
+}
+
+async function setSupervisors(pool, actor, body, sendJson, req, res) {
+  const scope = await loadScope(pool, actor);
+  const subordinate = staffInScope(scope, body.subordinateStaffId);
+  if (!subordinate || !subordinate.appId) {
+    sendJson(req, res, 400, { error: 'Choose a subordinate in your office.' });
+    return;
+  }
+  const requested = Array.isArray(body.supervisorStaffIds)
+    ? body.supervisorStaffIds
+    : [];
+  const supervisors = [];
+  for (const id of requested) {
+    if (id === subordinate.id) continue;
+    const person = staffInScope(scope, id);
+    if (!person || !person.appId) {
+      sendJson(req, res, 400, { error: 'A selected staff member is outside your office.' });
+      return;
+    }
+    supervisors.push(person);
+  }
+  const inScopeAppIds = scope.staff
+    .map((s) => String(s.appId || '').trim())
+    .filter((id) => id && id.toLowerCase() !== String(subordinate.appId).toLowerCase());
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const implied = await client.query(
+      `SELECT supervisor_id
+       FROM subordinate_implied
+       WHERE lower(subordinate_id) = lower($1)`,
+      [subordinate.appId],
+    );
+    const impliedAppIds = new Set(
+      implied.rows.map((row) => String(row.supervisor_id || '').trim().toLowerCase()),
+    );
+    const stored = supervisors.filter(
+      (person) => !impliedAppIds.has(String(person.appId).trim().toLowerCase()),
+    );
+    const deletable = inScopeAppIds.filter(
+      (id) => !impliedAppIds.has(id.toLowerCase()),
+    );
+    if (deletable.length > 0) {
+      await client.query(
+        `DELETE FROM subordinate
+         WHERE lower(subordinate_id) = lower($1)
+           AND lower(supervisor_id) = ANY($2::text[])`,
+        [subordinate.appId, deletable.map((id) => id.toLowerCase())],
+      );
+    }
+    for (const person of stored) {
+      await client.query(
+        `INSERT INTO subordinate (supervisor_id, subordinate_id)
+         VALUES ($1, $2)
+         ON CONFLICT ON CONSTRAINT unique_supervisor_subordinate DO NOTHING`,
+        [person.appId, subordinate.appId],
       );
     }
     await client.query('COMMIT');

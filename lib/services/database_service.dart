@@ -4031,8 +4031,9 @@ class DatabaseService {
     return (rows: rows, viaSubtask: viaSubtask);
   }
 
-  /// Subordinates of [supervisorAppId]: stored `subordinate` rows, plus staff in
-  /// offices whose `boss_office_id` is this person's office (`subordinate_effective`).
+  /// Subordinates of [supervisorAppId]: stored `subordinate` rows, plus every
+  /// other staff member in an office where this person is `office_admin` or
+  /// `performance_admin`.
   static Future<List<String>> fetchSubordinateAppIdsForSupervisor(
     String supervisorAppId,
   ) async {

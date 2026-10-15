@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../app_state.dart';
 import '../config/dev_auth_context.dart';
 import '../config/postgrest_config.dart';
@@ -123,15 +122,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
       }
     } catch (e) {
       debugPrint('AppBootstrap revamp staff/team lookup: $e');
-    }
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      state.setAdminViewMode(
-        prefs.getBool(AppState.adminViewStorageKey) ?? false,
-      );
-    } catch (e) {
-      debugPrint('AppBootstrap admin view restore: $e');
     }
 
     TaskFetchVisibility? taskVisibility;

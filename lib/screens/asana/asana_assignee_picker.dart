@@ -331,8 +331,7 @@ class _AsanaAssigneePickerBodyState extends State<_AsanaAssigneePickerBody> {
                   )
                 else if (widget.directListOnly) ...[
                   _AsanaDirectNameChecklist(
-                    members: List<StaffForAssignment>.from(snap.staff)
-                      ..sort((a, b) => a.name.compareTo(b.name)),
+                    members: snap.staff,
                     selectedIds: widget.selectedIds,
                     onToggle: widget.onToggle,
                   ),

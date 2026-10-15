@@ -37,6 +37,8 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   bool _loading = true;
   String? _error;
   String _loadedTaskSignature = '';
+  List<Task>? _fullTasks;
+  List<ProjectRecord>? _fullProjects;
   Map<String, String> _officeIdByStaffKey = {};
   Map<String, String> _officeNameById = {};
   Map<String, String> _teamIdByStaffKey = {};
@@ -45,6 +47,8 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   String? _individualStaffUuid;
   String? _individualAppId;
   String? _individualName;
+  List<StaffForAssignment> _scopedStaff = [];
+  String? _selectedIndividualId;
   String? _periodStartMonth;
   String? _periodEndMonth;
 
@@ -72,13 +76,27 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       _error = null;
     });
     try {
+      final state = context.read<AppState>();
+      var ids = taskIds;
+      if (state.isSuperAdmin && !state.showAllDataAsAdmin) {
+        final allTasks = await DatabaseService.fetchTasks(visibility: null);
+        final projects = await DatabaseService.fetchAllProjects();
+        _fullTasks = allTasks?.tasks ?? const [];
+        _fullProjects = projects;
+        ids = [
+          for (final task in _fullTasks!)
+            if (task.id.trim().isNotEmpty) task.id.trim(),
+        ];
+      } else {
+        _fullTasks = null;
+        _fullProjects = null;
+      }
       final picker = await DatabaseService.fetchStaffAssigneePickerData();
-      final individual = await DatabaseService.fetchStaffIdentityByEmail(
-        'kenkylee@hku.hk',
-      );
       final subtasks =
-          await DatabaseService.fetchSubtasksGroupedIncludingDeleted(taskIds);
+          await DatabaseService.fetchSubtasksGroupedIncludingDeleted(ids);
       if (!mounted) return;
+      final scoped = _staffInOffices(picker.staff, state);
+      final selected = _chooseIndividual(scoped, state);
       setState(() {
         _officeIdByStaffKey = _officeMapByStaffKey(picker.staff);
         _teamIdByStaffKey = _teamMapByStaffKey(picker.staff);
@@ -88,9 +106,8 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
             office.officeId.trim().toLowerCase(): office.officeName.trim(),
         };
         _subtasksByTaskId = subtasks;
-        _individualStaffUuid = individual.staffUuid;
-        _individualAppId = individual.appId;
-        _individualName = individual.name;
+        _scopedStaff = scoped;
+        _applyIndividual(selected);
         _loading = false;
       });
     } catch (e) {
@@ -100,6 +117,71 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
         _error = e.toString();
       });
     }
+  }
+
+  List<StaffForAssignment> _staffInOffices(
+    List<StaffForAssignment> staff,
+    AppState state,
+  ) {
+    final allowed = state.staffAdminOfficeIds
+        .map((id) => id.trim().toLowerCase())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final scoped = staff.where((person) {
+      final office = person.officeId?.trim().toLowerCase();
+      if (office == null || office.isEmpty) return false;
+      if (allowed.isEmpty) return state.isSuperAdmin;
+      return allowed.contains(office);
+    }).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return scoped;
+  }
+
+  StaffForAssignment? _chooseIndividual(
+    List<StaffForAssignment> scoped,
+    AppState state,
+  ) {
+    for (final person in scoped) {
+      if (person.assigneeId == _selectedIndividualId) return person;
+    }
+    final mine = state.effectiveStaffAppId?.trim();
+    if (mine != null && mine.isNotEmpty) {
+      for (final person in scoped) {
+        if (person.assigneeId == mine) return person;
+      }
+    }
+    return scoped.isEmpty ? null : scoped.first;
+  }
+
+  void _applyIndividual(StaffForAssignment? person) {
+    _selectedIndividualId = person?.assigneeId;
+    _individualAppId = person?.assigneeId;
+    _individualStaffUuid = person?.staffUuid;
+    _individualName = person?.name;
+  }
+
+  List<({String id, String name})> _officesInScope(AppState state) {
+    final fromGrant = state.staffAdminOfficeIds
+        .map((id) => id.trim().toLowerCase())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    final source = fromGrant.isNotEmpty
+        ? fromGrant
+        : (state.isSuperAdmin ? _officeNameById.keys.toList() : <String>[]);
+    source.sort((a, b) {
+      final an = (_officeNameById[a] ?? a).toLowerCase();
+      final bn = (_officeNameById[b] ?? b).toLowerCase();
+      return an.compareTo(bn);
+    });
+    return [
+      for (final id in source)
+        (
+          id: id,
+          name: (_officeNameById[id]?.trim().isNotEmpty == true)
+              ? _officeNameById[id]!.trim()
+              : id.toUpperCase(),
+        ),
+    ];
   }
 
   Map<String, String> _teamMapByStaffKey(List<StaffForAssignment> staff) {
@@ -187,6 +269,11 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     return p.assigneeStaffUuids;
   }
 
+  List<Task> _tasksOf(AppState state) => _fullTasks ?? state.tasks;
+
+  List<ProjectRecord> _projectsOf(AppState state) =>
+      _fullProjects ?? state.projects;
+
   Iterable<String?> _taskOwnerKeys(Task t) {
     final pic = t.pic?.trim();
     if (pic != null && pic.isNotEmpty) return [pic];
@@ -210,7 +297,7 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
 
   List<DateTime?> _createdDatesForOffice(String officeLabel, AppState state) {
     final out = <DateTime?>[];
-    for (final t in state.tasks.where((t) => !_taskDeleted(t))) {
+    for (final t in _tasksOf(state).where((t) => !_taskDeleted(t))) {
       if (_belongsToOffice(
         _officeKeysForCreatedItem(
           creatorKey: t.createByAssigneeKey,
@@ -239,11 +326,11 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   }
 
   _PerformanceMetrics _metricsFor(String officeLabel, AppState state) {
-    final projects = state.projects
+    final projects = _projectsOf(state)
         .where((p) => !_projectDeleted(p))
         .where((p) => _belongsToOffice(_projectOwnerKeys(p), officeLabel))
         .toList();
-    final tasks = state.tasks
+    final tasks = _tasksOf(state)
         .where((t) => !_taskDeleted(t))
         .where((t) => _belongsToOffice(_taskOwnerKeys(t), officeLabel))
         .toList();
@@ -417,7 +504,7 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       }
     }
 
-    for (final t in state.tasks.where((t) => !_taskDeleted(t))) {
+    for (final t in _tasksOf(state).where((t) => !_taskDeleted(t))) {
       final isCreator = _keyMatchesIndividual(t.createByAssigneeKey);
       final isAssignee = _anyKeyMatchesIndividual(t.assigneeIds);
       final isPic = _keyMatchesIndividual(t.pic);
@@ -465,10 +552,9 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     final months = byMonth.values.toList()
       ..sort((a, b) => b.month.compareTo(a.month));
     return _IndividualPerformance(
-      email: 'kenkylee@hku.hk',
       displayName: _individualName?.trim().isNotEmpty == true
           ? _individualName!.trim()
-          : 'Ken Lee',
+          : 'Staff',
       months: months,
     );
   }
@@ -507,7 +593,7 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    if (!state.adminViewMode) {
+    if (!state.canViewPerformance) {
       return ColoredBox(color: widget.palette.content);
     }
     if (_loading) {
@@ -526,10 +612,17 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       );
     }
 
-    final daao = _metricsFor('DAAO', state);
-    final cpao = _metricsFor('CPAO', state);
+    final offices = _officesInScope(state);
     final individual = _individualPerformance(state);
     final filteredWorkMonths = _filteredWorkMonths(individual);
+    const seriesColors = <Color>[
+      Color(0xFFF06A6A),
+      Color(0xFF1565C0),
+      Color(0xFF2E7D32),
+      Color(0xFF6A1B9A),
+      Color(0xFFEF6C00),
+      Color(0xFF00838F),
+    ];
 
     return ColoredBox(
       color: widget.palette.content,
@@ -538,20 +631,40 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
         children: [
           if (widget.viewMode == AsanaPerformanceViewMode.group) ...[
             _OfficePerformanceSection(
-              daao: daao,
-              cpao: cpao,
+              offices: [
+                for (final office in offices)
+                  (
+                    title: office.name,
+                    metrics: _metricsFor(office.id, state),
+                  ),
+              ],
               palette: widget.palette,
             ),
             const SizedBox(height: 18),
             _CreatedVolumeSection(
-              daaoDates: _createdDatesForOffice('DAAO', state),
-              cpaoDates: _createdDatesForOffice('CPAO', state),
+              series: [
+                for (var i = 0; i < offices.length; i++)
+                  _OfficeCreatedSeries(
+                    label: offices[i].name,
+                    color: seriesColors[i % seriesColors.length],
+                    dates: _createdDatesForOffice(offices[i].id, state),
+                  ),
+              ],
               palette: widget.palette,
             ),
           ],
           if (widget.viewMode == AsanaPerformanceViewMode.individual)
             _IndividualPerformanceBlock(
               performance: individual,
+              staffChoices: _scopedStaff,
+              selectedStaffId: _selectedIndividualId,
+              onStaffSelected: (id) {
+                StaffForAssignment? person;
+                for (final row in _scopedStaff) {
+                  if (row.assigneeId == id) person = row;
+                }
+                setState(() => _applyIndividual(person));
+              },
               workMonths: filteredWorkMonths,
               periodStartMonth: _periodStartMonth,
               periodEndMonth: _periodEndMonth,
@@ -629,12 +742,9 @@ class _MonthlyIndividualPerformance {
 
 class _IndividualPerformance {
   const _IndividualPerformance({
-    required this.email,
     required this.displayName,
     required this.months,
   });
-
-  final String email;
   final String displayName;
   final List<_MonthlyIndividualPerformance> months;
 }
@@ -956,6 +1066,9 @@ String _monthLabel(String monthKey) {
 class _IndividualPerformanceBlock extends StatelessWidget {
   const _IndividualPerformanceBlock({
     required this.performance,
+    required this.staffChoices,
+    required this.selectedStaffId,
+    required this.onStaffSelected,
     required this.workMonths,
     required this.periodStartMonth,
     required this.periodEndMonth,
@@ -965,6 +1078,9 @@ class _IndividualPerformanceBlock extends StatelessWidget {
   });
 
   final _IndividualPerformance performance;
+  final List<StaffForAssignment> staffChoices;
+  final String? selectedStaffId;
+  final ValueChanged<String> onStaffSelected;
   final List<_MonthlyIndividualPerformance> workMonths;
   final String? periodStartMonth;
   final String? periodEndMonth;
@@ -1103,9 +1219,38 @@ class _IndividualPerformanceBlock extends StatelessWidget {
                 color: kAsanaTextPrimary,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 12),
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Staff',
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: staffChoices.any((s) => s.assigneeId == selectedStaffId)
+                      ? selectedStaffId
+                      : null,
+                  isExpanded: true,
+                  items: [
+                    for (final person in staffChoices)
+                      DropdownMenuItem(
+                        value: person.assigneeId,
+                        child: Text(person.name),
+                      ),
+                  ],
+                  onChanged: staffChoices.isEmpty
+                      ? null
+                      : (value) {
+                          if (value != null) onStaffSelected(value);
+                        },
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
             Text(
-              '${performance.displayName} (${performance.email})',
+              performance.displayName,
               style: asanaTextStyle(
                 Theme.of(context).textTheme.bodyMedium,
                 color: kAsanaTextSecondary,
@@ -1875,16 +2020,23 @@ class _PerformanceInfoButton extends StatelessWidget {
 
 enum _CreatedChartGrain { month, week, day }
 
-class _CreatedVolumePoint {
-  const _CreatedVolumePoint({
+class _OfficeCreatedSeries {
+  const _OfficeCreatedSeries({
     required this.label,
-    required this.daao,
-    required this.cpao,
+    required this.color,
+    required this.dates,
   });
 
   final String label;
-  final int daao;
-  final int cpao;
+  final Color color;
+  final List<DateTime?> dates;
+}
+
+class _CreatedVolumePoint {
+  const _CreatedVolumePoint({required this.label, required this.values});
+
+  final String label;
+  final List<int> values;
 }
 
 DateTime? _hkDateOnly(DateTime? stored) {
@@ -1962,16 +2114,16 @@ List<DateTime> _createdGrainSteps(
 }
 
 List<_CreatedVolumePoint> _createdVolumePoints({
-  required List<DateTime?> daaoDates,
-  required List<DateTime?> cpaoDates,
+  required List<List<DateTime?>> seriesDates,
   required _CreatedChartGrain grain,
   required DateTime rangeStart,
   required DateTime rangeEnd,
 }) {
   final start = _alignCreatedGrainStart(rangeStart, grain);
   final last = _alignCreatedGrainStart(rangeEnd, grain);
-  final daaoCounts = <String, int>{};
-  final cpaoCounts = <String, int>{};
+  final counts = [
+    for (final _ in seriesDates) <String, int>{},
+  ];
   final keys = <String>[];
   final labels = <String, String>{};
   for (final cursor in _createdGrainSteps(start, last, grain)) {
@@ -1982,8 +2134,9 @@ List<_CreatedVolumePoint> _createdVolumePoints({
       _CreatedChartGrain.week ||
       _CreatedChartGrain.day => DateFormat('MMM d').format(cursor),
     };
-    daaoCounts[key] = 0;
-    cpaoCounts[key] = 0;
+    for (final into in counts) {
+      into[key] = 0;
+    }
   }
 
   void tally(List<DateTime?> dates, Map<String, int> into) {
@@ -1996,27 +2149,25 @@ List<_CreatedVolumePoint> _createdVolumePoints({
     }
   }
 
-  tally(daaoDates, daaoCounts);
-  tally(cpaoDates, cpaoCounts);
+  for (var i = 0; i < seriesDates.length; i++) {
+    tally(seriesDates[i], counts[i]);
+  }
   return [
     for (final key in keys)
       _CreatedVolumePoint(
         label: labels[key] ?? key,
-        daao: daaoCounts[key] ?? 0,
-        cpao: cpaoCounts[key] ?? 0,
+        values: [for (final into in counts) into[key] ?? 0],
       ),
   ];
 }
 
 class _CreatedVolumeSection extends StatefulWidget {
   const _CreatedVolumeSection({
-    required this.daaoDates,
-    required this.cpaoDates,
+    required this.series,
     required this.palette,
   });
 
-  final List<DateTime?> daaoDates;
-  final List<DateTime?> cpaoDates;
+  final List<_OfficeCreatedSeries> series;
   final AsanaLandingPalette palette;
 
   @override
@@ -2032,10 +2183,12 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
 
   DateTime get _dataStart {
     DateTime? min;
-    for (final raw in [...widget.daaoDates, ...widget.cpaoDates]) {
-      final d = _hkDateOnly(raw);
-      if (d == null) continue;
-      if (min == null || d.isBefore(min)) min = d;
+    for (final series in widget.series) {
+      for (final raw in series.dates) {
+        final d = _hkDateOnly(raw);
+        if (d == null) continue;
+        if (min == null || d.isBefore(min)) min = d;
+      }
     }
     return min ?? DateTime(_today.year, _today.month, 1);
   }
@@ -2134,14 +2287,11 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
   @override
   Widget build(BuildContext context) {
     final points = _createdVolumePoints(
-      daaoDates: widget.daaoDates,
-      cpaoDates: widget.cpaoDates,
+      seriesDates: [for (final series in widget.series) series.dates],
       grain: _grain,
       rangeStart: _effectiveStart,
       rangeEnd: _effectiveEnd,
     );
-    const daaoColor = Color(0xFFF06A6A);
-    const cpaoColor = Color(0xFF1565C0);
     return Material(
       color: widget.palette.listSurface,
       borderRadius: BorderRadius.circular(16),
@@ -2224,21 +2374,21 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
               ],
             ),
             const SizedBox(height: 12),
-            Row(
+            Wrap(
+              spacing: 16,
+              runSpacing: 8,
               children: [
-                _ChartLegendDot(color: daaoColor, label: 'DAAO'),
-                const SizedBox(width: 16),
-                _ChartLegendDot(color: cpaoColor, label: 'CPAO'),
+                for (final series in widget.series)
+                  _ChartLegendDot(color: series.color, label: series.label),
               ],
             ),
             const SizedBox(height: 12),
             SizedBox(
               height: 260,
               width: double.infinity,
-              child: _TwoLineChart(
+              child: _OfficeLineChart(
                 points: points,
-                daaoColor: daaoColor,
-                cpaoColor: cpaoColor,
+                colors: [for (final series in widget.series) series.color],
               ),
             ),
           ],
@@ -2349,24 +2499,18 @@ class _ChartLegendDot extends StatelessWidget {
   }
 }
 
-class _TwoLineChart extends StatelessWidget {
-  const _TwoLineChart({
-    required this.points,
-    required this.daaoColor,
-    required this.cpaoColor,
-  });
+class _OfficeLineChart extends StatelessWidget {
+  const _OfficeLineChart({required this.points, required this.colors});
 
   final List<_CreatedVolumePoint> points;
-  final Color daaoColor;
-  final Color cpaoColor;
+  final List<Color> colors;
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      painter: _TwoLineChartPainter(
+      painter: _OfficeLineChartPainter(
         points: points,
-        daaoColor: daaoColor,
-        cpaoColor: cpaoColor,
+        colors: colors,
         labelStyle: asanaTextStyle(
           Theme.of(context).textTheme.bodySmall,
           fontSize: 10,
@@ -2377,17 +2521,15 @@ class _TwoLineChart extends StatelessWidget {
   }
 }
 
-class _TwoLineChartPainter extends CustomPainter {
-  _TwoLineChartPainter({
+class _OfficeLineChartPainter extends CustomPainter {
+  _OfficeLineChartPainter({
     required this.points,
-    required this.daaoColor,
-    required this.cpaoColor,
+    required this.colors,
     required this.labelStyle,
   });
 
   final List<_CreatedVolumePoint> points;
-  final Color daaoColor;
-  final Color cpaoColor;
+  final List<Color> colors;
   final TextStyle labelStyle;
 
   @override
@@ -2407,7 +2549,10 @@ class _TwoLineChartPainter extends CustomPainter {
 
     final maxY = math.max(
       1,
-      points.fold<int>(0, (m, p) => math.max(m, math.max(p.daao, p.cpao))),
+      points.fold<int>(0, (m, p) {
+        final peak = p.values.fold<int>(0, math.max);
+        return math.max(m, peak);
+      }),
     );
     final axis = Paint()
       ..color = const Color(0xFFD5D8DC)
@@ -2462,8 +2607,12 @@ class _TwoLineChartPainter extends CustomPainter {
       }
     }
 
-    drawSeries(daaoColor, (p) => p.daao);
-    drawSeries(cpaoColor, (p) => p.cpao);
+    for (var series = 0; series < colors.length; series++) {
+      drawSeries(colors[series], (p) {
+        if (series >= p.values.length) return 0;
+        return p.values[series];
+      });
+    }
 
     final labelEvery = points.length > 12 ? (points.length / 6).ceil() : 1;
     for (var i = 0; i < points.length; i++) {
@@ -2481,10 +2630,8 @@ class _TwoLineChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _TwoLineChartPainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.daaoColor != daaoColor ||
-        oldDelegate.cpaoColor != cpaoColor;
+  bool shouldRepaint(covariant _OfficeLineChartPainter oldDelegate) {
+    return oldDelegate.points != points || oldDelegate.colors != colors;
   }
 }
 
@@ -2518,13 +2665,11 @@ class _PerformanceMetrics {
 
 class _OfficePerformanceSection extends StatelessWidget {
   const _OfficePerformanceSection({
-    required this.daao,
-    required this.cpao,
+    required this.offices,
     required this.palette,
   });
 
-  final _PerformanceMetrics daao;
-  final _PerformanceMetrics cpao;
+  final List<({String title, _PerformanceMetrics metrics})> offices;
   final AsanaLandingPalette palette;
 
   @override
@@ -2551,33 +2696,50 @@ class _OfficePerformanceSection extends StatelessWidget {
             LayoutBuilder(
               builder: (context, constraints) {
                 final compact = constraints.maxWidth < 920;
-                final daaoBlock = _PerformanceBlock(
-                  title: 'DAAO',
-                  metrics: daao,
-                  palette: palette,
-                );
-                final cpaoBlock = _PerformanceBlock(
-                  title: 'CPAO',
-                  metrics: cpao,
-                  palette: palette,
-                );
+                final blocks = [
+                  for (final office in offices)
+                    _PerformanceBlock(
+                      title: office.title,
+                      metrics: office.metrics,
+                      palette: palette,
+                    ),
+                ];
+                if (blocks.isEmpty) {
+                  return Text(
+                    'No offices in this grant.',
+                    style: asanaTextStyle(
+                      Theme.of(context).textTheme.bodyMedium,
+                      color: kAsanaTextSecondary,
+                    ),
+                  );
+                }
                 if (compact) {
                   return Column(
                     children: [
-                      daaoBlock,
-                      const SizedBox(height: 18),
-                      cpaoBlock,
+                      for (var i = 0; i < blocks.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 18),
+                        blocks[i],
+                      ],
                     ],
                   );
                 }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: daaoBlock),
-                    const SizedBox(width: 18),
-                    Expanded(child: cpaoBlock),
-                  ],
-                );
+                final rows = <Widget>[];
+                for (var i = 0; i < blocks.length; i += 2) {
+                  if (rows.isNotEmpty) rows.add(const SizedBox(height: 18));
+                  final left = blocks[i];
+                  final right = i + 1 < blocks.length ? blocks[i + 1] : null;
+                  rows.add(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: left),
+                        const SizedBox(width: 18),
+                        Expanded(child: right ?? const SizedBox.shrink()),
+                      ],
+                    ),
+                  );
+                }
+                return Column(children: rows);
               },
             ),
           ],

@@ -17,6 +17,8 @@ class AppState extends ChangeNotifier {
     'icarusm@hku.hk',
   };
   static const String adminViewStorageKey = 'project_tracker_admin_view_mode';
+  static const String superAdminToolsStorageKey =
+      'project_tracker_super_admin_tools';
 
   /// Staff members loaded from database (via /api/staff).
   final List<Assignee> _assignees = [];
@@ -50,9 +52,11 @@ class AppState extends ChangeNotifier {
   /// Revamp step 1: staff + team lookup by login email (Supabase).
   StaffTeamLookupResult? _revampStaffLookup;
   bool _adminViewMode = false;
+  bool _superAdminToolsOpen = false;
   String? _adminViewAsStaffAppId;
   String? _adminViewAsStaffUuid;
   String? _adminViewAsStaffName;
+  String? _staffAdminRole;
 
   StaffTeamLookupResult? get revampStaffLookup => _revampStaffLookup;
 
@@ -68,10 +72,33 @@ class AppState extends ChangeNotifier {
 
   bool get adminViewMode => _adminViewMode && canUseAdminViewMode;
 
-  bool get adminDebugViewAsActive =>
-      adminViewMode && (_adminViewAsStaffAppId?.trim().isNotEmpty == true);
+  bool get isSuperAdmin => _staffAdminRole == 'super_admin';
 
-  bool get showAllDataAsAdmin => adminViewMode && !adminDebugViewAsActive;
+  bool get isOfficeAdmin => _staffAdminRole == 'office_admin';
+
+  bool get isPerformanceAdmin => _staffAdminRole == 'performance_admin';
+
+  bool get canViewPerformance => isSuperAdmin || isPerformanceAdmin;
+
+  /// Five clicks on the signed-in super admin's circle. Hides performance and
+  /// the staff list until it is on.
+  bool get superAdminToolsOpen => _superAdminToolsOpen && isSuperAdmin;
+
+  bool get showPerformanceNav => isPerformanceAdmin || superAdminToolsOpen;
+
+  bool get showStaffViewAsMenu => superAdminToolsOpen;
+
+  List<String> _staffAdminOfficeIds = [];
+
+  List<String> get staffAdminOfficeIds =>
+      List.unmodifiable(_staffAdminOfficeIds);
+
+  bool get adminDebugViewAsActive =>
+      superAdminToolsOpen &&
+      (_adminViewAsStaffAppId?.trim().isNotEmpty == true);
+
+  /// Super admin sees every office until they choose someone in the staff list.
+  bool get showAllDataAsAdmin => isSuperAdmin && !adminDebugViewAsActive;
 
   String? get adminViewAsStaffAppId =>
       adminDebugViewAsActive ? _adminViewAsStaffAppId?.trim() : null;
@@ -87,6 +114,43 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setSuperAdminToolsOpen(bool value) {
+    if (_superAdminToolsOpen == value) return;
+    _superAdminToolsOpen = value;
+    if (!value) {
+      _adminViewAsStaffAppId = null;
+      _adminViewAsStaffUuid = null;
+      _adminViewAsStaffName = null;
+      _subordinateAppIds = List<String>.from(_actualSubordinateAppIds);
+      _subordinateStaffUuids = List<String>.from(_actualSubordinateStaffUuids);
+    }
+    notifyListeners();
+  }
+
+  void setStaffAdminRole(String? role, {List<String> officeIds = const []}) {
+    final trimmed = role?.trim();
+    final next = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+    final nextOffices = [
+      for (final id in officeIds)
+        if (id.trim().isNotEmpty) id.trim(),
+    ];
+    if (_staffAdminRole == next &&
+        _sameOfficeIds(_staffAdminOfficeIds, nextOffices)) {
+      return;
+    }
+    _staffAdminRole = next;
+    _staffAdminOfficeIds = nextOffices;
+    notifyListeners();
+  }
+
+  bool _sameOfficeIds(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].toLowerCase() != b[i].toLowerCase()) return false;
+    }
+    return true;
+  }
+
   void setAdminDebugViewAs({
     required String staffAppId,
     String? staffUuid,
@@ -94,7 +158,7 @@ class AppState extends ChangeNotifier {
     List<String> subordinateAppIds = const [],
     List<String> subordinateStaffUuids = const [],
   }) {
-    if (!adminViewMode) return;
+    if (!superAdminToolsOpen) return;
     _adminViewAsStaffAppId = staffAppId.trim();
     _adminViewAsStaffUuid = staffUuid?.trim();
     _adminViewAsStaffName = staffName?.trim();
