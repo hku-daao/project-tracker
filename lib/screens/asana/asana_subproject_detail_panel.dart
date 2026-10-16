@@ -562,8 +562,8 @@ class _AsanaSubprojectDetailPanelState
     final project = state.projectById(widget.projectId);
     if (project == null) return false;
     return project.isInvolvedStaff(
-      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
-      staffAppId: state.userStaffAppId,
+      staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
+      staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
     );
   }
 
@@ -571,8 +571,8 @@ class _AsanaSubprojectDetailPanelState
     final row = _row;
     if (row == null) return false;
     return row.isInvolvedStaff(
-      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
-      staffAppId: state.userStaffAppId,
+      staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
+      staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
     );
   }
 
@@ -1721,12 +1721,14 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
     final adminReadOnly = state.adminViewMode;
     final creator = _row?.createByStaffUuid?.trim();
     final me = _myStaffUuid?.trim();
+    final creatorKey = creator?.toLowerCase() ?? '';
     final isCreator =
-        me != null &&
-        me.isNotEmpty &&
-        creator != null &&
-        creator.isNotEmpty &&
-        me == creator;
+        creatorKey.isNotEmpty &&
+        ((me != null && me.isNotEmpty && me.toLowerCase() == creatorKey) ||
+            (state.effectiveStaffUuid ?? '').trim().toLowerCase() ==
+                creatorKey ||
+            (state.effectiveStaffAppId ?? '').trim().toLowerCase() ==
+                creatorKey);
     final canCreate = _createMode && _isParentProjectMember(state);
     final meUuid =
         (_myStaffUuid ?? state.effectiveStaffUuid ?? state.userStaffId)

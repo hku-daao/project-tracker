@@ -16,6 +16,7 @@ class AsanaDateRangePickerPanel extends StatefulWidget {
     this.initialRange,
     this.helpText = 'Due date range',
     this.allowClear = false,
+    this.requireBothEnds = false,
   });
 
   final DateTime firstDate;
@@ -24,6 +25,9 @@ class AsanaDateRangePickerPanel extends StatefulWidget {
   final DateTimeRange? initialRange;
   final String helpText;
   final bool allowClear;
+
+  /// Apply stays off until the second tap sets the end date.
+  final bool requireBothEnds;
 
   @override
   State<AsanaDateRangePickerPanel> createState() =>
@@ -101,6 +105,7 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
 
   DateTimeRange? _buildResult() {
     if (_rangeStart == null) return null;
+    if (widget.requireBothEnds && _rangeEnd == null) return null;
     final end = _rangeEnd ?? _rangeStart!;
     final start = _rangeStart!.isBefore(end) ? _rangeStart! : end;
     final finish = _rangeStart!.isBefore(end) ? end : _rangeStart!;
@@ -273,7 +278,8 @@ class _AsanaDateRangePickerPanelState extends State<AsanaDateRangePickerPanel> {
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: _rangeStart == null
+                onPressed: _rangeStart == null ||
+                        (widget.requireBothEnds && _rangeEnd == null)
                     ? null
                     : () {
                         final range = _buildResult();
@@ -699,6 +705,12 @@ class AsanaMonthRangePickerPanel extends StatefulWidget {
     this.initialStartMonth,
     this.initialEndMonth,
     this.helpText = 'Project start month range',
+    this.allowClear = true,
+    this.requireBothEnds = false,
+    this.emptyHint =
+        'First tap: earliest project start month.\nSecond tap: latest project start month.',
+    this.pendingEndHint = 'Now choose the latest project start month',
+    this.selectedPrefix = 'Project started',
   });
 
   final DateTime firstDate;
@@ -707,6 +719,13 @@ class AsanaMonthRangePickerPanel extends StatefulWidget {
   final DateTime? initialStartMonth;
   final DateTime? initialEndMonth;
   final String helpText;
+  final bool allowClear;
+
+  /// Apply stays off until the second tap sets the end month.
+  final bool requireBothEnds;
+  final String emptyHint;
+  final String pendingEndHint;
+  final String selectedPrefix;
 
   @override
   State<AsanaMonthRangePickerPanel> createState() =>
@@ -783,6 +802,7 @@ class _AsanaMonthRangePickerPanelState
 
   DateTimeRange? _buildResult() {
     if (_startMonth == null) return null;
+    if (widget.requireBothEnds && _endMonth == null) return null;
     final start = _startMonth!;
     final end = _endMonth ?? _startMonth!;
     final low = start.isBefore(end) ? start : end;
@@ -838,9 +858,11 @@ class _AsanaMonthRangePickerPanelState
           child: Text(
             _endMonth == null
                 ? (_startMonth == null
-                      ? 'First tap: earliest project start month.\nSecond tap: latest project start month.'
-                      : 'Now choose the latest project start month')
-                : 'Project started ${_monthLabel(_startMonth!)} – ${_monthLabel(_endMonth!)}',
+                      ? widget.emptyHint
+                      : widget.pendingEndHint)
+                : widget.selectedPrefix.trim().isEmpty
+                ? '${_monthLabel(_startMonth!)} – ${_monthLabel(_endMonth!)}'
+                : '${widget.selectedPrefix} ${_monthLabel(_startMonth!)} – ${_monthLabel(_endMonth!)}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: _startMonth == null ? kAsanaTextSecondary : accent,
               fontWeight: FontWeight.w600,
@@ -916,11 +938,12 @@ class _AsanaMonthRangePickerPanelState
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Row(
             children: [
-              TextButton(
-                onPressed: () =>
-                    Navigator.pop(context, const AsanaMonthRangePick.clear()),
-                child: const Text('Clear'),
-              ),
+              if (widget.allowClear)
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(context, const AsanaMonthRangePick.clear()),
+                  child: const Text('Clear'),
+                ),
               const Spacer(),
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -928,7 +951,8 @@ class _AsanaMonthRangePickerPanelState
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: _startMonth == null
+                onPressed: _startMonth == null ||
+                        (widget.requireBothEnds && _endMonth == null)
                     ? null
                     : () => Navigator.pop(
                         context,

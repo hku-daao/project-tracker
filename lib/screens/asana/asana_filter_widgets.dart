@@ -725,11 +725,16 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
   DateTime? start,
   DateTime? end,
   String helpText = 'Due date range',
+  DateTime? firstDate,
+  DateTime? lastDate,
+  bool requireBothEnds = false,
 }) async {
   final box = anchorContext.findRenderObject() as RenderBox?;
   if (box == null || !box.hasSize) return null;
 
   final now = HkTime.todayDateOnlyHk();
+  final rangeFirst = firstDate ?? now.subtract(const Duration(days: 365 * 10));
+  final rangeLast = lastDate ?? now.add(const Duration(days: 365 * 5));
   final initialStart = start ?? now.subtract(const Duration(days: 30));
   final initialEnd = end ?? now;
   final initialRange = DateTimeRange(
@@ -782,10 +787,11 @@ Future<DateTimeRange?> showAsanaAnchoredDateRangePicker({
                   width: panelWidth,
                   child: AsanaDateRangePickerPanel(
                     initialRange: initialRange,
-                    firstDate: now.subtract(const Duration(days: 365 * 10)),
-                    lastDate: now.add(const Duration(days: 365 * 5)),
+                    firstDate: rangeFirst,
+                    lastDate: rangeLast,
                     accentColor: accent,
                     helpText: helpText,
+                    requireBothEnds: requireBothEnds,
                   ),
                 ),
               ),
@@ -891,6 +897,13 @@ Future<AsanaMonthRangePick?> showAsanaAnchoredMonthRangePicker({
   DateTime? startMonth,
   DateTime? endMonth,
   String helpText = 'Project start month range',
+  DateTime? firstDate,
+  DateTime? lastDate,
+  bool allowClear = true,
+  bool requireBothEnds = false,
+  String? emptyHint,
+  String? pendingEndHint,
+  String? selectedPrefix,
 }) async {
   final box = anchorContext.findRenderObject() as RenderBox?;
   if (box == null || !box.hasSize) return null;
@@ -941,10 +954,17 @@ Future<AsanaMonthRangePick?> showAsanaAnchoredMonthRangePicker({
                   child: AsanaMonthRangePickerPanel(
                     initialStartMonth: startMonth,
                     initialEndMonth: endMonth,
-                    firstDate: DateTime(2025, 1, 1),
-                    lastDate: DateTime(2031, 12, 1),
+                    firstDate: firstDate ?? DateTime(2025, 1, 1),
+                    lastDate: lastDate ?? DateTime(2031, 12, 1),
                     accentColor: accent,
                     helpText: helpText,
+                    allowClear: allowClear,
+                    requireBothEnds: requireBothEnds,
+                    emptyHint: emptyHint ??
+                        'First tap: earliest project start month.\nSecond tap: latest project start month.',
+                    pendingEndHint: pendingEndHint ??
+                        'Now choose the latest project start month',
+                    selectedPrefix: selectedPrefix ?? 'Project started',
                   ),
                 ),
               ),

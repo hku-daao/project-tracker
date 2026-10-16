@@ -6,9 +6,11 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import '../../commencement_status.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/staff_for_assignment.dart';
+import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
@@ -351,16 +353,43 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       }
     }
 
+    final subprojects = state.subprojects
+        .where((s) => !s.isDeleted)
+        .where(
+          (s) => _belongsToOffice(_subprojectOwnerKeys(s), officeLabel),
+        )
+        .toList();
+    final activeTasks = tasks.where((t) => !_taskCompleted(t)).toList();
+    final activeSubtasks = subtasks.where((s) => !_subtaskCompleted(s)).toList();
+    final toBeCommenced =
+        activeTasks.where((t) => isToBeCommenced(t.commencementStatus)).length +
+        activeSubtasks
+            .where((s) => isToBeCommenced(s.commencementStatus))
+            .length;
+    final ongoing = activeTasks.length + activeSubtasks.length - toBeCommenced;
+
     return _PerformanceMetrics(
-      projects: projects.length,
-      tasks: tasks.length,
-      subtasks: subtasks.length,
-      completedTasks: tasks.where(_taskCompleted).length,
-      completedSubtasks: subtasks.where(_subtaskCompleted).length,
-      pausedTasks: tasks.where((t) => t.isPaused).length,
-      pausedSubtasks: subtasks.where((s) => s.isPaused).length,
+      activeProjects: projects.where((p) => !_recordCompleted(p.status)).length,
+      activeSubprojects: subprojects.where((s) => !s.isCompleted).length,
+      activeTasks: activeTasks.length,
+      activeSubtasks: activeSubtasks.length,
+      completedWorkItems:
+          tasks.where(_taskCompleted).length +
+          subtasks.where(_subtaskCompleted).length,
+      ongoingWorkItems: ongoing,
+      toBeCommencedWorkItems: toBeCommenced,
       activeStaff: activeStaff.length,
     );
+  }
+
+  bool _recordCompleted(String status) {
+    final value = status.trim().toLowerCase();
+    return value == 'completed' || value == 'complete';
+  }
+
+  Iterable<String?> _subprojectOwnerKeys(SubprojectRecord subproject) {
+    if (subproject.picStaffUuids.isNotEmpty) return subproject.picStaffUuids;
+    return subproject.assigneeStaffUuids;
   }
 
   bool _keyMatchesIndividual(String? value) {
@@ -613,11 +642,26 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       Color(0xFF00838F),
     ];
 
+    final titleNarrow = MediaQuery.sizeOf(context).width < 600;
+    final pageTitle = widget.viewMode == AsanaPerformanceViewMode.group
+        ? 'Group Performance'
+        : 'Individual Performance';
     return ColoredBox(
       color: widget.palette.content,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
         children: [
+          Text(
+            pageTitle,
+            style: asanaTextStyle(
+              Theme.of(context).textTheme.headlineMedium,
+              fontSize: titleNarrow ? 22 : 32,
+              fontWeight: FontWeight.w700,
+              color: kAsanaTextPrimary,
+              height: 1.15,
+            ),
+          ),
+          const SizedBox(height: 28),
           if (widget.viewMode == AsanaPerformanceViewMode.group) ...[
             _OfficePerformanceSection(
               offices: [
@@ -1199,16 +1243,6 @@ class _IndividualPerformanceBlock extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Individual Performance POC',
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.titleLarge,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                color: kAsanaTextPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
             InputDecorator(
               decoration: const InputDecoration(
                 labelText: 'Staff',
@@ -2201,68 +2235,52 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
     return aligned;
   }
 
-  Future<void> _pickBound({required bool isStart}) async {
+  Future<void> _pickRange(BuildContext anchorContext) async {
     final steps = _createdGrainSteps(_boundStart, _boundEnd, _grain);
     if (steps.isEmpty) return;
-    if (_grain == _CreatedChartGrain.day) {
-      final picked = await showDatePicker(
-        context: context,
-        initialDate: isStart ? _effectiveStart : _effectiveEnd,
+    if (_grain == _CreatedChartGrain.month) {
+      final picked = await showAsanaAnchoredMonthRangePicker(
+        anchorContext: anchorContext,
+        startMonth: _effectiveStart,
+        endMonth: _effectiveEnd,
+        helpText: 'From and to',
         firstDate: _boundStart,
         lastDate: _boundEnd,
+        allowClear: false,
+        requireBothEnds: true,
+        emptyHint: 'Select the from month, then the to month.',
+        pendingEndHint: 'Select the to month',
+        selectedPrefix: '',
       );
-      if (picked == null || !mounted) return;
-      _applyBound(picked, isStart: isStart);
+      if (picked == null || picked.cleared || picked.range == null || !mounted) {
+        return;
+      }
+      _applyRange(picked.range!.start, picked.range!.end);
       return;
     }
-    final selected = await showDialog<DateTime>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(isStart ? 'From' : 'To'),
-          content: SizedBox(
-            width: 360,
-            child: SingleChildScrollView(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final step in steps)
-                    ChoiceChip(
-                      label: Text(
-                        _grain == _CreatedChartGrain.month
-                            ? DateFormat('MMM yyyy').format(step)
-                            : DateFormat('MMM d, yyyy').format(step),
-                      ),
-                      selected:
-                          _createdGrainKey(step, _grain) ==
-                          _createdGrainKey(
-                            isStart ? _effectiveStart : _effectiveEnd,
-                            _grain,
-                          ),
-                      onSelected: (_) => Navigator.of(context).pop(step),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-          ],
-        );
-      },
+    var lastDate = _grain == _CreatedChartGrain.day ? _boundEnd : _today;
+    if (lastDate.isBefore(_boundStart)) lastDate = _boundStart;
+    final picked = await showAsanaAnchoredDateRangePicker(
+      anchorContext: anchorContext,
+      start: _effectiveStart,
+      end: _effectiveEnd,
+      helpText: 'From and to',
+      firstDate: _boundStart,
+      lastDate: lastDate,
+      requireBothEnds: true,
     );
-    if (selected == null || !mounted) return;
-    _applyBound(selected, isStart: isStart);
+    if (picked == null || !mounted) return;
+    _applyRange(picked.start, picked.end);
   }
 
-  void _applyBound(DateTime picked, {required bool isStart}) {
+  void _applyRange(DateTime startRaw, DateTime endRaw) {
     setState(() {
-      var start = isStart ? picked : _effectiveStart;
-      var end = isStart ? _effectiveEnd : picked;
+      var start = _alignCreatedGrainStart(startRaw, _grain);
+      var end = _alignCreatedGrainStart(endRaw, _grain);
+      if (start.isBefore(_boundStart)) start = _boundStart;
+      if (end.isAfter(_boundEnd)) end = _boundEnd;
+      if (start.isAfter(_boundEnd)) start = _boundEnd;
+      if (end.isBefore(_boundStart)) end = _boundStart;
       if (start.isAfter(end)) {
         final tmp = start;
         start = end;
@@ -2294,7 +2312,7 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
               builder: (context, constraints) {
                 final wrap = constraints.maxWidth < 720;
                 final title = Text(
-                  'Created tasks and sub-tasks',
+                  'Tasks & Sub-tasks Creation',
                   style: asanaTextStyle(
                     Theme.of(context).textTheme.titleLarge,
                     fontSize: 22,
@@ -2338,7 +2356,7 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
                 ),
                 _CreatedRangeButton(
                   label: _createdGrainLabel(_effectiveStart, _grain),
-                  onPressed: () => _pickBound(isStart: true),
+                  onPressed: _pickRange,
                 ),
                 Text(
                   'To',
@@ -2351,7 +2369,7 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
                 ),
                 _CreatedRangeButton(
                   label: _createdGrainLabel(_effectiveEnd, _grain),
-                  onPressed: () => _pickBound(isStart: false),
+                  onPressed: _pickRange,
                 ),
                 TextButton(
                   onPressed: () => setState(() {
@@ -2391,17 +2409,21 @@ class _CreatedRangeButton extends StatelessWidget {
   const _CreatedRangeButton({required this.label, required this.onPressed});
 
   final String label;
-  final VoidCallback onPressed;
+  final void Function(BuildContext anchorContext) onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        visualDensity: VisualDensity.compact,
-      ),
-      child: Text(label),
+    return Builder(
+      builder: (anchorContext) {
+        return OutlinedButton(
+          onPressed: () => onPressed(anchorContext),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            visualDensity: VisualDensity.compact,
+          ),
+          child: Text(label),
+        );
+      },
     );
   }
 }
@@ -2626,30 +2648,24 @@ class _OfficeLineChartPainter extends CustomPainter {
 
 class _PerformanceMetrics {
   const _PerformanceMetrics({
-    required this.projects,
-    required this.tasks,
-    required this.subtasks,
-    required this.completedTasks,
-    required this.completedSubtasks,
-    required this.pausedTasks,
-    required this.pausedSubtasks,
+    required this.activeProjects,
+    required this.activeSubprojects,
+    required this.activeTasks,
+    required this.activeSubtasks,
+    required this.completedWorkItems,
+    required this.ongoingWorkItems,
+    required this.toBeCommencedWorkItems,
     required this.activeStaff,
   });
 
-  final int projects;
-  final int tasks;
-  final int subtasks;
-  final int completedTasks;
-  final int completedSubtasks;
-  final int pausedTasks;
-  final int pausedSubtasks;
+  final int activeProjects;
+  final int activeSubprojects;
+  final int activeTasks;
+  final int activeSubtasks;
+  final int completedWorkItems;
+  final int ongoingWorkItems;
+  final int toBeCommencedWorkItems;
   final int activeStaff;
-
-  int get workItems => tasks + subtasks;
-  int get completedWorkItems => completedTasks + completedSubtasks;
-  int get pausedWorkItems => pausedTasks + pausedSubtasks;
-  int get incompleteWorkItems =>
-      (workItems - completedWorkItems - pausedWorkItems).clamp(0, 1 << 30);
 }
 
 class _OfficePerformanceSection extends StatelessWidget {
@@ -2672,19 +2688,8 @@ class _OfficePerformanceSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Office Performance POC',
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.titleLarge,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                color: kAsanaTextPrimary,
-              ),
-            ),
-            const SizedBox(height: 16),
             LayoutBuilder(
               builder: (context, constraints) {
-                final compact = constraints.maxWidth < 920;
                 final blocks = [
                   for (final office in offices)
                     _PerformanceBlock(
@@ -2693,6 +2698,9 @@ class _OfficePerformanceSection extends StatelessWidget {
                       palette: palette,
                     ),
                 ];
+                final perRow = constraints.maxWidth < 920
+                    ? 1
+                    : math.min(3, math.max(1, blocks.length));
                 if (blocks.isEmpty) {
                   return Text(
                     'No offices in this grant.',
@@ -2702,7 +2710,7 @@ class _OfficePerformanceSection extends StatelessWidget {
                     ),
                   );
                 }
-                if (compact) {
+                if (perRow == 1) {
                   return Column(
                     children: [
                       for (var i = 0; i < blocks.length; i++) ...[
@@ -2713,17 +2721,20 @@ class _OfficePerformanceSection extends StatelessWidget {
                   );
                 }
                 final rows = <Widget>[];
-                for (var i = 0; i < blocks.length; i += 2) {
+                for (var i = 0; i < blocks.length; i += perRow) {
                   if (rows.isNotEmpty) rows.add(const SizedBox(height: 18));
-                  final left = blocks[i];
-                  final right = i + 1 < blocks.length ? blocks[i + 1] : null;
                   rows.add(
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(child: left),
-                        const SizedBox(width: 18),
-                        Expanded(child: right ?? const SizedBox.shrink()),
+                        for (var col = 0; col < perRow; col++) ...[
+                          if (col > 0) const SizedBox(width: 18),
+                          Expanded(
+                            child: i + col < blocks.length
+                                ? blocks[i + col]
+                                : const SizedBox.shrink(),
+                          ),
+                        ],
                       ],
                     ),
                   );
@@ -2751,9 +2762,6 @@ class _PerformanceBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const summaryCardHeight = 104.0;
-    const summaryCardGap = 14.0;
-    const workItemsCardHeight = summaryCardHeight * 2 + summaryCardGap;
     return Material(
       color: palette.listSurface,
       borderRadius: BorderRadius.circular(16),
@@ -2774,166 +2782,8 @@ class _PerformanceBlock extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            _PerformanceCardsLayout(
-              metrics: metrics,
-              palette: palette,
-              summaryCardHeight: summaryCardHeight,
-              workItemsCardHeight: workItemsCardHeight,
-            ),
+            _PerformanceCardsLayout(metrics: metrics, palette: palette),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _WorkItemsScoreCard extends StatelessWidget {
-  const _WorkItemsScoreCard({
-    required this.metrics,
-    required this.palette,
-    required this.height,
-  });
-
-  final _PerformanceMetrics metrics;
-  final AsanaLandingPalette palette;
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: height,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color.alphaBlend(
-            palette.accent.withValues(alpha: 0.08),
-            palette.listSurface,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.accent.withValues(alpha: 0.16)),
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (constraints.maxHeight <= 130) {
-              final compactHeight = constraints.maxHeight < 92;
-              return Padding(
-                padding: EdgeInsets.fromLTRB(
-                  12,
-                  compactHeight ? 8 : 12,
-                  12,
-                  compactHeight ? 8 : 12,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${metrics.workItems}',
-                            style: asanaTextStyle(
-                              Theme.of(context).textTheme.headlineMedium,
-                              fontSize: compactHeight ? 18 : 26,
-                              fontWeight: FontWeight.w800,
-                              color: palette.accent,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Work items',
-                            style: asanaTextStyle(
-                              Theme.of(context).textTheme.bodyMedium,
-                              fontSize: compactHeight ? 8.5 : 12,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF3B4552),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: constraints.maxWidth * 0.28,
-                      child: _MiniScoreCard(
-                        label: 'Tasks',
-                        value: metrics.tasks,
-                        palette: palette,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: constraints.maxWidth * 0.28,
-                      child: _MiniScoreCard(
-                        label: 'Sub-tasks',
-                        value: metrics.subtasks,
-                        palette: palette,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }
-            final compact = constraints.maxWidth < 190;
-            final side = compact ? 12.0 : 18.0;
-            final bottom = compact ? 12.0 : 16.0;
-            final subWidth = (constraints.maxWidth - side * 2 - 18) / 2;
-            final subHeight = (constraints.maxHeight - 62) / 2;
-            return Stack(
-              children: [
-                Positioned(
-                  left: side,
-                  top: compact ? 14 : 16,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${metrics.workItems}',
-                        style: asanaTextStyle(
-                          Theme.of(context).textTheme.headlineMedium,
-                          fontSize: compact ? 26 : 30,
-                          fontWeight: FontWeight.w800,
-                          color: palette.accent,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Work items',
-                        style: asanaTextStyle(
-                          Theme.of(context).textTheme.bodyMedium,
-                          fontSize: compact ? 12 : 14,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF3B4552),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: side,
-                  bottom: bottom,
-                  width: subWidth,
-                  height: subHeight,
-                  child: _MiniScoreCard(
-                    label: 'Tasks',
-                    value: metrics.tasks,
-                    palette: palette,
-                  ),
-                ),
-                Positioned(
-                  right: side,
-                  bottom: bottom,
-                  width: subWidth,
-                  height: subHeight,
-                  child: _MiniScoreCard(
-                    label: 'Sub-tasks',
-                    value: metrics.subtasks,
-                    palette: palette,
-                  ),
-                ),
-              ],
-            );
-          },
         ),
       ),
     );
@@ -2944,231 +2794,50 @@ class _PerformanceCardsLayout extends StatelessWidget {
   const _PerformanceCardsLayout({
     required this.metrics,
     required this.palette,
-    required this.summaryCardHeight,
-    required this.workItemsCardHeight,
   });
 
   final _PerformanceMetrics metrics;
   final AsanaLandingPalette palette;
-  final double summaryCardHeight;
-  final double workItemsCardHeight;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 520;
-        if (compact) {
-          const gap = 10.0;
-          const compactCardHeight = 68.0;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _PerformanceScoreCard(
-                      label: 'Projects',
-                      value: metrics.projects,
-                      palette: palette,
-                      wide: true,
-                      height: compactCardHeight,
-                    ),
-                  ),
-                  const SizedBox(width: gap),
-                  Expanded(
-                    child: _PerformanceScoreCard(
-                      label: 'Staff',
-                      value: metrics.activeStaff,
-                      palette: palette,
-                      wide: true,
-                      height: compactCardHeight,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: gap),
-              _WorkItemsScoreCard(
-                metrics: metrics,
-                palette: palette,
-                height: compactCardHeight,
-              ),
-              const SizedBox(height: gap),
-              Row(
-                children: [
-                  Expanded(
-                    child: _PerformanceScoreCard(
-                      label: 'Completed',
-                      value: metrics.completedWorkItems,
-                      palette: palette,
-                      wide: true,
-                      height: compactCardHeight,
-                    ),
-                  ),
-                  const SizedBox(width: gap),
-                  Expanded(
-                    child: _PerformanceScoreCard(
-                      label: 'Incomplete',
-                      value: metrics.incompleteWorkItems,
-                      palette: palette,
-                      wide: true,
-                      height: compactCardHeight,
-                    ),
-                  ),
-                  const SizedBox(width: gap),
-                  Expanded(
-                    child: _PerformanceScoreCard(
-                      label: 'Paused',
-                      value: metrics.pausedWorkItems,
-                      palette: palette,
-                      wide: true,
-                      height: compactCardHeight,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          );
-        }
-
-        return Column(
+    const gap = 10.0;
+    const cardHeight = 96.0;
+    final cards = <(String, int)>[
+      ('Active projects', metrics.activeProjects),
+      ('Active sub-projects', metrics.activeSubprojects),
+      ('Active tasks', metrics.activeTasks),
+      ('Active sub-tasks', metrics.activeSubtasks),
+      ('Completed', metrics.completedWorkItems),
+      ('Ongoing', metrics.ongoingWorkItems),
+      ('To be commenced', metrics.toBeCommencedWorkItems),
+      ('Staff', metrics.activeStaff),
+    ];
+    const columns = 4;
+    final rows = <Widget>[];
+    for (var i = 0; i < cards.length; i += columns) {
+      if (rows.isNotEmpty) rows.add(const SizedBox(height: gap));
+      rows.add(
+        Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  children: [
-                    _PerformanceScoreCard(
-                      label: 'Projects',
-                      value: metrics.projects,
-                      palette: palette,
-                      height: summaryCardHeight,
-                    ),
-                    const SizedBox(height: 14),
-                    _PerformanceScoreCard(
-                      label: 'Staff',
-                      value: metrics.activeStaff,
-                      palette: palette,
-                      height: summaryCardHeight,
-                    ),
-                  ],
+            for (var col = 0; col < columns; col++) ...[
+              if (col > 0) const SizedBox(width: gap),
+              Expanded(
+                child: _PerformanceScoreCard(
+                  label: cards[i + col].$1,
+                  value: cards[i + col].$2,
+                  palette: palette,
+                  wide: true,
+                  height: cardHeight,
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _WorkItemsScoreCard(
-                    metrics: metrics,
-                    palette: palette,
-                    height: workItemsCardHeight,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _PerformanceScoreCard(
-                    label: 'Completed',
-                    value: metrics.completedWorkItems,
-                    palette: palette,
-                    wide: true,
-                    height: summaryCardHeight,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _PerformanceScoreCard(
-                    label: 'Incomplete',
-                    value: metrics.incompleteWorkItems,
-                    palette: palette,
-                    wide: true,
-                    height: summaryCardHeight,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _PerformanceScoreCard(
-                    label: 'Paused',
-                    value: metrics.pausedWorkItems,
-                    palette: palette,
-                    wide: true,
-                    height: summaryCardHeight,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ],
-        );
-      },
-    );
-  }
-}
-
-class _MiniScoreCard extends StatelessWidget {
-  const _MiniScoreCard({
-    required this.label,
-    required this.value,
-    required this.palette,
-  });
-
-  final String label;
-  final int value;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    final textColor = Color.lerp(
-      palette.accent,
-      const Color(0xFF3B4552),
-      0.24,
-    )!;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 70 || constraints.maxHeight < 64;
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.68),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 5 : 10,
-              vertical: compact ? 4 : 8,
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$value',
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.headlineMedium,
-                    fontSize: compact ? 15 : 24,
-                    fontWeight: FontWeight.w800,
-                    color: textColor,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.bodyMedium,
-                    fontSize: compact ? 7.2 : 12,
-                    fontWeight: FontWeight.w600,
-                    color: textColor.withValues(alpha: 0.88),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+        ),
+      );
+    }
+    return Column(children: rows);
   }
 }
 
@@ -3231,7 +2900,7 @@ class _PerformanceScoreCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.bodyMedium,
-                      fontSize: compact ? 8.5 : 14,
+                      fontSize: compact ? 11 : 14,
                       fontWeight: FontWeight.w600,
                       color: const Color(0xFF3B4552),
                     ),

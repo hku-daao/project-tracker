@@ -917,7 +917,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     if (project != null &&
         project.isInvolvedStaff(
           staffUuid: state.effectiveStaffUuid ?? state.userStaffId,
-          staffAppId: state.userStaffAppId,
+          staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
         )) {
       return true;
     }
@@ -925,7 +925,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     return subproject != null &&
         subproject.isInvolvedStaff(
           staffUuid: state.effectiveStaffUuid ?? state.userStaffId,
-          staffAppId: state.userStaffAppId,
+          staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
         );
   }
 

@@ -166,6 +166,7 @@ async function loadScope(pool, actor) {
   };
   const visibleLinks = linkRows(links.rows);
   const impliedLinks = linkRows(implied.rows);
+  const involvedKeys = await involvedStaffKeys(pool);
 
   return {
     role: actor.role,
@@ -187,6 +188,10 @@ async function loadScope(pool, actor) {
       teamId: s.team_id,
       active: s.active !== false,
       officeId: s.office_id,
+      removable: staffCanBeRemoved(
+        { id: s.id, appId: s.app_id },
+        involvedKeys,
+      ),
     })),
     links: visibleLinks,
     impliedLinks,
@@ -200,6 +205,79 @@ function teamInScope(scope, teamId) {
 
 function staffInScope(scope, staffId) {
   return scope.staff.find((s) => s.id === staffId) || null;
+}
+
+function plainSqlName(raw) {
+  return String(raw || '').replace(/"/g, '').split('.').pop();
+}
+
+function quoteSqlIdent(name) {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(name)) return null;
+  return `"${name}"`;
+}
+
+async function involvedStaffKeys(pool) {
+  const cols = await pool.query(
+    `SELECT table_name, column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (
+         (table_name IN ('project', 'subproject')
+           AND column_name ~ '^(create_by|assignee_[0-9]+|pic_[0-9]+)$')
+         OR (table_name IN ('task', 'subtask')
+           AND column_name ~ '^(create_by|assignee_[0-9]+|pic)$')
+       )`,
+  );
+  const byTable = new Map();
+  for (const row of cols.rows) {
+    const list = byTable.get(row.table_name) || [];
+    list.push(row.column_name);
+    byTable.set(row.table_name, list);
+  }
+  const parts = [];
+  for (const [table, columns] of byTable) {
+    const tableSql = quoteSqlIdent(table);
+    const array = columns
+      .map((name) => {
+        const columnSql = quoteSqlIdent(name);
+        return columnSql ? `${tableSql}.${columnSql}::text` : null;
+      })
+      .filter(Boolean)
+      .join(', ');
+    if (!tableSql || !array) continue;
+    parts.push(`SELECT unnest(ARRAY[${array}]) AS slot FROM ${tableSql}`);
+  }
+  const fks = await pool.query(
+    `SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+     FROM pg_constraint c
+     JOIN LATERAL unnest(c.conkey) AS k(attnum) ON true
+     JOIN pg_attribute a
+       ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE c.confrelid = 'public.staff'::regclass
+       AND c.contype = 'f'
+       AND c.confdeltype NOT IN ('c', 'n')`,
+  );
+  for (const row of fks.rows) {
+    const tableSql = quoteSqlIdent(plainSqlName(row.tbl));
+    const columnSql = quoteSqlIdent(row.col);
+    if (!tableSql || !columnSql) continue;
+    parts.push(`SELECT ${tableSql}.${columnSql}::text AS slot FROM ${tableSql}`);
+  }
+  if (parts.length === 0) return new Set();
+  const found = await pool.query(
+    `SELECT DISTINCT lower(btrim(slot)) AS key
+     FROM (${parts.join(' UNION ALL ')}) s
+     WHERE slot IS NOT NULL AND btrim(slot) <> ''`,
+  );
+  return new Set(found.rows.map((row) => row.key).filter(Boolean));
+}
+
+function staffCanBeRemoved(person, keys) {
+  const id = String(person.id || '').trim().toLowerCase();
+  const appId = String(person.appId || person.app_id || '').trim().toLowerCase();
+  if (id && keys.has(id)) return false;
+  if (appId && keys.has(appId)) return false;
+  return true;
 }
 
 async function handle(req, res, ctx) {
@@ -268,6 +346,11 @@ async function handle(req, res, ctx) {
     if (path.startsWith('/api/staff-admin/staff/') && req.method === 'PATCH') {
       const id = path.split('/').pop();
       await updateStaff(pool, actor, id, await readBody(req), sendJson, req, res);
+      return;
+    }
+    if (path.startsWith('/api/staff-admin/staff/') && req.method === 'DELETE') {
+      const id = path.split('/').pop();
+      await deleteStaff(pool, actor, id, sendJson, req, res);
       return;
     }
     if (path === '/api/staff-admin/teams' && req.method === 'POST') {
@@ -506,11 +589,56 @@ async function deleteTeam(pool, actor, teamUuid, sendJson, req, res) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(
-      `UPDATE staff SET team_id = NULL WHERE lower(team_id) = lower($1)`,
+    const used = await client.query(
+      `SELECT 1 FROM staff WHERE lower(team_id) = lower($1) LIMIT 1`,
       [row.team_id],
     );
+    if (used.rows.length > 0) {
+      await client.query('ROLLBACK');
+      sendJson(req, res, 400, {
+        error: 'This team still has staff, so it cannot be removed.',
+      });
+      return;
+    }
     await client.query(`DELETE FROM team WHERE id = $1`, [teamUuid]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  sendJson(req, res, 200, { ok: true });
+}
+
+async function deleteStaff(pool, actor, staffId, sendJson, req, res) {
+  const scope = await loadScope(pool, actor);
+  const person = staffInScope(scope, staffId);
+  if (!person) {
+    sendJson(req, res, 404, { error: 'Staff member is outside your office.' });
+    return;
+  }
+  const keys = await involvedStaffKeys(pool);
+  if (!staffCanBeRemoved(person, keys)) {
+    sendJson(req, res, 400, {
+      error:
+        'This staff member is a creator or assignee on existing work and cannot be removed.',
+    });
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const appId = String(person.appId || '').trim();
+    if (appId) {
+      await client.query(
+        `DELETE FROM subordinate
+         WHERE lower(supervisor_id) = lower($1)
+            OR lower(subordinate_id) = lower($1)`,
+        [appId],
+      );
+    }
+    await client.query(`DELETE FROM staff WHERE id = $1`, [person.id]);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');

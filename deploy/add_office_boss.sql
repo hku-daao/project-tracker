@@ -1,5 +1,5 @@
 -- office_admin and performance_admin see every other staff member whose team
--- is in that office.
+-- is in that office. super_admin sees every other staff member.
 -- A new staff member is covered as soon as their team belongs to the office.
 -- This does not write a row in public.subordinate.
 -- Requires public.staff_admin. If that table is absent, the implied list is empty.
@@ -25,6 +25,18 @@ BEGIN
       WHERE grant_row.role IN ('office_admin', 'performance_admin')
         AND grant_row.office_id IS NOT NULL
         AND btrim(grant_row.office_id) <> ''
+        AND admin.app_id IS NOT NULL
+        AND btrim(admin.app_id) <> ''
+        AND member.app_id IS NOT NULL
+        AND btrim(member.app_id) <> ''
+        AND lower(admin.app_id) <> lower(member.app_id)
+      UNION
+      SELECT DISTINCT admin.app_id AS supervisor_id, member.app_id AS subordinate_id
+      FROM public.staff_admin grant_row
+      JOIN public.staff admin ON admin.id = grant_row.staff_id
+      JOIN public.staff member ON true
+      WHERE grant_row.role = 'super_admin'
+        AND grant_row.office_id IS NULL
         AND admin.app_id IS NOT NULL
         AND btrim(admin.app_id) <> ''
         AND member.app_id IS NOT NULL

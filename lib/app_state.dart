@@ -233,8 +233,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  String? get userStaffAppId => _userStaffAppId;
-  String? get userStaffId => _userStaffId;
+  /// While a super admin is viewing as someone, writes and access checks use
+  /// that person. The signed-in account stays the one that opened the tools.
+  String? get userStaffAppId {
+    final viewAs = adminViewAsStaffAppId;
+    if (viewAs != null && viewAs.isNotEmpty) return viewAs;
+    return _userStaffAppId;
+  }
+
+  String? get userStaffId {
+    final viewAs = adminViewAsStaffUuid;
+    if (viewAs != null && viewAs.isNotEmpty) return viewAs;
+    return _userStaffId;
+  }
 
   /// Resolved staff keys for UI (falls back to revamp email lookup).
   String? get effectiveStaffAppId {

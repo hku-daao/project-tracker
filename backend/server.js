@@ -486,6 +486,29 @@ async function resolveStaffEmailForNotifications(dbClient, staffRow) {
  * True when [sessionEmailNorm] matches `staff.email` or any `app_users.email` for `staff.id`
  * (Firebase sign-in email often lives on `app_users`, not `staff.email`).
  */
+async function sessionIsSuperAdmin(sessionEmailNorm) {
+  const email = (sessionEmailNorm || '').trim().toLowerCase();
+  if (!email || !db) return false;
+  const profile = await fetchProfileByEmail(email);
+  const staffId = profile?.staff_id;
+  if (!staffId) return false;
+  const { data, error } = await db
+    .from('staff_admin')
+    .select('role')
+    .eq('staff_id', staffId)
+    .eq('role', 'super_admin')
+    .limit(1);
+  return !error && Array.isArray(data) && data.length > 0;
+}
+
+async function sessionMayActForStaff(sessionEmailNorm, staffEmail) {
+  const session = (sessionEmailNorm || '').trim().toLowerCase();
+  const staff = (staffEmail || '').trim().toLowerCase();
+  if (!session) return false;
+  if (staff && session === staff) return true;
+  return sessionIsSuperAdmin(session);
+}
+
 async function sessionEmailBelongsToStaffRow(dbClient, staffRow, sessionEmailNorm) {
   const want = (sessionEmailNorm || '').trim().toLowerCase();
   if (!want) return false;
@@ -503,7 +526,7 @@ async function sessionEmailBelongsToStaffRow(dbClient, staffRow, sessionEmailNor
     const e = String(r?.email || '').trim().toLowerCase();
     if (e && e === want) return true;
   }
-  return false;
+  return sessionIsSuperAdmin(want);
 }
 
 async function handleApiMe(req, res) {
@@ -5354,7 +5377,7 @@ async function handleNotifyTaskAssigned(req, res) {
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!creatorEmail || creatorEmail !== sessionEmail) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorEmail))) {
       sendJson(req, res, 403, {
         error: 'Only the task creator (staff email must match signed-in user) can send assignment emails',
       });
@@ -5713,7 +5736,7 @@ async function handleNotifySubtaskAssigned(req, res) {
     }
     const creatorEmail = (creatorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!creatorEmail || creatorEmail !== sessionEmail) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorEmail))) {
       sendJson(req, res, 403, {
         error:
           'Only the sub-task creator (staff email must match signed-in user) can send assignment emails',
@@ -6072,7 +6095,7 @@ async function handleNotifyTaskComment(req, res) {
     }
     const authorEmail = (authorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!authorEmail || authorEmail !== sessionEmail) {
+    if (!(await sessionMayActForStaff(sessionEmail, authorEmail))) {
       sendJson(req, res, 403, {
         error: 'Only the comment author (staff email must match signed-in user) can send comment emails',
       });
@@ -6260,7 +6283,7 @@ async function handleNotifyTaskEditedComment(req, res) {
     }
     const editorEmail = (editorStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!editorEmail || editorEmail !== sessionEmail) {
+    if (!(await sessionMayActForStaff(sessionEmail, editorEmail))) {
       sendJson(req, res, 403, {
         error:
           'Only the comment editor (staff email for update_by must match signed-in user) can send edit emails',
@@ -6860,7 +6883,7 @@ async function handleNotifyTaskUpdated(req, res) {
     }
     const updaterEmail = (updaterStaff.email || '').trim().toLowerCase();
     const sessionEmail = (session.email || '').trim().toLowerCase();
-    if (!updaterEmail || updaterEmail !== sessionEmail) {
+    if (!(await sessionMayActForStaff(sessionEmail, updaterEmail))) {
       sendJson(req, res, 403, {
         error:
           'Only the user who updated the task (staff email must match signed-in user) can send update emails',
@@ -7437,7 +7460,7 @@ async function handleNotifyTaskSubmission(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const picNotifyEmail = await resolveStaffEmailForNotifications(db, picStaff);
     const picAddr = (picNotifyEmail || picEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== picAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, picAddr))) {
       sendJson(req, res, 403, {
         error: 'Only the task PIC (staff email must match signed-in user) can send submission emails',
       });
@@ -7744,7 +7767,7 @@ async function handleNotifyTaskAccepted(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== creatorAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorAddr))) {
       sendJson(req, res, 403, {
         error:
           'Only the task creator (staff email must match signed-in user) can send acceptance emails',
@@ -7850,7 +7873,7 @@ async function handleNotifyTaskReturned(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== creatorAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorAddr))) {
       sendJson(req, res, 403, {
         error:
           'Only the task creator (staff email must match signed-in user) can send return emails',
@@ -7957,7 +7980,7 @@ async function handleNotifySubtaskSubmission(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const picNotifyEmail = await resolveStaffEmailForNotifications(db, picStaff);
     const picAddr = (picNotifyEmail || picEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== picAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, picAddr))) {
       sendJson(req, res, 403, {
         error:
           'Only the sub-task PIC (staff email must match signed-in user) can send submission emails',
@@ -8064,7 +8087,7 @@ async function handleNotifySubtaskAccepted(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== creatorAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorAddr))) {
       sendJson(req, res, 403, {
         error:
           'Only the sub-task creator (staff email must match signed-in user) can send acceptance emails',
@@ -8170,7 +8193,7 @@ async function handleNotifySubtaskReturned(req, res) {
     const sessionEmail = (session.email || '').trim().toLowerCase();
     const creatorNotifyEmail = await resolveStaffEmailForNotifications(db, creatorStaff);
     const creatorAddr = (creatorNotifyEmail || creatorEmail).toLowerCase();
-    if (!sessionEmail || sessionEmail !== creatorAddr) {
+    if (!(await sessionMayActForStaff(sessionEmail, creatorAddr))) {
       sendJson(req, res, 403, {
         error:
           'Only the sub-task creator (staff email must match signed-in user) can send return emails',

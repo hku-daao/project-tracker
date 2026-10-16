@@ -79,6 +79,7 @@ class _StaffRow {
     required this.teamId,
     required this.officeId,
     required this.active,
+    required this.removable,
   });
 
   final String id;
@@ -87,6 +88,7 @@ class _StaffRow {
   final String? teamId;
   final String? officeId;
   final bool active;
+  final bool removable;
 }
 
 class _LinkRow {
@@ -208,6 +210,7 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
             teamId: raw['teamId']?.toString(),
             officeId: raw['officeId']?.toString(),
             active: raw['active'] != false,
+            removable: raw['removable'] == true,
           ),
     ];
     List<_LinkRow> readLinks(String key) => [
@@ -385,17 +388,31 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
     if (saved == true) await _load();
   }
 
+  Future<void> _removeStaff(_StaffRow person) async {
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove staff?',
+      content: 'This step is not reversible.',
+      confirmText: 'Remove staff',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true) return;
+    final result = await _request('DELETE', '/api/staff-admin/staff/${person.id}');
+    if (!mounted) return;
+    if (result.error != null) {
+      await _showError(result.error!);
+      return;
+    }
+    await _load();
+  }
+
   Future<void> _removeTeam(_TeamRow team) async {
-    final people = _staffOnTeam(team);
-    final names = people.map((p) => p.name).join(', ');
-    final content = people.isEmpty
-        ? 'Remove team ${team.teamName}? No staff currently use it.'
-        : 'Removing ${team.teamName} leaves ${people.length} staff with no team: $names. '
-            'Set a team for each of them afterwards. Staff with no team leave this office list until a super admin, or a later team assignment, puts them back.';
+    if (_staffOnTeam(team).isNotEmpty) return;
     final ok = await showAsanaConfirmDialog(
       context: context,
       title: 'Remove team?',
-      content: content,
+      content: 'This step is not reversible.',
       confirmText: 'Remove team',
       isDestructive: true,
       palette: widget.palette,
@@ -442,11 +459,13 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
             offices: _offices,
             onAdd: () => _openStaffForm(),
             onEdit: (person) => _openStaffForm(existing: person),
+            onRemove: _removeStaff,
           );
           final teamPane = _TeamsPane(
             palette: widget.palette,
             teams: _teams,
             offices: _offices,
+            staff: _staff,
             onAdd: () => _editTeam(),
             onEdit: (team) => _editTeam(existing: team),
             onRemove: _removeTeam,
@@ -586,6 +605,7 @@ class _TeamsPane extends StatelessWidget {
     required this.palette,
     required this.teams,
     required this.offices,
+    required this.staff,
     required this.onAdd,
     required this.onEdit,
     required this.onRemove,
@@ -594,9 +614,17 @@ class _TeamsPane extends StatelessWidget {
   final AsanaLandingPalette palette;
   final List<_TeamRow> teams;
   final List<_OfficeRow> offices;
+  final List<_StaffRow> staff;
   final VoidCallback onAdd;
   final ValueChanged<_TeamRow> onEdit;
   final ValueChanged<_TeamRow> onRemove;
+
+  bool _hasStaff(_TeamRow team) {
+    final key = team.teamId.trim().toLowerCase();
+    return staff.any(
+      (person) => (person.teamId ?? '').trim().toLowerCase() == key,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -665,19 +693,20 @@ class _TeamsPane extends StatelessWidget {
                                       ],
                                     ),
                                   ),
+                                  if (!_hasStaff(team))
+                                    IconButton(
+                                      tooltip: 'Remove team',
+                                      onPressed: () => onRemove(team),
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
+                                      ),
+                                    ),
                                   IconButton(
                                     tooltip: 'Modify team',
                                     onPressed: () => onEdit(team),
                                     icon: const Icon(
                                       Icons.edit_outlined,
-                                      size: 18,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Remove team',
-                                    onPressed: () => onRemove(team),
-                                    icon: const Icon(
-                                      Icons.delete_outline,
                                       size: 18,
                                     ),
                                   ),
@@ -703,6 +732,7 @@ class _StaffListPane extends StatelessWidget {
     required this.offices,
     required this.onAdd,
     required this.onEdit,
+    required this.onRemove,
   });
 
   final AsanaLandingPalette palette;
@@ -711,6 +741,7 @@ class _StaffListPane extends StatelessWidget {
   final List<_OfficeRow> offices;
   final VoidCallback onAdd;
   final ValueChanged<_StaffRow> onEdit;
+  final ValueChanged<_StaffRow> onRemove;
 
   String _officeName(_StaffRow person) {
     final id = (person.officeId ?? '').trim();
@@ -803,6 +834,15 @@ class _StaffListPane extends StatelessWidget {
                                       ],
                                     ),
                                   ),
+                                  if (person.removable)
+                                    IconButton(
+                                      tooltip: 'Remove staff',
+                                      onPressed: () => onRemove(person),
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
+                                      ),
+                                    ),
                                   IconButton(
                                     tooltip: 'Modify staff',
                                     onPressed: () => onEdit(person),
@@ -1138,6 +1178,11 @@ class _ManagementPane extends StatelessWidget {
                                           visualDensity: VisualDensity.compact,
                                           materialTapTargetSize:
                                               MaterialTapTargetSize.shrinkWrap,
+                                          fillColor: includedByOffice
+                                              ? WidgetStateProperty.all(
+                                                  Colors.grey.shade400,
+                                                )
+                                              : null,
                                           onChanged: includedByOffice
                                               ? null
                                               : (value) => onToggle(

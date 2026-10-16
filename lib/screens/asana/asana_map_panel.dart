@@ -3725,7 +3725,7 @@ class _DiagramBox extends StatelessWidget {
     final showStatusBadge =
         item.node.type == _DiagramNodeType.task ||
         item.node.type == _DiagramNodeType.subtask;
-    final statusIcon = _mapStatusIcon(item.node);
+    final statusLabel = _mapStatusTooltip(item.node);
     Widget inner = sideExpand
         ? Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3796,15 +3796,21 @@ class _DiagramBox extends StatelessWidget {
           Positioned(
             top: letterTop,
             right: -6,
-            width: 24,
             height: letterHeight,
             child: _MapThemeBadge(
               palette: palette,
-              tooltip: _mapStatusTooltip(item.node),
-              child: Icon(
-                statusIcon,
-                size: 18,
-                color: _mapBadgeForeground(palette),
+              tooltip: statusLabel,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  statusLabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: _mapBadgeForeground(palette),
+                    height: 1,
+                  ),
+                ),
               ),
             ),
           ),
@@ -4451,13 +4457,13 @@ class _MapThemeBadge extends StatelessWidget {
     required this.palette,
     required this.child,
     required this.tooltip,
-    this.width = 24,
+    this.width,
   });
 
   final AsanaLandingPalette palette;
   final Widget child;
   final String tooltip;
-  final double width;
+  final double? width;
 
   @override
   Widget build(BuildContext context) {
@@ -4476,28 +4482,6 @@ class _MapThemeBadge extends StatelessWidget {
       ),
     );
   }
-}
-
-IconData _mapStatusIcon(_DiagramNode node) {
-  final status = node.status.trim().toLowerCase();
-  if (node.completed || status == 'completed' || status == 'complete') {
-    return Icons.circle_outlined;
-  }
-  if (status == 'deleted' || status == 'delete') return Icons.close;
-  if (status == 'paused') return Icons.pause;
-  if (status == 'not started') return Icons.hourglass_empty;
-  if (status == 'in progress') return Icons.play_arrow;
-  if ((node.submission ?? '').trim().toLowerCase() == 'submitted') {
-    return Icons.outbox;
-  }
-  final due = node.dueDate;
-  if (due != null && (status == 'incomplete' || status.isEmpty)) {
-    final today = HkTime.todayDateOnlyHk();
-    final day = DateTime(due.year, due.month, due.day);
-    if (day == today) return Icons.today;
-    if (day.isBefore(today)) return Icons.priority_high;
-  }
-  return Icons.build;
 }
 
 String _mapStatusTooltip(_DiagramNode node) {

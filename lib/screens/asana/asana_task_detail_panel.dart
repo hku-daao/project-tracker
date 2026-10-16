@@ -1261,16 +1261,16 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _isProjectInvolved(AppState state, ProjectRecord? project) {
     if (project == null) return false;
     return project.isInvolvedStaff(
-      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
-      staffAppId: state.userStaffAppId,
+      staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
+      staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
     );
   }
 
   bool _isSubprojectInvolved(AppState state, SubprojectRecord? subproject) {
     if (subproject == null) return false;
     return subproject.isInvolvedStaff(
-      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
-      staffAppId: state.userStaffAppId,
+      staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
+      staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
     );
   }
 

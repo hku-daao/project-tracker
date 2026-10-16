@@ -409,10 +409,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }
 
   bool _isCreator(ProjectRecord p) {
-    final me = _myStaffUuid?.trim();
-    final cb = p.createByStaffUuid?.trim();
-    if (me == null || me.isEmpty || cb == null || cb.isEmpty) return false;
-    return me == cb;
+    final cb = p.createByStaffUuid?.trim() ?? '';
+    if (cb.isEmpty) return false;
+    final state = context.read<AppState>();
+    final keys = <String>[
+      if ((_myStaffUuid ?? '').trim().isNotEmpty) _myStaffUuid!.trim(),
+      if ((state.effectiveStaffUuid ?? '').trim().isNotEmpty)
+        state.effectiveStaffUuid!.trim(),
+      if ((state.effectiveStaffAppId ?? '').trim().isNotEmpty)
+        state.effectiveStaffAppId!.trim(),
+    ];
+    final cbLower = cb.toLowerCase();
+    for (final key in keys) {
+      if (key.toLowerCase() == cbLower) return true;
+    }
+    return false;
   }
 
   bool _isProjectPic(ProjectRecord p) {
@@ -436,8 +447,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   bool _isProjectMember(ProjectRecord p) {
     final state = context.read<AppState>();
     return p.isInvolvedStaff(
-      staffUuid: _myStaffUuid ?? state.effectiveStaffUuid,
-      staffAppId: state.userStaffAppId,
+      staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
+      staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
     );
   }
 
