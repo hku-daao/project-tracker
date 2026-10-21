@@ -308,7 +308,8 @@ class AsanaTaskFilter {
   static bool _taskOnParentInScope(AppState state, Task t) {
     if (state.showAllDataAsAdmin) return true;
     return _taskAssignedToCurrentUser(state, t) ||
-        state.taskIsCreatedByCurrentUser(t);
+        state.taskIsCreatedByCurrentUser(t) ||
+        state.taskIdsVisibleViaSubtask.contains(t.id);
   }
 
   /// Parents loaded only because of a sub-task assignment, so those rows can

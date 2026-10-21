@@ -1206,7 +1206,10 @@ class _ExpandableProjectTableRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subprojects = appState.subprojectsForProject(project.id);
+    final subprojects = AsanaProjectFilter.visibleSubprojectsForProject(
+      appState,
+      project.id,
+    );
     final hasChildren = tasks.isNotEmpty || subprojects.isNotEmpty;
     return SizedBox(
       width: tableWidth,
@@ -2649,7 +2652,10 @@ class _ProjectMobileRow extends StatelessWidget {
     final nameStyle = asanaTableRowNameStyle(context, completed: _completed);
     final valueStyle = asanaTableRowValueStyle(context, completed: _completed);
     final hasChildren = tasks.isNotEmpty ||
-        appState.subprojectsForProject(project.id).isNotEmpty;
+        AsanaProjectFilter.visibleSubprojectsForProject(
+          appState,
+          project.id,
+        ).isNotEmpty;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2678,7 +2684,10 @@ class _ProjectMobileRow extends StatelessWidget {
               : null,
         ),
         if (tasks.isNotEmpty ||
-            appState.subprojectsForProject(project.id).isNotEmpty)
+            AsanaProjectFilter.visibleSubprojectsForProject(
+              appState,
+              project.id,
+            ).isNotEmpty)
           _AnimatedProjectTaskExpansion(
             expanded: expanded,
             child: ColoredBox(
@@ -2766,7 +2775,10 @@ class _ProjectMobileTaskList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subprojects = appState.subprojectsForProject(projectId);
+    final subprojects = AsanaProjectFilter.visibleSubprojectsForProject(
+      appState,
+      projectId,
+    );
     final nestedTaskIds = <String>{};
     final children = <Widget>[];
 

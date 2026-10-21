@@ -167,6 +167,8 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
     this.leading,
     this.trailing,
     this.alignClearWithControls = false,
+    this.pinClear = false,
+    this.clearLabel = 'Clear all',
   });
 
   final AsanaLandingPalette palette;
@@ -183,6 +185,10 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
 
   /// Sizes Clear all to the filter boxes and drops the extra top offset.
   final bool alignClearWithControls;
+
+  /// Keeps Clear all at the right edge of the first filter row.
+  final bool pinClear;
+  final String clearLabel;
 
   @override
   State<AsanaPanelFilterToolbar> createState() =>
@@ -285,7 +291,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   )
                 : null,
             onPressed: widget.onClearAll,
-            child: const Text('Clear all'),
+            child: Text(widget.clearLabel),
           );
           final secondRow = widget.secondRowFilterChildren;
           final thirdRow = widget.thirdRowFilterChildren;
@@ -299,6 +305,36 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   padding: const EdgeInsets.only(top: 18),
                   child: clearButton,
                 );
+          if (widget.pinClear) {
+            final extraRows = <List<Widget>>[
+              if (secondRow != null && secondRow.isNotEmpty) secondRow,
+              if (thirdRow != null && thirdRow.isNotEmpty) thirdRow,
+            ];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: _scrollableFilters(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: widget.filterChildren,
+                        ),
+                      ),
+                    ),
+                    clearChild,
+                  ],
+                ),
+                if (extraRows.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _linkedFilterRows(extraRows),
+                ],
+              ],
+            );
+          }
           final firstRowChildren = [
             ...widget.filterChildren,
             if (clearAtEndOfFirstRow) clearChild,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
+import 'asana_project_filter.dart';
 import '../../models/subproject_record.dart';
 import '../asana_landing_screen.dart';
 import 'asana_detail_widgets.dart';
@@ -28,7 +29,11 @@ class AsanaProjectSubprojectSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rows = context.watch<AppState>().subprojectsForProject(projectId);
+    final state = context.watch<AppState>();
+    final rows = AsanaProjectFilter.visibleSubprojectsForProject(
+      state,
+      projectId,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

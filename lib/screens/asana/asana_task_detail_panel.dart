@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -26,6 +27,7 @@ import '../../utils/attachment_url_launch.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../../utils/file_drop_region.dart';
 import 'asana_assignee_field.dart';
+import 'asana_project_filter.dart';
 import 'asana_assignee_picker.dart';
 import 'asana_attachment_draft_tile.dart';
 import 'asana_attachment_menu.dart';
@@ -2012,14 +2014,18 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   void _syncSubprojectToSelectedProject(AppState state) {
     final sid = _selectedSubprojectId?.trim();
     if (sid == null || sid.isEmpty) return;
-    final belongs = state
-        .subprojectsForProject(_selectedProjectId)
-        .any((row) => row.id == sid);
+    final belongs = AsanaProjectFilter.visibleSubprojectsForProject(
+      state,
+      _selectedProjectId,
+    ).any((row) => row.id == sid);
     if (!belongs) _selectedSubprojectId = null;
   }
 
   List<AsanaAnchoredOption<String>> _subprojectMenuOptions(AppState state) {
-    final rows = state.subprojectsForProject(_selectedProjectId);
+    final rows = AsanaProjectFilter.visibleSubprojectsForProject(
+      state,
+      _selectedProjectId,
+    );
     return [
       const AsanaAnchoredOption(value: '', label: 'No sub-project'),
       for (final row in rows)
@@ -2053,7 +2059,10 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   bool _showSubprojectField(AppState state) {
     final pid = _selectedProjectId?.trim();
     if (pid == null || pid.isEmpty) return false;
-    return state.subprojectsForProject(pid).isNotEmpty;
+    return AsanaProjectFilter.visibleSubprojectsForProject(
+      state,
+      pid,
+    ).isNotEmpty;
   }
 
   List<String?> _createAttachmentAclKeys(AppState state, String picKey) {
@@ -3224,41 +3233,21 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
         status: TaskStatus.done,
         submission: 'Accepted',
         completionDate: completedAt,
+        updateDate: DateTime.now(),
         lastUpdated: DateTime.now(),
       );
       state.upsertTask(completedTask);
       if (mounted) {
         setState(() => _completionDate = completedAt);
       }
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) _setSaving(false);
       // Invalidate the list reload started by Create before the next await.
       // That reload can still be in flight and would put the incomplete row
       // back over this completed one.
       _notifyChanged();
-      await _loadSubtasks();
-      final fresh = await DatabaseService.fetchSingularTaskModelById(task.id);
-      if (fresh != null) {
-        final freshStatus = (fresh.dbStatus ?? '').trim().toLowerCase();
-        final rowAlreadyCompleted =
-            freshStatus == 'completed' || freshStatus == 'complete';
-        final shown = fresh.copyWith(
-          dbStatus: rowAlreadyCompleted ? fresh.dbStatus : 'Completed',
-          status: TaskStatus.done,
-          submission: rowAlreadyCompleted &&
-                  (fresh.submission ?? '').trim().isNotEmpty
-              ? fresh.submission
-              : 'Accepted',
-          completionDate: fresh.completionDate ?? completedAt,
-          lastUpdated: rowAlreadyCompleted
-              ? (fresh.lastUpdated ?? fresh.updateDate ?? DateTime.now())
-              : DateTime.now(),
-        );
-        state.upsertTask(shown);
-        if (mounted) {
-          _syncFromTask();
-          setState(() {});
-        }
-      }
-      await _notifyEmail(
+      unawaited(_refreshCompletedTaskSlide(completedTask));
+      unawaited(_notifyEmail(
         'Task accepted email',
         (token) => BackendApi().notifyTaskAccepted(
           idToken: token,
@@ -3278,11 +3267,32 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
           ],
           extraRecipientStaffKeys: assigneeChangeRecipientStaffKeys,
         ),
-      );
+      ));
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
     }
+  }
+
+  Future<void> _refreshCompletedTaskSlide(Task completedTask) async {
+    await _loadSubtasks();
+    final fresh = await DatabaseService.fetchSingularTaskModelById(
+      completedTask.id,
+    );
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    final freshStatus = (fresh?.dbStatus ?? '').trim().toLowerCase();
+    final rowAlreadyCompleted =
+        freshStatus == 'completed' || freshStatus == 'complete';
+    final shown = fresh != null && rowAlreadyCompleted
+        ? fresh.copyWith(
+            status: TaskStatus.done,
+            completionDate: fresh.completionDate ?? completedTask.completionDate,
+          )
+        : completedTask;
+    state.upsertTask(shown);
+    _syncFromTask();
+    setState(() => _completionDate = shown.completionDate);
   }
 
   Future<void> _submitTask(AppState state, Task task) async {

@@ -348,7 +348,9 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  /// Client-side visibility: assignee or creator is self or a subordinate (uuid or app_id).
+  /// Client-side visibility: assignee or creator is self or a subordinate
+  /// (uuid or app_id), or this task was loaded because that person is PIC
+  /// or an assignee on one of its sub-tasks.
   bool taskMatchesSupervisorScope(Task t) {
     final keys = taskVisibilityLookupKeys;
     if (keys.isEmpty) return false;
@@ -359,7 +361,7 @@ class AppState extends ChangeNotifier {
     if (cb != null && cb.isNotEmpty && _visibilityKeyMatches(cb, keys)) {
       return true;
     }
-    return false;
+    return _taskIdsVisibleViaSubtask.contains(t.id);
   }
 
   void setUserStaffContext({String? staffAppId, String? staffUuid}) {
@@ -512,12 +514,40 @@ class AppState extends ChangeNotifier {
   /// Replace tasks from the database after fetch.
   void applyTasks(TasksLoadResult result, {bool visibilityScoped = false}) {
     _tasksLoadedWithVisibilityScope = visibilityScoped;
-    _tasks.clear();
-    _tasks.addAll(result.tasks);
+    final previous = {for (final task in _tasks) task.id: task};
+    _tasks
+      ..clear()
+      ..addAll(
+        result.tasks.map(
+          (incoming) => _keepFresherCompletion(previous[incoming.id], incoming),
+        ),
+      );
     _taskIdsVisibleViaSubtask
       ..clear()
       ..addAll(result.taskIdsVisibleViaSubtask);
     notifyListeners();
+  }
+
+  /// A list reload that started before Mark as Completed can return the old
+  /// incomplete row. Keep the completed slide until a newer row arrives.
+  Task _keepFresherCompletion(Task? current, Task incoming) {
+    if (current == null) return incoming;
+    final currentStatus = (current.dbStatus ?? '').trim().toLowerCase();
+    final incomingStatus = (incoming.dbStatus ?? '').trim().toLowerCase();
+    final currentCompleted =
+        currentStatus == 'completed' ||
+        currentStatus == 'complete' ||
+        current.status == TaskStatus.done;
+    final incomingCompleted =
+        incomingStatus == 'completed' || incomingStatus == 'complete';
+    if (!currentCompleted || incomingCompleted) return incoming;
+    final currentAt = current.updateDate ?? current.lastUpdated;
+    final incomingAt = incoming.updateDate ?? incoming.lastUpdated;
+    if (currentAt != null &&
+        (incomingAt == null || !incomingAt.isAfter(currentAt))) {
+      return current;
+    }
+    return incoming;
   }
 
   /// True when [key] is the current user or a subordinate (`staff.app_id` or uuid).

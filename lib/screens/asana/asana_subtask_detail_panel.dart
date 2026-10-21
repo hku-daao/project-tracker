@@ -381,8 +381,8 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool quiet = false}) async {
+    if (!quiet) setState(() => _loading = true);
     try {
       if (PostgrestConfig.isConfigured) {
         try {
@@ -426,7 +426,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
         }
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (!quiet && mounted) setState(() => _loading = false);
     }
   }
 
@@ -3000,7 +3000,7 @@ Due: ${_date(p.endDate)}
     if (!ok) return;
     final assigneeChangeRecipientStaffKeys =
         _subtaskAssigneeChangeRecipientStaffKeys(s);
-    await _notifyEmail(
+    _notifyEmailInBackground(
       'Sub-task accepted email',
       (token) => BackendApi().notifySubtaskAccepted(
         idToken: token,
@@ -3279,13 +3279,62 @@ Due: ${_date(p.endDate)}
         return false;
       }
       _subtaskAi?.clearAllSuggestions();
-      await _load();
+      _paintOpenSubtaskWorkflow(
+        status: status,
+        submission: submission,
+        completionDateAt: completionDateAt,
+        clearCompletionDate: clearCompletionDate,
+      );
+      AsanaBlockingLoadingOverlay.hide();
+      if (mounted) setState(() => _saving = false);
+      await _load(quiet: true);
+      _paintOpenSubtaskWorkflow(
+        status: status,
+        submission: submission,
+        completionDateAt: completionDateAt,
+        clearCompletionDate: clearCompletionDate,
+        onlyIfMissing: true,
+      );
       _notifyParentTaskOfSubtaskChange();
       return true;
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  void _paintOpenSubtaskWorkflow({
+    String? status,
+    String? submission,
+    DateTime? completionDateAt,
+    bool clearCompletionDate = false,
+    bool onlyIfMissing = false,
+  }) {
+    final current = _subtask;
+    if (!mounted || current == null) return;
+    final wantedStatus = status?.trim().toLowerCase() ?? '';
+    final haveStatus = (_draftStatus ?? current.status).trim().toLowerCase();
+    final wantedSubmission = submission?.trim().toLowerCase() ?? '';
+    final haveSubmission = (current.submission ?? '').trim().toLowerCase();
+    if (onlyIfMissing &&
+        (wantedStatus.isEmpty || haveStatus == wantedStatus) &&
+        (wantedSubmission.isEmpty || haveSubmission == wantedSubmission)) {
+      return;
+    }
+    setState(() {
+      if (status != null && status.trim().isNotEmpty) _draftStatus = status;
+      if (clearCompletionDate) {
+        _completionDate = null;
+      } else if (completionDateAt != null) {
+        _completionDate = completionDateAt;
+      }
+      _subtask = current.copyWith(
+        status: status,
+        submission: submission,
+        completionDate: completionDateAt,
+        clearCompletionDate: clearCompletionDate,
+      );
+    });
   }
 
   Widget _aiSuggestions(AsanaTaskAiFieldKey key) {

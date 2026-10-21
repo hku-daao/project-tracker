@@ -146,17 +146,64 @@ class AsanaProjectFilter {
     }
 
     if (mine == null || mine.isEmpty) return false;
-    if (keyInVisibility(p.createByStaffUuid)) {
-      return true;
-    }
+    if (projectHasDirectStake(state, p)) return true;
+    if (_projectHasVisibleChildTask(p, state)) return true;
+    if (_projectHasDirectlyVisibleSubproject(p, state)) return true;
+    return false;
+  }
+
+  /// Creator, assignee, or PIC of the project itself.
+  static bool projectHasDirectStake(AppState state, ProjectRecord p) {
+    if (state.showAllDataAsAdmin) return true;
+    final keys = state.taskVisibilityLookupKeys;
+    if (_keyInVisibilityKeys(p.createByStaffUuid ?? '', keys)) return true;
     for (final u in p.assigneeStaffUuids) {
-      if (keyInVisibility(u)) return true;
+      if (_keyInVisibilityKeys(u, keys)) return true;
     }
     for (final u in p.picStaffUuids) {
-      if (keyInVisibility(u)) return true;
+      if (_keyInVisibilityKeys(u, keys)) return true;
     }
-    if (_projectHasVisibleChildTask(p, state)) {
+    return false;
+  }
+
+  /// Creator, assignee, or PIC of this sub-project, or it sits on a chain the
+  /// user can already see (the parent project, or a task under it).
+  static bool subprojectVisible(AppState state, SubprojectRecord s) {
+    if (state.showAllDataAsAdmin) return true;
+    if (subprojectCreatedByCurrentUser(state, s) ||
+        subprojectAssignedToCurrentUser(state, s)) {
       return true;
+    }
+    final parent = state.projectById(s.projectId);
+    if (parent != null && projectHasDirectStake(state, parent)) return true;
+    for (final t in state.tasks) {
+      if ((t.subprojectId ?? '').trim() != s.id) continue;
+      final status = t.dbStatus?.trim().toLowerCase() ?? '';
+      if (status == 'deleted' || status == 'delete') continue;
+      if (state.taskMatchesSupervisorScope(t)) return true;
+    }
+    return false;
+  }
+
+  static List<SubprojectRecord> visibleSubprojectsForProject(
+    AppState state,
+    String? projectId,
+  ) {
+    return [
+      for (final row in state.subprojectsForProject(projectId))
+        if (subprojectVisible(state, row)) row,
+    ];
+  }
+
+  static bool _projectHasDirectlyVisibleSubproject(
+    ProjectRecord p,
+    AppState state,
+  ) {
+    for (final s in state.subprojectsForProject(p.id)) {
+      if (subprojectCreatedByCurrentUser(state, s) ||
+          subprojectAssignedToCurrentUser(state, s)) {
+        return true;
+      }
     }
     return false;
   }

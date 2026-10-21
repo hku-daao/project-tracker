@@ -49,8 +49,7 @@ class AsanaMapPanel extends StatefulWidget {
   State<AsanaMapPanel> createState() => _AsanaMapPanelState();
 }
 
-class _AsanaMapPanelState extends State<AsanaMapPanel>
-    with TickerProviderStateMixin {
+class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Map<String, List<SingularSubtask>> _subtasksByTask = {};
   final Set<String> _expandedProjectIds = {};
   final Set<String> _expandedTaskIds = {};
@@ -87,7 +86,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   bool _showProjectsWithoutTasks = true;
   final _saved = _MapAdvancedSettings();
   _MapDisplayMode _displayMode = _MapDisplayMode.all;
-  late final AnimationController _filterPaneController;
+  int _reportCompletedPastDays = 14;
+  int _reportDueAheadDays = 14;
   String _dataSig = '';
   int _loadGeneration = 0;
   bool _loadingSubtasks = false;
@@ -102,20 +102,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   @override
   void initState() {
     super.initState();
-    _filterPaneController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-    );
     _loadSavedFilters();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _refreshSubtasks();
     });
-  }
-
-  @override
-  void dispose() {
-    _filterPaneController.dispose();
-    super.dispose();
   }
 
   void _loadSavedFilters() {
@@ -147,12 +137,16 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
       _MapDisplayMode.progress => 'progress',
       _MapDisplayMode.advanced => 'advanced',
     },
+    'reportCompletedPastDays': _reportCompletedPastDays,
+    'reportDueAheadDays': _reportDueAheadDays,
     'advanced': _saved.toJson(),
   };
 
   void _applyCookieJson(Map<String, dynamic> data) {
     _replaceStringSet(_projectCreatorIds, data['projectCreatorIds']);
     _replaceStringSet(_projectPicIds, data['projectPicIds']);
+    _reportCompletedPastDays = _reportDayCount(data['reportCompletedPastDays']);
+    _reportDueAheadDays = _reportDayCount(data['reportDueAheadDays']);
     final advancedRaw = data['advanced'];
     if (advancedRaw is Map) {
       _saved.loadJson(Map<String, dynamic>.from(advancedRaw), _dateFromMs);
@@ -251,10 +245,20 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
     }
   }
 
+  int _reportDayCount(Object? value) {
+    final parsed = value is int
+        ? value
+        : value is num
+        ? value.toInt()
+        : null;
+    if (parsed == null || !_kReportDayOptions.contains(parsed)) return 14;
+    return parsed;
+  }
+
   void _writeProgressPresetToLive() {
     final today = HkTime.todayDateOnlyHk();
-    final past = today.subtract(const Duration(days: 14));
-    final next = today.add(const Duration(days: 14));
+    final past = today.subtract(Duration(days: _reportCompletedPastDays));
+    final next = today.add(Duration(days: _reportDueAheadDays));
     _clearFiltersBeyondProjectPeople();
     _setWorkStatuses(_taskStatuses, _WorkStatusMode.both);
     _taskCompletedStart = past;
@@ -359,7 +363,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
         continue;
       }
       final visibleSps = <SubprojectRecord>[];
-      for (final sp in state.subprojectsForProject(project.id)) {
+      for (final sp in AsanaProjectFilter.visibleSubprojectsForProject(
+        state,
+        project.id,
+      )) {
         if (sp.isDeleted || sp.isPaused) continue;
         if (_hasSubprojectFilters &&
             !_passesSubprojectFilters(state, project, sp)) {
@@ -1185,50 +1192,65 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
     _showProjectsWithoutTasks = true;
   }
 
-  void _applyDisplayAll() {
+  void _selectDisplayMode(_MapDisplayMode mode) {
     _applyFilters(() {
-      _displayMode = _MapDisplayMode.all;
-      _clearFiltersBeyondProjectPeople();
+      _displayMode = mode;
+      switch (mode) {
+        case _MapDisplayMode.all:
+          _clearFiltersBeyondProjectPeople();
+        case _MapDisplayMode.progress:
+          _writeProgressPresetToLive();
+        case _MapDisplayMode.advanced:
+          break;
+      }
     });
   }
 
-  void _applyProgressReport() {
+  void _clearMapFilters() {
     _applyFilters(() {
-      _displayMode = _MapDisplayMode.progress;
-      _writeProgressPresetToLive();
+      switch (_displayMode) {
+        case _MapDisplayMode.all:
+          _projectCreatorIds.clear();
+          _projectPicIds.clear();
+        case _MapDisplayMode.progress:
+          _projectCreatorIds.clear();
+          _projectPicIds.clear();
+          _reportCompletedPastDays = 14;
+          _reportDueAheadDays = 14;
+          _writeProgressPresetToLive();
+        case _MapDisplayMode.advanced:
+          _saved.resetToAll();
+      }
     });
   }
 
-  void _selectAdvancedMode() {
-    _applyFilters(() => _displayMode = _MapDisplayMode.advanced);
-  }
-
-  void _openAdvancedPanel() {
-    _filterPaneController.forward();
-  }
-
-  void _closeAdvancedPanel() {
-    _filterPaneController.reverse();
-  }
-
-  void _clearSimpleMapFilters() {
-    _applyFilters(() {
-      _projectCreatorIds.clear();
-      _projectPicIds.clear();
-      _displayMode = _MapDisplayMode.all;
-      _clearFiltersBeyondProjectPeople();
-    });
-  }
-
-  void _clearAllMapFilters() {
-    _applyFilters(() {
-      _projectCreatorIds.clear();
-      _projectPicIds.clear();
-      _saved.resetToAll();
-      _clearFiltersBeyondProjectPeople();
-      _displayMode = _MapDisplayMode.all;
-    });
-    _filterPaneController.reverse();
+  Widget _reportDayDropdown({
+    required String title,
+    required int days,
+    required ValueChanged<int> onSelected,
+  }) {
+    return AsanaFilterDropdown(
+      title: title,
+      value: _reportDayLabel(days),
+      buttonWidth: 108,
+      onPressed: (anchor) async {
+        final selected = await showMenu<int>(
+          context: anchor,
+          position: _menuPosition(anchor),
+          color: Theme.of(anchor).colorScheme.surface,
+          surfaceTintColor: Colors.transparent,
+          items: [
+            for (final option in _kReportDayOptions)
+              PopupMenuItem(
+                value: option,
+                child: Text(_reportDayLabel(option)),
+              ),
+          ],
+        );
+        if (selected == null || !mounted) return;
+        onSelected(selected);
+      },
+    );
   }
 
   Widget _simpleMapFilters(AppState state) {
@@ -1237,10 +1259,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
       createLabel: '',
       onCreate: null,
       alignFiltersLeft: true,
+      padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+      onClearAll: _clearMapFilters,
+      pinClear: true,
+      clearLabel: 'Clear All',
       alignClearWithControls: true,
-      padding: const EdgeInsets.fromLTRB(16, 6, 8, 4),
-      onClearAll: _clearSimpleMapFilters,
-      trailing: _mapCustomizeControls(),
       filterChildren: [
         AsanaFilterDropdown(
           title: 'Project Creator',
@@ -1282,42 +1305,25 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
               ..addAll(value),
           ),
         ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            _MapDisplayChoice(
-              palette: widget.palette,
-              label: 'All',
-              width: _kMapModeButtonWidth,
-              selected: _displayMode == _MapDisplayMode.all,
-              onTap: _applyDisplayAll,
-            ),
-            _MapDisplayChoice(
-              palette: widget.palette,
-              label: 'Reporting',
-              width: _kMapModeButtonWidth,
-              selected: _displayMode == _MapDisplayMode.progress,
-              onTap: _applyProgressReport,
-            ),
-            _MapDisplayChoice(
-              palette: widget.palette,
-              label: 'Customized',
-              width: _kMapModeButtonWidth,
-              selected: _displayMode == _MapDisplayMode.advanced,
-              onTap: _selectAdvancedMode,
-            ),
-          ],
-        ),
+        if (_displayMode == _MapDisplayMode.progress) ...[
+          _reportDayDropdown(
+            title: 'Completed in past',
+            days: _reportCompletedPastDays,
+            onSelected: (days) => _applyFilters(() {
+              _reportCompletedPastDays = days;
+              _writeProgressPresetToLive();
+            }),
+          ),
+          _reportDayDropdown(
+            title: 'Due in next',
+            days: _reportDueAheadDays,
+            onSelected: (days) => _applyFilters(() {
+              _reportDueAheadDays = days;
+              _writeProgressPresetToLive();
+            }),
+          ),
+        ],
       ],
-    );
-  }
-
-  Widget _mapCustomizeControls() {
-    return _MapPlainButton(
-      palette: widget.palette,
-      label: 'Customize Filters >>',
-      onTap: _openAdvancedPanel,
     );
   }
 
@@ -1779,6 +1785,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   Iterable<String?> _subprojectCreatorKeys(AppState state) sync* {
     for (final row in state.subprojects) {
       if (!row.isActive) continue;
+      if (!AsanaProjectFilter.subprojectVisible(state, row)) continue;
       yield row.createByStaffUuid;
     }
   }
@@ -1786,6 +1793,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   Iterable<String?> _subprojectPicKeys(AppState state) sync* {
     for (final row in state.subprojects) {
       if (!row.isActive) continue;
+      if (!AsanaProjectFilter.subprojectVisible(state, row)) continue;
       for (final id in row.picStaffUuids) {
         yield id;
       }
@@ -1796,6 +1804,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
     final names = <String, String>{};
     for (final row in state.subprojects) {
       if (!row.isActive) continue;
+      if (!AsanaProjectFilter.subprojectVisible(state, row)) continue;
       for (var i = 0; i < row.picStaffUuids.length; i++) {
         final id = row.picStaffUuids[i].trim();
         if (id.isEmpty) continue;
@@ -1811,6 +1820,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   Iterable<String> _subprojectStatusValues(AppState state) sync* {
     for (final row in state.subprojects) {
       if (!row.isActive) continue;
+      if (!AsanaProjectFilter.subprojectVisible(state, row)) continue;
       ProjectRecord? parent;
       for (final project in state.projects) {
         if (project.id == row.projectId) {
@@ -2038,21 +2048,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
               ],
             ),
           ),
-          _MapFilterPaneSlide(
-            animation: _filterPaneController,
-            simple: _simpleMapFilters(state),
-            advanced: AsanaPanelFilterToolbar(
+          _MapFilterChrome(
+            palette: widget.palette,
+            mode: _displayMode,
+            onSelect: _selectDisplayMode,
+            child: _displayMode == _MapDisplayMode.advanced
+                ? AsanaPanelFilterToolbar(
             palette: widget.palette,
             createLabel: '',
             onCreate: null,
             alignFiltersLeft: true,
             alignClearWithControls: true,
-            padding: const EdgeInsets.fromLTRB(8, 6, 16, 4),
-            onClearAll: _clearAllMapFilters,
-            leading: _MapBackStrip(
-              palette: widget.palette,
-              onTap: _closeAdvancedPanel,
-            ),
+            padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+            onClearAll: _clearMapFilters,
+            pinClear: true,
+            clearLabel: 'Clear All',
             filterChildren: [
               AsanaFilterDropdown(
                 title: 'Project Creator Team',
@@ -2473,7 +2483,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
                 onPressed: _showSortMenu,
               ),
             ],
-            ),
+                )
+                : _simpleMapFilters(state),
           ),
           Expanded(
             child: AsanaPanelListSurface(
@@ -2872,7 +2883,15 @@ class _ProjectTreeDiagram extends StatelessWidget {
       type: _DiagramNodeType.project,
       id: node.project.id,
       name: node.project.name,
-      pic: _projectPicLabel(node.project),
+      creator: _mapCreatorLabel(
+        node.project.createByDisplayName,
+        state,
+        node.project.createByStaffUuid,
+      ),
+      pic: _mapPicListLabel(
+        node.project.picStaffDisplayNames,
+        node.project.picStaffUuids,
+      ),
       status: status,
       completed: _mapBlockIsCompleted(status),
       detailLabel: AsanaStatusChip.statusStyle(status).$1,
@@ -2884,6 +2903,7 @@ class _ProjectTreeDiagram extends StatelessWidget {
             type: _DiagramNodeType.levelSpacer,
             id: '${node.project.id}__task_lane',
             name: '',
+            creator: '',
             pic: '',
             status: '',
             detailLabel: '',
@@ -2894,18 +2914,6 @@ class _ProjectTreeDiagram extends StatelessWidget {
           ...directTaskNodes,
       ],
     );
-  }
-
-  String _projectPicLabel(ProjectRecord project) {
-    final names = project.picStaffDisplayNames
-        .map((name) => name.trim())
-        .where((name) => name.isNotEmpty)
-        .toList();
-    if (names.isNotEmpty) return names.join(', ');
-    return project.picStaffUuids
-        .map((id) => id.trim())
-        .where((id) => id.isNotEmpty)
-        .join(', ');
   }
 }
 
@@ -2974,9 +2982,15 @@ _DiagramNode _subprojectDiagramNode({
     type: _DiagramNodeType.subproject,
     id: subproject.id,
     name: subproject.name,
-    pic: subproject.createByDisplayName?.trim().isNotEmpty == true
-        ? subproject.createByDisplayName!.trim()
-        : _projectPicLabelFor(project),
+    creator: _mapCreatorLabel(
+      subproject.createByDisplayName,
+      state,
+      subproject.createByStaffUuid,
+    ),
+    pic: _mapPicListLabel(
+      subproject.picStaffDisplayNames,
+      subproject.picStaffUuids,
+    ),
     status: status,
     completed: _mapBlockIsCompleted(status),
     detailLabel: AsanaStatusChip.statusStyle(status).$1,
@@ -2995,16 +3009,26 @@ _DiagramNode _subprojectDiagramNode({
   );
 }
 
-String _projectPicLabelFor(ProjectRecord project) {
-  final names = project.picStaffDisplayNames
-      .map((name) => name.trim())
-      .where((name) => name.isNotEmpty)
-      .toList();
-  if (names.isNotEmpty) return names.join(', ');
-  return project.picStaffUuids
-      .map((id) => id.trim())
-      .where((id) => id.isNotEmpty)
-      .join(', ');
+String _mapCreatorLabel(
+  String? displayName,
+  AppState state,
+  String? staffId,
+) {
+  final stored = displayName?.trim() ?? '';
+  if (stored.isNotEmpty) return stored;
+  return _staffNameFor(state, staffId);
+}
+
+String _mapPicListLabel(List<String> names, List<String> ids) {
+  final cleaned = [
+    for (final name in names)
+      if (name.trim().isNotEmpty) name.trim(),
+  ];
+  if (cleaned.isNotEmpty) return cleaned.join(', ');
+  return [
+    for (final id in ids)
+      if (id.trim().isNotEmpty) id.trim(),
+  ].join(', ');
 }
 
 _DiagramNode _taskDiagramNode({
@@ -3022,6 +3046,11 @@ _DiagramNode _taskDiagramNode({
     type: _DiagramNodeType.task,
     id: taskNode.task.id,
     name: taskNode.task.name,
+    creator: _mapCreatorLabel(
+      taskNode.task.createByStaffName,
+      state,
+      taskNode.task.createByAssigneeKey,
+    ),
     pic: _staffNameFor(state, taskNode.task.pic),
     status: taskStatus,
     completed: _mapBlockIsCompleted(taskStatus),
@@ -3059,6 +3088,11 @@ _DiagramNode _taskDiagramNode({
               type: _DiagramNodeType.subtask,
               id: subtask.id,
               name: subtask.subtaskName,
+              creator: _mapCreatorLabel(
+                subtask.createByStaffName,
+                state,
+                subtask.createByStaffId,
+              ),
               pic: _staffNameFor(state, subtask.pic),
               status: subStatus,
               completed: _mapBlockIsCompleted(subStatus),
@@ -3130,6 +3164,31 @@ TextStyle _mapDiagramNameStyle(TextTheme theme) {
         height: 1.15,
       ) ??
       const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, height: 1.15);
+}
+
+Widget _mapLabeledLine({
+  required String label,
+  required String value,
+  required TextTheme theme,
+  required Color color,
+}) {
+  final display = value.trim().isEmpty ? '—' : value.trim();
+  final style = _mapDiagramMetaStyle(theme).copyWith(color: color);
+  return Text.rich(
+    TextSpan(
+      style: style,
+      children: [
+        TextSpan(
+          text: '$label: ',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: display),
+      ],
+    ),
+    textAlign: TextAlign.center,
+    softWrap: true,
+    overflow: TextOverflow.visible,
+  );
 }
 
 TextStyle _mapDiagramMetaStyle(TextTheme theme, {FontWeight? fontWeight}) {
@@ -3347,16 +3406,24 @@ class _GenericTreeDiagram extends StatelessWidget {
         _GenericTreeDiagram._boxBorderWidth * 2 -
         (sideToggle ? _ProjectTreeDiagram._toggleHeight : 0);
     final name = node.name.trim().isEmpty ? 'Untitled' : node.name.trim();
+    final creator = node.creator.trim().isEmpty ? '—' : node.creator.trim();
     final pic = node.pic.trim().isEmpty ? '—' : node.pic.trim();
+    final metaStyle = _mapDiagramMetaStyle(theme, fontWeight: FontWeight.w700);
     final nameH = _measureTextHeight(
       name,
       _mapDiagramNameStyle(theme),
       innerWidth,
       textScaler,
     );
+    final creatorH = _measureTextHeight(
+      'Creator: $creator',
+      metaStyle,
+      innerWidth,
+      textScaler,
+    );
     final picH = _measureTextHeight(
-      pic,
-      _mapDiagramMetaStyle(theme),
+      'PIC: $pic',
+      metaStyle,
       innerWidth,
       textScaler,
     );
@@ -3375,6 +3442,7 @@ class _GenericTreeDiagram extends StatelessWidget {
     return padV +
         nameH +
         _ProjectTreeDiagram._nameToPicGap +
+        creatorH +
         picH +
         detailH +
         padV +
@@ -3676,14 +3744,17 @@ class _DiagramBox extends StatelessWidget {
               ).copyWith(color: style.text),
             ),
             const SizedBox(height: _ProjectTreeDiagram._nameToPicGap),
-            Text(
-              item.node.pic.trim().isEmpty ? '—' : item.node.pic.trim(),
-              textAlign: TextAlign.center,
-              softWrap: true,
-              overflow: TextOverflow.visible,
-              style: _mapDiagramMetaStyle(
-                textTheme,
-              ).copyWith(color: style.secondaryText),
+            _mapLabeledLine(
+              label: 'Creator',
+              value: item.node.creator,
+              theme: textTheme,
+              color: style.secondaryText,
+            ),
+            _mapLabeledLine(
+              label: 'PIC',
+              value: item.node.pic,
+              theme: textTheme,
+              color: style.secondaryText,
             ),
             Text(
               item.node.detailLabel,
@@ -4011,6 +4082,7 @@ class _DiagramNode {
     required this.type,
     required this.id,
     required this.name,
+    required this.creator,
     required this.pic,
     required this.status,
     required this.detailLabel,
@@ -4027,6 +4099,7 @@ class _DiagramNode {
   final _DiagramNodeType type;
   final String id;
   final String name;
+  final String creator;
   final String pic;
   final String status;
   final bool completed;
@@ -4083,28 +4156,130 @@ class _TaskMapNode {
 
 enum _MapDisplayMode { all, progress, advanced }
 
-/// Mode buttons are the same width: 65% of the Project Creator dropdown.
-const double _kMapModeButtonWidth = 160 * 0.65;
+const List<int> _kReportDayOptions = [1, 2, 3, 5, 7, 14, 21, 28, 42, 56];
 
-/// Same metrics as [AsanaFilterDropdown] so the map mode buttons match
-/// the dropdown boxes after compact visual-density adjustment.
-ButtonStyle _mapFilterButtonStyle({
-  required Color background,
-  required Color foreground,
-  BorderSide? side,
-  double minWidth = 0,
-}) {
-  return OutlinedButton.styleFrom(
-    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-    minimumSize: Size(minWidth, 34),
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    visualDensity: VisualDensity.compact,
-    backgroundColor: background,
-    foregroundColor: foreground,
-    side: side,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-  );
+String _reportDayLabel(int days) {
+  if (days < 7) return days == 1 ? '1 day' : '$days days';
+  final weeks = days ~/ 7;
+  return weeks == 1 ? '1 week' : '$weeks weeks';
 }
+
+const Color _kMapTabLine = Color(0xFFDADCE0);
+const Color _kMapTabIdle = Color(0xFFE8EAED);
+
+class _MapFilterChrome extends StatelessWidget {
+  const _MapFilterChrome({
+    required this.palette,
+    required this.mode,
+    required this.onSelect,
+    required this.child,
+  });
+
+  final AsanaLandingPalette palette;
+  final _MapDisplayMode mode;
+  final ValueChanged<_MapDisplayMode> onSelect;
+  final Widget child;
+
+  static const _tabs = <(_MapDisplayMode, String)>[
+    (_MapDisplayMode.all, 'All'),
+    (_MapDisplayMode.progress, 'Reporting'),
+    (_MapDisplayMode.advanced, 'Customized'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 33),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.listSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _kMapTabLine),
+              ),
+              child: child,
+            ),
+          ),
+          Positioned(
+            left: 10,
+            top: 0,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final tab in _tabs)
+                  _MapModeTab(
+                    label: tab.$2,
+                    selected: mode == tab.$1,
+                    surface: palette.listSurface,
+                    onTap: () => onSelect(tab.$1),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapModeTab extends StatelessWidget {
+  const _MapModeTab({
+    required this.label,
+    required this.selected,
+    required this.surface,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final Color surface;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: selected ? 0 : 4, right: 4),
+      child: Material(
+        color: selected ? surface : _kMapTabIdle,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+          child: Container(
+            height: selected ? 34 : 29,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(8),
+              ),
+              border: Border(
+                top: const BorderSide(color: _kMapTabLine),
+                left: const BorderSide(color: _kMapTabLine),
+                right: const BorderSide(color: _kMapTabLine),
+                bottom: selected
+                    ? BorderSide(color: surface, width: 2)
+                    : const BorderSide(color: _kMapTabLine),
+              ),
+            ),
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: selected ? kAsanaTextPrimary : kAsanaTextSecondary,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 Color _mapBadgeForeground(AsanaLandingPalette palette) {
   // Corner badges are filled with the theme accent. Pick the ink that
@@ -4292,166 +4467,6 @@ class _MapAdvancedSettings {
   }
 }
 
-class _MapButtonPaint {
-  const _MapButtonPaint({
-    required this.background,
-    required this.foreground,
-    required this.side,
-  });
-
-  final Color background;
-  final Color foreground;
-  final BorderSide side;
-}
-
-_MapButtonPaint _mapChoicePaint(
-  AsanaLandingPalette palette, {
-  required bool selected,
-}) {
-  if (!selected && palette.id == 'Charcoal') {
-    final box = _DiagramBoxStyle.forType(_DiagramNodeType.subtask, palette);
-    return _MapButtonPaint(
-      background: box.background,
-      foreground: box.text,
-      side: BorderSide(color: box.border),
-    );
-  }
-  return _MapButtonPaint(
-    background: selected ? palette.accent : palette.sidebar,
-    foreground: selected ? palette.onBanner : palette.onSidebar,
-    side: BorderSide(color: palette.accent, width: selected ? 0 : 1.5),
-  );
-}
-
-_MapButtonPaint _mapCustomizePaint(AsanaLandingPalette palette) {
-  if (palette.id == 'Charcoal') {
-    final box = _DiagramBoxStyle.forType(_DiagramNodeType.project, palette);
-    return _MapButtonPaint(
-      background: box.background,
-      foreground: box.text,
-      side: BorderSide(color: box.border),
-    );
-  }
-  return _MapButtonPaint(
-    background: palette.sidebar,
-    foreground: palette.onSidebar,
-    side: BorderSide(color: palette.accent, width: 1.5),
-  );
-}
-
-class _MapDisplayChoice extends StatelessWidget {
-  const _MapDisplayChoice({
-    required this.palette,
-    required this.label,
-    required this.width,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final AsanaLandingPalette palette;
-  final String label;
-  final double width;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final paint = _mapChoicePaint(palette, selected: selected);
-    final background = paint.background;
-    final foreground = paint.foreground;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: SizedBox(
-        width: width,
-        child: OutlinedButton(
-          onPressed: onTap,
-          style: _mapFilterButtonStyle(
-            background: background,
-            foreground: foreground,
-            minWidth: width,
-            side: paint.side,
-          ),
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: foreground,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MapPlainButton extends StatelessWidget {
-  const _MapPlainButton({
-    required this.palette,
-    required this.label,
-    required this.onTap,
-  });
-
-  final AsanaLandingPalette palette;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final paint = _mapCustomizePaint(palette);
-    return OutlinedButton(
-      onPressed: onTap,
-      style: _mapFilterButtonStyle(
-        background: paint.background,
-        foreground: paint.foreground,
-        side: paint.side,
-      ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: paint.foreground,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _MapBackStrip extends StatelessWidget {
-  const _MapBackStrip({required this.palette, required this.onTap});
-
-  final AsanaLandingPalette palette;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Back to main filters',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Center(
-              child: Text(
-                '<<',
-                style: TextStyle(
-                  color: palette.accent,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18,
-                  height: 1,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MapThemeBadge extends StatelessWidget {
   const _MapThemeBadge({
     required this.palette,
@@ -4501,142 +4516,4 @@ String _mapStatusTooltip(_DiagramNode node) {
   }
   if (status.isEmpty) return 'Incomplete';
   return status;
-}
-
-/// Slides the one-row map filters and the taller advanced filters, and
-/// sizes the strip to the pane that is on screen.
-class _MapFilterPaneSlide extends StatefulWidget {
-  const _MapFilterPaneSlide({
-    required this.animation,
-    required this.simple,
-    required this.advanced,
-  });
-
-  final Animation<double> animation;
-  final Widget simple;
-  final Widget advanced;
-
-  @override
-  State<_MapFilterPaneSlide> createState() => _MapFilterPaneSlideState();
-}
-
-class _MapFilterPaneSlideState extends State<_MapFilterPaneSlide> {
-  double? _simpleHeight;
-  double? _advancedHeight;
-
-  void _remember(bool advanced, Size size) {
-    final next = size.height;
-    if (next <= 0) return;
-    if (advanced) {
-      if (_advancedHeight == next) return;
-      setState(() => _advancedHeight = next);
-    } else {
-      if (_simpleHeight == next) return;
-      setState(() => _simpleHeight = next);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        return AnimatedBuilder(
-          animation: widget.animation,
-          builder: (context, _) {
-            final t = widget.animation.value;
-            final simpleH = _simpleHeight;
-            final advancedH = _advancedHeight;
-            if (simpleH == null || advancedH == null) {
-              final showAdvanced = t >= 0.5;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _hiddenMeasure(
-                    widget.simple,
-                    (size) => _remember(false, size),
-                  ),
-                  _hiddenMeasure(
-                    widget.advanced,
-                    (size) => _remember(true, size),
-                  ),
-                  showAdvanced ? widget.advanced : widget.simple,
-                ],
-              );
-            }
-            final height = simpleH + (advancedH - simpleH) * t;
-            return ClipRect(
-              child: SizedBox(
-                width: width,
-                height: height,
-                child: Stack(
-                  clipBehavior: Clip.hardEdge,
-                  children: [
-                    Positioned(
-                      left: -t * width,
-                      top: 0,
-                      width: width,
-                      child: _ReportSize(
-                        onChange: (size) => _remember(false, size),
-                        child: widget.simple,
-                      ),
-                    ),
-                    Positioned(
-                      left: (1 - t) * width,
-                      top: 0,
-                      width: width,
-                      child: _ReportSize(
-                        onChange: (size) => _remember(true, size),
-                        child: widget.advanced,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _ReportSize extends StatefulWidget {
-  const _ReportSize({required this.onChange, required this.child});
-
-  final ValueChanged<Size> onChange;
-  final Widget child;
-
-  @override
-  State<_ReportSize> createState() => _ReportSizeState();
-}
-
-class _ReportSizeState extends State<_ReportSize> {
-  Size? _last;
-
-  @override
-  Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = context.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) return;
-      final size = box.size;
-      if (_last == size) return;
-      _last = size;
-      widget.onChange(size);
-    });
-    return widget.child;
-  }
-}
-
-Widget _hiddenMeasure(Widget child, ValueChanged<Size> onSize) {
-  return SizedBox(
-    height: 0,
-    child: OverflowBox(
-      alignment: Alignment.topLeft,
-      minHeight: 0,
-      maxHeight: double.infinity,
-      child: _ReportSize(onChange: onSize, child: child),
-    ),
-  );
 }
