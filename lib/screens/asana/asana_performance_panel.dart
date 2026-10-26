@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -13,7 +14,12 @@ import '../../models/staff_for_assignment.dart';
 import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
+import '../../services/llm_service.dart';
+import '../../utils/attachment_open_bytes.dart';
 import '../../utils/hk_time.dart';
+import '../../utils/staff_report_export.dart';
+import 'asana_assignee_field.dart';
+import 'asana_assignee_picker.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_theme.dart';
@@ -43,16 +49,19 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
   List<ProjectRecord>? _fullProjects;
   Map<String, String> _officeIdByStaffKey = {};
   Map<String, String> _officeNameById = {};
-  Map<String, String> _teamIdByStaffKey = {};
   Map<String, String> _canonicalStaffKeyByLookup = {};
   Map<String, List<SingularSubtask>> _subtasksByTaskId = {};
   String? _individualStaffUuid;
   String? _individualAppId;
   String? _individualName;
   List<StaffForAssignment> _scopedStaff = [];
+  List<OfficeOptionRow> _pickerOffices = const [];
+  List<TeamOptionRow> _pickerTeams = const [];
   String? _selectedIndividualId;
-  String? _periodStartMonth;
-  String? _periodEndMonth;
+  bool _individualPickedManually = false;
+  String? _appliedSelfKey;
+  DateTime? _outputRangeStart;
+  DateTime? _outputRangeEnd;
 
   @override
   void didChangeDependencies() {
@@ -66,6 +75,7 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
             .toList()
           ..sort();
     final signature = taskIds.join('|');
+    _syncDefaultIndividual(context.read<AppState>());
     if (signature != _loadedTaskSignature) {
       _loadedTaskSignature = signature;
       _load(taskIds);
@@ -86,18 +96,24 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       final subtasks =
           await DatabaseService.fetchSubtasksGroupedIncludingDeleted(ids);
       if (!mounted) return;
-      final scoped = _staffInOffices(picker.staff, state);
+      final scoped = _withCurrentUser(
+        _staffInOffices(picker.staff, state),
+        picker.staff,
+        state,
+      );
       final selected = _chooseIndividual(scoped, state);
       setState(() {
         _officeIdByStaffKey = _officeMapByStaffKey(picker.staff);
-        _teamIdByStaffKey = _teamMapByStaffKey(picker.staff);
         _canonicalStaffKeyByLookup = _canonicalMapByStaffKey(picker.staff);
         _officeNameById = {
           for (final office in picker.offices)
             office.officeId.trim().toLowerCase(): office.officeName.trim(),
         };
         _subtasksByTaskId = subtasks;
+        _pickerOffices = picker.offices;
+        _pickerTeams = picker.teams;
         _scopedStaff = scoped;
+        _appliedSelfKey = _selfKey(state);
         _applyIndividual(selected);
         _loading = false;
       });
@@ -132,16 +148,75 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     List<StaffForAssignment> scoped,
     AppState state,
   ) {
-    for (final person in scoped) {
-      if (person.assigneeId == _selectedIndividualId) return person;
-    }
-    final mine = state.effectiveStaffAppId?.trim();
-    if (mine != null && mine.isNotEmpty) {
+    if (_individualPickedManually) {
       for (final person in scoped) {
-        if (person.assigneeId == mine) return person;
+        if (person.assigneeId == _selectedIndividualId) return person;
       }
     }
-    return scoped.isEmpty ? null : scoped.first;
+    return _personMatchingSelf(scoped, state) ??
+        (scoped.isEmpty ? null : scoped.first);
+  }
+
+  List<StaffForAssignment> _withCurrentUser(
+    List<StaffForAssignment> scoped,
+    List<StaffForAssignment> all,
+    AppState state,
+  ) {
+    final self = _personMatchingSelf(all, state);
+    if (self == null) return scoped;
+    if (scoped.any((person) => person.assigneeId == self.assigneeId)) {
+      return scoped;
+    }
+    return [...scoped, self]..sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+  }
+
+  StaffForAssignment? _personMatchingSelf(
+    List<StaffForAssignment> staff,
+    AppState state,
+  ) {
+    final appId = state.effectiveStaffAppId?.trim().toLowerCase();
+    final uuid = state.effectiveStaffUuid?.trim().toLowerCase();
+    for (final person in staff) {
+      final assignee = person.assigneeId.trim().toLowerCase();
+      final personUuid = person.staffUuid?.trim().toLowerCase();
+      final appHit = appId != null &&
+          appId.isNotEmpty &&
+          (assignee == appId || personUuid == appId);
+      final uuidHit = uuid != null &&
+          uuid.isNotEmpty &&
+          (assignee == uuid || personUuid == uuid);
+      if (appHit || uuidHit) return person;
+    }
+    final name = state.currentStaffDisplayName?.trim().toLowerCase();
+    if (name == null || name.isEmpty) return null;
+    final named = staff
+        .where((person) => person.name.trim().toLowerCase() == name)
+        .toList();
+    return named.length == 1 ? named.first : null;
+  }
+
+  String _selfKey(AppState state) {
+    final appId = state.effectiveStaffAppId?.trim() ?? '';
+    final uuid = state.effectiveStaffUuid?.trim() ?? '';
+    if (appId.isNotEmpty || uuid.isNotEmpty) return '$appId|$uuid';
+    return 'name:${state.currentStaffDisplayName ?? ''}';
+  }
+
+  void _syncDefaultIndividual(AppState state) {
+    final key = _selfKey(state);
+    if (key == _appliedSelfKey) return;
+    _appliedSelfKey = key;
+    _individualPickedManually = false;
+    if (_loading || _scopedStaff.isEmpty) return;
+    final selected = _chooseIndividual(_scopedStaff, state);
+    if (selected?.assigneeId == _selectedIndividualId) return;
+    setState(() {
+      _outputRangeStart = null;
+      _outputRangeEnd = null;
+      _applyIndividual(selected);
+    });
   }
 
   void _applyIndividual(StaffForAssignment? person) {
@@ -173,19 +248,6 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
               : id.toUpperCase(),
         ),
     ];
-  }
-
-  Map<String, String> _teamMapByStaffKey(List<StaffForAssignment> staff) {
-    final map = <String, String>{};
-    for (final s in staff) {
-      final teamId = s.teamId?.trim();
-      if (teamId == null || teamId.isEmpty) continue;
-      final appId = s.assigneeId.trim();
-      if (appId.isNotEmpty) map[appId.toLowerCase()] = teamId;
-      final uuid = s.staffUuid?.trim();
-      if (uuid != null && uuid.isNotEmpty) map[uuid.toLowerCase()] = teamId;
-    }
-    return map;
   }
 
   Map<String, String> _officeMapByStaffKey(List<StaffForAssignment> staff) {
@@ -382,6 +444,77 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     );
   }
 
+  bool _ownedByIndividual(Iterable<String?> keys) {
+    for (final key in keys) {
+      if (_keyMatchesIndividual(key)) return true;
+    }
+    return false;
+  }
+
+  /// Same eight counts as an office, limited to items this staff member owns.
+  _PerformanceMetrics _metricsForIndividual(AppState state) {
+    final projects = _projectsOf(state)
+        .where((p) => !_projectDeleted(p))
+        .where((p) => _ownedByIndividual(_projectOwnerKeys(p)))
+        .toList();
+    final tasks = _tasksOf(state)
+        .where((t) => !_taskDeleted(t))
+        .where((t) => _ownedByIndividual(_taskOwnerKeys(t)))
+        .toList();
+    final subtasks = _subtasksByTaskId.values
+        .expand((list) => list)
+        .where((s) => !_subtaskDeleted(s))
+        .where((s) => _ownedByIndividual(_subtaskOwnerKeys(s)))
+        .toList();
+    final subprojects = state.subprojects
+        .where((s) => !s.isDeleted)
+        .where((s) => _ownedByIndividual(_subprojectOwnerKeys(s)))
+        .toList();
+    final activeStaff = <String>{};
+    void addPerson(String? key) {
+      final k = key?.trim();
+      if (k == null || k.isEmpty) return;
+      final lower = k.toLowerCase();
+      activeStaff.add(_canonicalStaffKeyByLookup[lower] ?? lower);
+    }
+
+    for (final t in tasks) {
+      addPerson(t.pic);
+      for (final id in t.assigneeIds) {
+        addPerson(id);
+      }
+    }
+    for (final s in subtasks) {
+      addPerson(s.pic);
+      for (final id in s.assigneeIds) {
+        addPerson(id);
+      }
+    }
+
+    final activeTasks = tasks.where((t) => !_taskCompleted(t)).toList();
+    final activeSubtasks = subtasks
+        .where((s) => !_subtaskCompleted(s))
+        .toList();
+    final toBeCommenced =
+        activeTasks.where((t) => isToBeCommenced(t.commencementStatus)).length +
+        activeSubtasks
+            .where((s) => isToBeCommenced(s.commencementStatus))
+            .length;
+    final ongoing = activeTasks.length + activeSubtasks.length - toBeCommenced;
+    return _PerformanceMetrics(
+      activeProjects: projects.where((p) => !_recordCompleted(p.status)).length,
+      activeSubprojects: subprojects.where((s) => !s.isCompleted).length,
+      activeTasks: activeTasks.length,
+      activeSubtasks: activeSubtasks.length,
+      completedWorkItems:
+          tasks.where(_taskCompleted).length +
+          subtasks.where(_subtaskCompleted).length,
+      ongoingWorkItems: ongoing,
+      toBeCommencedWorkItems: toBeCommenced,
+      activeStaff: activeStaff.length,
+    );
+  }
+
   bool _recordCompleted(String status) {
     final value = status.trim().toLowerCase();
     return value == 'completed' || value == 'complete';
@@ -399,20 +532,6 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     final uuid = _individualStaffUuid?.trim().toLowerCase();
     return (appId != null && appId.isNotEmpty && v == appId) ||
         (uuid != null && uuid.isNotEmpty && v == uuid);
-  }
-
-  bool _anyKeyMatchesIndividual(Iterable<String> values) {
-    return values.any(_keyMatchesIndividual);
-  }
-
-  String? _individualTeamId() {
-    for (final key in [_individualStaffUuid, _individualAppId]) {
-      final normalized = key?.trim().toLowerCase();
-      if (normalized == null || normalized.isEmpty) continue;
-      final teamId = _teamIdByStaffKey[normalized];
-      if (teamId != null && teamId.isNotEmpty) return teamId;
-    }
-    return null;
   }
 
   String _monthKey(DateTime? value) {
@@ -439,107 +558,25 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
       return byMonth.putIfAbsent(key, () => _MonthlyIndividualPerformance(key));
     }
 
-    void countCreated({
-      required DateTime? createdAt,
-      required bool createdByIndividual,
-      required bool assignedToIndividual,
-      required Iterable<String> assigneeIds,
-      required bool isTask,
-    }) {
-      if (!createdByIndividual) return;
-      final m = month(_monthKey(createdAt));
-      m.createdTotal++;
-      if (isTask) {
-        m.createdTasks++;
-      } else {
-        m.createdSubtasks++;
-      }
-      final myTeamId = _individualTeamId();
-      var hasSameTeamOther = false;
-      var hasOtherTeam = false;
-      for (final id in assigneeIds) {
-        if (_keyMatchesIndividual(id)) continue;
-        final teamId = _teamIdByStaffKey[id.trim().toLowerCase()];
-        if (myTeamId != null &&
-            myTeamId.isNotEmpty &&
-            teamId != null &&
-            teamId == myTeamId) {
-          hasSameTeamOther = true;
-        } else {
-          hasOtherTeam = true;
-        }
-      }
-      if (hasOtherTeam) {
-        m.createdToOtherTeam++;
-        if (isTask) {
-          m.createdTaskToOtherTeam++;
-        } else {
-          m.createdSubtaskToOtherTeam++;
-        }
-      } else if (hasSameTeamOther) {
-        m.createdToSameTeam++;
-        if (isTask) {
-          m.createdTaskToSameTeam++;
-        } else {
-          m.createdSubtaskToSameTeam++;
-        }
-      } else if (assignedToIndividual) {
-        m.createdToSelf++;
-        if (isTask) {
-          m.createdTaskToSelf++;
-        } else {
-          m.createdSubtaskToSelf++;
-        }
-      } else {
-        m.createdToOtherTeam++;
-        if (isTask) {
-          m.createdTaskToOtherTeam++;
-        } else {
-          m.createdSubtaskToOtherTeam++;
-        }
-      }
-    }
-
+    final scored = <_ScoredCompletion>[];
     void countCompleted({
       required DateTime? completedAt,
       required String? complexity,
       required bool completed,
       required bool isPic,
-      required bool isAssignee,
-      required bool isCreator,
     }) {
-      if (!completed) return;
-      final m = month(_monthKey(completedAt));
-      final c = _complexityKey(complexity);
-      if (isCreator && isPic) {
-        m.completedAsCreatorAndPic.increment(c);
-      }
-      if (isPic && !isCreator) {
-        m.completedAsPicNotCreator.increment(c);
-      }
-      if (isCreator && !isAssignee) {
-        m.completedAsCreatorNotAssignee.increment(c);
-      }
+      if (!completed || !isPic) return;
+      final key = _complexityKey(complexity);
+      month(_monthKey(completedAt)).completedOutput.increment(key);
+      scored.add(_ScoredCompletion(date: completedAt, complexity: key));
     }
 
     for (final t in _tasksOf(state).where((t) => !_taskDeleted(t))) {
-      final isCreator = _keyMatchesIndividual(t.createByAssigneeKey);
-      final isAssignee = _anyKeyMatchesIndividual(t.assigneeIds);
-      final isPic = _keyMatchesIndividual(t.pic);
-      countCreated(
-        createdAt: t.createdAt,
-        createdByIndividual: isCreator,
-        assignedToIndividual: isAssignee,
-        assigneeIds: t.assigneeIds,
-        isTask: true,
-      );
       countCompleted(
         completedAt: t.completionDate ?? t.updateDate ?? t.lastUpdated,
         complexity: t.complexity,
         completed: _taskCompleted(t),
-        isPic: isPic,
-        isAssignee: isAssignee,
-        isCreator: isCreator,
+        isPic: _keyMatchesIndividual(t.pic),
       );
     }
 
@@ -547,23 +584,11 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
         .expand((list) => list)
         .where((s) => !_subtaskDeleted(s));
     for (final s in subtasks) {
-      final isCreator = _keyMatchesIndividual(s.createByStaffId);
-      final isAssignee = _anyKeyMatchesIndividual(s.assigneeIds);
-      final isPic = _keyMatchesIndividual(s.pic);
-      countCreated(
-        createdAt: s.createDate,
-        createdByIndividual: isCreator,
-        assignedToIndividual: isAssignee,
-        assigneeIds: s.assigneeIds,
-        isTask: false,
-      );
       countCompleted(
         completedAt: s.completionDate ?? s.updateDate,
         complexity: s.complexity,
         completed: _subtaskCompleted(s),
-        isPic: isPic,
-        isAssignee: isAssignee,
-        isCreator: isCreator,
+        isPic: _keyMatchesIndividual(s.pic),
       );
     }
 
@@ -574,38 +599,8 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
           ? _individualName!.trim()
           : 'Staff',
       months: months,
+      scored: scored,
     );
-  }
-
-  List<_MonthlyIndividualPerformance> _filteredWorkMonths(
-    _IndividualPerformance performance,
-  ) {
-    final months = performance.months;
-    final start = _periodStartMonth;
-    final end = _periodEndMonth;
-    if ((start == null || start.isEmpty) && (end == null || end.isEmpty)) {
-      return months;
-    }
-    var lower = start;
-    var upper = end;
-    if (lower != null &&
-        upper != null &&
-        lower.isNotEmpty &&
-        upper.isNotEmpty &&
-        lower.compareTo(upper) > 0) {
-      final tmp = lower;
-      lower = upper;
-      upper = tmp;
-    }
-    return months.where((m) {
-      if (lower != null && lower.isNotEmpty && m.month.compareTo(lower) < 0) {
-        return false;
-      }
-      if (upper != null && upper.isNotEmpty && m.month.compareTo(upper) > 0) {
-        return false;
-      }
-      return true;
-    }).toList();
   }
 
   @override
@@ -632,7 +627,6 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
 
     final offices = _officesInScope(state);
     final individual = _individualPerformance(state);
-    final filteredWorkMonths = _filteredWorkMonths(individual);
     const seriesColors = <Color>[
       Color(0xFFF06A6A),
       Color(0xFF1565C0),
@@ -689,33 +683,285 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
           if (widget.viewMode == AsanaPerformanceViewMode.individual)
             _IndividualPerformanceBlock(
               performance: individual,
+              metrics: _metricsForIndividual(state),
               staffChoices: _scopedStaff,
+              offices: _pickerOffices,
+              teams: _pickerTeams,
               selectedStaffId: _selectedIndividualId,
               onStaffSelected: (id) {
                 StaffForAssignment? person;
                 for (final row in _scopedStaff) {
                   if (row.assigneeId == id) person = row;
                 }
-                setState(() => _applyIndividual(person));
-              },
-              workMonths: filteredWorkMonths,
-              periodStartMonth: _periodStartMonth,
-              periodEndMonth: _periodEndMonth,
-              onPeriodStartChanged: (value) {
                 setState(() {
-                  _periodStartMonth = value;
+                  _individualPickedManually = true;
+                  _outputRangeStart = null;
+                  _outputRangeEnd = null;
+                  _applyIndividual(person);
                 });
               },
-              onPeriodEndChanged: (value) {
+              outputRangeStart: _outputRangeStart,
+              outputRangeEnd: _outputRangeEnd,
+              onOutputRangeChanged: (start, end) {
                 setState(() {
-                  _periodEndMonth = value;
+                  _outputRangeStart = start;
+                  _outputRangeEnd = end;
                 });
               },
+              onWriteReport: _writeStaffReport,
               palette: widget.palette,
             ),
         ],
       ),
     );
+  }
+
+  bool _staffInvolved(String? pic, List<String> assigneeIds) {
+    if (_keyMatchesIndividual(pic)) return true;
+    for (final id in assigneeIds) {
+      if (_keyMatchesIndividual(id)) return true;
+    }
+    return false;
+  }
+
+  String _staffRole(String? pic, List<String> assigneeIds) {
+    final isPic = _keyMatchesIndividual(pic);
+    final isAssignee = assigneeIds.any(_keyMatchesIndividual);
+    if (isPic && isAssignee) return 'PIC and assignee';
+    if (isPic) return 'PIC';
+    return 'assignee';
+  }
+
+  bool _dueInReportRange(
+    DateTime? due, {
+    required bool all,
+    required _CreatedChartGrain grain,
+    required DateTime start,
+    required DateTime end,
+  }) {
+    if (all) return true;
+    final day = _hkDateOnly(due);
+    if (day == null) return false;
+    final bucket = _alignCreatedGrainStart(day, grain);
+    return !bucket.isBefore(start) && !bucket.isAfter(end);
+  }
+
+  String _clipReportText(String raw) {
+    final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= 160) return text;
+    return '${text.substring(0, 157)}...';
+  }
+
+  Future<String> _writeStaffReport({
+    required bool all,
+    required _CreatedChartGrain grain,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final evidence = _staffReportEvidence(
+      context.read<AppState>(),
+      all: all,
+      grain: grain,
+      start: start,
+      end: end,
+    );
+    if (evidence == null) {
+      return 'No tasks or sub-tasks are due in this period for this staff member.';
+    }
+    return LlmService.writeStaffPerformanceReport(
+      staffName: _individualName?.trim().isNotEmpty == true
+          ? _individualName!.trim()
+          : 'Staff',
+      evidence: evidence,
+    );
+  }
+
+  String? _staffReportEvidence(
+    AppState state, {
+    required bool all,
+    required _CreatedChartGrain grain,
+    required DateTime start,
+    required DateTime end,
+  }) {
+    bool inRange(DateTime? due) => _dueInReportRange(
+      due,
+      all: all,
+      grain: grain,
+      start: start,
+      end: end,
+    );
+    final tasks = _tasksOf(state)
+        .where((t) => !_taskDeleted(t))
+        .where((t) => _staffInvolved(t.pic, t.assigneeIds))
+        .where((t) => inRange(t.dueDate))
+        .toList();
+    final subtasks = _subtasksByTaskId.values
+        .expand((list) => list)
+        .where((s) => !_subtaskDeleted(s))
+        .where((s) => _staffInvolved(s.pic, s.assigneeIds))
+        .where((s) => inRange(s.dueDate))
+        .toList();
+    if (tasks.isEmpty && subtasks.isEmpty) return null;
+
+    final taskById = {for (final t in _tasksOf(state)) t.id: t};
+    final projectById = {for (final p in _projectsOf(state)) p.id: p};
+    final subprojectById = {for (final s in state.subprojects) s.id: s};
+    final projectIds = <String>{};
+    final subprojectIds = <String>{};
+    void takeParents(Task? task) {
+      final projectId = task?.projectId?.trim();
+      if (projectId != null && projectId.isNotEmpty) projectIds.add(projectId);
+      final subprojectId = task?.subprojectId?.trim();
+      if (subprojectId != null && subprojectId.isNotEmpty) {
+        subprojectIds.add(subprojectId);
+      }
+    }
+
+    for (final task in tasks) {
+      takeParents(task);
+    }
+    for (final subtask in subtasks) {
+      takeParents(taskById[subtask.taskId]);
+    }
+
+    var score = 0;
+    var scoreLow = 0;
+    var scoreMedium = 0;
+    var scoreHigh = 0;
+    void addScore(String? complexity, bool completed, bool isPic) {
+      if (!completed || !isPic) return;
+      switch (_complexityKey(complexity)) {
+        case 'Low':
+          scoreLow++;
+          score += 1;
+        case 'Medium':
+          scoreMedium++;
+          score += 2;
+        case 'High':
+          scoreHigh++;
+          score += 3;
+      }
+    }
+
+    final taskMix = _ComplexityCounts();
+    final subtaskMix = _ComplexityCounts();
+    for (final task in tasks) {
+      taskMix.increment(_complexityKey(task.complexity));
+      addScore(task.complexity, _taskCompleted(task), _keyMatchesIndividual(task.pic));
+    }
+    for (final subtask in subtasks) {
+      subtaskMix.increment(_complexityKey(subtask.complexity));
+      addScore(
+        subtask.complexity,
+        _subtaskCompleted(subtask),
+        _keyMatchesIndividual(subtask.pic),
+      );
+    }
+
+    String dueLabel(DateTime? due) {
+      final day = _hkDateOnly(due);
+      if (day == null) return 'no due date';
+      return DateFormat('d MMM yyyy').format(day);
+    }
+
+    String statusOfTask(Task task) {
+      final db = (task.dbStatus ?? '').trim();
+      if (db.isNotEmpty) return db;
+      return taskStatusDisplayNames[task.status] ?? '';
+    }
+
+    const cap = 40;
+    final shownTasks = tasks.take(cap).toList();
+    final shownSubtasks = subtasks.take(cap).toList();
+    final period = all
+        ? 'All due dates'
+        : 'Due from ${_createdGrainLabel(start, grain)} to ${_createdGrainLabel(end, grain)}';
+    final buffer = StringBuffer()
+      ..writeln('Period: $period')
+      ..writeln(
+        all
+            ? 'Included items are every task and sub-task where this person is assignee or PIC. Projects and sub-projects are only those linked to these items.'
+            : 'Included items are tasks and sub-tasks where this person is assignee or PIC, and whose due date is in the period. Projects and sub-projects are only those linked to these items.',
+      )
+      ..writeln()
+      ..writeln(
+        'Capability score (completed items where this person is PIC; Low 1, Medium 2, High 3; a task weighs the same as a sub-task):',
+      )
+      ..writeln('Score: $score')
+      ..writeln('Low: $scoreLow')
+      ..writeln('Medium: $scoreMedium')
+      ..writeln('High: $scoreHigh')
+      ..writeln()
+      ..writeln(
+        'Kind of work in this period, counting every included item: tasks ${taskMix.total} (Low ${taskMix.low}, Medium ${taskMix.medium}, High ${taskMix.high}); sub-tasks ${subtaskMix.total} (Low ${subtaskMix.low}, Medium ${subtaskMix.medium}, High ${subtaskMix.high}).',
+      )
+      ..writeln()
+      ..writeln('Projects:');
+    if (projectIds.isEmpty) {
+      buffer.writeln('- None');
+    }
+    String projectNameFor(String id) {
+      final stored = projectById[id]?.name.trim() ?? '';
+      if (stored.isNotEmpty) return stored;
+      for (final task in tasks) {
+        if (task.projectId == id &&
+            (task.projectName?.trim().isNotEmpty ?? false)) {
+          return task.projectName!.trim();
+        }
+      }
+      return id;
+    }
+
+    for (final id in projectIds) {
+      final project = projectById[id];
+      final name = projectNameFor(id);
+      final description = _clipReportText(project?.description ?? '');
+      buffer.writeln('- $name');
+      if (description.isNotEmpty) buffer.writeln('  $description');
+    }
+    buffer.writeln();
+    buffer.writeln('Sub-projects:');
+    if (subprojectIds.isEmpty) buffer.writeln('- None');
+    for (final id in subprojectIds) {
+      final subproject = subprojectById[id];
+      final name = subproject?.name.trim().isNotEmpty == true
+          ? subproject!.name.trim()
+          : id;
+      final parent = subproject == null
+          ? ''
+          : (projectById[subproject.projectId]?.name.trim() ?? '');
+      final description = _clipReportText(subproject?.description ?? '');
+      buffer.writeln(parent.isEmpty ? '- $name' : '- $name (project: $parent)');
+      if (description.isNotEmpty) buffer.writeln('  $description');
+    }
+    buffer.writeln();
+    buffer.writeln('Tasks:');
+    for (final task in shownTasks) {
+      buffer.writeln(
+        '- ${task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim()} | ${_staffRole(task.pic, task.assigneeIds)} | ${_complexityKey(task.complexity)} | ${statusOfTask(task)} | due ${dueLabel(task.dueDate)} | project ${task.projectName?.trim().isNotEmpty == true ? task.projectName!.trim() : '—'} | sub-project ${task.subprojectName?.trim().isNotEmpty == true ? task.subprojectName!.trim() : '—'}',
+      );
+      final description = _clipReportText(task.description);
+      if (description.isNotEmpty) buffer.writeln('  $description');
+    }
+    if (tasks.length > shownTasks.length) {
+      buffer.writeln('- ${tasks.length - shownTasks.length} more tasks not listed');
+    }
+    buffer.writeln();
+    buffer.writeln('Sub-tasks:');
+    for (final subtask in shownSubtasks) {
+      final parent = taskById[subtask.taskId];
+      buffer.writeln(
+        '- ${subtask.subtaskName.trim().isEmpty ? '(Unnamed sub-task)' : subtask.subtaskName.trim()} | ${_staffRole(subtask.pic, subtask.assigneeIds)} | ${_complexityKey(subtask.complexity)} | ${subtask.status.trim()} | due ${dueLabel(subtask.dueDate)} | task ${parent?.name.trim().isNotEmpty == true ? parent!.name.trim() : '—'}',
+      );
+      final description = _clipReportText(subtask.description);
+      if (description.isNotEmpty) buffer.writeln('  $description');
+    }
+    if (subtasks.length > shownSubtasks.length) {
+      buffer.writeln(
+        '- ${subtasks.length - shownSubtasks.length} more sub-tasks not listed',
+      );
+    }
+    return buffer.toString();
   }
 }
 
@@ -747,286 +993,35 @@ class _MonthlyIndividualPerformance {
   _MonthlyIndividualPerformance(this.month);
 
   final String month;
-  int createdTotal = 0;
-  int createdTasks = 0;
-  int createdSubtasks = 0;
-  int createdToSelf = 0;
-  int createdToSameTeam = 0;
-  int createdToOtherTeam = 0;
-  int createdTaskToSelf = 0;
-  int createdTaskToSameTeam = 0;
-  int createdTaskToOtherTeam = 0;
-  int createdSubtaskToSelf = 0;
-  int createdSubtaskToSameTeam = 0;
-  int createdSubtaskToOtherTeam = 0;
-  final completedAsCreatorAndPic = _ComplexityCounts();
-  final completedAsPicNotCreator = _ComplexityCounts();
-  final completedAsCreatorNotAssignee = _ComplexityCounts();
+  final completedOutput = _ComplexityCounts();
 
-  int get outputScore =>
-      completedAsCreatorAndPic.weightedScore +
-      completedAsPicNotCreator.weightedScore;
+  int get outputScore => completedOutput.weightedScore;
+}
 
-  int get delegationScore => completedAsCreatorNotAssignee.weightedScore;
+class _ScoredCompletion {
+  const _ScoredCompletion({required this.date, required this.complexity});
 
-  int get workInitiationScore =>
-      createdToSelf + createdToSameTeam * 2 + createdToOtherTeam * 3;
+  final DateTime? date;
+  final String complexity;
+
+  int get weight => switch (complexity) {
+    'Low' => 1,
+    'High' => 3,
+    _ => 2,
+  };
 }
 
 class _IndividualPerformance {
   const _IndividualPerformance({
     required this.displayName,
     required this.months,
+    required this.scored,
   });
   final String displayName;
   final List<_MonthlyIndividualPerformance> months;
+  final List<_ScoredCompletion> scored;
 }
 
-_MonthlyIndividualPerformance _aggregateMonths(
-  List<_MonthlyIndividualPerformance> months,
-) {
-  if (months.isEmpty) return _MonthlyIndividualPerformance('No data');
-  final label = months.length == 1
-      ? months.first.month
-      : '${_monthLabel(months.last.month)} - ${_monthLabel(months.first.month)}';
-  final out = _MonthlyIndividualPerformance(label);
-  void addCounts(_ComplexityCounts target, _ComplexityCounts source) {
-    target.low += source.low;
-    target.medium += source.medium;
-    target.high += source.high;
-  }
-
-  for (final m in months) {
-    out.createdTotal += m.createdTotal;
-    out.createdTasks += m.createdTasks;
-    out.createdSubtasks += m.createdSubtasks;
-    out.createdToSelf += m.createdToSelf;
-    out.createdToSameTeam += m.createdToSameTeam;
-    out.createdToOtherTeam += m.createdToOtherTeam;
-    out.createdTaskToSelf += m.createdTaskToSelf;
-    out.createdTaskToSameTeam += m.createdTaskToSameTeam;
-    out.createdTaskToOtherTeam += m.createdTaskToOtherTeam;
-    out.createdSubtaskToSelf += m.createdSubtaskToSelf;
-    out.createdSubtaskToSameTeam += m.createdSubtaskToSameTeam;
-    out.createdSubtaskToOtherTeam += m.createdSubtaskToOtherTeam;
-    addCounts(out.completedAsCreatorAndPic, m.completedAsCreatorAndPic);
-    addCounts(out.completedAsPicNotCreator, m.completedAsPicNotCreator);
-    addCounts(
-      out.completedAsCreatorNotAssignee,
-      m.completedAsCreatorNotAssignee,
-    );
-  }
-  return out;
-}
-
-class _MobileWorkInitiationCard extends StatelessWidget {
-  const _MobileWorkInitiationCard({required this.month, required this.palette});
-
-  final _MonthlyIndividualPerformance month;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    TextStyle? style({bool header = false, bool breakdown = false}) =>
-        asanaTextStyle(
-          Theme.of(context).textTheme.bodySmall,
-          fontSize: header ? 11 : (breakdown ? 11 : 12),
-          fontWeight: header
-              ? FontWeight.w700
-              : (breakdown ? FontWeight.w500 : FontWeight.w700),
-          color: header || !breakdown
-              ? const Color(0xFF3B4552)
-              : kAsanaTextSecondary,
-        );
-
-    TableRow row(
-      String label,
-      int tasks,
-      int subtasks, {
-      required int total,
-      bool breakdown = false,
-    }) {
-      return TableRow(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            child: Text(label, style: style(breakdown: breakdown)),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            child: Text(
-              '$tasks',
-              textAlign: TextAlign.right,
-              style: style(breakdown: true),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            child: Text(
-              '$subtasks',
-              textAlign: TextAlign.right,
-              style: style(breakdown: true),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            child: Text('$total', textAlign: TextAlign.right, style: style()),
-          ),
-        ],
-      );
-    }
-
-    Widget header(String text) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(
-          text,
-          textAlign: TextAlign.right,
-          style: style(header: true),
-        ),
-      );
-    }
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Color.alphaBlend(
-          palette.accent.withValues(alpha: 0.04),
-          palette.listSurface,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.accent.withValues(alpha: 0.14)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _monthLabel(month.month),
-                    style: asanaTextStyle(
-                      Theme.of(context).textTheme.bodyMedium,
-                      fontWeight: FontWeight.w800,
-                      color: kAsanaTextPrimary,
-                    ),
-                  ),
-                ),
-                _UsageScorePill(
-                  score: month.workInitiationScore,
-                  palette: palette,
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Table(
-              columnWidths: const {
-                0: FlexColumnWidth(1.45),
-                1: FlexColumnWidth(0.7),
-                2: FlexColumnWidth(0.8),
-                3: FlexColumnWidth(1.05),
-              },
-              children: [
-                TableRow(
-                  children: [
-                    const SizedBox.shrink(),
-                    header('Tasks'),
-                    header('Sub-\ntasks'),
-                    header('Work items'),
-                  ],
-                ),
-                row(
-                  'Created',
-                  month.createdTasks,
-                  month.createdSubtasks,
-                  total: month.createdTotal,
-                ),
-                row(
-                  'Self-managed',
-                  month.createdTaskToSelf,
-                  month.createdSubtaskToSelf,
-                  total: month.createdToSelf,
-                  breakdown: true,
-                ),
-                row(
-                  'Same team',
-                  month.createdTaskToSameTeam,
-                  month.createdSubtaskToSameTeam,
-                  total: month.createdToSameTeam,
-                  breakdown: true,
-                ),
-                row(
-                  'Cross team',
-                  month.createdTaskToOtherTeam,
-                  month.createdSubtaskToOtherTeam,
-                  total: month.createdToOtherTeam,
-                  breakdown: true,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _UsageScorePill extends StatelessWidget {
-  const _UsageScorePill({required this.score, required this.palette});
-
-  final int score;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message:
-          'Work Initiation Score = self-managed items x1 + same-team delegation x2 + cross-team delegation x3.',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.accent.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: palette.accent.withValues(alpha: 0.22)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          child: Text(
-            'Usage score $score',
-            style: asanaTextStyle(
-              Theme.of(context).textTheme.bodySmall,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              color: palette.accent,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _WorkInitiationScoreInfoButton extends StatelessWidget {
-  const _WorkInitiationScoreInfoButton({required this.palette});
-
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return _PerformanceInfoButton(
-      palette: palette,
-      title: 'Work Creation Activity Score',
-      content:
-          'It estimates how actively the staff member starts work in Project Tracker.',
-      tableRows: const [
-        ['Creation pattern', 'Weight'],
-        ['Self-managed', '1'],
-        ['Same-team delegation', '2'],
-        ['Cross-team delegation', '3'],
-      ],
-    );
-  }
-}
 
 class _WorkOutputScoreInfoButton extends StatelessWidget {
   const _WorkOutputScoreInfoButton({required this.palette});
@@ -1039,7 +1034,7 @@ class _WorkOutputScoreInfoButton extends StatelessWidget {
       palette: palette,
       title: 'Output Score',
       content:
-          'This score estimates completed hands-on output from self-initiated own work and collaborative responsibility.',
+          'Each completed task and each completed sub-task where this staff member is PIC adds the same score. The score uses complexity only.',
       tableRows: const [
         ['Complexity', 'Weight'],
         ['Low', '1'],
@@ -1050,862 +1045,307 @@ class _WorkOutputScoreInfoButton extends StatelessWidget {
   }
 }
 
-class _DelegationScoreInfoButton extends StatelessWidget {
-  const _DelegationScoreInfoButton({required this.palette});
+class _IndividualStaffField extends StatefulWidget {
+  const _IndividualStaffField({
+    required this.offices,
+    required this.teams,
+    required this.staff,
+    required this.selectedId,
+    required this.onSelected,
+    required this.nameStyle,
+  });
 
-  final AsanaLandingPalette palette;
+  final List<OfficeOptionRow> offices;
+  final List<TeamOptionRow> teams;
+  final List<StaffForAssignment> staff;
+  final String? selectedId;
+  final ValueChanged<String> onSelected;
+  final TextStyle nameStyle;
+
+  @override
+  State<_IndividualStaffField> createState() => _IndividualStaffFieldState();
+}
+
+class _IndividualStaffFieldState extends State<_IndividualStaffField> {
+  final LayerLink _anchor = LayerLink();
+  late final ValueNotifier<AsanaAssigneePickerSnapshot> _snapshot;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapshot = ValueNotifier(_snapshotOf());
+  }
+
+  @override
+  void didUpdateWidget(covariant _IndividualStaffField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _snapshot.value = _snapshotOf();
+  }
+
+  @override
+  void dispose() {
+    _snapshot.dispose();
+    super.dispose();
+  }
+
+  AsanaAssigneePickerSnapshot _snapshotOf() {
+    final officeIds = {
+      for (final person in widget.staff)
+        if ((person.officeId ?? '').trim().isNotEmpty)
+          person.officeId!.trim().toLowerCase(),
+    };
+    final teamIds = {
+      for (final person in widget.staff)
+        if ((person.teamId ?? '').trim().isNotEmpty)
+          person.teamId!.trim().toLowerCase(),
+    };
+    return AsanaAssigneePickerSnapshot(
+      offices: widget.offices
+          .where((office) => officeIds.contains(office.officeId.trim().toLowerCase()))
+          .toList(),
+      teams: widget.teams
+          .where((team) => teamIds.contains(team.teamId.trim().toLowerCase()))
+          .toList(),
+      staff: widget.staff,
+    );
+  }
+
+  Future<void> _open(BuildContext anchorContext) {
+    final id = widget.selectedId?.trim();
+    return showAsanaAssigneePicker(
+      anchorLink: _anchor,
+      anchorContext: anchorContext,
+      snapshot: _snapshot,
+      selectedIds: {if (id != null && id.isNotEmpty) id},
+      singleSelect: true,
+      minPanelWidth: 420,
+      onSelectionChanged: (ids) {
+        if (ids.isEmpty) return;
+        widget.onSelected(ids.first);
+      },
+    );
+  }
+
+  double _fieldWidth(BuildContext context) {
+    var width = _textWidth('Select staff', asanaDetailValueStyle(context));
+    for (final person in widget.staff) {
+      final name = person.name.trim();
+      if (name.isEmpty) continue;
+      final measured = _textWidth(name, widget.nameStyle);
+      if (measured > width) width = measured;
+    }
+    return width + 36;
+  }
+
+  double _textWidth(String text, TextStyle? style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 1,
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    return painter.width;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return _PerformanceInfoButton(
-      palette: palette,
-      title: 'Delegation Score',
-      content:
-          'This score estimates management and follow-through for work assigned to others.',
-      tableRows: const [
-        ['Complexity', 'Weight'],
-        ['Low', '1'],
-        ['Medium', '2'],
-        ['High', '3'],
-      ],
+    StaffForAssignment? person;
+    for (final row in widget.staff) {
+      if (row.assigneeId == widget.selectedId) person = row;
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: _fieldWidth(context)),
+      child: AsanaAssigneeFieldValue(
+        anchorLink: _anchor,
+        assignees: [
+          if (person != null) (id: person.assigneeId, name: person.name),
+        ],
+        canEdit: widget.staff.isNotEmpty,
+        emptyPlaceholder: 'Select staff',
+        showAddButtonWhenNotEmpty: false,
+        nameStyle: widget.nameStyle,
+        onOpenPicker: _open,
+      ),
     );
   }
-}
-
-String _monthLabel(String monthKey) {
-  final parts = monthKey.split('-');
-  if (parts.length != 2) return monthKey;
-  final year = parts[0];
-  final month = int.tryParse(parts[1]);
-  const names = [
-    '',
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  if (month == null || month < 1 || month > 12) return monthKey;
-  return '$year ${names[month]}';
 }
 
 class _IndividualPerformanceBlock extends StatelessWidget {
   const _IndividualPerformanceBlock({
     required this.performance,
+    required this.metrics,
     required this.staffChoices,
+    required this.offices,
+    required this.teams,
     required this.selectedStaffId,
     required this.onStaffSelected,
-    required this.workMonths,
-    required this.periodStartMonth,
-    required this.periodEndMonth,
-    required this.onPeriodStartChanged,
-    required this.onPeriodEndChanged,
+    required this.outputRangeStart,
+    required this.outputRangeEnd,
+    required this.onOutputRangeChanged,
+    required this.onWriteReport,
     required this.palette,
   });
 
   final _IndividualPerformance performance;
+  final _PerformanceMetrics metrics;
   final List<StaffForAssignment> staffChoices;
+  final List<OfficeOptionRow> offices;
+  final List<TeamOptionRow> teams;
   final String? selectedStaffId;
   final ValueChanged<String> onStaffSelected;
-  final List<_MonthlyIndividualPerformance> workMonths;
-  final String? periodStartMonth;
-  final String? periodEndMonth;
-  final ValueChanged<String?> onPeriodStartChanged;
-  final ValueChanged<String?> onPeriodEndChanged;
+  final DateTime? outputRangeStart;
+  final DateTime? outputRangeEnd;
+  final void Function(DateTime? start, DateTime? end) onOutputRangeChanged;
+  final Future<String> Function({
+    required bool all,
+    required _CreatedChartGrain grain,
+    required DateTime start,
+    required DateTime end,
+  }) onWriteReport;
   final AsanaLandingPalette palette;
-
-  List<DataRow> _usageRows(
-    BuildContext context,
-    _MonthlyIndividualPerformance m,
-  ) {
-    Text cell(String value, {bool breakdown = false}) {
-      return Text(
-        value,
-        style: asanaTextStyle(
-          Theme.of(context).textTheme.bodySmall,
-          fontSize: breakdown ? 11 : 12,
-          fontWeight: breakdown ? FontWeight.w500 : FontWeight.w700,
-          color: breakdown ? kAsanaTextSecondary : const Color(0xFF3B4552),
-        ),
-      );
-    }
-
-    DataRow row({
-      required String month,
-      required String type,
-      required int created,
-      required int self,
-      required int sameTeam,
-      required int otherTeam,
-      required String usageScore,
-      required bool breakdown,
-    }) {
-      return DataRow(
-        cells: [
-          DataCell(cell(month, breakdown: breakdown)),
-          DataCell(cell(type, breakdown: breakdown)),
-          DataCell(cell('$created', breakdown: breakdown)),
-          DataCell(cell('$self', breakdown: breakdown)),
-          DataCell(cell('$sameTeam', breakdown: breakdown)),
-          DataCell(cell('$otherTeam', breakdown: breakdown)),
-          DataCell(cell(usageScore, breakdown: breakdown)),
-        ],
-      );
-    }
-
-    return [
-      row(
-        month: _monthLabel(m.month),
-        type: 'Work items',
-        created: m.createdTotal,
-        self: m.createdToSelf,
-        sameTeam: m.createdToSameTeam,
-        otherTeam: m.createdToOtherTeam,
-        usageScore: '${m.workInitiationScore}',
-        breakdown: false,
-      ),
-      row(
-        month: '',
-        type: 'Tasks',
-        created: m.createdTasks,
-        self: m.createdTaskToSelf,
-        sameTeam: m.createdTaskToSameTeam,
-        otherTeam: m.createdTaskToOtherTeam,
-        usageScore: '',
-        breakdown: true,
-      ),
-      row(
-        month: '',
-        type: 'Sub-tasks',
-        created: m.createdSubtasks,
-        self: m.createdSubtaskToSelf,
-        sameTeam: m.createdSubtaskToSameTeam,
-        otherTeam: m.createdSubtaskToOtherTeam,
-        usageScore: '',
-        breakdown: true,
-      ),
-    ];
-  }
-
-  Widget _workInitiationTable(
-    BuildContext context,
-    _MonthlyIndividualPerformance summaryMonth,
-  ) {
-    final compact = MediaQuery.sizeOf(context).width < 600;
-    if (compact) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: _MobileWorkInitiationCard(month: summaryMonth, palette: palette),
-      );
-    }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        headingTextStyle: asanaTextStyle(
-          Theme.of(context).textTheme.bodySmall,
-          fontWeight: FontWeight.w700,
-          color: kAsanaTextPrimary,
-        ),
-        dataTextStyle: asanaTextStyle(
-          Theme.of(context).textTheme.bodySmall,
-          color: const Color(0xFF3B4552),
-        ),
-        columns: const [
-          DataColumn(label: Text('Month')),
-          DataColumn(label: Text('Type')),
-          DataColumn(label: Text('Created')),
-          DataColumn(label: Text('Self-managed')),
-          DataColumn(label: Text('Same-team delegation')),
-          DataColumn(label: Text('Cross-team delegation')),
-          DataColumn(label: Text('Usage score')),
-        ],
-        rows: _usageRows(context, summaryMonth),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
-    final summaryMonth = _aggregateMonths(workMonths);
+    final titleStyle = asanaTextStyle(
+      Theme.of(context).textTheme.titleLarge,
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      color: kAsanaTextPrimary,
+      height: 1.2,
+    );
+    final totals = _outputTotals(
+      performance.scored,
+      outputRangeStart,
+      outputRangeEnd,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _IndividualSectionCard(
+          palette: palette,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text('Staff - ', style: titleStyle),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _IndividualStaffField(
+                        offices: offices,
+                        teams: teams,
+                        staff: staffChoices,
+                        selectedId: selectedStaffId,
+                        onSelected: onStaffSelected,
+                        nameStyle: titleStyle!,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _PerformanceCardsLayout(metrics: metrics, palette: palette),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        _IndividualSectionCard(
+          palette: palette,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('Work Output', style: titleStyle),
+                  const SizedBox(width: 4),
+                  _WorkOutputScoreInfoButton(palette: palette),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _PerformanceCardsLayout(
+                palette: palette,
+                cards: [
+                  ('Score', totals.score),
+                  ('# of low', totals.low),
+                  ('# of medium', totals.medium),
+                  ('# of high', totals.high),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        _ScoreTrendSection(
+          items: performance.scored,
+          palette: palette,
+          onRangeChanged: onOutputRangeChanged,
+        ),
+        const SizedBox(height: 18),
+        _StaffReportSection(
+          key: ValueKey<String>(selectedStaffId ?? ''),
+          palette: palette,
+          staffName: performance.displayName,
+          onWriteReport: onWriteReport,
+        ),
+      ],
+    );
+  }
+}
+
+class _IndividualSectionCard extends StatelessWidget {
+  const _IndividualSectionCard({required this.palette, required this.child});
+
+  final AsanaLandingPalette palette;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
       color: palette.listSurface,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Staff',
-                isDense: true,
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: staffChoices.any((s) => s.assigneeId == selectedStaffId)
-                      ? selectedStaffId
-                      : null,
-                  isExpanded: true,
-                  items: [
-                    for (final person in staffChoices)
-                      DropdownMenuItem(
-                        value: person.assigneeId,
-                        child: Text(person.name),
-                      ),
-                  ],
-                  onChanged: staffChoices.isEmpty
-                      ? null
-                      : (value) {
-                          if (value != null) onStaffSelected(value);
-                        },
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              performance.displayName,
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.bodyMedium,
-                color: kAsanaTextSecondary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 14),
-            _WorkPerformanceFilters(
-              months: performance.months.map((m) => m.month).toList(),
-              periodStartMonth: periodStartMonth,
-              periodEndMonth: periodEndMonth,
-              onPeriodStartChanged: onPeriodStartChanged,
-              onPeriodEndChanged: onPeriodEndChanged,
-              palette: palette,
-            ),
-            const SizedBox(height: 18),
-            _PerformanceSectionTitle(
-              title: 'Work Output',
-              subtitle:
-                  'Completed hands-on task/subtask output by role and complexity for the selected months.',
-              trailing: _WorkOutputScoreInfoButton(palette: palette),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 14,
-              runSpacing: 14,
-              children: [
-                _MonthlyCompletionCard(month: summaryMonth, palette: palette),
-              ],
-            ),
-            const SizedBox(height: 22),
-            _PerformanceSectionTitle(
-              title: 'Delegation',
-              subtitle:
-                  'Work this staff member created for others to complete, summarizing management and follow-through for the selected months.',
-              trailing: _DelegationScoreInfoButton(palette: palette),
-            ),
-            const SizedBox(height: 12),
-            _DelegationCard(month: summaryMonth, palette: palette),
-            const SizedBox(height: 22),
-            _PerformanceSectionTitle(
-              title: 'Work Creation Activity',
-              subtitle:
-                  'How actively this staff member creates work items in Project Tracker, split by task type and delegation pattern.',
-              trailing: _WorkInitiationScoreInfoButton(palette: palette),
-            ),
-            const SizedBox(height: 8),
-            _workInitiationTable(context, summaryMonth),
-          ],
-        ),
+        child: child,
       ),
     );
   }
 }
 
-class _PerformanceSectionTitle extends StatelessWidget {
-  const _PerformanceSectionTitle({
-    required this.title,
-    required this.subtitle,
-    this.trailing,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Flexible(
-              child: Text(
-                title,
-                style: asanaTextStyle(
-                  Theme.of(context).textTheme.titleMedium,
-                  fontWeight: FontWeight.w700,
-                  color: kAsanaTextPrimary,
-                ),
-              ),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 4), trailing!],
-          ],
-        ),
-        const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: asanaTextStyle(
-            Theme.of(context).textTheme.bodySmall,
-            color: kAsanaTextSecondary,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _WorkPerformanceFilters extends StatelessWidget {
-  const _WorkPerformanceFilters({
-    required this.months,
-    required this.periodStartMonth,
-    required this.periodEndMonth,
-    required this.onPeriodStartChanged,
-    required this.onPeriodEndChanged,
-    required this.palette,
-  });
-
-  final List<String> months;
-  final String? periodStartMonth;
-  final String? periodEndMonth;
-  final ValueChanged<String?> onPeriodStartChanged;
-  final ValueChanged<String?> onPeriodEndChanged;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 10,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        AsanaFilterDropdown(
-          title: 'Months',
-          value: _periodLabel(),
-          highlighted: periodStartMonth != null || periodEndMonth != null,
-          buttonWidth: 220,
-          onPressed: _showPeriodPicker,
-        ),
-      ],
-    );
-  }
-
-  String _periodLabel() {
-    if (periodStartMonth == null && periodEndMonth == null) return 'All months';
-    final start = periodStartMonth == null
-        ? 'Start'
-        : _monthLabel(periodStartMonth!);
-    final end = periodEndMonth == null ? 'End' : _monthLabel(periodEndMonth!);
-    return '$start - $end';
-  }
-
-  Future<void> _showPeriodPicker(BuildContext buttonContext) async {
-    final box = buttonContext.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final offset = box.localToGlobal(Offset.zero);
-    final size = box.size;
-    final screen = MediaQuery.sizeOf(buttonContext);
-    final panelWidth = screen.width < 456 ? screen.width - 16 : 440.0;
-    const panelHeight = 360.0;
-    var left = offset.dx;
-    if (left + panelWidth > screen.width - 8) {
-      left = screen.width - panelWidth - 8;
+({int score, int low, int medium, int high}) _outputTotals(
+  List<_ScoredCompletion> items,
+  DateTime? start,
+  DateTime? end,
+) {
+  var low = 0;
+  var medium = 0;
+  var high = 0;
+  final from = start == null ? null : DateTime(start.year, start.month, start.day);
+  final to = end == null ? null : DateTime(end.year, end.month, end.day);
+  for (final item in items) {
+    if (from != null || to != null) {
+      final day = _hkDateOnly(item.date);
+      if (day == null) continue;
+      if (from != null && day.isBefore(from)) continue;
+      if (to != null && day.isAfter(to)) continue;
     }
-    if (left < 8) left = 8;
-    var top = offset.dy + size.height + 4;
-    if (top + panelHeight > screen.height - 8) {
-      top = offset.dy - panelHeight - 4;
-    }
-    if (top < 8) top = 8;
-
-    final result = await showDialog<({String? start, String? end})>(
-      context: buttonContext,
-      barrierColor: Colors.black26,
-      builder: (context) {
-        String? start;
-        String? end;
-        final orderedMonths = months.reversed.toList();
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            bool inRange(String month) {
-              if (start == null || end == null) return false;
-              var lower = start!;
-              var upper = end!;
-              if (lower.compareTo(upper) > 0) {
-                final tmp = lower;
-                lower = upper;
-                upper = tmp;
-              }
-              return month.compareTo(lower) >= 0 && month.compareTo(upper) <= 0;
-            }
-
-            void selectMonth(String month) {
-              setDialogState(() {
-                if (start == null || (start != null && end != null)) {
-                  start = month;
-                  end = null;
-                } else {
-                  end = month;
-                }
-              });
-            }
-
-            return Stack(
-              children: [
-                Positioned(
-                  left: left,
-                  top: top,
-                  child: Material(
-                    elevation: 8,
-                    borderRadius: BorderRadius.circular(8),
-                    clipBehavior: Clip.antiAlias,
-                    color: Theme.of(context).colorScheme.surface,
-                    child: SizedBox(
-                      width: panelWidth,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              'Select period',
-                              style: asanaTextStyle(
-                                Theme.of(context).textTheme.titleSmall,
-                                fontWeight: FontWeight.w700,
-                                color: kAsanaTextPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Click one month for a single-month period, or click two months for a range.',
-                              style: asanaDetailLabelStyle(context),
-                            ),
-                            const SizedBox(height: 14),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                for (final month in orderedMonths)
-                                  ChoiceChip(
-                                    label: Text(_monthLabel(month)),
-                                    selected:
-                                        month == start ||
-                                        month == end ||
-                                        inRange(month),
-                                    onSelected: (_) => selectMonth(month),
-                                    side: BorderSide(
-                                      color:
-                                          (month == start ||
-                                              month == end ||
-                                              inRange(month))
-                                          ? palette.accent
-                                          : palette.accent.withValues(
-                                              alpha: 0.28,
-                                            ),
-                                    ),
-                                    selectedColor: palette.accent.withValues(
-                                      alpha: 0.18,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, (
-                                    start: null,
-                                    end: null,
-                                  )),
-                                  child: const Text('Clear'),
-                                ),
-                                const SizedBox(width: 8),
-                                FilledButton(
-                                  onPressed: start == null
-                                      ? null
-                                      : () => Navigator.pop(context, (
-                                          start: start,
-                                          end: end ?? start,
-                                        )),
-                                  style:
-                                      AsanaTaskDetailActionStyles.updateFilled(
-                                        palette,
-                                        context: context,
-                                      ),
-                                  child: const Text('Apply'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    if (result != null) {
-      onPeriodStartChanged(result.start);
-      onPeriodEndChanged(result.end);
+    switch (item.complexity) {
+      case 'Low':
+        low++;
+      case 'High':
+        high++;
+      default:
+        medium++;
     }
   }
-}
-
-class _MonthlyCompletionCard extends StatelessWidget {
-  const _MonthlyCompletionCard({required this.month, required this.palette});
-
-  final _MonthlyIndividualPerformance month;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    final maxCount = [
-      month.completedAsCreatorAndPic.maxComplexityCount,
-      month.completedAsPicNotCreator.maxComplexityCount,
-      1,
-    ].reduce((a, b) => a > b ? a : b);
-    return SizedBox(
-      width: 360,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color.alphaBlend(
-            palette.accent.withValues(alpha: 0.04),
-            palette.listSurface,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.accent.withValues(alpha: 0.14)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _monthLabel(month.month),
-                      style: asanaTextStyle(
-                        Theme.of(context).textTheme.titleSmall,
-                        fontWeight: FontWeight.w800,
-                        color: kAsanaTextPrimary,
-                      ),
-                    ),
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: palette.accent.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: palette.accent.withValues(alpha: 0.22),
-                      ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      child: Text(
-                        'Output score ${month.outputScore}',
-                        style: asanaTextStyle(
-                          Theme.of(context).textTheme.bodySmall,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: palette.accent,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _ComplexityBarGroup(
-                title: 'Self-Initiated Own Work',
-                infoText:
-                    'Completed tasks/subtasks where this staff member was both Creator and PIC.',
-                counts: month.completedAsCreatorAndPic,
-                maxCount: maxCount,
-                palette: palette,
-              ),
-              const SizedBox(height: 12),
-              _ComplexityBarGroup(
-                title: 'Collaborative Responsibility',
-                infoText:
-                    'Completed tasks/subtasks where this staff member was PIC but not Creator.',
-                counts: month.completedAsPicNotCreator,
-                maxCount: maxCount,
-                palette: palette,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DelegationCard extends StatelessWidget {
-  const _DelegationCard({required this.month, required this.palette});
-
-  final _MonthlyIndividualPerformance month;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    final counts = month.completedAsCreatorNotAssignee;
-    return SizedBox(
-      width: 360,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color.alphaBlend(
-            palette.accent.withValues(alpha: 0.04),
-            palette.listSurface,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.accent.withValues(alpha: 0.14)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _monthLabel(month.month),
-                      style: asanaTextStyle(
-                        Theme.of(context).textTheme.titleSmall,
-                        fontWeight: FontWeight.w800,
-                        color: kAsanaTextPrimary,
-                      ),
-                    ),
-                  ),
-                  _OutputScorePill(
-                    label: 'Delegation score',
-                    score: month.delegationScore,
-                    palette: palette,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _ComplexityBarGroup(
-                title: 'Delegated Work Assigned',
-                infoText:
-                    'Completed tasks/subtasks created by this staff member where they were not an assignee.',
-                counts: counts,
-                maxCount: counts.maxComplexityCount,
-                palette: palette,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OutputScorePill extends StatelessWidget {
-  const _OutputScorePill({
-    required this.label,
-    required this.score,
-    required this.palette,
-  });
-
-  final String label;
-  final int score;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.accent.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: palette.accent.withValues(alpha: 0.22)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        child: Text(
-          '$label $score',
-          style: asanaTextStyle(
-            Theme.of(context).textTheme.bodySmall,
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            color: palette.accent,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ComplexityBarGroup extends StatelessWidget {
-  const _ComplexityBarGroup({
-    required this.title,
-    required this.infoText,
-    required this.counts,
-    required this.maxCount,
-    required this.palette,
-  });
-
-  final String title;
-  final String infoText;
-  final _ComplexityCounts counts;
-  final int maxCount;
-  final AsanaLandingPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      title,
-                      style: asanaTextStyle(
-                        Theme.of(context).textTheme.bodySmall,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF3B4552),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  _PerformanceInfoButton(
-                    palette: palette,
-                    title: title,
-                    content: infoText,
-                  ),
-                ],
-              ),
-            ),
-            Text(
-              '${counts.total}',
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.bodySmall,
-                fontWeight: FontWeight.w800,
-                color: kAsanaTextPrimary,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        _ComplexityBar(label: 'Low', value: counts.low, maxCount: maxCount),
-        _ComplexityBar(
-          label: 'Medium',
-          value: counts.medium,
-          maxCount: maxCount,
-        ),
-        _ComplexityBar(label: 'High', value: counts.high, maxCount: maxCount),
-      ],
-    );
-  }
-}
-
-class _ComplexityBar extends StatelessWidget {
-  const _ComplexityBar({
-    required this.label,
-    required this.value,
-    required this.maxCount,
-  });
-
-  final String label;
-  final int value;
-  final int maxCount;
-
-  Color get _color {
-    return switch (label) {
-      'Low' => const Color(0xFF2563EB),
-      'Medium' => const Color(0xFFF59E0B),
-      'High' => const Color(0xFF16A34A),
-      _ => const Color(0xFF6B7280),
-    };
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final fraction = maxCount <= 0 ? 0.0 : value / maxCount;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 58,
-            child: Text(
-              label,
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.bodySmall,
-                color: kAsanaTextSecondary,
-                fontSize: 11,
-              ),
-            ),
-          ),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth * fraction.clamp(0.0, 1.0);
-                return SizedBox(
-                  height: 9,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: SizedBox(
-                      width: width,
-                      height: 9,
-                      child: ColoredBox(color: _color),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 24,
-            child: Text(
-              '$value',
-              textAlign: TextAlign.right,
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.bodySmall,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF3B4552),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  return (
+    score: low + medium * 2 + high * 3,
+    low: low,
+    medium: medium,
+    high: high,
+  );
 }
 
 class _PerformanceInfoButton extends StatelessWidget {
@@ -2109,6 +1549,32 @@ String _createdGrainKey(DateTime d, _CreatedChartGrain grain) {
   }
 }
 
+const _reportMonthNames = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+String _reportMonthText(DateTime d) => '${d.year} ${_reportMonthNames[d.month - 1]}';
+
+String _reportDayText(DateTime d) =>
+    '${_reportMonthNames[d.month - 1]} ${d.day}, ${d.year}';
+
+String _reportStampMonth(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}${d.month.toString().padLeft(2, '0')}';
+
+String _reportStampDay(DateTime d) =>
+    '${_reportStampMonth(d)}${d.day.toString().padLeft(2, '0')}';
+
 String _createdGrainLabel(DateTime d, _CreatedChartGrain grain) {
   final a = _alignCreatedGrainStart(d, grain);
   switch (grain) {
@@ -2181,6 +1647,606 @@ List<_CreatedVolumePoint> _createdVolumePoints({
         label: labels[key] ?? key,
         values: [for (final into in counts) into[key] ?? 0],
       ),
+  ];
+}
+
+class _StaffReportSection extends StatefulWidget {
+  const _StaffReportSection({
+    super.key,
+    required this.palette,
+    required this.staffName,
+    required this.onWriteReport,
+  });
+
+  final AsanaLandingPalette palette;
+  final String staffName;
+  final Future<String> Function({
+    required bool all,
+    required _CreatedChartGrain grain,
+    required DateTime start,
+    required DateTime end,
+  }) onWriteReport;
+
+  @override
+  State<_StaffReportSection> createState() => _StaffReportSectionState();
+}
+
+class _StaffReportSectionState extends State<_StaffReportSection> {
+  _CreatedChartGrain _grain = _CreatedChartGrain.month;
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
+  bool _writing = false;
+  final _report = TextEditingController();
+
+  @override
+  void dispose() {
+    _report.dispose();
+    super.dispose();
+  }
+
+  DateTime get _today => HkTime.todayDateOnlyHk();
+
+  DateTime get _boundStart => DateTime(_today.year - 3, _today.month, 1);
+  DateTime get _boundEnd => DateTime(_today.year + 2, _today.month, 1);
+
+  DateTime get _effectiveStart {
+    final raw = _rangeStart ?? _boundStart;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isAfter(_boundEnd)) return _boundEnd;
+    return aligned;
+  }
+
+  DateTime get _effectiveEnd {
+    final raw = _rangeEnd ?? _boundEnd;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isBefore(_effectiveStart)) return _effectiveStart;
+    return aligned;
+  }
+
+  bool get _all => _rangeStart == null && _rangeEnd == null;
+
+  String? get _reportRangeLabel {
+    if (_all) return null;
+    if (_grain == _CreatedChartGrain.day) {
+      return 'from ${_reportDayText(_effectiveStart)} to ${_reportDayText(_effectiveEnd)}';
+    }
+    return 'from ${_reportMonthText(_effectiveStart)} to ${_reportMonthText(_effectiveEnd)}';
+  }
+
+  String _reportFileName({required bool asPdf}) {
+    final name = widget.staffName.trim().isEmpty
+        ? 'Staff'
+        : widget.staffName.trim().replaceAll(' ', '_');
+    final extension = asPdf ? 'pdf' : 'docx';
+    if (_all) return 'project_tracker_report_$name.$extension';
+    final from = _grain == _CreatedChartGrain.day
+        ? _reportStampDay(_effectiveStart)
+        : _reportStampMonth(_effectiveStart);
+    final to = _grain == _CreatedChartGrain.day
+        ? _reportStampDay(_effectiveEnd)
+        : _reportStampMonth(_effectiveEnd);
+    return 'project_tracker_report_${name}_${from}_to_$to.$extension';
+  }
+
+  ButtonStyle _accentButtonStyle() {
+    return FilledButton.styleFrom(
+      backgroundColor: widget.palette.accent,
+      foregroundColor: Colors.white,
+      disabledBackgroundColor: widget.palette.accent.withValues(alpha: 0.6),
+      disabledForegroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    );
+  }
+
+  StaffReportDocument get _reportDocument {
+    final name = widget.staffName.trim().isEmpty ? 'Staff' : widget.staffName.trim();
+    return StaffReportDocument(
+      staffName: name,
+      rangeLabel: _reportRangeLabel,
+      body: _report.text,
+    );
+  }
+
+  Future<void> _downloadReport({required bool asPdf}) async {
+    if (_report.text.trim().isEmpty || _writing) return;
+    try {
+      final document = _reportDocument;
+      final bytes = asPdf
+          ? await staffReportPdf(document)
+          : staffReportDocx(document);
+      final contentType = asPdf
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      final saved = await openAttachmentBytesInSystemViewer(
+        bytes,
+        contentType,
+        _reportFileName(asPdf: asPdf),
+      );
+      if (!saved && mounted) {
+        _showDownloadError();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _showDownloadError();
+    }
+  }
+
+  void _showDownloadError() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not download the report.')),
+    );
+  }
+
+  Future<void> _pickRange(BuildContext anchorContext) async {
+    if (_grain == _CreatedChartGrain.month) {
+      final picked = await showAsanaAnchoredMonthRangePicker(
+        anchorContext: anchorContext,
+        startMonth: _rangeStart == null ? _today : _effectiveStart,
+        endMonth: _rangeEnd == null ? _today : _effectiveEnd,
+        helpText: 'From and to',
+        firstDate: _boundStart,
+        lastDate: _boundEnd,
+        allowClear: false,
+        requireBothEnds: true,
+        emptyHint: 'Select the from month, then the to month.',
+        pendingEndHint: 'Select the to month',
+        selectedPrefix: '',
+      );
+      if (picked == null || picked.cleared || picked.range == null || !mounted) {
+        return;
+      }
+      _applyRange(picked.range!.start, picked.range!.end);
+      return;
+    }
+    final picked = await showAsanaAnchoredDateRangePicker(
+      anchorContext: anchorContext,
+      start: _rangeStart ?? _today,
+      end: _rangeEnd ?? _today,
+      helpText: 'From and to',
+      firstDate: _boundStart,
+      lastDate: _boundEnd,
+      requireBothEnds: true,
+    );
+    if (picked == null || !mounted) return;
+    _applyRange(picked.start, picked.end);
+  }
+
+  void _applyRange(DateTime startRaw, DateTime endRaw) {
+    setState(() {
+      var start = _alignCreatedGrainStart(startRaw, _grain);
+      var end = _alignCreatedGrainStart(endRaw, _grain);
+      if (start.isAfter(end)) {
+        final tmp = start;
+        start = end;
+        end = tmp;
+      }
+      _rangeStart = start;
+      _rangeEnd = end;
+    });
+  }
+
+  Future<void> _write() async {
+    setState(() => _writing = true);
+    try {
+      final text = await widget.onWriteReport(
+        all: _all,
+        grain: _grain,
+        start: _effectiveStart,
+        end: _effectiveEnd,
+      );
+      if (!mounted) return;
+      setState(() => _report.text = text);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _report.text = e.toString());
+    } finally {
+      if (mounted) setState(() => _writing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final titleStyle = asanaTextStyle(
+      Theme.of(context).textTheme.titleLarge,
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      color: kAsanaTextPrimary,
+      height: 1.2,
+    );
+    final fromLabel = _all ? 'All' : _createdGrainLabel(_effectiveStart, _grain);
+    final toLabel = _all ? 'All' : _createdGrainLabel(_effectiveEnd, _grain);
+    return Material(
+      color: widget.palette.listSurface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Staff report', style: titleStyle),
+            const SizedBox(height: 6),
+            Text(
+              'A written report for this staff member, using tasks and sub-tasks due in the selected period and the projects and sub-projects those items belong to.',
+              style: asanaTextStyle(
+                Theme.of(context).textTheme.bodySmall,
+                color: kAsanaTextSecondary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _CreatedGrainToggle(
+                  grain: _grain,
+                  showWeek: false,
+                  onChanged: (value) => setState(() {
+                    _grain = value;
+                    _rangeStart = null;
+                    _rangeEnd = null;
+                  }),
+                  palette: widget.palette,
+                ),
+                Text(
+                  'From',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(label: fromLabel, onPressed: _pickRange),
+                Text(
+                  'To',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(label: toLabel, onPressed: _pickRange),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _rangeStart = null;
+                    _rangeEnd = null;
+                  }),
+                  child: const Text('All'),
+                ),
+                FilledButton(
+                  onPressed: _writing ? null : _write,
+                  style: _accentButtonStyle(),
+                  child: _writing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Write report'),
+                ),
+              ],
+            ),
+            if (_report.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _report,
+                readOnly: true,
+                minLines: 8,
+                maxLines: 18,
+                style: asanaTextStyle(
+                  Theme.of(context).textTheme.bodyMedium,
+                  color: kAsanaTextPrimary,
+                  height: 1.4,
+                ),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    FilledButton(
+                      onPressed: _writing
+                          ? null
+                          : () => _downloadReport(asPdf: false),
+                      style: _accentButtonStyle(),
+                      child: const Text('Download as Word'),
+                    ),
+                    FilledButton(
+                      onPressed: _writing
+                          ? null
+                          : () => _downloadReport(asPdf: true),
+                      style: _accentButtonStyle(),
+                      child: const Text('Download as PDF'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScoreTrendSection extends StatefulWidget {
+  const _ScoreTrendSection({
+    required this.items,
+    required this.palette,
+    required this.onRangeChanged,
+  });
+
+  final List<_ScoredCompletion> items;
+  final AsanaLandingPalette palette;
+  final void Function(DateTime? start, DateTime? end) onRangeChanged;
+
+  @override
+  State<_ScoreTrendSection> createState() => _ScoreTrendSectionState();
+}
+
+class _ScoreTrendSectionState extends State<_ScoreTrendSection> {
+  _CreatedChartGrain _grain = _CreatedChartGrain.month;
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
+
+  DateTime get _today => HkTime.todayDateOnlyHk();
+
+  DateTime get _dataStart {
+    DateTime? min;
+    for (final item in widget.items) {
+      final d = _hkDateOnly(item.date);
+      if (d == null) continue;
+      if (min == null || d.isBefore(min)) min = d;
+    }
+    return min ?? DateTime(_today.year, _today.month, 1);
+  }
+
+  DateTime get _dataEnd {
+    var maxDate = _today;
+    for (final item in widget.items) {
+      final d = _hkDateOnly(item.date);
+      if (d != null && d.isAfter(maxDate)) maxDate = d;
+    }
+    return maxDate;
+  }
+
+  DateTime get _boundStart => _alignCreatedGrainStart(_dataStart, _grain);
+  DateTime get _boundEnd => _alignCreatedGrainStart(_dataEnd, _grain);
+
+  DateTime get _effectiveStart {
+    final raw = _rangeStart ?? _boundStart;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isBefore(_boundStart)) return _boundStart;
+    if (aligned.isAfter(_boundEnd)) return _boundEnd;
+    return aligned;
+  }
+
+  DateTime get _effectiveEnd {
+    final raw = _rangeEnd ?? _boundEnd;
+    final aligned = _alignCreatedGrainStart(raw, _grain);
+    if (aligned.isAfter(_boundEnd)) return _boundEnd;
+    if (aligned.isBefore(_effectiveStart)) return _effectiveStart;
+    return aligned;
+  }
+
+  void _publishRange({required bool all}) {
+    if (all) {
+      widget.onRangeChanged(null, null);
+      return;
+    }
+    widget.onRangeChanged(_effectiveStart, _effectiveEnd);
+  }
+
+  Future<void> _pickRange(BuildContext anchorContext) async {
+    final steps = _createdGrainSteps(_boundStart, _boundEnd, _grain);
+    if (steps.isEmpty) return;
+    if (_grain == _CreatedChartGrain.month) {
+      final picked = await showAsanaAnchoredMonthRangePicker(
+        anchorContext: anchorContext,
+        startMonth: _effectiveStart,
+        endMonth: _effectiveEnd,
+        helpText: 'From and to',
+        firstDate: _boundStart,
+        lastDate: _boundEnd,
+        allowClear: false,
+        requireBothEnds: true,
+        emptyHint: 'Select the from month, then the to month.',
+        pendingEndHint: 'Select the to month',
+        selectedPrefix: '',
+      );
+      if (picked == null || picked.cleared || picked.range == null || !mounted) {
+        return;
+      }
+      _applyRange(picked.range!.start, picked.range!.end);
+      return;
+    }
+    var lastDate = _grain == _CreatedChartGrain.day ? _boundEnd : _today;
+    if (lastDate.isBefore(_boundStart)) lastDate = _boundStart;
+    final picked = await showAsanaAnchoredDateRangePicker(
+      anchorContext: anchorContext,
+      start: _effectiveStart,
+      end: _effectiveEnd,
+      helpText: 'From and to',
+      firstDate: _boundStart,
+      lastDate: lastDate,
+      requireBothEnds: true,
+    );
+    if (picked == null || !mounted) return;
+    _applyRange(picked.start, picked.end);
+  }
+
+  void _applyRange(DateTime startRaw, DateTime endRaw) {
+    setState(() {
+      var start = _alignCreatedGrainStart(startRaw, _grain);
+      var end = _alignCreatedGrainStart(endRaw, _grain);
+      if (start.isBefore(_boundStart)) start = _boundStart;
+      if (end.isAfter(_boundEnd)) end = _boundEnd;
+      if (start.isAfter(_boundEnd)) start = _boundEnd;
+      if (end.isBefore(_boundStart)) end = _boundStart;
+      if (start.isAfter(end)) {
+        final tmp = start;
+        start = end;
+        end = tmp;
+      }
+      _rangeStart = start;
+      _rangeEnd = end;
+    });
+    _publishRange(all: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final points = _scoreTrendPoints(
+      items: widget.items,
+      grain: _grain,
+      rangeStart: _effectiveStart,
+      rangeEnd: _effectiveEnd,
+    );
+    final titleStyle = asanaTextStyle(
+      Theme.of(context).textTheme.titleLarge,
+      fontSize: 22,
+      fontWeight: FontWeight.w700,
+      color: kAsanaTextPrimary,
+      height: 1.2,
+    );
+    return Material(
+      color: widget.palette.listSurface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final wrap = constraints.maxWidth < 720;
+                final title = Text('Score trend', style: titleStyle);
+                final toggle = _CreatedGrainToggle(
+                  grain: _grain,
+                  onChanged: (value) {
+                    setState(() {
+                      _grain = value;
+                      _rangeStart = null;
+                      _rangeEnd = null;
+                    });
+                    _publishRange(all: true);
+                  },
+                  palette: widget.palette,
+                );
+                if (wrap) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [title, const SizedBox(height: 12), toggle],
+                  );
+                }
+                return Row(children: [Expanded(child: title), toggle]);
+              },
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'From',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(
+                  label: _createdGrainLabel(_effectiveStart, _grain),
+                  onPressed: _pickRange,
+                ),
+                Text(
+                  'To',
+                  style: asanaTextStyle(
+                    Theme.of(context).textTheme.bodySmall,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextSecondary,
+                  ),
+                ),
+                _CreatedRangeButton(
+                  label: _createdGrainLabel(_effectiveEnd, _grain),
+                  onPressed: _pickRange,
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _rangeStart = null;
+                      _rangeEnd = null;
+                    });
+                    _publishRange(all: true);
+                  },
+                  child: const Text('All'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _ChartLegendDot(color: widget.palette.accent, label: 'Score'),
+            const SizedBox(height: 12),
+            const SizedBox(height: 12),
+            _ScrollablePerformanceChart(
+              points: points,
+              colors: [widget.palette.accent],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+List<_CreatedVolumePoint> _scoreTrendPoints({
+  required List<_ScoredCompletion> items,
+  required _CreatedChartGrain grain,
+  required DateTime rangeStart,
+  required DateTime rangeEnd,
+}) {
+  final start = _alignCreatedGrainStart(rangeStart, grain);
+  final last = _alignCreatedGrainStart(rangeEnd, grain);
+  final totals = <String, int>{};
+  final labels = <String, String>{};
+  final keys = <String>[];
+  for (final cursor in _createdGrainSteps(start, last, grain)) {
+    final key = _createdGrainKey(cursor, grain);
+    keys.add(key);
+    totals[key] = 0;
+    labels[key] = switch (grain) {
+      _CreatedChartGrain.month => DateFormat('MMM yyyy').format(cursor),
+      _CreatedChartGrain.week ||
+      _CreatedChartGrain.day => DateFormat('MMM d').format(cursor),
+    };
+  }
+  for (final item in items) {
+    final day = _hkDateOnly(item.date);
+    if (day == null) continue;
+    final key = _createdGrainKey(day, grain);
+    if (!totals.containsKey(key)) continue;
+    totals[key] = (totals[key] ?? 0) + item.weight;
+  }
+  return [
+    for (final key in keys)
+      _CreatedVolumePoint(label: labels[key] ?? key, values: [totals[key] ?? 0]),
   ];
 }
 
@@ -2390,13 +2456,10 @@ class _CreatedVolumeSectionState extends State<_CreatedVolumeSection> {
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 260,
-              width: double.infinity,
-              child: _OfficeLineChart(
-                points: points,
-                colors: [for (final series in widget.series) series.color],
-              ),
+            const SizedBox(height: 12),
+            _ScrollablePerformanceChart(
+              points: points,
+              colors: [for (final series in widget.series) series.color],
             ),
           ],
         ),
@@ -2433,11 +2496,13 @@ class _CreatedGrainToggle extends StatelessWidget {
     required this.grain,
     required this.onChanged,
     required this.palette,
+    this.showWeek = true,
   });
 
   final _CreatedChartGrain grain;
   final ValueChanged<_CreatedChartGrain> onChanged;
   final AsanaLandingPalette palette;
+  final bool showWeek;
 
   @override
   Widget build(BuildContext context) {
@@ -2472,7 +2537,7 @@ class _CreatedGrainToggle extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         button(_CreatedChartGrain.month, 'Month'),
-        button(_CreatedChartGrain.week, 'Week'),
+        if (showWeek) button(_CreatedChartGrain.week, 'Week'),
         button(_CreatedChartGrain.day, 'Day'),
       ],
     );
@@ -2508,6 +2573,58 @@ class _ChartLegendDot extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ScrollablePerformanceChart extends StatelessWidget {
+  const _ScrollablePerformanceChart({
+    required this.points,
+    required this.colors,
+  });
+
+  final List<_CreatedVolumePoint> points;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 600;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewport = constraints.maxWidth;
+        final width = mobile
+            ? math.max(viewport, _mobileChartWidth(points.length))
+            : viewport;
+        final chart = SizedBox(
+          width: width,
+          height: 260,
+          child: _OfficeLineChart(points: points, colors: colors),
+        );
+        if (!mobile || width <= viewport) return chart;
+        return ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(
+            scrollbars: false,
+            dragDevices: {
+              PointerDeviceKind.touch,
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.stylus,
+              PointerDeviceKind.trackpad,
+            },
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: chart,
+          ),
+        );
+      },
+    );
+  }
+}
+
+double _mobileChartWidth(int pointCount) {
+  if (pointCount <= 1) return 0;
+  const slot = 72.0;
+  const axisLeft = 36.0;
+  const axisRight = 8.0;
+  return axisLeft + axisRight + slot * (pointCount - 1);
 }
 
 class _OfficeLineChart extends StatelessWidget {
@@ -2625,7 +2742,10 @@ class _OfficeLineChartPainter extends CustomPainter {
       });
     }
 
-    final labelEvery = points.length > 12 ? (points.length / 6).ceil() : 1;
+    final slot = points.length <= 1
+        ? plot.width
+        : plot.width / (points.length - 1);
+    final labelEvery = math.max(1, (64 / slot).ceil());
     for (var i = 0; i < points.length; i++) {
       if (i != 0 && i != points.length - 1 && i % labelEvery != 0) continue;
       final tp = TextPainter(
@@ -2700,7 +2820,7 @@ class _OfficePerformanceSection extends StatelessWidget {
                 ];
                 final perRow = constraints.maxWidth < 920
                     ? 1
-                    : math.min(3, math.max(1, blocks.length));
+                    : math.min(2, math.max(1, blocks.length));
                 if (blocks.isEmpty) {
                   return Text(
                     'No offices in this grant.',
@@ -2792,52 +2912,62 @@ class _PerformanceBlock extends StatelessWidget {
 
 class _PerformanceCardsLayout extends StatelessWidget {
   const _PerformanceCardsLayout({
-    required this.metrics,
     required this.palette,
+    this.metrics,
+    this.cards,
   });
 
-  final _PerformanceMetrics metrics;
+  final _PerformanceMetrics? metrics;
+  final List<(String, int)>? cards;
   final AsanaLandingPalette palette;
 
   @override
   Widget build(BuildContext context) {
     const gap = 10.0;
-    const cardHeight = 96.0;
-    final cards = <(String, int)>[
-      ('Active projects', metrics.activeProjects),
-      ('Active sub-projects', metrics.activeSubprojects),
-      ('Active tasks', metrics.activeTasks),
-      ('Active sub-tasks', metrics.activeSubtasks),
-      ('Completed', metrics.completedWorkItems),
-      ('Ongoing', metrics.ongoingWorkItems),
-      ('To be commenced', metrics.toBeCommencedWorkItems),
-      ('Staff', metrics.activeStaff),
-    ];
-    const columns = 4;
-    final rows = <Widget>[];
-    for (var i = 0; i < cards.length; i += columns) {
-      if (rows.isNotEmpty) rows.add(const SizedBox(height: gap));
-      rows.add(
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var col = 0; col < columns; col++) ...[
-              if (col > 0) const SizedBox(width: gap),
-              Expanded(
-                child: _PerformanceScoreCard(
-                  label: cards[i + col].$1,
-                  value: cards[i + col].$2,
-                  palette: palette,
-                  wide: true,
-                  height: cardHeight,
-                ),
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-    return Column(children: rows);
+    final source = metrics;
+    final cards = this.cards ??
+        <(String, int)>[
+          ('Active projects', source!.activeProjects),
+          ('Active sub-projects', source.activeSubprojects),
+          ('Active tasks', source.activeTasks),
+          ('Active sub-tasks', source.activeSubtasks),
+          ('Completed Tasks/Sub-tasks', source.completedWorkItems),
+          ('Ongoing Tasks/Sub-tasks', source.ongoingWorkItems),
+          ('Tasks/Sub-tasks To be commenced', source.toBeCommencedWorkItems),
+          ('Staff', source.activeStaff),
+        ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = MediaQuery.sizeOf(context).width < 600 ? 2 : 4;
+        final cardHeight = (columns == 2 ? 148.0 : 156.0) * 0.55;
+        final rows = <Widget>[];
+        for (var i = 0; i < cards.length; i += columns) {
+          if (rows.isNotEmpty) rows.add(const SizedBox(height: gap));
+          rows.add(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var col = 0; col < columns; col++) ...[
+                  if (col > 0) const SizedBox(width: gap),
+                  Expanded(
+                    child: i + col < cards.length
+                        ? _PerformanceScoreCard(
+                            label: cards[i + col].$1,
+                            value: cards[i + col].$2,
+                            palette: palette,
+                            wide: true,
+                            height: cardHeight,
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
+        return Column(children: rows);
+      },
+    );
   }
 }
 
@@ -2863,8 +2993,7 @@ class _PerformanceScoreCard extends StatelessWidget {
       height: height,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact =
-              constraints.maxWidth < 120 || constraints.maxHeight < 92;
+          final narrow = constraints.maxWidth < 140;
           return DecoratedBox(
             decoration: BoxDecoration(
               color: Color.alphaBlend(
@@ -2876,10 +3005,10 @@ class _PerformanceScoreCard extends StatelessWidget {
             ),
             child: Padding(
               padding: EdgeInsets.fromLTRB(
-                compact ? 10 : 18,
-                compact ? 10 : 16,
-                compact ? 8 : 18,
-                compact ? 10 : 16,
+                narrow ? 10 : 14,
+                8,
+                narrow ? 8 : 12,
+                4,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2888,20 +3017,22 @@ class _PerformanceScoreCard extends StatelessWidget {
                     '$value',
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.headlineMedium,
-                      fontSize: compact ? 18 : 30,
+                      fontSize: narrow ? 26 : 30,
                       fontWeight: FontWeight.w800,
+                      height: 1,
                       color: palette.accent,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 2),
                   Text(
                     label,
-                    maxLines: 2,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: asanaTextStyle(
                       Theme.of(context).textTheme.bodyMedium,
-                      fontSize: compact ? 11 : 14,
+                      fontSize: narrow ? 11 : 12,
                       fontWeight: FontWeight.w600,
+                      height: 1.15,
                       color: const Color(0xFF3B4552),
                     ),
                   ),

@@ -3844,6 +3844,7 @@ class _DiagramBox extends StatelessWidget {
           height: letterHeight,
           child: _MapThemeBadge(
             palette: palette,
+            fill: _mapLevelBadgeColor(palette, item.node.type),
             width: item.node.type.letter.length > 1 ? 30 : 24,
             tooltip: switch (item.node.type) {
               _DiagramNodeType.project => 'Project',
@@ -3857,7 +3858,10 @@ class _DiagramBox extends StatelessWidget {
               style: TextStyle(
                 fontSize: item.node.type.letter.length > 1 ? 10 : 12,
                 fontWeight: FontWeight.w700,
-                color: _mapBadgeForeground(palette),
+                color: _mapBadgeForeground(
+                  palette,
+                  fill: _mapLevelBadgeColor(palette, item.node.type),
+                ),
                 height: 1,
               ),
             ),
@@ -3870,6 +3874,7 @@ class _DiagramBox extends StatelessWidget {
             height: letterHeight,
             child: _MapThemeBadge(
               palette: palette,
+              fill: _mapStatusBadgeColor(palette, statusLabel),
               tooltip: statusLabel,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -3878,7 +3883,10 @@ class _DiagramBox extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
-                    color: _mapBadgeForeground(palette),
+                    color: _mapBadgeForeground(
+                      palette,
+                      fill: _mapStatusBadgeColor(palette, statusLabel),
+                    ),
                     height: 1,
                   ),
                 ),
@@ -3907,8 +3915,9 @@ class _TreeConnectorPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final line = palette.levelBadges?.subproject ?? palette.accent;
     final paint = Paint()
-      ..color = palette.accent.withValues(alpha: 0.78)
+      ..color = line.withValues(alpha: 0.78)
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
@@ -4032,6 +4041,31 @@ class _DiagramBoxStyle {
     _DiagramNodeType type,
     AsanaLandingPalette palette,
   ) {
+    final fills = palette.levelFills;
+    final badges = palette.levelBadges;
+    if (fills != null && type != _DiagramNodeType.levelSpacer) {
+      final fill = switch (type) {
+        _DiagramNodeType.project => fills.project,
+        _DiagramNodeType.subproject => fills.subproject,
+        _DiagramNodeType.task => fills.task,
+        _DiagramNodeType.subtask => fills.subtask,
+        _DiagramNodeType.levelSpacer => fills.project,
+      };
+      final badge = switch (type) {
+        _DiagramNodeType.project => badges?.project ?? fill,
+        _DiagramNodeType.subproject => badges?.subproject ?? fill,
+        _DiagramNodeType.task => badges?.task ?? fill,
+        _DiagramNodeType.subtask => badges?.subtask ?? fill,
+        _DiagramNodeType.levelSpacer => fill,
+      };
+      final ink = asanaInkIfDark(fill) ?? kAsanaTextPrimary;
+      return _DiagramBoxStyle(
+        background: fill,
+        border: badge,
+        text: ink,
+        secondaryText: ink.withValues(alpha: 0.78),
+      );
+    }
     final surface = palette.listSurface;
     final accent = palette.accent;
     final dark = palette.darkChrome;
@@ -4281,11 +4315,38 @@ class _MapModeTab extends StatelessWidget {
 }
 
 
-Color _mapBadgeForeground(AsanaLandingPalette palette) {
+Color? _mapLevelBadgeColor(
+  AsanaLandingPalette palette,
+  _DiagramNodeType type,
+) {
+  final badges = palette.levelBadges;
+  if (badges == null) return null;
+  return switch (type) {
+    _DiagramNodeType.project => badges.project,
+    _DiagramNodeType.subproject => badges.subproject,
+    _DiagramNodeType.task => badges.task,
+    _DiagramNodeType.subtask => badges.subtask,
+    _DiagramNodeType.levelSpacer => null,
+  };
+}
+
+Color? _mapStatusBadgeColor(AsanaLandingPalette palette, String label) {
+  if (palette.levelBadges == null) return null;
+  return switch (label) {
+    'Completed' => const Color(0xFF2E9B57),
+    'Submitted' => const Color(0xFF1565C0),
+    'Due today' => const Color(0xFF7B5EA7),
+    'Overdue' => const Color(0xFFD32F2F),
+    'Incomplete' => const Color(0xFFE09A2B),
+    _ => palette.levelBadges!.task,
+  };
+}
+
+Color _mapBadgeForeground(AsanaLandingPalette palette, {Color? fill}) {
   // Corner badges are filled with the theme accent. Pick the ink that
   // stays readable on that fill. Classic stays white, as requested.
-  if (palette.id == 'Classic') return Colors.white;
-  final accent = palette.accent;
+  if (fill == null && palette.id == 'Classic') return Colors.white;
+  final accent = fill ?? palette.accent;
   final onBanner = palette.onBanner;
   final accentLum = accent.computeLuminance();
   final inkLum = onBanner.computeLuminance();
@@ -4473,15 +4534,18 @@ class _MapThemeBadge extends StatelessWidget {
     required this.child,
     required this.tooltip,
     this.width,
+    this.fill,
   });
 
   final AsanaLandingPalette palette;
   final Widget child;
   final String tooltip;
   final double? width;
+  final Color? fill;
 
   @override
   Widget build(BuildContext context) {
+    final badge = fill ?? palette.accent;
     return Tooltip(
       message: tooltip,
       child: Container(
@@ -4489,9 +4553,9 @@ class _MapThemeBadge extends StatelessWidget {
         height: 24,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: palette.accent,
+          color: badge,
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: palette.banner),
+          border: Border.all(color: fill == null ? palette.banner : badge),
         ),
         child: child,
       ),

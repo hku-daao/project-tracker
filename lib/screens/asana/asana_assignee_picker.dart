@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -39,9 +41,13 @@ Future<void> showAsanaAssigneePicker({
   VoidCallback? whenClosed,
   bool directListOnly = false,
   bool singleSelect = false,
+  double? minPanelWidth,
 }) {
   final media = MediaQuery.of(anchorContext);
-  final panelWidth = asanaAnchoredFieldWidth(anchorContext);
+  final fitted = asanaAnchoredFieldWidth(anchorContext);
+  final panelWidth = minPanelWidth == null
+      ? fitted
+      : math.max(fitted, minPanelWidth).clamp(120.0, media.size.width - 24);
   final box = anchorContext.findRenderObject() as RenderBox?;
   final topEstimate = box?.localToGlobal(Offset.zero).dy ?? 0;
   final maxPanelHeight = (media.size.height - topEstimate - 80).clamp(

@@ -57,6 +57,10 @@ class AsanaHierarchyHeaderColors {
 Color asanaOnHeaderFill(Color fill) =>
     fill.computeLuminance() > 0.55 ? kAsanaTextPrimary : Colors.white;
 
+/// White when [fill] is too dark for the usual dark text. Null on a light fill.
+Color? asanaInkIfDark(Color fill) =>
+    fill.computeLuminance() > 0.55 ? null : Colors.white;
+
 /// Dark-to-light row tints for project-view hierarchy: P → SP → T → ST.
 class AsanaHierarchyRowColors {
   const AsanaHierarchyRowColors({
@@ -282,10 +286,11 @@ Widget asanaTableHeaderShell({
 TextStyle? asanaTableRowValueStyle(
   BuildContext context, {
   bool completed = false,
+  Color? color,
 }) {
   final theme = Theme.of(context);
   return theme.textTheme.bodyMedium?.copyWith(
-    color: theme.colorScheme.onSurface,
+    color: color ?? theme.colorScheme.onSurface,
   );
 }
 
@@ -294,12 +299,13 @@ TextStyle? asanaTableRowNameStyle(
   BuildContext context, {
   bool completed = false,
   bool isSubtask = false,
+  Color? color,
 }) {
   return asanaTextStyle(
     Theme.of(context).textTheme.bodyMedium,
     fontSize: 14,
     fontWeight: isSubtask ? FontWeight.w600 : FontWeight.w700,
-    color: kAsanaTextPrimary,
+    color: color ?? kAsanaTextPrimary,
   );
 }
 

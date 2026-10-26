@@ -12,6 +12,7 @@ class AsanaAssigneeFieldValue extends StatefulWidget {
     this.anchorLink,
     this.emptyPlaceholder = 'Select assignees',
     this.showAddButtonWhenNotEmpty = true,
+    this.nameStyle,
     this.onOpenPicker,
     this.onRemove,
   });
@@ -22,6 +23,7 @@ class AsanaAssigneeFieldValue extends StatefulWidget {
   final LayerLink? anchorLink;
   final String emptyPlaceholder;
   final bool showAddButtonWhenNotEmpty;
+  final TextStyle? nameStyle;
   final void Function(BuildContext fieldContext)? onOpenPicker;
   final void Function(String assigneeId)? onRemove;
 
@@ -68,6 +70,7 @@ class _AsanaAssigneeFieldValueState extends State<AsanaAssigneeFieldValue> {
                     for (final a in widget.assignees)
                       _AssigneeNameChip(
                         name: a.name,
+                        nameStyle: widget.nameStyle,
                         canRemove: widget.canEdit && widget.onRemove != null,
                         onRemove: () => widget.onRemove!(a.id),
                       ),
@@ -105,11 +108,13 @@ class _AssigneeNameChip extends StatefulWidget {
     required this.name,
     required this.canRemove,
     required this.onRemove,
+    this.nameStyle,
   });
 
   final String name;
   final bool canRemove;
   final VoidCallback onRemove;
+  final TextStyle? nameStyle;
 
   @override
   State<_AssigneeNameChip> createState() => _AssigneeNameChipState();
@@ -125,7 +130,7 @@ class _AssigneeNameChipState extends State<_AssigneeNameChip> {
           padding: EdgeInsets.only(top: 2, right: widget.canRemove ? 14 : 0),
           child: Text(
             widget.name,
-            style: asanaDetailValueStyle(context),
+            style: widget.nameStyle ?? asanaDetailValueStyle(context),
             softWrap: true,
             overflow: TextOverflow.visible,
           ),

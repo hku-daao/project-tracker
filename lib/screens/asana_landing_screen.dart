@@ -67,6 +67,9 @@ class AsanaLandingPalette {
     required this.tableColors,
     required this.panelBackground,
     required this.listSurface,
+    this.levelFills,
+    this.levelBadges,
+    this.menuSwatch,
   });
 
   final String id;
@@ -89,6 +92,15 @@ class AsanaLandingPalette {
   final bool darkChrome;
   final Color accent;
 
+  /// Map and project-tree fills for themes that use four level colors.
+  final AsanaHierarchyRowColors? levelFills;
+
+  /// Saturated badge color for each level. Falls back to [levelFills].
+  final AsanaHierarchyRowColors? levelBadges;
+
+  /// Bright theme-menu circle. Falls back to [banner].
+  final Color? menuSwatch;
+
   /// Task / sub-task / project table row backgrounds for this theme.
   final AsanaTableColors tableColors;
 
@@ -98,7 +110,7 @@ class AsanaLandingPalette {
       : accent;
 
   AsanaHierarchyRowColors get hierarchyRowColors =>
-      AsanaHierarchyRowColors.fromSeed(hierarchyRowSeed);
+      levelFills ?? AsanaHierarchyRowColors.fromSeed(hierarchyRowSeed);
 
   /// Project-view table headers follow the landing header; Charcoal uses black.
   Color get tableHeaderSeed => darkChrome ? const Color(0xFF000000) : banner;
@@ -250,16 +262,202 @@ class AsanaLandingPalette {
     listSurface: Color(0xFFFFFFFF),
   );
 
+  static const coralCobalt = AsanaLandingPalette(
+    id: 'Coral Cobalt',
+    banner: Color(0xFF0C3CAB),
+    sidebar: Color(0xFFECEEFF),
+    content: Color(0xFFF7F8FC),
+    searchField: Color(0xFFFFFFFF),
+    selectedNav: Color(0xFFF96C4E),
+    onBanner: Color(0xFFFFFFFF),
+    onSidebar: Color(0xFF1C2434),
+    onSidebarMuted: Color(0xFF5C6570),
+    darkChrome: false,
+    accent: Color(0xFFF96C4E),
+    tableColors: AsanaTableColors(
+      taskRow: Color(0xFFFFF9F7),
+      subtaskRow: Color(0xFFF8F5FD),
+      subtaskSection: Color(0xFFF1EAFC),
+      projectRow: Color(0xFFF5F8FF),
+    ),
+    panelBackground: Color(0xFFF4F6FC),
+    listSurface: Color(0xFFFFFFFF),
+    menuSwatch: Color(0xFFFF1744),
+    levelFills: AsanaHierarchyRowColors(
+      project: Color(0xFFDAEFFD),
+      subproject: Color(0xFFDDF9FB),
+      task: Color(0xFFFEF2EF),
+      subtask: Color(0xFFF0E8FC),
+    ),
+    levelBadges: AsanaHierarchyRowColors(
+      project: Color(0xFF0C3CAB),
+      subproject: Color(0xFF00A3BE),
+      task: Color(0xFFF25C45),
+      subtask: Color(0xFF7C4DDB),
+    ),
+  );
+
+  static const plumJade = AsanaLandingPalette(
+    id: 'Plum Jade',
+    banner: Color(0xFF3A144F),
+    sidebar: Color(0xFF6A4A71),
+    content: Color(0xFFFBF8F6),
+    searchField: Color(0xFFFFFFFF),
+    selectedNav: Color(0xFF068656),
+    onBanner: Color(0xFFFFFFFF),
+    onSidebar: Color(0xFFFFFFFF),
+    onSidebarMuted: Color(0xFFE4D7EA),
+    darkChrome: true,
+    accent: Color(0xFF068656),
+    tableColors: AsanaTableColors(
+      taskRow: Color(0xFFFFF8F9),
+      subtaskRow: Color(0xFFF4F8FC),
+      subtaskSection: Color(0xFFE9F3FB),
+      projectRow: Color(0xFFF8F1FA),
+    ),
+    panelBackground: Color(0xFFF7F3F5),
+    listSurface: Color(0xFFFFFFFF),
+    menuSwatch: Color(0xFFFFD600),
+    levelFills: AsanaHierarchyRowColors(
+      project: Color(0xFFE8D3F3),
+      subproject: Color(0xFFDDF5E4),
+      task: Color(0xFFFCEDF1),
+      subtask: Color(0xFFE7F2FB),
+    ),
+    levelBadges: AsanaHierarchyRowColors(
+      project: Color(0xFF5C1A78),
+      subproject: Color(0xFF1E8F55),
+      task: Color(0xFFC2185B),
+      subtask: Color(0xFF6FA8DC),
+    ),
+  );
+
+  static const lilacGrove = AsanaLandingPalette(
+    id: 'Lilac Grove',
+    banner: Color(0xFF0F121B),
+    sidebar: Color(0xFF1A2838),
+    content: Color(0xFFFFFFFF),
+    searchField: Color(0xFF2A3140),
+    selectedNav: Color(0xFF223E65),
+    onBanner: Color(0xFFFFFFFF),
+    onSidebar: Color(0xFFF5F6F7),
+    onSidebarMuted: Color(0xFF9CA6AF),
+    darkChrome: true,
+    accent: Color(0xFF3D6CB5),
+    tableColors: AsanaTableColors(
+      taskRow: Color(0xFFFFFDF7),
+      subtaskRow: Color(0xFFFFF6F8),
+      subtaskSection: Color(0xFFF8E6EC),
+      projectRow: Color(0xFFF7F2FC),
+    ),
+    panelBackground: Color(0xFFF4F5F7),
+    listSurface: Color(0xFFFFFFFF),
+    menuSwatch: Color(0xFF7C4DFF),
+    levelFills: AsanaHierarchyRowColors(
+      project: Color(0xFFDFD3F3),
+      subproject: Color(0xFFD9F3E4),
+      task: Color(0xFFFEFCEF),
+      subtask: Color(0xFFFBE7ED),
+    ),
+    levelBadges: AsanaHierarchyRowColors(
+      project: Color(0xFF7A6BB5),
+      subproject: Color(0xFF3E9A78),
+      task: Color(0xFFE0A020),
+      subtask: Color(0xFFD45B7A),
+    ),
+  );
+
+  static const harbor = AsanaLandingPalette(
+    id: 'Harbor',
+    banner: Color(0xFF0B1933),
+    sidebar: Color(0xFF1B2946),
+    content: Color(0xFFFFFFFF),
+    searchField: Color(0xFF243556),
+    selectedNav: Color(0xFF4C6DD6),
+    onBanner: Color(0xFFFFFFFF),
+    onSidebar: Color(0xFFF5F6F7),
+    onSidebarMuted: Color(0xFF9CA6AF),
+    darkChrome: true,
+    accent: Color(0xFF4C6DD6),
+    tableColors: AsanaTableColors(
+      taskRow: Color(0xFFFFFDF7),
+      subtaskRow: Color(0xFFF8F3FC),
+      subtaskSection: Color(0xFFF0E6F8),
+      projectRow: Color(0xFFFFFFFF),
+    ),
+    panelBackground: Color(0xFFF4F5F7),
+    listSurface: Color(0xFFFFFFFF),
+    menuSwatch: Color(0xFF00B8D4),
+    levelFills: AsanaHierarchyRowColors(
+      project: Color(0xFFD5DEEE),
+      subproject: Color(0xFFE5F6F4),
+      task: Color(0xFFFEFCEF),
+      subtask: Color(0xFFF3E8FB),
+    ),
+    levelBadges: AsanaHierarchyRowColors(
+      project: Color(0xFF1B2A4A),
+      subproject: Color(0xFF3AA89A),
+      task: Color(0xFFE0A020),
+      subtask: Color(0xFF8E6BB8),
+    ),
+  );
+
+  static const lagoon = AsanaLandingPalette(
+    id: 'Lagoon',
+    banner: Color(0xFF06244A),
+    sidebar: Color(0xFF072851),
+    content: Color(0xFFFFFFFF),
+    searchField: Color(0xFF16345C),
+    selectedNav: Color(0xFF0E6E82),
+    onBanner: Color(0xFFFFFFFF),
+    onSidebar: Color(0xFFF5F6F7),
+    onSidebarMuted: Color(0xFF9CA6AF),
+    darkChrome: true,
+    accent: Color(0xFF1497A6),
+    tableColors: AsanaTableColors(
+      taskRow: Color(0xFFF6F4FB),
+      subtaskRow: Color(0xFFF3F7FB),
+      subtaskSection: Color(0xFFE4EEF6),
+      projectRow: Color(0xFFEEF2F8),
+    ),
+    panelBackground: Color(0xFFF3F5F8),
+    listSurface: Color(0xFFFFFFFF),
+    menuSwatch: Color(0xFFC6FF00),
+    levelFills: AsanaHierarchyRowColors(
+      project: Color(0xFFD4E1F5),
+      subproject: Color(0xFFD5F3F0),
+      task: Color(0xFFE6E4F2),
+      subtask: Color(0xFFE4EEF8),
+    ),
+    levelBadges: AsanaHierarchyRowColors(
+      project: Color(0xFF1E3A6E),
+      subproject: Color(0xFF1A8A96),
+      task: Color(0xFF6E62A8),
+      subtask: Color(0xFF7AA0C4),
+    ),
+  );
+
   static const List<AsanaLandingPalette> all = [
     asana,
     classic,
     ocean,
     forest,
     sunset,
+    coralCobalt,
+    plumJade,
+    lilacGrove,
+    harbor,
+    lagoon,
   ];
 
   static AsanaLandingPalette byId(String id) {
-    return all.firstWhere((p) => p.id == id, orElse: () => asana);
+    final resolved = switch (id) {
+      'Theme 4' => 'Lilac Grove',
+      'Theme 5' => 'Harbor',
+      'Theme 6' => 'Lagoon',
+      _ => id,
+    };
+    return all.firstWhere((p) => p.id == resolved, orElse: () => asana);
   }
 }
 
@@ -1536,7 +1734,7 @@ class _ThemeSidebarExpandable extends StatelessWidget {
                             width: 12,
                             height: 12,
                             decoration: BoxDecoration(
-                              color: p.banner,
+                              color: p.menuSwatch ?? p.banner,
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.black26),
                             ),
@@ -1580,7 +1778,11 @@ class _SidebarNavTile extends StatelessWidget {
     final theme = Theme.of(context);
     final tileHeight = densePadding ? _kTileHeightDense : _kTileHeight;
     final textColor = selected
-        ? (palette.darkChrome ? Colors.white : palette.accent)
+        ? (palette.levelBadges != null
+              ? (palette.selectedNav.computeLuminance() > 0.55
+                    ? const Color(0xFF1A1A1A)
+                    : Colors.white)
+              : (palette.darkChrome ? Colors.white : palette.accent))
         : palette.onSidebar;
     final textStyle = asanaTextStyle(
       theme.textTheme.bodyMedium,

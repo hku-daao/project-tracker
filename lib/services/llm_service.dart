@@ -674,6 +674,36 @@ Rules:
     return reply;
   }
 
+  /// Plain-text staff report. [evidence] already contains the period, items, and scores.
+  static Future<String> writeStaffPerformanceReport({
+    required String staffName,
+    required String evidence,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(_missingConfigMessage);
+    }
+    const system = '''
+You write a workplace performance report for one staff member of a university project tracker.
+Use only the evidence in the user message. Do not invent projects, tasks, or numbers.
+Write plain text in two parts:
+1. Kind of work. Comment on what this person is working on, based on the listed projects, sub-projects, tasks, and sub-tasks. Describe the nature of the work in a few sentences.
+2. Capability. Use the supplied score exactly. The score counts each completed task and each completed sub-task where this person is PIC. Low adds 1, Medium adds 2, High adds 3. A task and a sub-task of the same complexity add the same score. State the score and the low, medium, and high counts, and say what those numbers show about the kind of work.
+Do not use JSON or markdown headings. Write short paragraphs.
+''';
+    final body = jsonEncode({
+      'model': _effectiveModel,
+      'messages': [
+        {'role': 'system', 'content': system},
+        {
+          'role': 'user',
+          'content': 'Staff: ${staffName.trim()}\n\n$evidence',
+        },
+      ],
+      'temperature': 0.3,
+    });
+    return (await _chatCompletionContent(body)).trim();
+  }
+
   static Future<Map<String, dynamic>> _chatCompletionJsonObject(
     String body,
   ) async {

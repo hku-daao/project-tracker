@@ -1228,6 +1228,7 @@ class _ExpandableProjectTableRow extends StatelessWidget {
                 ? _ProjectExpandChevron(
                     expanded: expanded,
                     onPressed: onToggleExpand,
+                    color: asanaInkIfDark(hierarchyColors.project),
                   )
                 : null,
           ),
@@ -1305,10 +1306,12 @@ class _ProjectExpandChevron extends StatelessWidget {
   const _ProjectExpandChevron({
     required this.expanded,
     required this.onPressed,
+    this.color,
   });
 
   final bool expanded;
   final VoidCallback onPressed;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -1323,7 +1326,7 @@ class _ProjectExpandChevron extends StatelessWidget {
             child: Icon(
               expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
               size: 20,
-              color: kAsanaTextSecondary,
+              color: color ?? kAsanaTextSecondary,
             ),
           ),
         ),
@@ -1579,14 +1582,17 @@ class _ProjectSubprojectDataRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final completed = subproject.isCompleted;
     final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final ink = asanaInkIfDark(hierarchyColors.subproject);
     final nameStyle = asanaTableRowNameStyle(
       context,
       completed: completed,
       isSubtask: true,
+      color: ink,
     );
     final rowValueStyle = asanaTableRowValueStyle(
       context,
       completed: completed,
+      color: ink,
     );
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1643,6 +1649,9 @@ class _ProjectSubprojectDataRow extends StatelessWidget {
                                   expanded: expanded,
                                   loading: false,
                                   onPressed: onToggleExpand,
+                                  color: asanaInkIfDark(
+                                    hierarchyColors.subproject,
+                                  ),
                                 )
                               : const SizedBox.shrink(),
                         ),
@@ -1794,14 +1803,17 @@ class _ProjectTaskDataRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = AsanaTaskFilter.taskDisplayStatus(appState, task);
     final completed = _taskCompleted(task);
+    final ink = asanaInkIfDark(hierarchyColors.task);
     final rowValueStyle = asanaTableRowValueStyle(
       context,
       completed: completed,
+      color: ink,
     );
     final nameStyle = asanaTableRowNameStyle(
       context,
       completed: completed,
       isSubtask: true,
+      color: ink,
     );
     final cols = _ProjectExpandedTaskTableLayout(tableWidth);
     final hasSubtasks = subtasks.isNotEmpty;
@@ -1862,6 +1874,9 @@ class _ProjectTaskDataRow extends StatelessWidget {
                                       expanded: expanded,
                                       loading: loadingSubtasks,
                                       onPressed: onToggleExpand,
+                                      color: asanaInkIfDark(
+                                        hierarchyColors.task,
+                                      ),
                                     )
                                   : const SizedBox.shrink(),
                             ),
@@ -2004,11 +2019,13 @@ class _ProjectNestedExpandChevron extends StatelessWidget {
     required this.expanded,
     required this.loading,
     required this.onPressed,
+    this.color,
   });
 
   final bool expanded;
   final bool loading;
   final VoidCallback onPressed;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -2032,7 +2049,7 @@ class _ProjectNestedExpandChevron extends StatelessWidget {
                         ? Icons.keyboard_arrow_up
                         : Icons.keyboard_arrow_down,
                     size: 22,
-                    color: kAsanaTextPrimary,
+                    color: color ?? kAsanaTextPrimary,
                   ),
           ),
         ),
@@ -2096,14 +2113,17 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
       subtask,
     );
     final completed = _subtaskCompleted(subtask);
+    final ink = asanaInkIfDark(hierarchyColors.subtask);
     final rowValueStyle = asanaTableRowValueStyle(
       context,
       completed: completed,
+      color: ink,
     );
     final nameStyle = asanaTableRowNameStyle(
       context,
       completed: completed,
       isSubtask: true,
+      color: ink,
     );
     final cols = _ProjectExpandedTaskTableLayout(tableWidth);
 
@@ -2259,17 +2279,19 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
 }
 
 class _ProjectProgressPercent extends StatelessWidget {
-  const _ProjectProgressPercent({required this.percent});
+  const _ProjectProgressPercent({required this.percent, this.color});
 
   final int percent;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    final color = percent >= 100
-        ? const Color(0xFF1B7A4E)
-        : percent <= 0
-        ? kAsanaTextSecondary
-        : Theme.of(context).colorScheme.primary;
+    final color = this.color ??
+        (percent >= 100
+            ? const Color(0xFF1B7A4E)
+            : percent <= 0
+            ? kAsanaTextSecondary
+            : Theme.of(context).colorScheme.primary);
     final fill = (percent.clamp(0, 100)) / 100;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
@@ -2342,11 +2364,17 @@ class _ProjectTableRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cols = _ProjectTableLayout(tableWidth);
+    final ink = asanaInkIfDark(rowColor);
     final rowValueStyle = asanaTableRowValueStyle(
       context,
       completed: _completed,
+      color: ink,
     );
-    final nameStyle = asanaTableRowNameStyle(context, completed: _completed);
+    final nameStyle = asanaTableRowNameStyle(
+      context,
+      completed: _completed,
+      color: ink,
+    );
 
     final status = project.isPaused ? 'Paused' : project.status;
     return Material(
@@ -2393,7 +2421,10 @@ class _ProjectTableRow extends StatelessWidget {
                               createdAt: project.createDate,
                               updatedAt: project.updateDate,
                             ),
-                            _ProjectProgressPercent(percent: progressPercent),
+                            _ProjectProgressPercent(
+                              percent: progressPercent,
+                              color: ink,
+                            ),
                           ],
                         ),
                       ),
@@ -2516,6 +2547,11 @@ class _ProjectMobileBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ink = asanaInkIfDark(rowColor);
+    final paintedName = ink == null ? nameStyle : nameStyle?.copyWith(color: ink);
+    final paintedValue = ink == null
+        ? valueStyle
+        : valueStyle?.copyWith(color: ink);
     final metaLine = 'Cr: $creator · PIC: $pic';
     final dateLine =
         'Start: ${_formatDueDate(startDate)} · Due: ${_formatDueDate(dueDate)}';
@@ -2556,17 +2592,20 @@ class _ProjectMobileBlock extends StatelessWidget {
                   children: [
                     AsanaNameWithFreshness(
                       name: name,
-                      style: nameStyle,
+                      style: paintedName,
                       createdAt: createdAt,
                       updatedAt: updatedAt,
                       maxLines: 2,
                     ),
                     if (progressPercent != null)
-                      _ProjectProgressPercent(percent: progressPercent!),
+                      _ProjectProgressPercent(
+                        percent: progressPercent!,
+                        color: ink,
+                      ),
                     const SizedBox(height: 5),
                     Text(
                       metaLine,
-                      style: valueStyle,
+                      style: paintedValue,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2578,7 +2617,7 @@ class _ProjectMobileBlock extends StatelessWidget {
                       children: [
                         Text(
                           dateLine,
-                          style: valueStyle,
+                          style: paintedValue,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -2680,6 +2719,7 @@ class _ProjectMobileRow extends StatelessWidget {
               ? _ProjectMobileExpandChevron(
                   expanded: expanded,
                   onPressed: onToggleExpand,
+                  color: asanaInkIfDark(hierarchyColors.project),
                 )
               : null,
         ),
@@ -2719,10 +2759,12 @@ class _ProjectMobileExpandChevron extends StatelessWidget {
   const _ProjectMobileExpandChevron({
     required this.expanded,
     required this.onPressed,
+    this.color,
   });
 
   final bool expanded;
   final VoidCallback onPressed;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -2733,7 +2775,7 @@ class _ProjectMobileExpandChevron extends StatelessWidget {
         child: Icon(
           expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
           size: 20,
-          color: kAsanaTextSecondary,
+          color: color ?? kAsanaTextSecondary,
         ),
       ),
     );
@@ -2849,6 +2891,7 @@ class _ProjectMobileTaskList extends StatelessWidget {
               ? _ProjectMobileExpandChevron(
                   expanded: expanded,
                   onPressed: () => onToggleSubprojectExpand(subproject.id),
+                  color: asanaInkIfDark(hierarchyColors.subproject),
                 )
               : null,
         ),
@@ -2950,6 +2993,7 @@ class _ProjectMobileTaskRow extends StatelessWidget {
                     : _ProjectMobileExpandChevron(
                         expanded: expanded,
                         onPressed: onToggleExpand,
+                        color: asanaInkIfDark(hierarchyColors.task),
                       ))
               : null,
           trailingChips: [
