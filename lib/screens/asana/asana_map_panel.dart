@@ -54,9 +54,12 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   final Set<String> _expandedProjectIds = {};
   final Set<String> _expandedTaskIds = {};
   final Set<String> _mapExpandedTaskIds = {};
+  final Set<String> _collapsedMapSubprojectIds = {};
   final Set<String> _projectCreatorTeamIds = {};
   final Set<String> _projectCreatorIds = {};
   final Set<String> _projectPicIds = {};
+  final Set<String> _simpleProjectCreatorIds = {};
+  final Set<String> _simpleProjectPicIds = {};
   final Set<String> _projectStatuses = {};
   final Set<String> _subprojectCreatorTeamIds = {};
   final Set<String> _subprojectCreatorIds = {};
@@ -84,6 +87,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
   DateTime? _subtaskExpectedDueEnd;
   String _sortKey = 'due_asc';
   bool _showProjectsWithoutTasks = true;
+  bool _reportShowProjectsWithoutTasks = true;
   final _saved = _MapAdvancedSettings();
   _MapDisplayMode _displayMode = _MapDisplayMode.all;
   int _reportCompletedPastDays = 14;
@@ -124,14 +128,16 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       apply();
       if (_displayMode == _MapDisplayMode.advanced) {
         _copySavedAdvancedToLive();
+      } else {
+        _copySimpleProjectPeopleToLive();
       }
     });
     _persistFilters();
   }
 
   Map<String, dynamic> _toCookieJson() => {
-    'projectCreatorIds': _projectCreatorIds.toList(),
-    'projectPicIds': _projectPicIds.toList(),
+    'projectCreatorIds': _simpleProjectCreatorIds.toList(),
+    'projectPicIds': _simpleProjectPicIds.toList(),
     'displayMode': switch (_displayMode) {
       _MapDisplayMode.all => 'all',
       _MapDisplayMode.progress => 'progress',
@@ -139,14 +145,19 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     },
     'reportCompletedPastDays': _reportCompletedPastDays,
     'reportDueAheadDays': _reportDueAheadDays,
+    'reportShowProjectsWithoutTasks': _reportShowProjectsWithoutTasks,
     'advanced': _saved.toJson(),
   };
 
   void _applyCookieJson(Map<String, dynamic> data) {
-    _replaceStringSet(_projectCreatorIds, data['projectCreatorIds']);
-    _replaceStringSet(_projectPicIds, data['projectPicIds']);
+    _replaceStringSet(_simpleProjectCreatorIds, data['projectCreatorIds']);
+    _replaceStringSet(_simpleProjectPicIds, data['projectPicIds']);
     _reportCompletedPastDays = _reportDayCount(data['reportCompletedPastDays']);
     _reportDueAheadDays = _reportDayCount(data['reportDueAheadDays']);
+    final reportShowEmpty = data['reportShowProjectsWithoutTasks'];
+    if (reportShowEmpty is bool) {
+      _reportShowProjectsWithoutTasks = reportShowEmpty;
+    }
     final advancedRaw = data['advanced'];
     if (advancedRaw is Map) {
       _saved.loadJson(Map<String, dynamic>.from(advancedRaw), _dateFromMs);
@@ -203,8 +214,15 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ..addAll(source);
   }
 
+  void _copySimpleProjectPeopleToLive() {
+    _copySet(_projectCreatorIds, _simpleProjectCreatorIds);
+    _copySet(_projectPicIds, _simpleProjectPicIds);
+  }
+
   void _copySavedAdvancedToLive() {
     _copySet(_projectCreatorTeamIds, _saved.projectCreatorTeamIds);
+    _copySet(_projectCreatorIds, _saved.projectCreatorIds);
+    _copySet(_projectPicIds, _saved.projectPicIds);
     _copySet(_projectStatuses, _saved.projectStatuses);
     _projectStartMonth = _saved.projectStartMonth;
     _projectEndMonth = _saved.projectEndMonth;
@@ -238,8 +256,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     switch (_displayMode) {
       case _MapDisplayMode.all:
         _clearFiltersBeyondProjectPeople();
+        _copySimpleProjectPeopleToLive();
       case _MapDisplayMode.progress:
         _writeProgressPresetToLive();
+        _copySimpleProjectPeopleToLive();
       case _MapDisplayMode.advanced:
         _copySavedAdvancedToLive();
     }
@@ -260,6 +280,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     final past = today.subtract(Duration(days: _reportCompletedPastDays));
     final next = today.add(Duration(days: _reportDueAheadDays));
     _clearFiltersBeyondProjectPeople();
+    _showProjectsWithoutTasks = _reportShowProjectsWithoutTasks;
     _setWorkStatuses(_taskStatuses, _WorkStatusMode.both);
     _taskCompletedStart = past;
     _taskCompletedEnd = today;
@@ -1210,13 +1231,14 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     _applyFilters(() {
       switch (_displayMode) {
         case _MapDisplayMode.all:
-          _projectCreatorIds.clear();
-          _projectPicIds.clear();
+          _simpleProjectCreatorIds.clear();
+          _simpleProjectPicIds.clear();
         case _MapDisplayMode.progress:
-          _projectCreatorIds.clear();
-          _projectPicIds.clear();
+          _simpleProjectCreatorIds.clear();
+          _simpleProjectPicIds.clear();
           _reportCompletedPastDays = 14;
           _reportDueAheadDays = 14;
+          _reportShowProjectsWithoutTasks = true;
           _writeProgressPresetToLive();
         case _MapDisplayMode.advanced:
           _saved.resetToAll();
@@ -1267,7 +1289,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       filterChildren: [
         AsanaFilterDropdown(
           title: 'Project Creator',
-          value: _filterLabel(_projectCreatorIds, (id) {
+          value: _filterLabel(_simpleProjectCreatorIds, (id) {
             final names = _projectCreatorDisplayNames(state);
             return names[id] ?? _staffName(state, id);
           }),
@@ -1279,15 +1301,15 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               _projectCreatorKeys(state),
               displayNames: _projectCreatorDisplayNames(state),
             ),
-            selected: _projectCreatorIds,
-            apply: (value) => _projectCreatorIds
+            selected: _simpleProjectCreatorIds,
+            apply: (value) => _simpleProjectCreatorIds
               ..clear()
               ..addAll(value),
           ),
         ),
         AsanaFilterDropdown(
           title: 'Project PIC',
-          value: _filterLabel(_projectPicIds, (id) {
+          value: _filterLabel(_simpleProjectPicIds, (id) {
             final names = _projectPicDisplayNames(state);
             return names[id] ?? _staffName(state, id);
           }),
@@ -1299,8 +1321,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               _projectPicKeys(state),
               displayNames: _projectPicDisplayNames(state),
             ),
-            selected: _projectPicIds,
-            apply: (value) => _projectPicIds
+            selected: _simpleProjectPicIds,
+            apply: (value) => _simpleProjectPicIds
               ..clear()
               ..addAll(value),
           ),
@@ -1321,6 +1343,19 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               _reportDueAheadDays = days;
               _writeProgressPresetToLive();
             }),
+          ),
+          AsanaFilterDropdown(
+            title: 'Projects Without Tasks',
+            value: _reportShowProjectsWithoutTasks ? 'Show' : 'Hide',
+            buttonWidth: 168,
+            highlighted: !_reportShowProjectsWithoutTasks,
+            onPressed: (anchor) => _pickShowProjectsWithoutTasks(
+              anchor,
+              apply: (selected) {
+                _reportShowProjectsWithoutTasks = selected;
+                _showProjectsWithoutTasks = selected;
+              },
+            ),
           ),
         ],
       ],
@@ -1906,7 +1941,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     }
   }
 
-  Future<void> _showEmptyProjectsMenu(BuildContext buttonContext) async {
+  Future<void> _pickShowProjectsWithoutTasks(
+    BuildContext buttonContext, {
+    required void Function(bool selected) apply,
+  }) async {
     final selected = await showMenu<bool>(
       context: buttonContext,
       position: _menuPosition(buttonContext),
@@ -1918,7 +1956,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       ],
     );
     if (selected == null || !mounted) return;
-    _applyFilters(() => _saved.showProjectsWithoutTasks = selected);
+    _applyFilters(() => apply(selected));
   }
 
   Future<void> _showSortMenu(BuildContext buttonContext) async {
@@ -1969,6 +2007,16 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
     if (result == null || !mounted) return;
     _applyFilters(() {
       apply(result.contains('__all__') ? <String>{} : result);
+    });
+  }
+
+  void _toggleMapSubprojectTasks(String subprojectId) {
+    final id = subprojectId.trim();
+    if (id.isEmpty) return;
+    setState(() {
+      if (!_collapsedMapSubprojectIds.add(id)) {
+        _collapsedMapSubprojectIds.remove(id);
+      }
     });
   }
 
@@ -2073,6 +2121,46 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                   options: _teamOptions(state, _projectCreatorKeys(state)),
                   selected: _saved.projectCreatorTeamIds,
                   apply: (value) => _saved.projectCreatorTeamIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Project Creator',
+                value: _filterLabel(_saved.projectCreatorIds, (id) {
+                  final names = _projectCreatorDisplayNames(state);
+                  return names[id] ?? _staffName(state, id);
+                }),
+                buttonWidth: 160,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(
+                    state,
+                    _projectCreatorKeys(state),
+                    displayNames: _projectCreatorDisplayNames(state),
+                  ),
+                  selected: _saved.projectCreatorIds,
+                  apply: (value) => _saved.projectCreatorIds
+                    ..clear()
+                    ..addAll(value),
+                ),
+              ),
+              AsanaFilterDropdown(
+                title: 'Project PIC',
+                value: _filterLabel(_saved.projectPicIds, (id) {
+                  final names = _projectPicDisplayNames(state);
+                  return names[id] ?? _staffName(state, id);
+                }),
+                buttonWidth: 160,
+                onPressed: (anchor) => _showFilterMenu(
+                  anchorContext: anchor,
+                  options: _staffOptions(
+                    state,
+                    _projectPicKeys(state),
+                    displayNames: _projectPicDisplayNames(state),
+                  ),
+                  selected: _saved.projectPicIds,
+                  apply: (value) => _saved.projectPicIds
                     ..clear()
                     ..addAll(value),
                 ),
@@ -2474,7 +2562,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 value: _saved.showProjectsWithoutTasks ? 'Show' : 'Hide',
                 buttonWidth: 168,
                 highlighted: !_saved.showProjectsWithoutTasks,
-                onPressed: _showEmptyProjectsMenu,
+                onPressed: (anchor) => _pickShowProjectsWithoutTasks(
+                  anchor,
+                  apply: (selected) =>
+                      _saved.showProjectsWithoutTasks = selected,
+                ),
               ),
               AsanaFilterDropdown(
                 title: 'Sort',
@@ -2519,7 +2611,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                               state: state,
                               node: nodes[index],
                               expandedTaskIds: _mapExpandedTaskIds,
+                              collapsedSubprojectIds:
+                                  _collapsedMapSubprojectIds,
                               onToggleTaskSubtasks: _toggleMapTaskSubtasks,
+                              onToggleSubprojectTasks:
+                                  _toggleMapSubprojectTasks,
                               onOpenProject: widget.onOpenProject,
                               onOpenSubproject: widget.onOpenSubproject,
                               onOpenTask: widget.onOpenTask,
@@ -2813,7 +2909,9 @@ class _ProjectTreeDiagram extends StatelessWidget {
     required this.state,
     required this.node,
     required this.expandedTaskIds,
+    required this.collapsedSubprojectIds,
     required this.onToggleTaskSubtasks,
+    required this.onToggleSubprojectTasks,
     this.onOpenProject,
     this.onOpenSubproject,
     this.onOpenTask,
@@ -2832,7 +2930,9 @@ class _ProjectTreeDiagram extends StatelessWidget {
   final AppState state;
   final _ProjectMapNode node;
   final Set<String> expandedTaskIds;
+  final Set<String> collapsedSubprojectIds;
   final void Function(String taskId) onToggleTaskSubtasks;
+  final void Function(String subprojectId) onToggleSubprojectTasks;
   final void Function(String projectId)? onOpenProject;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final void Function(String taskId)? onOpenTask;
@@ -2861,7 +2961,9 @@ class _ProjectTreeDiagram extends StatelessWidget {
                 taskNode,
           ],
           expandedTaskIds: expandedTaskIds,
+          collapsedSubprojectIds: collapsedSubprojectIds,
           onToggleTaskSubtasks: onToggleTaskSubtasks,
+          onToggleSubprojectTasks: onToggleSubprojectTasks,
           onOpenSubproject: onOpenSubproject,
           onOpenTask: onOpenTask,
           onOpenSubtask: onOpenSubtask,
@@ -2970,7 +3072,9 @@ _DiagramNode _subprojectDiagramNode({
   required SubprojectRecord subproject,
   required List<_TaskMapNode> taskNodes,
   required Set<String> expandedTaskIds,
+  required Set<String> collapsedSubprojectIds,
   required void Function(String taskId) onToggleTaskSubtasks,
+  required void Function(String subprojectId) onToggleSubprojectTasks,
   void Function(String subprojectId, String projectId)? onOpenSubproject,
   void Function(String taskId)? onOpenTask,
   void Function(String subtaskId)? onOpenSubtask,
@@ -2978,6 +3082,8 @@ _DiagramNode _subprojectDiagramNode({
   final status = (project.isPaused || subproject.isPaused)
       ? 'Paused'
       : subproject.status;
+  final hasTasks = taskNodes.isNotEmpty;
+  final expanded = !collapsedSubprojectIds.contains(subproject.id);
   return _DiagramNode(
     type: _DiagramNodeType.subproject,
     id: subproject.id,
@@ -2995,16 +3101,22 @@ _DiagramNode _subprojectDiagramNode({
     completed: _mapBlockIsCompleted(status),
     detailLabel: AsanaStatusChip.statusStyle(status).$1,
     onTap: () => onOpenSubproject?.call(subproject.id, project.id),
+    canExpand: hasTasks,
+    expanded: expanded,
+    onToggleExpand: hasTasks
+        ? () => onToggleSubprojectTasks(subproject.id)
+        : null,
     children: [
-      for (final taskNode in taskNodes)
-        _taskDiagramNode(
-          state: state,
-          taskNode: taskNode,
-          expandedTaskIds: expandedTaskIds,
-          onToggleTaskSubtasks: onToggleTaskSubtasks,
-          onOpenTask: onOpenTask,
-          onOpenSubtask: onOpenSubtask,
-        ),
+      if (expanded)
+        for (final taskNode in taskNodes)
+          _taskDiagramNode(
+            state: state,
+            taskNode: taskNode,
+            expandedTaskIds: expandedTaskIds,
+            onToggleTaskSubtasks: onToggleTaskSubtasks,
+            onOpenTask: onOpenTask,
+            onOpenSubtask: onOpenSubtask,
+          ),
     ],
   );
 }
@@ -4358,6 +4470,8 @@ Color _mapBadgeForeground(AsanaLandingPalette palette, {Color? fill}) {
 
 class _MapAdvancedSettings {
   final Set<String> projectCreatorTeamIds = {};
+  final Set<String> projectCreatorIds = {};
+  final Set<String> projectPicIds = {};
   final Set<String> projectStatuses = {};
   DateTime? projectStartMonth;
   DateTime? projectEndMonth;
@@ -4388,6 +4502,8 @@ class _MapAdvancedSettings {
 
   bool get hasAnyFilter =>
       projectCreatorTeamIds.isNotEmpty ||
+      projectCreatorIds.isNotEmpty ||
+      projectPicIds.isNotEmpty ||
       projectStatuses.isNotEmpty ||
       projectStartMonth != null ||
       projectEndMonth != null ||
@@ -4418,6 +4534,8 @@ class _MapAdvancedSettings {
 
   void resetToAll() {
     projectCreatorTeamIds.clear();
+    projectCreatorIds.clear();
+    projectPicIds.clear();
     projectStatuses.clear();
     projectStartMonth = null;
     projectEndMonth = null;
@@ -4449,6 +4567,8 @@ class _MapAdvancedSettings {
 
   Map<String, dynamic> toJson() => {
     'projectCreatorTeamIds': projectCreatorTeamIds.toList(),
+    'projectCreatorIds': projectCreatorIds.toList(),
+    'projectPicIds': projectPicIds.toList(),
     'projectStatuses': projectStatuses.toList(),
     'projectStartMonth': projectStartMonth?.millisecondsSinceEpoch,
     'projectEndMonth': projectEndMonth?.millisecondsSinceEpoch,
@@ -4489,6 +4609,8 @@ class _MapAdvancedSettings {
     }
 
     sets(projectCreatorTeamIds, data['projectCreatorTeamIds']);
+    sets(projectCreatorIds, data['projectCreatorIds']);
+    sets(projectPicIds, data['projectPicIds']);
     sets(projectStatuses, data['projectStatuses']);
     projectStartMonth = dateOf(data['projectStartMonth']);
     projectEndMonth = dateOf(data['projectEndMonth']);
