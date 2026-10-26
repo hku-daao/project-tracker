@@ -14,10 +14,7 @@ import '../../models/staff_for_assignment.dart';
 import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/database_service.dart';
-import '../../services/llm_service.dart';
-import '../../utils/attachment_open_bytes.dart';
 import '../../utils/hk_time.dart';
-import '../../utils/staff_report_export.dart';
 import 'asana_assignee_field.dart';
 import 'asana_assignee_picker.dart';
 import 'asana_detail_widgets.dart';
@@ -708,7 +705,6 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
                   _outputRangeEnd = end;
                 });
               },
-              onWriteReport: _writeStaffReport,
               palette: widget.palette,
             ),
         ],
@@ -716,253 +712,6 @@ class _AsanaPerformancePanelState extends State<AsanaPerformancePanel> {
     );
   }
 
-  bool _staffInvolved(String? pic, List<String> assigneeIds) {
-    if (_keyMatchesIndividual(pic)) return true;
-    for (final id in assigneeIds) {
-      if (_keyMatchesIndividual(id)) return true;
-    }
-    return false;
-  }
-
-  String _staffRole(String? pic, List<String> assigneeIds) {
-    final isPic = _keyMatchesIndividual(pic);
-    final isAssignee = assigneeIds.any(_keyMatchesIndividual);
-    if (isPic && isAssignee) return 'PIC and assignee';
-    if (isPic) return 'PIC';
-    return 'assignee';
-  }
-
-  bool _dueInReportRange(
-    DateTime? due, {
-    required bool all,
-    required _CreatedChartGrain grain,
-    required DateTime start,
-    required DateTime end,
-  }) {
-    if (all) return true;
-    final day = _hkDateOnly(due);
-    if (day == null) return false;
-    final bucket = _alignCreatedGrainStart(day, grain);
-    return !bucket.isBefore(start) && !bucket.isAfter(end);
-  }
-
-  String _clipReportText(String raw) {
-    final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.length <= 160) return text;
-    return '${text.substring(0, 157)}...';
-  }
-
-  Future<String> _writeStaffReport({
-    required bool all,
-    required _CreatedChartGrain grain,
-    required DateTime start,
-    required DateTime end,
-  }) async {
-    final evidence = _staffReportEvidence(
-      context.read<AppState>(),
-      all: all,
-      grain: grain,
-      start: start,
-      end: end,
-    );
-    if (evidence == null) {
-      return 'No tasks or sub-tasks are due in this period for this staff member.';
-    }
-    return LlmService.writeStaffPerformanceReport(
-      staffName: _individualName?.trim().isNotEmpty == true
-          ? _individualName!.trim()
-          : 'Staff',
-      evidence: evidence,
-    );
-  }
-
-  String? _staffReportEvidence(
-    AppState state, {
-    required bool all,
-    required _CreatedChartGrain grain,
-    required DateTime start,
-    required DateTime end,
-  }) {
-    bool inRange(DateTime? due) => _dueInReportRange(
-      due,
-      all: all,
-      grain: grain,
-      start: start,
-      end: end,
-    );
-    final tasks = _tasksOf(state)
-        .where((t) => !_taskDeleted(t))
-        .where((t) => _staffInvolved(t.pic, t.assigneeIds))
-        .where((t) => inRange(t.dueDate))
-        .toList();
-    final subtasks = _subtasksByTaskId.values
-        .expand((list) => list)
-        .where((s) => !_subtaskDeleted(s))
-        .where((s) => _staffInvolved(s.pic, s.assigneeIds))
-        .where((s) => inRange(s.dueDate))
-        .toList();
-    if (tasks.isEmpty && subtasks.isEmpty) return null;
-
-    final taskById = {for (final t in _tasksOf(state)) t.id: t};
-    final projectById = {for (final p in _projectsOf(state)) p.id: p};
-    final subprojectById = {for (final s in state.subprojects) s.id: s};
-    final projectIds = <String>{};
-    final subprojectIds = <String>{};
-    void takeParents(Task? task) {
-      final projectId = task?.projectId?.trim();
-      if (projectId != null && projectId.isNotEmpty) projectIds.add(projectId);
-      final subprojectId = task?.subprojectId?.trim();
-      if (subprojectId != null && subprojectId.isNotEmpty) {
-        subprojectIds.add(subprojectId);
-      }
-    }
-
-    for (final task in tasks) {
-      takeParents(task);
-    }
-    for (final subtask in subtasks) {
-      takeParents(taskById[subtask.taskId]);
-    }
-
-    var score = 0;
-    var scoreLow = 0;
-    var scoreMedium = 0;
-    var scoreHigh = 0;
-    void addScore(String? complexity, bool completed, bool isPic) {
-      if (!completed || !isPic) return;
-      switch (_complexityKey(complexity)) {
-        case 'Low':
-          scoreLow++;
-          score += 1;
-        case 'Medium':
-          scoreMedium++;
-          score += 2;
-        case 'High':
-          scoreHigh++;
-          score += 3;
-      }
-    }
-
-    final taskMix = _ComplexityCounts();
-    final subtaskMix = _ComplexityCounts();
-    for (final task in tasks) {
-      taskMix.increment(_complexityKey(task.complexity));
-      addScore(task.complexity, _taskCompleted(task), _keyMatchesIndividual(task.pic));
-    }
-    for (final subtask in subtasks) {
-      subtaskMix.increment(_complexityKey(subtask.complexity));
-      addScore(
-        subtask.complexity,
-        _subtaskCompleted(subtask),
-        _keyMatchesIndividual(subtask.pic),
-      );
-    }
-
-    String dueLabel(DateTime? due) {
-      final day = _hkDateOnly(due);
-      if (day == null) return 'no due date';
-      return DateFormat('d MMM yyyy').format(day);
-    }
-
-    String statusOfTask(Task task) {
-      final db = (task.dbStatus ?? '').trim();
-      if (db.isNotEmpty) return db;
-      return taskStatusDisplayNames[task.status] ?? '';
-    }
-
-    const cap = 40;
-    final shownTasks = tasks.take(cap).toList();
-    final shownSubtasks = subtasks.take(cap).toList();
-    final period = all
-        ? 'All due dates'
-        : 'Due from ${_createdGrainLabel(start, grain)} to ${_createdGrainLabel(end, grain)}';
-    final buffer = StringBuffer()
-      ..writeln('Period: $period')
-      ..writeln(
-        all
-            ? 'Included items are every task and sub-task where this person is assignee or PIC. Projects and sub-projects are only those linked to these items.'
-            : 'Included items are tasks and sub-tasks where this person is assignee or PIC, and whose due date is in the period. Projects and sub-projects are only those linked to these items.',
-      )
-      ..writeln()
-      ..writeln(
-        'Capability score (completed items where this person is PIC; Low 1, Medium 2, High 3; a task weighs the same as a sub-task):',
-      )
-      ..writeln('Score: $score')
-      ..writeln('Low: $scoreLow')
-      ..writeln('Medium: $scoreMedium')
-      ..writeln('High: $scoreHigh')
-      ..writeln()
-      ..writeln(
-        'Kind of work in this period, counting every included item: tasks ${taskMix.total} (Low ${taskMix.low}, Medium ${taskMix.medium}, High ${taskMix.high}); sub-tasks ${subtaskMix.total} (Low ${subtaskMix.low}, Medium ${subtaskMix.medium}, High ${subtaskMix.high}).',
-      )
-      ..writeln()
-      ..writeln('Projects:');
-    if (projectIds.isEmpty) {
-      buffer.writeln('- None');
-    }
-    String projectNameFor(String id) {
-      final stored = projectById[id]?.name.trim() ?? '';
-      if (stored.isNotEmpty) return stored;
-      for (final task in tasks) {
-        if (task.projectId == id &&
-            (task.projectName?.trim().isNotEmpty ?? false)) {
-          return task.projectName!.trim();
-        }
-      }
-      return id;
-    }
-
-    for (final id in projectIds) {
-      final project = projectById[id];
-      final name = projectNameFor(id);
-      final description = _clipReportText(project?.description ?? '');
-      buffer.writeln('- $name');
-      if (description.isNotEmpty) buffer.writeln('  $description');
-    }
-    buffer.writeln();
-    buffer.writeln('Sub-projects:');
-    if (subprojectIds.isEmpty) buffer.writeln('- None');
-    for (final id in subprojectIds) {
-      final subproject = subprojectById[id];
-      final name = subproject?.name.trim().isNotEmpty == true
-          ? subproject!.name.trim()
-          : id;
-      final parent = subproject == null
-          ? ''
-          : (projectById[subproject.projectId]?.name.trim() ?? '');
-      final description = _clipReportText(subproject?.description ?? '');
-      buffer.writeln(parent.isEmpty ? '- $name' : '- $name (project: $parent)');
-      if (description.isNotEmpty) buffer.writeln('  $description');
-    }
-    buffer.writeln();
-    buffer.writeln('Tasks:');
-    for (final task in shownTasks) {
-      buffer.writeln(
-        '- ${task.name.trim().isEmpty ? '(Unnamed task)' : task.name.trim()} | ${_staffRole(task.pic, task.assigneeIds)} | ${_complexityKey(task.complexity)} | ${statusOfTask(task)} | due ${dueLabel(task.dueDate)} | project ${task.projectName?.trim().isNotEmpty == true ? task.projectName!.trim() : '—'} | sub-project ${task.subprojectName?.trim().isNotEmpty == true ? task.subprojectName!.trim() : '—'}',
-      );
-      final description = _clipReportText(task.description);
-      if (description.isNotEmpty) buffer.writeln('  $description');
-    }
-    if (tasks.length > shownTasks.length) {
-      buffer.writeln('- ${tasks.length - shownTasks.length} more tasks not listed');
-    }
-    buffer.writeln();
-    buffer.writeln('Sub-tasks:');
-    for (final subtask in shownSubtasks) {
-      final parent = taskById[subtask.taskId];
-      buffer.writeln(
-        '- ${subtask.subtaskName.trim().isEmpty ? '(Unnamed sub-task)' : subtask.subtaskName.trim()} | ${_staffRole(subtask.pic, subtask.assigneeIds)} | ${_complexityKey(subtask.complexity)} | ${subtask.status.trim()} | due ${dueLabel(subtask.dueDate)} | task ${parent?.name.trim().isNotEmpty == true ? parent!.name.trim() : '—'}',
-      );
-      final description = _clipReportText(subtask.description);
-      if (description.isNotEmpty) buffer.writeln('  $description');
-    }
-    if (subtasks.length > shownSubtasks.length) {
-      buffer.writeln(
-        '- ${subtasks.length - shownSubtasks.length} more sub-tasks not listed',
-      );
-    }
-    return buffer.toString();
-  }
 }
 
 class _ComplexityCounts {
@@ -1181,7 +930,6 @@ class _IndividualPerformanceBlock extends StatelessWidget {
     required this.outputRangeStart,
     required this.outputRangeEnd,
     required this.onOutputRangeChanged,
-    required this.onWriteReport,
     required this.palette,
   });
 
@@ -1195,12 +943,6 @@ class _IndividualPerformanceBlock extends StatelessWidget {
   final DateTime? outputRangeStart;
   final DateTime? outputRangeEnd;
   final void Function(DateTime? start, DateTime? end) onOutputRangeChanged;
-  final Future<String> Function({
-    required bool all,
-    required _CreatedChartGrain grain,
-    required DateTime start,
-    required DateTime end,
-  }) onWriteReport;
   final AsanaLandingPalette palette;
 
   @override
@@ -1281,13 +1023,6 @@ class _IndividualPerformanceBlock extends StatelessWidget {
           items: performance.scored,
           palette: palette,
           onRangeChanged: onOutputRangeChanged,
-        ),
-        const SizedBox(height: 18),
-        _StaffReportSection(
-          key: ValueKey<String>(selectedStaffId ?? ''),
-          palette: palette,
-          staffName: performance.displayName,
-          onWriteReport: onWriteReport,
         ),
       ],
     );
@@ -1549,32 +1284,6 @@ String _createdGrainKey(DateTime d, _CreatedChartGrain grain) {
   }
 }
 
-const _reportMonthNames = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
-
-String _reportMonthText(DateTime d) => '${d.year} ${_reportMonthNames[d.month - 1]}';
-
-String _reportDayText(DateTime d) =>
-    '${_reportMonthNames[d.month - 1]} ${d.day}, ${d.year}';
-
-String _reportStampMonth(DateTime d) =>
-    '${d.year.toString().padLeft(4, '0')}${d.month.toString().padLeft(2, '0')}';
-
-String _reportStampDay(DateTime d) =>
-    '${_reportStampMonth(d)}${d.day.toString().padLeft(2, '0')}';
-
 String _createdGrainLabel(DateTime d, _CreatedChartGrain grain) {
   final a = _alignCreatedGrainStart(d, grain);
   switch (grain) {
@@ -1648,339 +1357,6 @@ List<_CreatedVolumePoint> _createdVolumePoints({
         values: [for (final into in counts) into[key] ?? 0],
       ),
   ];
-}
-
-class _StaffReportSection extends StatefulWidget {
-  const _StaffReportSection({
-    super.key,
-    required this.palette,
-    required this.staffName,
-    required this.onWriteReport,
-  });
-
-  final AsanaLandingPalette palette;
-  final String staffName;
-  final Future<String> Function({
-    required bool all,
-    required _CreatedChartGrain grain,
-    required DateTime start,
-    required DateTime end,
-  }) onWriteReport;
-
-  @override
-  State<_StaffReportSection> createState() => _StaffReportSectionState();
-}
-
-class _StaffReportSectionState extends State<_StaffReportSection> {
-  _CreatedChartGrain _grain = _CreatedChartGrain.month;
-  DateTime? _rangeStart;
-  DateTime? _rangeEnd;
-  bool _writing = false;
-  final _report = TextEditingController();
-
-  @override
-  void dispose() {
-    _report.dispose();
-    super.dispose();
-  }
-
-  DateTime get _today => HkTime.todayDateOnlyHk();
-
-  DateTime get _boundStart => DateTime(_today.year - 3, _today.month, 1);
-  DateTime get _boundEnd => DateTime(_today.year + 2, _today.month, 1);
-
-  DateTime get _effectiveStart {
-    final raw = _rangeStart ?? _boundStart;
-    final aligned = _alignCreatedGrainStart(raw, _grain);
-    if (aligned.isAfter(_boundEnd)) return _boundEnd;
-    return aligned;
-  }
-
-  DateTime get _effectiveEnd {
-    final raw = _rangeEnd ?? _boundEnd;
-    final aligned = _alignCreatedGrainStart(raw, _grain);
-    if (aligned.isBefore(_effectiveStart)) return _effectiveStart;
-    return aligned;
-  }
-
-  bool get _all => _rangeStart == null && _rangeEnd == null;
-
-  String? get _reportRangeLabel {
-    if (_all) return null;
-    if (_grain == _CreatedChartGrain.day) {
-      return 'from ${_reportDayText(_effectiveStart)} to ${_reportDayText(_effectiveEnd)}';
-    }
-    return 'from ${_reportMonthText(_effectiveStart)} to ${_reportMonthText(_effectiveEnd)}';
-  }
-
-  String _reportFileName({required bool asPdf}) {
-    final name = widget.staffName.trim().isEmpty
-        ? 'Staff'
-        : widget.staffName.trim().replaceAll(' ', '_');
-    final extension = asPdf ? 'pdf' : 'docx';
-    if (_all) return 'project_tracker_report_$name.$extension';
-    final from = _grain == _CreatedChartGrain.day
-        ? _reportStampDay(_effectiveStart)
-        : _reportStampMonth(_effectiveStart);
-    final to = _grain == _CreatedChartGrain.day
-        ? _reportStampDay(_effectiveEnd)
-        : _reportStampMonth(_effectiveEnd);
-    return 'project_tracker_report_${name}_${from}_to_$to.$extension';
-  }
-
-  ButtonStyle _accentButtonStyle() {
-    return FilledButton.styleFrom(
-      backgroundColor: widget.palette.accent,
-      foregroundColor: Colors.white,
-      disabledBackgroundColor: widget.palette.accent.withValues(alpha: 0.6),
-      disabledForegroundColor: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    );
-  }
-
-  StaffReportDocument get _reportDocument {
-    final name = widget.staffName.trim().isEmpty ? 'Staff' : widget.staffName.trim();
-    return StaffReportDocument(
-      staffName: name,
-      rangeLabel: _reportRangeLabel,
-      body: _report.text,
-    );
-  }
-
-  Future<void> _downloadReport({required bool asPdf}) async {
-    if (_report.text.trim().isEmpty || _writing) return;
-    try {
-      final document = _reportDocument;
-      final bytes = asPdf
-          ? await staffReportPdf(document)
-          : staffReportDocx(document);
-      final contentType = asPdf
-          ? 'application/pdf'
-          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      final saved = await openAttachmentBytesInSystemViewer(
-        bytes,
-        contentType,
-        _reportFileName(asPdf: asPdf),
-      );
-      if (!saved && mounted) {
-        _showDownloadError();
-      }
-    } catch (_) {
-      if (!mounted) return;
-      _showDownloadError();
-    }
-  }
-
-  void _showDownloadError() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not download the report.')),
-    );
-  }
-
-  Future<void> _pickRange(BuildContext anchorContext) async {
-    if (_grain == _CreatedChartGrain.month) {
-      final picked = await showAsanaAnchoredMonthRangePicker(
-        anchorContext: anchorContext,
-        startMonth: _rangeStart == null ? _today : _effectiveStart,
-        endMonth: _rangeEnd == null ? _today : _effectiveEnd,
-        helpText: 'From and to',
-        firstDate: _boundStart,
-        lastDate: _boundEnd,
-        allowClear: false,
-        requireBothEnds: true,
-        emptyHint: 'Select the from month, then the to month.',
-        pendingEndHint: 'Select the to month',
-        selectedPrefix: '',
-      );
-      if (picked == null || picked.cleared || picked.range == null || !mounted) {
-        return;
-      }
-      _applyRange(picked.range!.start, picked.range!.end);
-      return;
-    }
-    final picked = await showAsanaAnchoredDateRangePicker(
-      anchorContext: anchorContext,
-      start: _rangeStart ?? _today,
-      end: _rangeEnd ?? _today,
-      helpText: 'From and to',
-      firstDate: _boundStart,
-      lastDate: _boundEnd,
-      requireBothEnds: true,
-    );
-    if (picked == null || !mounted) return;
-    _applyRange(picked.start, picked.end);
-  }
-
-  void _applyRange(DateTime startRaw, DateTime endRaw) {
-    setState(() {
-      var start = _alignCreatedGrainStart(startRaw, _grain);
-      var end = _alignCreatedGrainStart(endRaw, _grain);
-      if (start.isAfter(end)) {
-        final tmp = start;
-        start = end;
-        end = tmp;
-      }
-      _rangeStart = start;
-      _rangeEnd = end;
-    });
-  }
-
-  Future<void> _write() async {
-    setState(() => _writing = true);
-    try {
-      final text = await widget.onWriteReport(
-        all: _all,
-        grain: _grain,
-        start: _effectiveStart,
-        end: _effectiveEnd,
-      );
-      if (!mounted) return;
-      setState(() => _report.text = text);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _report.text = e.toString());
-    } finally {
-      if (mounted) setState(() => _writing = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final titleStyle = asanaTextStyle(
-      Theme.of(context).textTheme.titleLarge,
-      fontSize: 22,
-      fontWeight: FontWeight.w700,
-      color: kAsanaTextPrimary,
-      height: 1.2,
-    );
-    final fromLabel = _all ? 'All' : _createdGrainLabel(_effectiveStart, _grain);
-    final toLabel = _all ? 'All' : _createdGrainLabel(_effectiveEnd, _grain);
-    return Material(
-      color: widget.palette.listSurface,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Staff report', style: titleStyle),
-            const SizedBox(height: 6),
-            Text(
-              'A written report for this staff member, using tasks and sub-tasks due in the selected period and the projects and sub-projects those items belong to.',
-              style: asanaTextStyle(
-                Theme.of(context).textTheme.bodySmall,
-                color: kAsanaTextSecondary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _CreatedGrainToggle(
-                  grain: _grain,
-                  showWeek: false,
-                  onChanged: (value) => setState(() {
-                    _grain = value;
-                    _rangeStart = null;
-                    _rangeEnd = null;
-                  }),
-                  palette: widget.palette,
-                ),
-                Text(
-                  'From',
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.bodySmall,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: kAsanaTextSecondary,
-                  ),
-                ),
-                _CreatedRangeButton(label: fromLabel, onPressed: _pickRange),
-                Text(
-                  'To',
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.bodySmall,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: kAsanaTextSecondary,
-                  ),
-                ),
-                _CreatedRangeButton(label: toLabel, onPressed: _pickRange),
-                TextButton(
-                  onPressed: () => setState(() {
-                    _rangeStart = null;
-                    _rangeEnd = null;
-                  }),
-                  child: const Text('All'),
-                ),
-                FilledButton(
-                  onPressed: _writing ? null : _write,
-                  style: _accentButtonStyle(),
-                  child: _writing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('Write report'),
-                ),
-              ],
-            ),
-            if (_report.text.trim().isNotEmpty) ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _report,
-                readOnly: true,
-                minLines: 8,
-                maxLines: 18,
-                style: asanaTextStyle(
-                  Theme.of(context).textTheme.bodyMedium,
-                  color: kAsanaTextPrimary,
-                  height: 1.4,
-                ),
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.end,
-                  children: [
-                    FilledButton(
-                      onPressed: _writing
-                          ? null
-                          : () => _downloadReport(asPdf: false),
-                      style: _accentButtonStyle(),
-                      child: const Text('Download as Word'),
-                    ),
-                    FilledButton(
-                      onPressed: _writing
-                          ? null
-                          : () => _downloadReport(asPdf: true),
-                      style: _accentButtonStyle(),
-                      child: const Text('Download as PDF'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _ScoreTrendSection extends StatefulWidget {
@@ -2496,13 +1872,11 @@ class _CreatedGrainToggle extends StatelessWidget {
     required this.grain,
     required this.onChanged,
     required this.palette,
-    this.showWeek = true,
   });
 
   final _CreatedChartGrain grain;
   final ValueChanged<_CreatedChartGrain> onChanged;
   final AsanaLandingPalette palette;
-  final bool showWeek;
 
   @override
   Widget build(BuildContext context) {
@@ -2537,7 +1911,7 @@ class _CreatedGrainToggle extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         button(_CreatedChartGrain.month, 'Month'),
-        if (showWeek) button(_CreatedChartGrain.week, 'Week'),
+        button(_CreatedChartGrain.week, 'Week'),
         button(_CreatedChartGrain.day, 'Day'),
       ],
     );
