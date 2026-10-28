@@ -505,7 +505,12 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
     _publishAssigneeSnapshot();
     if (mounted) setState(() {});
     try {
-      final data = await DatabaseService.fetchStaffAssigneePickerData();
+      final state = context.read<AppState>();
+      final data = DatabaseService.scopeAssigneePickerToSameBossOffice(
+        await DatabaseService.fetchStaffAssigneePickerData(),
+        viewerAppId: state.effectiveStaffAppId,
+        viewerStaffUuid: state.effectiveStaffUuid,
+      );
       if (!mounted) return;
       _assigneePickerLoading = false;
       _pickerOffices = data.offices;

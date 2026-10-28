@@ -1,9 +1,16 @@
 /// Row from `office` for assignee filtering.
 class OfficeOptionRow {
-  const OfficeOptionRow({required this.officeId, required this.officeName});
+  const OfficeOptionRow({
+    required this.officeId,
+    required this.officeName,
+    this.bossOfficeId,
+  });
 
   final String officeId;
   final String officeName;
+
+  /// Vice-president office for every team in this office.
+  final String? bossOfficeId;
 }
 
 /// Row from `team` for assignee filtering (join key: [teamId] == [StaffForAssignment.teamId]).
@@ -48,6 +55,7 @@ class StaffForAssignment {
     this.staffUuid,
     this.teamId,
     this.officeId,
+    this.bossOfficeId,
   });
 
   /// Prefer `staff.app_id`; falls back to `staff.id` string when app_id is null.
@@ -56,4 +64,7 @@ class StaffForAssignment {
   final String name;
   final String? teamId;
   final String? officeId;
+
+  /// Vice-president office copied from this staff member's office.
+  final String? bossOfficeId;
 }

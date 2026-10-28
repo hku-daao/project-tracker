@@ -106,7 +106,7 @@ async function loadActorByStaffId(pool, staffId) {
 
 async function loadScope(pool, actor) {
   const offices = await pool.query(
-    `SELECT office_id, office_name
+    `SELECT office_id, office_name, boss_office_id
      FROM office
      WHERE office_id IS NOT NULL AND btrim(office_id) <> ''
      ORDER BY office_name`,
@@ -173,6 +173,12 @@ async function loadScope(pool, actor) {
     offices: visibleOffices.map((o) => ({
       officeId: o.office_id,
       officeName: o.office_name || o.office_id,
+      bossOfficeId: o.boss_office_id,
+    })),
+    bossOffices: offices.rows.map((o) => ({
+      officeId: o.office_id,
+      officeName: o.office_name || o.office_id,
+      bossOfficeId: o.boss_office_id,
     })),
     teams: visibleTeams.map((t) => ({
       id: t.id,
@@ -353,6 +359,11 @@ async function handle(req, res, ctx) {
       await deleteStaff(pool, actor, id, sendJson, req, res);
       return;
     }
+    if (path.startsWith('/api/staff-admin/offices/') && req.method === 'PATCH') {
+      const officeId = decodeURIComponent(path.split('/').pop());
+      await updateOfficeBoss(pool, actor, officeId, await readBody(req), sendJson, req, res);
+      return;
+    }
     if (path === '/api/staff-admin/teams' && req.method === 'POST') {
       await createTeam(pool, actor, await readBody(req), sendJson, req, res);
       return;
@@ -380,6 +391,48 @@ async function handle(req, res, ctx) {
     console.error('staff-admin:', e);
     sendJson(req, res, 500, { error: 'Could not save Staff changes.' });
   }
+}
+
+async function resolveBossOfficeId(pool, raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) {
+    return { error: 'Choose a boss office.' };
+  }
+  const found = await pool.query(
+    `SELECT office_id
+     FROM office
+     WHERE lower(office_id) = lower($1)
+     LIMIT 1`,
+    [value],
+  );
+  const officeId = found.rows[0]?.office_id;
+  if (!officeId) {
+    return { error: 'Choose a boss office that exists.' };
+  }
+  return { bossOfficeId: officeId };
+}
+
+async function updateOfficeBoss(pool, actor, officeId, body, sendJson, req, res) {
+  const scope = await loadScope(pool, actor);
+  const office = scope.offices.find(
+    (row) => String(row.officeId).trim().toLowerCase() === String(officeId || '').trim().toLowerCase(),
+  );
+  if (!office) {
+    sendJson(req, res, 404, { error: 'That office is outside your access.' });
+    return;
+  }
+  const boss = await resolveBossOfficeId(pool, body.bossOfficeId);
+  if (boss.error) {
+    sendJson(req, res, 400, { error: boss.error });
+    return;
+  }
+  await pool.query(
+    `UPDATE office
+     SET boss_office_id = $2
+     WHERE lower(office_id) = lower($1)`,
+    [office.officeId, boss.bossOfficeId],
+  );
+  sendJson(req, res, 200, { ok: true });
 }
 
 async function createStaff(pool, actor, body, sendJson, req, res) {

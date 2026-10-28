@@ -1,0 +1,2 @@
+-- Superseded by deploy/move_boss_office_id_to_office.sql.
+-- boss_office_id belongs on public.office. This file no longer adds it to staff.

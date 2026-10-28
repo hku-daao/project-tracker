@@ -51,10 +51,15 @@ String? staffEmailError(String raw) {
 }
 
 class _OfficeRow {
-  const _OfficeRow({required this.officeId, required this.officeName});
+  const _OfficeRow({
+    required this.officeId,
+    required this.officeName,
+    this.bossOfficeId,
+  });
 
   final String officeId;
   final String officeName;
+  final String? bossOfficeId;
 }
 
 class _TeamRow {
@@ -123,6 +128,7 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
   bool _loading = true;
   String? _error;
   List<_OfficeRow> _offices = const [];
+  List<_OfficeRow> _bossOffices = const [];
   List<_TeamRow> _teams = const [];
   List<_StaffRow> _staff = const [];
   List<_LinkRow> _links = const [];
@@ -182,14 +188,17 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
       return;
     }
     final data = result.data!;
-    final offices = [
-      for (final raw in (data['offices'] as List? ?? const []))
+    List<_OfficeRow> readOffices(String key) => [
+      for (final raw in (data[key] as List? ?? const []))
         if (raw is Map)
           _OfficeRow(
             officeId: raw['officeId']?.toString() ?? '',
             officeName: raw['officeName']?.toString() ?? '',
+            bossOfficeId: raw['bossOfficeId']?.toString(),
           ),
     ];
+    final offices = readOffices('offices');
+    final bossOffices = readOffices('bossOffices');
     final teams = [
       for (final raw in (data['teams'] as List? ?? const []))
         if (raw is Map)
@@ -241,6 +250,7 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
     setState(() {
       _loading = false;
       _offices = offices;
+      _bossOffices = bossOffices.isEmpty ? offices : bossOffices;
       _teams = teams;
       _staff = staff;
       _links = links;
@@ -373,16 +383,30 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
       builder: (context) => _TeamFormDialog(
         palette: widget.palette,
         offices: _offices,
+        bossOffices: _bossOffices,
         teams: _teams,
         existing: existing,
         affectedStaff: existing == null ? const [] : _staffOnTeam(existing),
-        onSubmit: (body) => _request(
-          existing == null ? 'POST' : 'PATCH',
-          existing == null
-              ? '/api/staff-admin/teams'
-              : '/api/staff-admin/teams/${existing.id}',
-          body: body,
-        ),
+        onSubmit: (body) async {
+          final officeId = body['officeId']?.toString() ?? '';
+          final teamResult = await _request(
+            existing == null ? 'POST' : 'PATCH',
+            existing == null
+                ? '/api/staff-admin/teams'
+                : '/api/staff-admin/teams/${existing.id}',
+            body: {
+              'teamId': body['teamId'],
+              'teamName': body['teamName'],
+              'officeId': officeId,
+            },
+          );
+          if (teamResult.error != null) return teamResult;
+          return _request(
+            'PATCH',
+            '/api/staff-admin/offices/${Uri.encodeComponent(officeId)}',
+            body: {'bossOfficeId': body['bossOfficeId']},
+          );
+        },
       ),
     );
     if (saved == true) await _load();
@@ -465,6 +489,7 @@ class _AsanaStaffAdminPanelState extends State<AsanaStaffAdminPanel> {
             palette: widget.palette,
             teams: _teams,
             offices: _offices,
+            bossOffices: _bossOffices,
             staff: _staff,
             onAdd: () => _editTeam(),
             onEdit: (team) => _editTeam(existing: team),
@@ -605,6 +630,7 @@ class _TeamsPane extends StatelessWidget {
     required this.palette,
     required this.teams,
     required this.offices,
+    required this.bossOffices,
     required this.staff,
     required this.onAdd,
     required this.onEdit,
@@ -614,10 +640,21 @@ class _TeamsPane extends StatelessWidget {
   final AsanaLandingPalette palette;
   final List<_TeamRow> teams;
   final List<_OfficeRow> offices;
+  final List<_OfficeRow> bossOffices;
   final List<_StaffRow> staff;
   final VoidCallback onAdd;
   final ValueChanged<_TeamRow> onEdit;
   final ValueChanged<_TeamRow> onRemove;
+
+  String _bossOfficeName(String? bossOfficeId) {
+    final id = (bossOfficeId ?? '').trim();
+    for (final office in bossOffices) {
+      if (office.officeId == id && office.officeName.trim().isNotEmpty) {
+        return office.officeName.trim();
+      }
+    }
+    return id.isEmpty ? 'No boss office' : id;
+  }
 
   bool _hasStaff(_TeamRow team) {
     final key = team.teamId.trim().toLowerCase();
@@ -674,8 +711,11 @@ class _TeamsPane extends StatelessWidget {
                       final team = teams[index];
                       final office = offices
                           .where((o) => o.officeId == team.officeId)
-                          .map((o) => o.officeName)
                           .firstOrNull;
+                      final officeLine = [
+                        office?.officeName ?? '',
+                        _bossOfficeName(office?.bossOfficeId),
+                      ].where((part) => part.isNotEmpty).join(' · ');
                       return Material(
                         color: palette.tableColors.subtaskRow,
                         child: Padding(
@@ -689,7 +729,7 @@ class _TeamsPane extends StatelessWidget {
                                       children: [
                                         Text(team.teamName, style: nameStyle),
                                         const SizedBox(height: 5),
-                                        Text(office ?? '', style: valueStyle),
+                                        Text(officeLine, style: valueStyle),
                                       ],
                                     ),
                                   ),
@@ -1637,6 +1677,7 @@ class _TeamFormDialog extends StatefulWidget {
   const _TeamFormDialog({
     required this.palette,
     required this.offices,
+    required this.bossOffices,
     required this.teams,
     required this.affectedStaff,
     required this.onSubmit,
@@ -1645,6 +1686,7 @@ class _TeamFormDialog extends StatefulWidget {
 
   final AsanaLandingPalette palette;
   final List<_OfficeRow> offices;
+  final List<_OfficeRow> bossOffices;
   final List<_TeamRow> teams;
   final List<_StaffRow> affectedStaff;
   final _TeamRow? existing;
@@ -1660,6 +1702,7 @@ class _TeamFormDialog extends StatefulWidget {
 class _TeamFormDialogState extends State<_TeamFormDialog> {
   late final TextEditingController _teamName;
   String? _officeId;
+  String? _bossOfficeId;
   String? _formError;
   bool _saving = false;
 
@@ -1670,6 +1713,21 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
     _teamName = TextEditingController(text: existing?.teamName ?? '');
     _officeId = existing?.officeId;
     _officeId ??= widget.offices.isEmpty ? null : widget.offices.first.officeId;
+    _bossOfficeId = _storedBossOfficeId(_officeId);
+  }
+
+  String? _storedBossOfficeId(String? officeId) {
+    for (final office in widget.offices) {
+      if (office.officeId == officeId) {
+        final boss = office.bossOfficeId?.trim();
+        if (boss != null &&
+            boss.isNotEmpty &&
+            widget.bossOffices.any((choice) => choice.officeId == boss)) {
+          return boss;
+        }
+      }
+    }
+    return null;
   }
 
   @override
@@ -1703,6 +1761,10 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
       setState(() => _formError = 'Team name and office are required.');
       return;
     }
+    if (_bossOfficeId == null || _bossOfficeId!.isEmpty) {
+      setState(() => _formError = 'Choose a boss office.');
+      return;
+    }
     if (widget.existing != null) {
       final count = widget.affectedStaff.length;
       final ok = await showAsanaConfirmDialog(
@@ -1724,6 +1786,7 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
       'teamId': teamId,
       'teamName': teamName,
       'officeId': _officeId,
+      'bossOfficeId': _bossOfficeId,
     });
     if (!mounted) return;
     if (result.error != null) {
@@ -1741,6 +1804,13 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
       if (office.officeId == _officeId) return office.officeName;
     }
     return 'Choose office';
+  }
+
+  String _bossOfficeLabel() {
+    for (final office in widget.bossOffices) {
+      if (office.officeId == _bossOfficeId) return office.officeName;
+    }
+    return 'Choose boss office';
   }
 
   Future<void> _pickOffice(BuildContext buttonContext) async {
@@ -1763,7 +1833,33 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
             (id) => id != _officeId,
             orElse: () => selection.first,
           );
-    setState(() => _officeId = next);
+    setState(() {
+      _officeId = next;
+      _bossOfficeId = _storedBossOfficeId(next);
+    });
+  }
+
+  Future<void> _pickBossOffice(BuildContext buttonContext) async {
+    final selection = await showAsanaCheckboxFilterPanel(
+      anchorContext: buttonContext,
+      options: [
+        for (final office in widget.bossOffices)
+          AsanaFilterCheckboxOption(
+            key: office.officeId,
+            label: office.officeName,
+          ),
+      ],
+      initialSelection: {?_bossOfficeId},
+      singleSelect: true,
+    );
+    if (!mounted || selection == null || selection.isEmpty) return;
+    final next = selection.length == 1
+        ? selection.first
+        : selection.firstWhere(
+            (id) => id != _bossOfficeId,
+            orElse: () => selection.first,
+          );
+    setState(() => _bossOfficeId = next);
   }
 
   Widget _fieldLabel(String title) {
@@ -1829,6 +1925,29 @@ class _TeamFormDialogState extends State<_TeamFormDialog> {
                   buttonWidth: dialogWidth - 60,
                   enabled: widget.offices.isNotEmpty,
                   onPressed: _pickOffice,
+                ),
+                const SizedBox(height: 12),
+                AsanaFilterDropdown(
+                  title: 'Boss office',
+                  value: _bossOfficeLabel(),
+                  buttonWidth: dialogWidth - 60,
+                  enabled: widget.bossOffices.isNotEmpty,
+                  onPressed: _pickBossOffice,
+                ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'This boss office applies to every team in the selected office. Assignee lists only include staff whose office has the same boss office.',
+                    textAlign: TextAlign.left,
+                    style: asanaTextStyle(
+                      theme.textTheme.bodySmall,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: kAsanaTextSecondary,
+                      height: 1.35,
+                    ),
+                  ),
                 ),
             if (_formError != null) ...[
               const SizedBox(height: 12),

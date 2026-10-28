@@ -55,7 +55,3 @@ FROM public.subordinate_implied;
 
 GRANT SELECT ON public.subordinate_implied TO anon, authenticated, service_role;
 GRANT SELECT ON public.subordinate_effective TO anon, authenticated, service_role;
-
-ALTER TABLE public.office DROP CONSTRAINT IF EXISTS office_boss_office_id_fkey;
-ALTER TABLE public.office DROP CONSTRAINT IF EXISTS office_boss_not_self;
-ALTER TABLE public.office DROP COLUMN IF EXISTS boss_office_id;

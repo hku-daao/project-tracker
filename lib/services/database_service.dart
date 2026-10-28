@@ -3566,31 +3566,53 @@ class DatabaseService {
 
     final offices = <OfficeOptionRow>[];
     final officeIds = <String>{};
+    final bossByOfficeId = <String, String>{};
     final teamOfficeByTeamId = <String, String>{};
     final teams = <TeamOptionRow>[];
     final teamUuidToBusinessId = <String, String>{};
     final legacyTeamUuidToBusinessId = <String, String>{};
 
+    void addOffice(Map<String, dynamic> m) {
+      final officeId = m['office_id']?.toString().trim() ?? '';
+      if (officeId.isEmpty || officeIds.contains(officeId)) return;
+      final name = m['office_name']?.toString().trim();
+      final boss = m['boss_office_id']?.toString().trim();
+      if (boss != null && boss.isNotEmpty) {
+        bossByOfficeId[officeId.toLowerCase()] = boss;
+      }
+      offices.add(
+        OfficeOptionRow(
+          officeId: officeId,
+          officeName: name != null && name.isNotEmpty ? name : officeId,
+          bossOfficeId: boss != null && boss.isNotEmpty ? boss : null,
+        ),
+      );
+      officeIds.add(officeId);
+    }
+
     try {
       final res = await db
           .from('office')
-          .select('office_id, office_name')
+          .select('office_id, office_name, boss_office_id')
           .order('office_name');
       for (final raw in (res as List)) {
-        final m = Map<String, dynamic>.from(raw as Map);
-        final officeId = m['office_id']?.toString().trim() ?? '';
-        if (officeId.isEmpty || officeIds.contains(officeId)) continue;
-        final name = m['office_name']?.toString().trim();
-        offices.add(
-          OfficeOptionRow(
-            officeId: officeId,
-            officeName: name != null && name.isNotEmpty ? name : officeId,
-          ),
-        );
-        officeIds.add(officeId);
+        addOffice(Map<String, dynamic>.from(raw as Map));
       }
     } catch (e) {
-      debugPrint('fetchStaffAssigneePickerData: office table: $e');
+      debugPrint(
+        'fetchStaffAssigneePickerData: office.boss_office_id unavailable, retrying: $e',
+      );
+      try {
+        final res = await db
+            .from('office')
+            .select('office_id, office_name')
+            .order('office_name');
+        for (final raw in (res as List)) {
+          addOffice(Map<String, dynamic>.from(raw as Map));
+        }
+      } catch (retryError) {
+        debugPrint('fetchStaffAssigneePickerData: office table: $retryError');
+      }
     }
 
     try {
@@ -3727,6 +3749,9 @@ class DatabaseService {
       }
       teamId ??= staffUuidToTeamBusinessId[id];
       final officeId = teamId == null ? null : teamOfficeByTeamId[teamId];
+      final bossOfficeId = officeId == null
+          ? null
+          : bossByOfficeId[officeId.toLowerCase()];
 
       staff.add(
         StaffForAssignment(
@@ -3735,6 +3760,7 @@ class DatabaseService {
           staffUuid: id.isNotEmpty ? id : null,
           teamId: teamId,
           officeId: officeId,
+          bossOfficeId: bossOfficeId,
         ),
       );
     }
@@ -3769,6 +3795,69 @@ class DatabaseService {
 
     offices.sort((a, b) => a.officeName.compareTo(b.officeName));
     teams.sort((a, b) => a.teamName.compareTo(b.teamName));
+    return StaffAssigneePickerData(
+      offices: offices,
+      teams: teams,
+      staff: staff,
+    );
+  }
+
+  /// Keeps assignee choices inside the signed-in person's vice-president group.
+  ///
+  /// The group is [StaffForAssignment.bossOfficeId], copied from that person's
+  /// office. A blank value only matches other blank values. Offices and teams
+  /// that have no remaining staff are dropped with them.
+  static StaffAssigneePickerData scopeAssigneePickerToSameBossOffice(
+    StaffAssigneePickerData data, {
+    required String? viewerAppId,
+    required String? viewerStaffUuid,
+  }) {
+    bool sameKey(String? left, String? right) {
+      final a = left?.trim().toLowerCase() ?? '';
+      final b = right?.trim().toLowerCase() ?? '';
+      return a.isNotEmpty && a == b;
+    }
+
+    StaffForAssignment? viewer;
+    for (final person in data.staff) {
+      if (sameKey(person.assigneeId, viewerAppId) ||
+          sameKey(person.staffUuid, viewerAppId) ||
+          sameKey(person.assigneeId, viewerStaffUuid) ||
+          sameKey(person.staffUuid, viewerStaffUuid)) {
+        viewer = person;
+        break;
+      }
+    }
+    if (viewer == null) {
+      return const StaffAssigneePickerData(
+        offices: [],
+        teams: [],
+        staff: [],
+      );
+    }
+    final boss = viewer.bossOfficeId?.trim().toLowerCase() ?? '';
+    final staff = [
+      for (final person in data.staff)
+        if ((person.bossOfficeId?.trim().toLowerCase() ?? '') == boss) person,
+    ];
+    final teamIds = <String>{
+      for (final person in staff)
+        if ((person.teamId ?? '').trim().isNotEmpty) person.teamId!.trim(),
+    };
+    final teams = [
+      for (final team in data.teams)
+        if (teamIds.contains(team.teamId)) team,
+    ];
+    final officeIds = <String>{
+      for (final team in teams)
+        if ((team.officeId ?? '').trim().isNotEmpty) team.officeId!.trim(),
+      for (final person in staff)
+        if ((person.officeId ?? '').trim().isNotEmpty) person.officeId!.trim(),
+    };
+    final offices = [
+      for (final office in data.offices)
+        if (officeIds.contains(office.officeId)) office,
+    ];
     return StaffAssigneePickerData(
       offices: offices,
       teams: teams,
