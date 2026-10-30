@@ -48,22 +48,31 @@
   </style>
 </head>
 <body>
-  <!-- Drop stale Flutter service workers so normal browsers load the latest deploy. -->
+  <!-- Drop stale Flutter service workers, then load the latest build. -->
   <script>
-    if ('serviceWorker' in navigator) {
+    (function () {
+      function boot() {
+        var script = document.createElement('script');
+        script.src = 'flutter_bootstrap.js';
+        document.body.appendChild(script);
+      }
+      if (!('serviceWorker' in navigator)) {
+        boot();
+        return;
+      }
       navigator.serviceWorker.getRegistrations().then(function (regs) {
-        for (var i = 0; i < regs.length; i++) regs[i].unregister();
-      });
-    }
+        var pending = [];
+        for (var i = 0; i < regs.length; i++) pending.push(regs[i].unregister());
+        return Promise.all(pending).then(function () {
+          if (regs.length && !sessionStorage.getItem('pt_sw_cleared')) {
+            sessionStorage.setItem('pt_sw_cleared', '1');
+            location.reload();
+            return;
+          }
+          boot();
+        });
+      }).catch(boot);
+    })();
   </script>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
-  <script src="flutter_bootstrap.js"></script>
 </body>
 </html>

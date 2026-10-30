@@ -781,6 +781,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         onCreateProject: adminViewMode
             ? null
             : () => _openRootDetail(const AsanaDetailSelection.createProject()),
+        onStructureChanged: _handleProjectChanged,
       );
     }
     if (_selectedNav == 'Map') {

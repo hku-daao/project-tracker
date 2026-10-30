@@ -24,6 +24,8 @@ import 'asana_project_milestone_section.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
+const double _kProjectSelectionWidth = 36;
+
 /// Projects nav content: filter toolbar + project table (mirrors [AsanaTasksPanel]).
 class AsanaProjectsPanel extends StatefulWidget {
   const AsanaProjectsPanel({
@@ -36,6 +38,7 @@ class AsanaProjectsPanel extends StatefulWidget {
     this.onOpenSubtask,
     this.onOpenSubproject,
     this.onCreateProject,
+    this.onStructureChanged,
   });
 
   final AsanaLandingPalette palette;
@@ -46,6 +49,7 @@ class AsanaProjectsPanel extends StatefulWidget {
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final VoidCallback? onCreateProject;
+  final VoidCallback? onStructureChanged;
 
   @override
   State<AsanaProjectsPanel> createState() => _AsanaProjectsPanelState();
@@ -60,6 +64,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   final Set<String> _loadingSubtaskTaskIds = {};
   final Map<String, List<SingularSubtask>> _subtasksByTask = {};
   final Map<String, int> _milestoneProgressByProject = {};
+  final Set<String> _selectedProjectIds = {};
+  final Set<String> _selectedSubprojectIds = {};
+  bool _pickingParentProject = false;
+  Set<String> _moveSourceProjectIds = {};
   int _progressLoadGen = 0;
   String? _progressIdsKey;
 
@@ -340,6 +348,411 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     }
   }
 
+  void _clearStructureSelection() {
+    setState(() {
+      _selectedProjectIds.clear();
+      _selectedSubprojectIds.clear();
+      _pickingParentProject = false;
+      _moveSourceProjectIds = {};
+    });
+  }
+
+  void _setProjectSelected(String projectId, bool selected) {
+    if (_pickingParentProject) {
+      if (!selected) {
+        setState(() {
+          _selectedProjectIds.remove(projectId);
+          _moveSourceProjectIds.remove(projectId);
+          if (_moveSourceProjectIds.isEmpty) {
+            _pickingParentProject = false;
+            _selectedSubprojectIds.clear();
+          }
+        });
+        return;
+      }
+      if (_moveSourceProjectIds.contains(projectId)) return;
+      unawaited(_confirmMakeSubprojectUnder(projectId));
+      return;
+    }
+    setState(() {
+      if (selected) {
+        _selectedProjectIds.add(projectId);
+      } else {
+        _selectedProjectIds.remove(projectId);
+      }
+    });
+  }
+
+  void _setSubprojectSelected(String subprojectId, bool selected) {
+    if (_pickingParentProject) return;
+    setState(() {
+      if (selected) {
+        _selectedSubprojectIds.add(subprojectId);
+      } else {
+        _selectedSubprojectIds.remove(subprojectId);
+      }
+    });
+  }
+
+  bool _staffHit(AppState state, String? raw) {
+    final value = raw?.trim() ?? '';
+    if (value.isEmpty) return false;
+    final uuid = state.effectiveStaffUuid?.trim() ?? '';
+    final appId =
+        (state.effectiveStaffAppId ?? state.userStaffAppId)?.trim() ?? '';
+    return (uuid.isNotEmpty && value == uuid) ||
+        (appId.isNotEmpty && value == appId);
+  }
+
+  bool _viewerIsProjectPic(AppState state, ProjectRecord project) {
+    if (state.superAdminActsAsPic) return true;
+    return project.picStaffUuids.any((id) => _staffHit(state, id));
+  }
+
+  bool _viewerIsSubprojectPic(AppState state, SubprojectRecord subproject) {
+    if (state.superAdminActsAsPic) return true;
+    return subproject.picStaffUuids.any((id) => _staffHit(state, id));
+  }
+
+  bool _canMakeSubproject(AppState state, ProjectRecord project) {
+    if (_projectIsDeleted(project) || project.hasMilestone) return false;
+    if (!_viewerIsProjectPic(state, project)) return false;
+    return state.subprojectsForProject(project.id).isEmpty;
+  }
+
+  bool _canDetachProject(AppState state, SubprojectRecord subproject) {
+    if (subproject.isDeleted) return false;
+    return _viewerIsSubprojectPic(state, subproject);
+  }
+
+  List<Widget> _selectionButtons(AppState state) {
+    if (_pickingParentProject) return const [];
+    if (_selectedProjectIds.isEmpty && _selectedSubprojectIds.isEmpty) {
+      return const [];
+    }
+    if (_selectedProjectIds.isNotEmpty && _selectedSubprojectIds.isNotEmpty) {
+      return const [];
+    }
+    if (_selectedProjectIds.isNotEmpty) {
+      final selected = <ProjectRecord>[
+        for (final project in state.projects)
+          if (_selectedProjectIds.contains(project.id)) project,
+      ];
+      if (selected.length != _selectedProjectIds.length) return const [];
+      final allEligible = selected.every(
+        (project) => _canMakeSubproject(state, project),
+      );
+      final hasParent = state.projects.any(
+        (project) =>
+            !_projectIsDeleted(project) &&
+            !_selectedProjectIds.contains(project.id),
+      );
+      if (!allEligible || !hasParent) return const [];
+      return [
+        _ProjectStructureButton(
+          label: 'Make Subproject',
+          palette: widget.palette,
+          onPressed: _beginMakeSubproject,
+        ),
+      ];
+    }
+    final selectedSubs = <SubprojectRecord>[
+      for (final id in _selectedSubprojectIds)
+        if (state.subprojectById(id) case final subproject?)
+          if (_canDetachProject(state, subproject)) subproject,
+    ];
+    if (selectedSubs.length != _selectedSubprojectIds.length) {
+      return const [];
+    }
+    return [
+      _ProjectStructureButton(
+        label: 'Detach Project',
+        palette: widget.palette,
+        onPressed: _detachSelectedProjects,
+      ),
+    ];
+  }
+
+  Future<void> _showStructureInfoDialog({
+    required String title,
+    required String content,
+    String confirmText = 'OK',
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Dialog(
+          backgroundColor: widget.palette.panelBackground,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
+          ),
+          elevation: 12,
+          child: Container(
+            width: 440,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: asanaTextStyle(
+                    theme.textTheme.titleMedium,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  content,
+                  style: asanaTextStyle(
+                    theme.textTheme.bodyMedium,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: kAsanaTextSecondary,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: widget.palette.accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    child: Text(confirmText),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<bool?> _showStructureConfirmDialog({
+    required String title,
+    required String content,
+    required String confirmText,
+    String cancelText = 'Cancel',
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Dialog(
+          backgroundColor: widget.palette.panelBackground,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
+          ),
+          elevation: 12,
+          child: Container(
+            width: 400,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: asanaTextStyle(
+                    theme.textTheme.titleMedium,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  content,
+                  style: asanaTextStyle(
+                    theme.textTheme.bodyMedium,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: kAsanaTextSecondary,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kAsanaTextPrimary,
+                        side: const BorderSide(color: Color(0xFFEDEAE9)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(cancelText),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: widget.palette.accent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(confirmText),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  bool _projectIsDeleted(ProjectRecord project) {
+    final status = project.status.trim().toLowerCase();
+    return status == 'deleted' || status == 'delete';
+  }
+
+  String _projectLabel(ProjectRecord project) {
+    final name = project.name.trim();
+    return name.isEmpty ? '(Unnamed project)' : name;
+  }
+
+  String _subprojectLabel(SubprojectRecord subproject) {
+    final name = subproject.name.trim();
+    return name.isEmpty ? '(Unnamed sub-project)' : name;
+  }
+
+  Future<void> _beginMakeSubproject() async {
+    final state = context.read<AppState>();
+    final selected = <ProjectRecord>[
+      for (final project in state.projects)
+        if (_selectedProjectIds.contains(project.id)) project,
+    ];
+    if (selected.isEmpty) return;
+    if (!mounted) return;
+    await _showStructureInfoDialog(
+      title: 'Make Subproject',
+      content:
+          'Check one project from the list. That project will become the parent, and each checked project will move under it as a sub-project. Tasks move with those projects.',
+    );
+    if (!mounted) return;
+    setState(() {
+      _pickingParentProject = true;
+      _moveSourceProjectIds = {..._selectedProjectIds};
+      _selectedSubprojectIds.clear();
+    });
+  }
+
+  Future<void> _confirmMakeSubprojectUnder(String parentId) async {
+    final state = context.read<AppState>();
+    final sources = <ProjectRecord>[
+      for (final project in state.projects)
+        if (_moveSourceProjectIds.contains(project.id)) project,
+    ];
+    ProjectRecord? parent;
+    for (final project in state.projects) {
+      if (project.id == parentId) {
+        parent = project;
+        break;
+      }
+    }
+    if (sources.isEmpty || parent == null) {
+      _clearStructureSelection();
+      return;
+    }
+    setState(() {
+      _selectedProjectIds
+        ..clear()
+        ..addAll(_moveSourceProjectIds)
+        ..add(parentId);
+    });
+    final sourceNames = sources.map(_projectLabel).join(', ');
+    final parentName = _projectLabel(parent);
+    final confirmed = await _showStructureConfirmDialog(
+      title: 'Make Subproject',
+      content: sources.length == 1
+          ? 'Move $sourceNames under $parentName?'
+          : 'Move these projects under $parentName?\n$sourceNames',
+      confirmText: 'Yes',
+      cancelText: 'No',
+    );
+    if (!mounted) return;
+    if (confirmed != true) {
+      _clearStructureSelection();
+      return;
+    }
+    AsanaBlockingLoadingOverlay.show(context);
+    final error = await DatabaseService.moveProjectsUnderProject(
+      projects: sources,
+      parentProjectId: parentId,
+      updaterStaffLookupKey: state.effectiveStaffAppId,
+    );
+    AsanaBlockingLoadingOverlay.hide();
+    if (!mounted) return;
+    _clearStructureSelection();
+    widget.onStructureChanged?.call();
+    if (error != null) {
+      await _showStructureInfoDialog(title: 'Could not move', content: error);
+    }
+  }
+
+  Future<void> _detachSelectedProjects() async {
+    final state = context.read<AppState>();
+    final selected = <SubprojectRecord>[
+      for (final id in _selectedSubprojectIds)
+        if (state.subprojectById(id) case final subproject?)
+          if (_canDetachProject(state, subproject)) subproject,
+    ];
+    if (selected.isEmpty) return;
+    final names = selected.map(_subprojectLabel).join(', ');
+    final confirmed = await _showStructureConfirmDialog(
+      title: 'Detach Project',
+      content: selected.length == 1
+          ? '$names will leave its parent and become its own project. Its tasks move with it.'
+          : 'These sub-projects will leave their parents and become their own projects. Their tasks move with them:\n$names',
+      confirmText: 'Confirm',
+      cancelText: 'Cancel',
+    );
+    if (confirmed != true || !mounted) return;
+    AsanaBlockingLoadingOverlay.show(context);
+    final error = await DatabaseService.promoteSubprojectsToProjects(
+      subprojects: selected,
+      updaterStaffLookupKey: state.effectiveStaffAppId,
+    );
+    AsanaBlockingLoadingOverlay.hide();
+    if (!mounted) return;
+    _clearStructureSelection();
+    widget.onStructureChanged?.call();
+    if (error != null) {
+      await _showStructureInfoDialog(title: 'Could not detach', content: error);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppState state;
@@ -401,6 +814,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
             palette: widget.palette,
             createLabel: 'Create Project',
             onCreate: widget.onCreateProject,
+            besideCreate: _selectionButtons(state),
             onClearAll: () {
               setState(_filters.resetToDefaults);
               _onFiltersChanged();
@@ -508,6 +922,15 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                               onOpenTask: widget.onOpenTask,
                               onOpenSubtask: widget.onOpenSubtask,
                               onOpenSubproject: widget.onOpenSubproject,
+                              selectionWidth: _kProjectSelectionWidth,
+                              projectSelected: _selectedProjectIds.contains(
+                                p.id,
+                              ),
+                              onProjectSelected: (checked) =>
+                                  _setProjectSelected(p.id, checked),
+                              selectedSubprojectIds: _selectedSubprojectIds,
+                              onSubprojectSelected: _setSubprojectSelected,
+                              forceSelectionVisible: _pickingParentProject,
                             ),
                           ],
                         );
@@ -521,6 +944,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                       _ProjectTableHeader(
                         tableWidth: tableWidth,
                         fillColor: widget.palette.hierarchyHeaderColors.project,
+                        reserveLeading: _kProjectSelectionWidth,
                       ),
                       Divider(height: 1, color: Colors.grey.shade300),
                       Expanded(
@@ -563,6 +987,16 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                                   onOpenTask: widget.onOpenTask,
                                   onOpenSubtask: widget.onOpenSubtask,
                                   onOpenSubproject: widget.onOpenSubproject,
+                                  selectionWidth: _kProjectSelectionWidth,
+                                  projectSelected: _selectedProjectIds.contains(
+                                    p.id,
+                                  ),
+                                  onProjectSelected: (checked) =>
+                                      _setProjectSelected(p.id, checked),
+                                  selectedSubprojectIds:
+                                      _selectedSubprojectIds,
+                                  onSubprojectSelected: _setSubprojectSelected,
+                                  forceSelectionVisible: _pickingParentProject,
                                 ),
                               ],
                             );
@@ -972,9 +1406,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
 }
 
 class _ProjectTableLayout {
-  _ProjectTableLayout(this.tableWidth);
+  _ProjectTableLayout(this.tableWidth, {this.reserveLeading = 0});
 
   final double tableWidth;
+  final double reserveLeading;
 
   static const double minTableWidth = 1000;
   static const double typeCol = _ProjectExpandedTaskTableLayout.typeCol;
@@ -994,6 +1429,7 @@ class _ProjectTableLayout {
 
   late final double _inner =
       (tableWidth -
+              reserveLeading -
               typeCol -
               typeColGap -
               kAsanaTextColumnGap * textColumnGapCount -
@@ -1012,9 +1448,10 @@ class _ProjectTableLayout {
 }
 
 class _ProjectExpandedTaskTableLayout {
-  _ProjectExpandedTaskTableLayout(this.tableWidth);
+  _ProjectExpandedTaskTableLayout(this.tableWidth, {this.reserveLeading = 0});
 
   final double tableWidth;
+  final double reserveLeading;
 
   static const double typeColGap = 10;
   static const double nameGutter = 36;
@@ -1065,7 +1502,10 @@ class _ProjectExpandedTaskTableLayout {
     );
   }
 
-  late final _projectCols = _ProjectTableLayout(tableWidth);
+  late final _projectCols = _ProjectTableLayout(
+    tableWidth,
+    reserveLeading: reserveLeading,
+  );
 
   double get taskNameCol => _projectCols.nameCol;
   double get dueCol => _projectCols.dueCol;
@@ -1080,14 +1520,19 @@ class _ProjectTableHeader extends StatelessWidget {
   const _ProjectTableHeader({
     required this.tableWidth,
     required this.fillColor,
+    this.reserveLeading = 0,
   });
 
   final double tableWidth;
   final Color fillColor;
+  final double reserveLeading;
 
   @override
   Widget build(BuildContext context) {
-    final cols = _ProjectTableLayout(tableWidth);
+    final cols = _ProjectTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
     final style = asanaTableHeaderStyle(
       context,
       color: asanaOnHeaderFill(fillColor),
@@ -1097,6 +1542,7 @@ class _ProjectTableHeader extends StatelessWidget {
       horizontalPad: _ProjectTableLayout.hPad,
       child: Row(
         children: [
+          if (reserveLeading > 0) SizedBox(width: reserveLeading),
           SizedBox(
             width: _ProjectTableLayout.typeCol,
             child: Text('', style: style),
@@ -1181,6 +1627,12 @@ class _ExpandableProjectTableRow extends StatelessWidget {
     this.onOpenTask,
     this.onOpenSubtask,
     this.onOpenSubproject,
+    this.selectionWidth = 0,
+    this.projectSelected = false,
+    this.onProjectSelected,
+    this.selectedSubprojectIds = const {},
+    this.onSubprojectSelected,
+    this.forceSelectionVisible = false,
   });
 
   final double tableWidth;
@@ -1203,6 +1655,12 @@ class _ExpandableProjectTableRow extends StatelessWidget {
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
+  final double selectionWidth;
+  final bool projectSelected;
+  final ValueChanged<bool>? onProjectSelected;
+  final Set<String> selectedSubprojectIds;
+  final void Function(String subprojectId, bool selected)? onSubprojectSelected;
+  final bool forceSelectionVisible;
 
   @override
   Widget build(BuildContext context) {
@@ -1224,6 +1682,10 @@ class _ExpandableProjectTableRow extends StatelessWidget {
             progressPercent: progressPercent,
             appState: appState,
             onRowTap: onRowTap,
+            reserveLeading: selectionWidth,
+            selected: projectSelected,
+            forceSelectionVisible: forceSelectionVisible,
+            onSelected: onProjectSelected,
             expandControl: hasChildren
                 ? _ProjectExpandChevron(
                     expanded: expanded,
@@ -1259,10 +1721,14 @@ class _ExpandableProjectTableRow extends StatelessWidget {
                         onOpenTask: onOpenTask,
                         onOpenSubtask: onOpenSubtask,
                         onOpenSubproject: onOpenSubproject,
+                        reserveLeading: selectionWidth,
+                        selectedSubprojectIds: selectedSubprojectIds,
+                        onSubprojectSelected: onSubprojectSelected,
                       ),
                       _ProjectTableHeader(
                         tableWidth: tableWidth,
                         fillColor: headerColors.project,
+                        reserveLeading: selectionWidth,
                       ),
                     ],
                   ),
@@ -1341,16 +1807,21 @@ class _ProjectTaskSectionHeader extends StatelessWidget {
     required this.fillColor,
     this.nameLabel = 'Task Name',
     this.showSubmission = true,
+    this.reserveLeading = 0,
   });
 
   final double tableWidth;
   final Color fillColor;
   final String nameLabel;
   final bool showSubmission;
+  final double reserveLeading;
 
   @override
   Widget build(BuildContext context) {
-    final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final cols = _ProjectExpandedTaskTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
     final style = asanaTableHeaderStyle(
       context,
       color: asanaOnHeaderFill(fillColor),
@@ -1361,6 +1832,7 @@ class _ProjectTaskSectionHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          if (reserveLeading > 0) SizedBox(width: reserveLeading),
           SizedBox(
             width: _ProjectExpandedTaskTableLayout.typeCol,
             child: Text('', style: style),
@@ -1460,6 +1932,9 @@ List<Widget> _expandedProjectChildRows({
   void Function(String taskId)? onOpenTask,
   void Function(String subtaskId)? onOpenSubtask,
   void Function(String subprojectId, String projectId)? onOpenSubproject,
+  double reserveLeading = 0,
+  Set<String> selectedSubprojectIds = const {},
+  void Function(String subprojectId, bool selected)? onSubprojectSelected,
 }) {
   final widgets = <Widget>[];
   final nestedTaskIds = <String>{};
@@ -1472,6 +1947,7 @@ List<Widget> _expandedProjectChildRows({
         nameLabel: nameLabel,
         fillColor: headerColors.forNameLabel(nameLabel),
         showSubmission: nameLabel != 'Sub-project Name',
+        reserveLeading: reserveLeading,
       ),
     );
   }
@@ -1510,6 +1986,7 @@ List<Widget> _expandedProjectChildRows({
         onToggleExpand: () => onToggleTaskExpand(task),
         onOpenTask: onOpenTask,
         onOpenSubtask: onOpenSubtask,
+        reserveLeading: reserveLeading,
       ),
     );
     if (taskShowsSubtasks(task)) interruptSection();
@@ -1535,6 +2012,11 @@ List<Widget> _expandedProjectChildRows({
           expanded: expanded,
           onToggleExpand: () => onToggleSubprojectExpand(subproject.id),
           onOpenSubproject: onOpenSubproject,
+          reserveLeading: reserveLeading,
+          selected: selectedSubprojectIds.contains(subproject.id),
+          onSelected: onSubprojectSelected == null
+              ? null
+              : (checked) => onSubprojectSelected(subproject.id, checked),
         ),
       );
       if (expanded && childTasks.isNotEmpty) {
@@ -1566,6 +2048,9 @@ class _ProjectSubprojectDataRow extends StatelessWidget {
     required this.expanded,
     required this.onToggleExpand,
     this.onOpenSubproject,
+    this.reserveLeading = 0,
+    this.selected = false,
+    this.onSelected,
   });
 
   final double tableWidth;
@@ -1577,11 +2062,17 @@ class _ProjectSubprojectDataRow extends StatelessWidget {
   final bool expanded;
   final VoidCallback onToggleExpand;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
+  final double reserveLeading;
+  final bool selected;
+  final ValueChanged<bool>? onSelected;
 
   @override
   Widget build(BuildContext context) {
     final completed = subproject.isCompleted;
-    final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final cols = _ProjectExpandedTaskTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
     final ink = asanaInkIfDark(hierarchyColors.subproject);
     final nameStyle = asanaTableRowNameStyle(
       context,
@@ -1625,6 +2116,12 @@ class _ProjectSubprojectDataRow extends StatelessWidget {
               width: tableWidth - _ProjectExpandedTaskTableLayout.hPad * 2,
               child: Row(
                 children: [
+                  if (onSelected != null)
+                    _ProjectSelectionBox(
+                      width: reserveLeading,
+                      selected: selected,
+                      onChanged: onSelected!,
+                    ),
                   _ProjectExpandedTaskTableLayout.typeMarker(
                     letter: 'SP',
                     completed: completed,
@@ -1781,6 +2278,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
     required this.onToggleExpand,
     this.onOpenTask,
     this.onOpenSubtask,
+    this.reserveLeading = 0,
   });
 
   final double tableWidth;
@@ -1798,6 +2296,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
   final VoidCallback onToggleExpand;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
+  final double reserveLeading;
 
   @override
   Widget build(BuildContext context) {
@@ -1815,7 +2314,10 @@ class _ProjectTaskDataRow extends StatelessWidget {
       isSubtask: true,
       color: ink,
     );
-    final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final cols = _ProjectExpandedTaskTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
     final hasSubtasks = subtasks.isNotEmpty;
     final showSubtaskControl = loadingSubtasks || hasSubtasks;
     final showSubtaskExpansion = loadingSubtasks || hasSubtasks;
@@ -1850,6 +2352,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    if (reserveLeading > 0) SizedBox(width: reserveLeading),
                     _ProjectExpandedTaskTableLayout.typeMarker(
                       letter: 'T',
                       completed: completed,
@@ -1987,6 +2490,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
                     tableWidth: tableWidth,
                     nameLabel: 'Sub-task Name',
                     fillColor: headerColors.subtask,
+                    reserveLeading: reserveLeading,
                   ),
                   if (loadingSubtasks)
                     const _ProjectSubtaskStatusRow(
@@ -2004,6 +2508,7 @@ class _ProjectTaskDataRow extends StatelessWidget {
                         indentLevel: indentLevel + 1,
                         showDivider: i > 0,
                         onOpenSubtask: onOpenSubtask,
+                        reserveLeading: reserveLeading,
                       ),
                 ],
               ),
@@ -2093,6 +2598,7 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
     this.indentLevel = 2,
     required this.showDivider,
     this.onOpenSubtask,
+    this.reserveLeading = 0,
   });
 
   final double tableWidth;
@@ -2104,6 +2610,7 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
   final int indentLevel;
   final bool showDivider;
   final void Function(String subtaskId)? onOpenSubtask;
+  final double reserveLeading;
 
   @override
   Widget build(BuildContext context) {
@@ -2125,7 +2632,10 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
       isSubtask: true,
       color: ink,
     );
-    final cols = _ProjectExpandedTaskTableLayout(tableWidth);
+    final cols = _ProjectExpandedTaskTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2157,6 +2667,7 @@ class _ProjectSubtaskDataRow extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    if (reserveLeading > 0) SizedBox(width: reserveLeading),
                     _ProjectExpandedTaskTableLayout.typeMarker(
                       letter: 'ST',
                       completed: completed,
@@ -2344,6 +2855,10 @@ class _ProjectTableRow extends StatelessWidget {
     required this.appState,
     this.onRowTap,
     this.expandControl,
+    this.reserveLeading = 0,
+    this.selected = false,
+    this.onSelected,
+    this.forceSelectionVisible = false,
   });
 
   final double tableWidth;
@@ -2354,6 +2869,10 @@ class _ProjectTableRow extends StatelessWidget {
   final AppState appState;
   final VoidCallback? onRowTap;
   final Widget? expandControl;
+  final double reserveLeading;
+  final bool selected;
+  final ValueChanged<bool>? onSelected;
+  final bool forceSelectionVisible;
 
   bool get _completed => project.status.trim() == 'Completed';
   bool get _deleted {
@@ -2363,7 +2882,10 @@ class _ProjectTableRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cols = _ProjectTableLayout(tableWidth);
+    final cols = _ProjectTableLayout(
+      tableWidth,
+      reserveLeading: reserveLeading,
+    );
     final ink = asanaInkIfDark(rowColor);
     final rowValueStyle = asanaTableRowValueStyle(
       context,
@@ -2391,6 +2913,13 @@ class _ProjectTableRow extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                if (onSelected != null)
+                  _ProjectSelectionBox(
+                    width: reserveLeading,
+                    selected: selected,
+                    forceVisible: forceSelectionVisible,
+                    onChanged: onSelected!,
+                  ),
                 _ProjectExpandedTaskTableLayout.typeMarker(
                   letter: 'P',
                   completed: _completed,
@@ -2524,6 +3053,7 @@ class _ProjectMobileBlock extends StatelessWidget {
     this.onTap,
     this.trailingChips = const [],
     this.progressPercent,
+    this.bottomLeading,
   });
 
   final Color rowColor;
@@ -2544,6 +3074,7 @@ class _ProjectMobileBlock extends StatelessWidget {
   final VoidCallback? onTap;
   final List<Widget> trailingChips;
   final int? progressPercent;
+  final Widget? bottomLeading;
 
   @override
   Widget build(BuildContext context) {
@@ -2561,73 +3092,82 @@ class _ProjectMobileBlock extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: 28,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AsanaRowTypeLetter(
-                        letter: letter,
-                        completed: completed,
-                        deleted: deleted,
-                        status: status,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 28,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AsanaRowTypeLetter(
+                            letter: letter,
+                            completed: completed,
+                            deleted: deleted,
+                            status: status,
+                          ),
+                          if (expandControl != null) ...[
+                            const SizedBox(height: 2),
+                            expandControl!,
+                          ],
+                        ],
                       ),
-                      if (expandControl != null) ...[
-                        const SizedBox(height: 2),
-                        expandControl!,
-                      ],
-                    ],
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    AsanaNameWithFreshness(
-                      name: name,
-                      style: paintedName,
-                      createdAt: createdAt,
-                      updatedAt: updatedAt,
-                      maxLines: 2,
-                    ),
-                    if (progressPercent != null)
-                      _ProjectProgressPercent(
-                        percent: progressPercent!,
-                        color: ink,
-                      ),
-                    const SizedBox(height: 5),
-                    Text(
-                      metaLine,
-                      style: paintedValue,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 6,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        AsanaNameWithFreshness(
+                          name: name,
+                          style: paintedName,
+                          createdAt: createdAt,
+                          updatedAt: updatedAt,
+                          maxLines: 2,
+                        ),
+                        if (progressPercent != null)
+                          _ProjectProgressPercent(
+                            percent: progressPercent!,
+                            color: ink,
+                          ),
+                        const SizedBox(height: 5),
                         Text(
-                          dateLine,
+                          metaLine,
                           style: paintedValue,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        AsanaStatusChip(status: status),
-                        ...trailingChips,
+                        const SizedBox(height: 5),
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: [
+                            Text(
+                              dateLine,
+                              style: paintedValue,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            AsanaStatusChip(status: status),
+                            ...trailingChips,
+                          ],
+                        ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
+              if (bottomLeading != null) ...[
+                const SizedBox(height: 4),
+                bottomLeading!,
+              ],
             ],
           ),
         ),
@@ -2656,6 +3196,12 @@ class _ProjectMobileRow extends StatelessWidget {
     this.onOpenTask,
     this.onOpenSubtask,
     this.onOpenSubproject,
+    this.selectionWidth = 0,
+    this.projectSelected = false,
+    this.onProjectSelected,
+    this.selectedSubprojectIds = const {},
+    this.onSubprojectSelected,
+    this.forceSelectionVisible = false,
   });
 
   final AsanaTableColors tableColors;
@@ -2676,6 +3222,12 @@ class _ProjectMobileRow extends StatelessWidget {
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
+  final double selectionWidth;
+  final bool projectSelected;
+  final ValueChanged<bool>? onProjectSelected;
+  final Set<String> selectedSubprojectIds;
+  final void Function(String subprojectId, bool selected)? onSubprojectSelected;
+  final bool forceSelectionVisible;
 
   bool get _completed => project.status.trim() == 'Completed';
   bool get _deleted {
@@ -2715,6 +3267,14 @@ class _ProjectMobileRow extends StatelessWidget {
           deleted: _deleted,
           progressPercent: progressPercent,
           onTap: onTap,
+          bottomLeading: onProjectSelected == null
+              ? null
+              : _ProjectSelectionBox(
+                  width: selectionWidth,
+                  selected: projectSelected,
+                  forceVisible: forceSelectionVisible,
+                  onChanged: onProjectSelected!,
+                ),
           expandControl: hasChildren
               ? _ProjectMobileExpandChevron(
                   expanded: expanded,
@@ -2747,6 +3307,9 @@ class _ProjectMobileRow extends StatelessWidget {
                 onOpenTask: onOpenTask,
                 onOpenSubtask: onOpenSubtask,
                 onOpenSubproject: onOpenSubproject,
+                selectionWidth: selectionWidth,
+                selectedSubprojectIds: selectedSubprojectIds,
+                onSubprojectSelected: onSubprojectSelected,
               ),
             ),
           ),
@@ -2798,6 +3361,9 @@ class _ProjectMobileTaskList extends StatelessWidget {
     this.onOpenTask,
     this.onOpenSubtask,
     this.onOpenSubproject,
+    this.selectionWidth = 0,
+    this.selectedSubprojectIds = const {},
+    this.onSubprojectSelected,
   });
 
   final String projectId;
@@ -2814,6 +3380,9 @@ class _ProjectMobileTaskList extends StatelessWidget {
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
+  final double selectionWidth;
+  final Set<String> selectedSubprojectIds;
+  final void Function(String subprojectId, bool selected)? onSubprojectSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -2884,6 +3453,14 @@ class _ProjectMobileTaskList extends StatelessWidget {
           updatedAt: subproject.updateDate,
           completed: subproject.isCompleted,
           deleted: subproject.isDeleted,
+          bottomLeading: onSubprojectSelected == null
+              ? null
+              : _ProjectSelectionBox(
+                  width: selectionWidth,
+                  selected: selectedSubprojectIds.contains(subproject.id),
+                  onChanged: (checked) =>
+                      onSubprojectSelected!(subproject.id, checked),
+                ),
           onTap: onOpenSubproject == null
               ? null
               : () => onOpenSubproject!(subproject.id, subproject.projectId),
@@ -3144,4 +3721,84 @@ String _formatTaskAssignees(AppState state, Iterable<String> ids) {
       .where((name) => name.isNotEmpty)
       .toList();
   return names.isEmpty ? '—' : names.join(', ');
+}
+
+class _ProjectStructureButton extends StatelessWidget {
+  const _ProjectStructureButton({
+    required this.label,
+    required this.palette,
+    required this.onPressed,
+  });
+
+  final String label;
+  final AsanaLandingPalette palette;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: palette.accent,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+class _ProjectSelectionBox extends StatefulWidget {
+  const _ProjectSelectionBox({
+    required this.width,
+    required this.selected,
+    required this.onChanged,
+    this.forceVisible = false,
+  });
+
+  final double width;
+  final bool selected;
+  final ValueChanged<bool> onChanged;
+  final bool forceVisible;
+
+  @override
+  State<_ProjectSelectionBox> createState() => _ProjectSelectionBoxState();
+}
+
+class _ProjectSelectionBoxState extends State<_ProjectSelectionBox> {
+  bool _hovering = false;
+
+  void _toggle() => widget.onChanged(!widget.selected);
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.selected || widget.forceVisible || _hovering;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _toggle,
+        child: SizedBox(
+          width: widget.width,
+          height: 32,
+          child: Opacity(
+            opacity: visible ? 1 : 0,
+            child: IgnorePointer(
+              child: Checkbox(
+                value: widget.selected,
+                onChanged: (_) {},
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                checkColor: Colors.black,
+                fillColor: const WidgetStatePropertyAll(Colors.white),
+                side: const BorderSide(color: Colors.black, width: 1.6),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

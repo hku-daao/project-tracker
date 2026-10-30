@@ -3432,6 +3432,159 @@ class DatabaseService {
     }
   }
 
+  /// Turns projects that have no sub-projects into sub-projects of [parentProjectId].
+  /// Tasks move with them. The original project row is marked Deleted.
+  static Future<String?> moveProjectsUnderProject({
+    required List<ProjectRecord> projects,
+    required String parentProjectId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final parentId = parentProjectId.trim();
+    if (parentId.isEmpty) return 'Choose a parent project.';
+    if (projects.isEmpty) return 'Choose a project.';
+    for (final project in projects) {
+      if (project.id.trim() == parentId) {
+        return 'A project cannot move under itself.';
+      }
+      if (project.hasMilestone) {
+        return '${project.name} has milestones. Remove them before moving it under another project.';
+      }
+      final created = await insertSubprojectRow(
+        projectId: parentId,
+        name: project.name,
+        description: project.description,
+        status: project.status,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        assignees: project.assigneeStaffUuids,
+        picStaffUuids: project.picStaffUuids,
+        creatorStaffLookupKey:
+            project.createByStaffUuid ?? updaterStaffLookupKey,
+      );
+      if (created.error != null || created.subprojectId == null) {
+        return created.error ?? 'Could not create the sub-project.';
+      }
+      final subprojectId = created.subprojectId!;
+      if (project.isPaused) {
+        final pauseErr = await updateSubprojectRow(
+          subprojectId: subprojectId,
+          updatePauseStatus: true,
+          pauseStatus: 'Paused',
+          updaterStaffLookupKey: updaterStaffLookupKey,
+        );
+        if (pauseErr != null) return pauseErr;
+      }
+      try {
+        await PostgrestClient.instance
+            .from('task')
+            .update({
+              'project_id': parentId,
+              'subproject_id': subprojectId,
+            })
+            .eq('project_id', project.id);
+      } catch (e) {
+        await PostgrestClient.instance
+            .from('subproject')
+            .delete()
+            .eq('id', subprojectId);
+        return e.toString();
+      }
+      await _retargetStoredAttachments(
+        fromType: 'project',
+        fromId: project.id,
+        toType: 'subproject',
+        toId: subprojectId,
+      );
+      final removed = await deleteProjectRow(project.id);
+      if (removed != null) return removed;
+    }
+    return null;
+  }
+
+  /// Turns sub-projects into their own projects. Tasks move with them.
+  /// The original sub-project row is marked Deleted.
+  static Future<String?> promoteSubprojectsToProjects({
+    required List<SubprojectRecord> subprojects,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    if (subprojects.isEmpty) return 'Choose a sub-project.';
+    for (final subproject in subprojects) {
+      final created = await insertProjectRow(
+        name: subproject.name,
+        description: subproject.description,
+        status: subproject.status,
+        startDate: subproject.startDate,
+        endDate: subproject.endDate,
+        assignees: subproject.assigneeStaffUuids,
+        picStaffUuids: subproject.picStaffUuids,
+        creatorStaffLookupKey:
+            subproject.createByStaffUuid ?? updaterStaffLookupKey,
+      );
+      if (created.error != null || created.projectId == null) {
+        return created.error ?? 'Could not create the project.';
+      }
+      final projectId = created.projectId!;
+      if (subproject.isPaused) {
+        final pauseErr = await updateProjectRow(
+          projectId: projectId,
+          updatePauseStatus: true,
+          pauseStatus: 'Paused',
+          updateByStaffLookupKey: updaterStaffLookupKey,
+        );
+        if (pauseErr != null) return pauseErr;
+      }
+      try {
+        await PostgrestClient.instance
+            .from('task')
+            .update({'project_id': projectId, 'subproject_id': null})
+            .eq('subproject_id', subproject.id);
+      } catch (e) {
+        await deleteProjectRow(projectId);
+        return e.toString();
+      }
+      await _retargetStoredAttachments(
+        fromType: 'subproject',
+        fromId: subproject.id,
+        toType: 'project',
+        toId: projectId,
+      );
+      try {
+        await PostgrestClient.instance
+            .from('subproject')
+            .update({
+              'status': 'Deleted',
+              'update_date': HkTime.timestampForDb(),
+            })
+            .eq('id', subproject.id);
+      } catch (e) {
+        return e.toString();
+      }
+    }
+    return null;
+  }
+
+  static Future<void> _retargetStoredAttachments({
+    required String fromType,
+    required String fromId,
+    required String toType,
+    required String toId,
+  }) async {
+    final db = PostgrestClient.instance;
+    for (final table in ['file_attachment', 'url_attachment']) {
+      try {
+        await db
+            .from(table)
+            .update({'entity_type': toType, 'entity_id': toId})
+            .eq('entity_type', fromType)
+            .eq('entity_id', fromId);
+      } catch (e) {
+        debugPrint('_retargetStoredAttachments $table: $e');
+      }
+    }
+  }
+
   /// DB stores `Yes` / `No` for singular task/subtask overdue flags.
   static String _overdueYnFromRow(dynamic v) {
     final s = v?.toString().trim() ?? '';
@@ -4386,12 +4539,6 @@ class DatabaseService {
     final k = key.trim();
     if (k.isEmpty) return null;
     final db = PostgrestClient.instance;
-    final byApp = await db
-        .from('staff')
-        .select('id')
-        .eq('app_id', k)
-        .maybeSingle();
-    if (byApp != null) return byApp['id'] as String?;
     if (_looksLikeUuid(k)) {
       final byId = await db
           .from('staff')
@@ -4400,6 +4547,12 @@ class DatabaseService {
           .maybeSingle();
       if (byId != null) return byId['id'] as String?;
     }
+    final byApp = await db
+        .from('staff')
+        .select('id')
+        .eq('app_id', k)
+        .maybeSingle();
+    if (byApp != null) return byApp['id'] as String?;
     return null;
   }
 

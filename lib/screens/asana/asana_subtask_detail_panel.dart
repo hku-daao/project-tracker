@@ -905,6 +905,7 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   bool _canCreateUnderParent(AppState state) {
+    if (state.superAdminActsAsPic) return true;
     final parent =
         _parentTask ?? state.taskById(widget.parentTaskId ?? '');
     if (parent == null) return false;
@@ -930,12 +931,12 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
   }
 
   bool _isPic(AppState state, SingularSubtask s) {
-    return _matchesCurrentStaff(state, s.pic);
+    return state.superAdminActsAsPic || _matchesCurrentStaff(state, s.pic);
   }
 
   bool _picSelfLockApplies(AppState state, SingularSubtask? s) {
     if (s == null || _effectiveCreateMode) return false;
-    return _isPic(state, s) && !_isCreator(state);
+    return _matchesCurrentStaff(state, s.pic) && !_isCreator(state);
   }
 
   Future<bool> _validatePicSelfLock(AppState state, SingularSubtask? s) async {

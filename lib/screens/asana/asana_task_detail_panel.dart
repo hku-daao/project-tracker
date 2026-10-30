@@ -1194,7 +1194,8 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _isPic(AppState state, Task task) {
-    return _staffKeyIsCurrentUser(state, task.pic);
+    return state.superAdminActsAsPic ||
+        _staffKeyIsCurrentUser(state, task.pic);
   }
 
   bool _matchesCurrentStaffKey(AppState state, String? staffKey) {
@@ -1203,7 +1204,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
 
   bool _picSelfLockApplies(AppState state, Task? task) {
     if (task == null || widget.createMode) return false;
-    return _isPic(state, task) && !_isCreator(state, task);
+    return _staffKeyIsCurrentUser(state, task.pic) && !_isCreator(state, task);
   }
 
   Future<bool> _validatePicSelfLock() async {
@@ -1293,6 +1294,7 @@ class _AsanaTaskDetailPanelState extends State<AsanaTaskDetailPanel> {
   }
 
   bool _canCreateTaskInSelectedScope(AppState state) {
+    if (state.superAdminActsAsPic) return true;
     final pid = _selectedProjectId?.trim();
     if (pid == null || pid.isEmpty) return true;
     final project = _projectFor(state, pid);

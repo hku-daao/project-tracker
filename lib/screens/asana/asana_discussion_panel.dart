@@ -435,79 +435,112 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
         final bd = b.likedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         return ad.compareTo(bd);
       });
-    final anchorBox = anchorContext.findRenderObject() as RenderBox?;
-    final overlayBox =
-        Overlay.of(anchorContext).context.findRenderObject() as RenderBox?;
-    if (anchorBox == null || overlayBox == null) return;
-    final topLeft = anchorBox.localToGlobal(Offset.zero, ancestor: overlayBox);
-    final bottomRight = anchorBox.localToGlobal(
-      anchorBox.size.bottomRight(Offset.zero),
-      ancestor: overlayBox,
+    final theme = Theme.of(context);
+    final titleStyle = asanaTextStyle(
+      theme.textTheme.titleMedium,
+      fontSize: 18,
+      fontWeight: FontWeight.w600,
+      color: kAsanaTextPrimary,
     );
-    final position = RelativeRect.fromRect(
-      Rect.fromLTRB(
-        topLeft.dx,
-        bottomRight.dy + 4,
-        bottomRight.dx,
-        bottomRight.dy + 4,
-      ),
-      Offset.zero & overlayBox.size,
+    final bodyStyle = asanaTextStyle(
+      theme.textTheme.bodyMedium,
+      fontSize: 14,
+      fontWeight: FontWeight.w400,
+      color: kAsanaTextSecondary,
+      height: 1.4,
     );
-    await showMenu<void>(
-      context: anchorContext,
-      position: position,
-      constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
-      items: [
-        const PopupMenuItem<void>(
-          enabled: false,
-          child: Text(
-            'Liked by',
-            style: TextStyle(
-              color: Color(0xFF111827),
-              fontWeight: FontWeight.w700,
-            ),
+    final nameStyle = bodyStyle?.copyWith(color: kAsanaTextPrimary);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: widget.palette.panelBackground,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
+        ),
+        elevation: 12,
+        child: Container(
+          width: 440,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Liked by', style: titleStyle),
+              const SizedBox(height: 12),
+              if (sorted.isEmpty)
+                Text('No likes yet.', style: bodyStyle)
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(ctx).copyWith(
+                      scrollbars: false,
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: sorted.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final user = sorted[index];
+                        final you =
+                            viewerStaffId != null &&
+                            user.staffId.toLowerCase() == viewerStaffId;
+                        return Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: widget.palette.accent.withValues(
+                                alpha: 0.12,
+                              ),
+                              foregroundColor: widget.palette.accent,
+                              child: Text(
+                                _initialsForName(user.displayName),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                you
+                                    ? '${user.displayName} (You)'
+                                    : user.displayName,
+                                overflow: TextOverflow.ellipsis,
+                                style: nameStyle,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: widget.palette.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: const Text('OK'),
+                ),
+              ),
+            ],
           ),
         ),
-        const PopupMenuDivider(height: 1),
-        if (sorted.isEmpty)
-          const PopupMenuItem<void>(
-            enabled: false,
-            child: Text('No likes yet.'),
-          )
-        else
-          for (final user in sorted)
-            PopupMenuItem<void>(
-              enabled: false,
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: widget.palette.accent.withValues(
-                      alpha: 0.12,
-                    ),
-                    foregroundColor: widget.palette.accent,
-                    child: Text(
-                      _initialsForName(user.displayName),
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      viewerStaffId != null &&
-                              user.staffId.toLowerCase() == viewerStaffId
-                          ? '${user.displayName} (You)'
-                          : user.displayName,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-      ],
+      ),
     );
   }
 

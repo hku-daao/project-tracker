@@ -564,6 +564,7 @@ class _AsanaSubprojectDetailPanelState
   }
 
   bool _isParentProjectMember(AppState state) {
+    if (state.superAdminActsAsPic) return true;
     final project = state.projectById(widget.projectId);
     if (project == null) return false;
     return project.isInvolvedStaff(
@@ -573,6 +574,7 @@ class _AsanaSubprojectDetailPanelState
   }
 
   bool _isSubprojectMember(AppState state) {
+    if (state.superAdminActsAsPic) return true;
     final row = _row;
     if (row == null) return false;
     return row.isInvolvedStaff(
@@ -1748,7 +1750,9 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
           (meApp.isNotEmpty && v == meApp);
     }
 
-    final isPic = _row?.picStaffUuids.any(staffHit) ?? false;
+    final isPic =
+        state.superAdminActsAsPic ||
+        (_row?.picStaffUuids.any(staffHit) ?? false);
     final canEdit =
         !adminReadOnly && (_createMode ? canCreate : (isCreator || isPic));
     final parentProject = state.projectById(widget.projectId);

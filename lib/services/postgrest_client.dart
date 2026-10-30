@@ -233,12 +233,30 @@ class PostgrestFilterBuilder implements Future<dynamic> {
     required bool maybeSingle,
   }) {
     if (response.statusCode >= 400) {
+      if (maybeSingle &&
+          response.statusCode == 406 &&
+          _isEmptySingleObject(response.body)) {
+        return null;
+      }
       throw PostgrestException(response.body, statusCode: response.statusCode);
     }
     if (response.body.isEmpty) return maybeSingle ? null : <dynamic>[];
     final decoded = jsonDecode(response.body);
     if (maybeSingle && decoded is List && decoded.isEmpty) return null;
     return decoded;
+  }
+
+  /// PostgREST answers `Accept: application/vnd.pgrst.object+json` with 406
+  /// when the filter matches nothing. [maybeSingle] means that empty result.
+  static bool _isEmptySingleObject(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) return false;
+      if (decoded['code']?.toString() != 'PGRST116') return false;
+      return (decoded['details']?.toString() ?? '').contains('0 rows');
+    } catch (_) {
+      return false;
+    }
   }
 
   static String _encodeFilterValue(Object? value) {

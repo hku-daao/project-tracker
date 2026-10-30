@@ -169,6 +169,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
     this.alignClearWithControls = false,
     this.pinClear = false,
     this.clearLabel = 'Clear all',
+    this.besideCreate = const [],
   });
 
   final AsanaLandingPalette palette;
@@ -189,6 +190,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
   /// Keeps Clear all at the right edge of the first filter row.
   final bool pinClear;
   final String clearLabel;
+  final List<Widget> besideCreate;
 
   @override
   State<AsanaPanelFilterToolbar> createState() =>
@@ -202,6 +204,21 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
   void dispose() {
     _filterScrollController.dispose();
     super.dispose();
+  }
+
+  Widget _createCluster(Widget createButton) {
+    if (widget.onCreate == null && widget.besideCreate.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (widget.onCreate != null) createButton,
+        ...widget.besideCreate,
+      ],
+    );
   }
 
   Widget _scrollableFilters(
@@ -281,6 +298,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   palette: widget.palette,
                   onPressed: widget.onCreate!,
                 );
+          final createCluster = _createCluster(createButton);
           final clearButton = TextButton(
             style: widget.alignClearWithControls
                 ? TextButton.styleFrom(
@@ -373,10 +391,10 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (widget.onCreate != null) ...[
+                if (widget.onCreate != null || widget.besideCreate.isNotEmpty) ...[
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: createButton,
+                    child: createCluster,
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -389,8 +407,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(children: [createButton, const Spacer(), clearButton]),
-                const SizedBox(height: 10),
+                Row(children: [createCluster, const Spacer(), clearButton]),
                 filters,
               ],
             );
@@ -399,7 +416,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              createButton,
+              createCluster,
               const SizedBox(width: 12),
               Expanded(child: filters),
               Padding(

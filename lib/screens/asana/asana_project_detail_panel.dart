@@ -441,11 +441,15 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     return p.picStaffUuids.any(hit);
   }
 
-  bool _canManageProject(ProjectRecord p) =>
-      _isCreator(p) || _isProjectPic(p);
+  bool _canManageProject(ProjectRecord p) {
+    final state = context.read<AppState>();
+    if (state.superAdminActsAsPic) return true;
+    return _isCreator(p) || _isProjectPic(p);
+  }
 
   bool _isProjectMember(ProjectRecord p) {
     final state = context.read<AppState>();
+    if (state.superAdminActsAsPic) return true;
     return p.isInvolvedStaff(
       staffUuid: state.effectiveStaffUuid ?? _myStaffUuid,
       staffAppId: state.effectiveStaffAppId ?? state.userStaffAppId,
@@ -2315,7 +2319,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   }) {
     final mobileButtons = AsanaTaskDetailActionStyles.isMobile(context);
     final deleted = _effectiveStatus(p) == 'Deleted';
-    final canResume = !deleted && (_isCreator(p) || _isProjectPic(p)) && p.isPaused;
+    final canResume = !deleted && _canManageProject(p) && p.isPaused;
     if (!canEdit && !canResume) return null;
     final buttons = <Widget>[];
     if (!canEdit) {

@@ -76,6 +76,13 @@ class AppState extends ChangeNotifier {
 
   bool get isSuperAdmin => _staffAdminRole == 'super_admin';
 
+  /// Signed-in super admin may edit any project or task the way its PIC can.
+  /// Viewing as another person keeps that person's own rights.
+  bool get superAdminActsAsPic {
+    if (adminDebugViewAsActive) return _adminViewAsRole == 'super_admin';
+    return isSuperAdmin;
+  }
+
   bool get isOfficeAdmin => _staffAdminRole == 'office_admin';
 
   bool get isPerformanceAdmin => _staffAdminRole == 'performance_admin';
