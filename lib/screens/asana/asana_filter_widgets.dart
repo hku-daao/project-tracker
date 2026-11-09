@@ -122,6 +122,32 @@ class AsanaFilterDropdown extends StatelessWidget {
   }
 }
 
+/// Previous toolbar action height: 12px vertical padding plus a 20px label.
+const kAsanaToolbarActionHeight = 44.0;
+
+/// List and Map action buttons are 15% shorter than [kAsanaToolbarActionHeight].
+const kAsanaShortToolbarActionHeight = kAsanaToolbarActionHeight * 0.85;
+
+ButtonStyle asanaToolbarActionStyle(
+  Color background, {
+  double? height,
+}) {
+  return FilledButton.styleFrom(
+    backgroundColor: background,
+    foregroundColor: Colors.white,
+    padding: EdgeInsets.symmetric(
+      horizontal: 16,
+      vertical: height == null ? 12 : 0,
+    ),
+    minimumSize: height == null ? null : Size(0, height),
+    maximumSize: height == null ? null : Size(double.infinity, height),
+    tapTargetSize: height == null
+        ? null
+        : MaterialTapTargetSize.shrinkWrap,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  );
+}
+
 /// Primary create action (left side of list panel toolbars).
 class AsanaToolbarCreateButton extends StatelessWidget {
   const AsanaToolbarCreateButton({
@@ -129,11 +155,13 @@ class AsanaToolbarCreateButton extends StatelessWidget {
     required this.label,
     required this.palette,
     required this.onPressed,
+    this.height,
   });
 
   final String label;
   final AsanaLandingPalette palette;
   final VoidCallback onPressed;
+  final double? height;
 
   @override
   Widget build(BuildContext context) {
@@ -141,12 +169,7 @@ class AsanaToolbarCreateButton extends StatelessWidget {
       onPressed: onPressed,
       icon: const Icon(Icons.add, size: 18),
       label: Text(label),
-      style: FilledButton.styleFrom(
-        backgroundColor: palette.accent,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+      style: asanaToolbarActionStyle(palette.accent, height: height),
     );
   }
 }
@@ -170,6 +193,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
     this.pinClear = false,
     this.clearLabel = 'Clear all',
     this.besideCreate = const [],
+    this.actionButtonHeight,
   });
 
   final AsanaLandingPalette palette;
@@ -191,6 +215,7 @@ class AsanaPanelFilterToolbar extends StatefulWidget {
   final bool pinClear;
   final String clearLabel;
   final List<Widget> besideCreate;
+  final double? actionButtonHeight;
 
   @override
   State<AsanaPanelFilterToolbar> createState() =>
@@ -297,6 +322,7 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
                   label: widget.createLabel,
                   palette: widget.palette,
                   onPressed: widget.onCreate!,
+                  height: widget.actionButtonHeight,
                 );
           final createCluster = _createCluster(createButton);
           final clearButton = TextButton(
@@ -331,6 +357,14 @@ class _AsanaPanelFilterToolbarState extends State<AsanaPanelFilterToolbar> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (widget.onCreate != null ||
+                    widget.besideCreate.isNotEmpty) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: createCluster,
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [

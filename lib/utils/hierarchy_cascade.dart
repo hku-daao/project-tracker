@@ -5,11 +5,15 @@ class HierarchyCascadeCounts {
     this.subprojects = 0,
     this.tasks = 0,
     this.subtasks = 0,
+    this.itemNames = const [],
   });
 
   final int subprojects;
   final int tasks;
   final int subtasks;
+
+  /// Names of every item the action will change, in hierarchy order.
+  final List<String> itemNames;
 
   bool get hasChanges => subprojects > 0 || tasks > 0 || subtasks > 0;
 }

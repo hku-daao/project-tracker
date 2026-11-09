@@ -16,6 +16,7 @@ import '../models/project_record.dart';
 import '../models/subproject_record.dart';
 import '../models/task.dart';
 import '../models/team.dart';
+import '../priority.dart';
 import '../utils/hierarchy_cascade.dart';
 import '../utils/hk_time.dart';
 import 'task_fetch_visibility.dart';
@@ -3103,16 +3104,28 @@ class DatabaseService {
     );
   }
 
-  static Future<int> _countSubtasksThatWouldChange(
+  static String _cascadeItemName(
+    Map<String, dynamic> row,
+    String key,
+    String fallback,
+  ) {
+    final name = row[key]?.toString().trim() ?? '';
+    return name.isEmpty ? fallback : name;
+  }
+
+  static Future<List<String>> _subtaskNamesThatWouldChange(
     String taskId,
     HierarchyCascadeAction action,
   ) async {
     final rows = await _fetchSubtaskRawRowsForTask(taskId);
-    var n = 0;
+    final names = <String>[];
     for (final row in rows) {
-      if (_hierarchyMapWouldChange(row, action)) n += 1;
+      if (!_hierarchyMapWouldChange(row, action)) continue;
+      names.add(
+        _cascadeItemName(row, 'subtask_name', '(Unnamed sub-task)'),
+      );
     }
-    return n;
+    return names;
   }
 
   static Future<HierarchyCascadeCounts> countCascadeForTask({
@@ -3123,9 +3136,8 @@ class DatabaseService {
     final tid = taskId.trim();
     if (tid.isEmpty) return const HierarchyCascadeCounts();
     try {
-      return HierarchyCascadeCounts(
-        subtasks: await _countSubtasksThatWouldChange(tid, action),
-      );
+      final names = await _subtaskNamesThatWouldChange(tid, action);
+      return HierarchyCascadeCounts(subtasks: names.length, itemNames: names);
     } catch (_) {
       return const HierarchyCascadeCounts();
     }
@@ -3139,15 +3151,23 @@ class DatabaseService {
     final sid = subprojectId.trim();
     if (sid.isEmpty) return const HierarchyCascadeCounts();
     try {
-      var tasks = 0;
-      var subtasks = 0;
+      final taskNames = <String>[];
+      final subtaskNames = <String>[];
       for (final row in await _fetchTaskRawRows(subprojectId: sid)) {
-        if (_hierarchyMapWouldChange(row, action)) tasks += 1;
+        if (_hierarchyMapWouldChange(row, action)) {
+          taskNames.add(_cascadeItemName(row, 'task_name', '(Unnamed task)'));
+        }
         final taskId = row['id']?.toString().trim();
         if (taskId == null || taskId.isEmpty) continue;
-        subtasks += await _countSubtasksThatWouldChange(taskId, action);
+        subtaskNames.addAll(
+          await _subtaskNamesThatWouldChange(taskId, action),
+        );
       }
-      return HierarchyCascadeCounts(tasks: tasks, subtasks: subtasks);
+      return HierarchyCascadeCounts(
+        tasks: taskNames.length,
+        subtasks: subtaskNames.length,
+        itemNames: [...taskNames, ...subtaskNames],
+      );
     } catch (_) {
       return const HierarchyCascadeCounts();
     }
@@ -3161,7 +3181,7 @@ class DatabaseService {
     final pid = projectId.trim();
     if (pid.isEmpty) return const HierarchyCascadeCounts();
     try {
-      var subprojects = 0;
+      final subprojectNames = <String>[];
       for (final row in await fetchSubprojectsForProject(pid)) {
         if (_hierarchyRecordWouldChange(
           deleted: row.isDeleted,
@@ -3169,21 +3189,29 @@ class DatabaseService {
           paused: row.isPaused,
           action: action,
         )) {
-          subprojects += 1;
+          final name = row.name.trim();
+          subprojectNames.add(
+            name.isEmpty ? '(Unnamed sub-project)' : name,
+          );
         }
       }
-      var tasks = 0;
-      var subtasks = 0;
+      final taskNames = <String>[];
+      final subtaskNames = <String>[];
       for (final row in await _fetchTaskRawRows(projectId: pid)) {
-        if (_hierarchyMapWouldChange(row, action)) tasks += 1;
+        if (_hierarchyMapWouldChange(row, action)) {
+          taskNames.add(_cascadeItemName(row, 'task_name', '(Unnamed task)'));
+        }
         final taskId = row['id']?.toString().trim();
         if (taskId == null || taskId.isEmpty) continue;
-        subtasks += await _countSubtasksThatWouldChange(taskId, action);
+        subtaskNames.addAll(
+          await _subtaskNamesThatWouldChange(taskId, action),
+        );
       }
       return HierarchyCascadeCounts(
-        subprojects: subprojects,
-        tasks: tasks,
-        subtasks: subtasks,
+        subprojects: subprojectNames.length,
+        tasks: taskNames.length,
+        subtasks: subtaskNames.length,
+        itemNames: [...subprojectNames, ...taskNames, ...subtaskNames],
       );
     } catch (_) {
       return const HierarchyCascadeCounts();
@@ -3347,6 +3375,79 @@ class DatabaseService {
       return (error: null, commentId: id);
     } catch (e) {
       return (error: e.toString(), commentId: null);
+    }
+  }
+
+  static Future<String?> updateSubprojectCommentRow({
+    required String commentId,
+    required String description,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final d = description.trim();
+    if (d.isEmpty) return 'Comment is empty';
+    try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to update this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
+      final map = <String, dynamic>{
+        'description': d,
+        'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
+      };
+      final res = await PostgrestClient.instance
+          .from('subproject_comment')
+          .update(map)
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only update comments made by you.';
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> softDeleteSubprojectCommentRow({
+    required String commentId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    try {
+      final lookup = updaterStaffLookupKey?.trim();
+      if (lookup == null || lookup.isEmpty) {
+        return 'Sign in again to remove this comment.';
+      }
+      final staffId = await _staffRowIdForAssigneeKey(lookup);
+      if (staffId == null || staffId.isEmpty) {
+        return 'Could not verify comment owner.';
+      }
+      final map = <String, dynamic>{
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+        'update_by': staffId,
+      };
+      final res = await PostgrestClient.instance
+          .from('subproject_comment')
+          .update(map)
+          .eq('id', commentId)
+          .eq('create_by', staffId)
+          .select('id')
+          .maybeSingle();
+      if (res == null) {
+        return 'You can only remove comments made by you.';
+      }
+      return null;
+    } catch (e) {
+      return e.toString();
     }
   }
 
@@ -3563,6 +3664,449 @@ class DatabaseService {
       }
     }
     return null;
+  }
+
+  /// Copies a task under the same project or sub-project. The copy is Incomplete
+  /// and not paused, even when the original is completed, paused, or deleted.
+  static Future<String?> cloneTasks({
+    required List<Task> tasks,
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    if (tasks.isEmpty) return 'Choose a task.';
+    for (final task in tasks) {
+      final slots = await assigneeSlotsForTask(task.assigneeIds);
+      final created = await insertTaskTableRow(
+        taskName: _clonedTitle(task.name),
+        assignees: slots,
+        priority: priorityToDisplayName(task.priority),
+        complexity: task.complexity,
+        startDate: task.startDate,
+        dueDate: task.endDate,
+        description: task.description,
+        status: 'Incomplete',
+        commencementStatus: task.commencementStatus,
+        creatorStaffLookupKey: creatorStaffLookupKey ?? task.createByAssigneeKey,
+        picStaffLookupKey: task.pic,
+        changeDueReason: task.changeDueReason,
+        commencementNote: task.commencementNote,
+        projectId: task.projectId,
+        subprojectId: task.subprojectId,
+      );
+      if (created.error != null || created.taskId == null) {
+        return created.error ?? 'Could not clone ${task.name}.';
+      }
+    }
+    return null;
+  }
+
+  /// Copies a sub-task under the same parent task. The copy is Incomplete
+  /// and not paused.
+  static Future<String?> cloneSubtasks({
+    required List<SingularSubtask> subtasks,
+    String? creatorStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    if (subtasks.isEmpty) return 'Choose a sub-task.';
+    for (final subtask in subtasks) {
+      final created = await insertSubtaskRow(
+        taskId: subtask.taskId,
+        subtaskName: _clonedTitle(subtask.subtaskName),
+        description: subtask.description,
+        priorityDisplay: priorityToDisplayName(subtask.priority),
+        complexity: subtask.complexity ?? '',
+        startDate: subtask.startDate,
+        dueDate: subtask.dueDate,
+        assigneeStaffUuids: subtask.assigneeIds,
+        picStaffUuid: subtask.pic ?? '',
+        creatorStaffLookupKey:
+            creatorStaffLookupKey ?? subtask.createByStaffId,
+        changeDueReason: subtask.changeDueReason,
+        commencementNote: subtask.commencementNote,
+        status: 'Incomplete',
+        commencementStatus: subtask.commencementStatus,
+        pauseStatus: 'Not Paused',
+      );
+      if (created.error != null || created.subtaskId == null) {
+        return created.error ?? 'Could not clone ${subtask.subtaskName}.';
+      }
+    }
+    return null;
+  }
+
+  /// Turns tasks that have no sub-tasks into sub-tasks of [parentTaskId].
+  /// The original task row is marked Deleted. Comments stay on the old row.
+  static Future<String?> convertTasksToSubtasks({
+    required List<Task> tasks,
+    required String parentTaskId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final parentId = parentTaskId.trim();
+    if (parentId.isEmpty) return 'Choose a parent task.';
+    if (tasks.isEmpty) return 'Choose a task.';
+    for (final task in tasks) {
+      if (task.id.trim() == parentId) {
+        return 'A task cannot become a sub-task of itself.';
+      }
+      if (await _taskHasActiveSubtasks(task.id)) {
+        return '${_workItemName(task.name)} has sub-tasks. Move or detach those sub-tasks before turning it into a sub-task.';
+      }
+      final created = await insertSubtaskRow(
+        taskId: parentId,
+        subtaskName: task.name,
+        description: task.description,
+        priorityDisplay: priorityToDisplayName(task.priority),
+        complexity: task.complexity ?? '',
+        startDate: task.startDate,
+        dueDate: task.endDate,
+        assigneeStaffUuids: task.assigneeIds,
+        picStaffUuid: task.pic ?? '',
+        creatorStaffLookupKey: task.createByAssigneeKey ?? updaterStaffLookupKey,
+        changeDueReason: task.changeDueReason,
+        commencementNote: task.commencementNote,
+        status: _keptWorkStatus(task.dbStatus),
+        commencementStatus: task.commencementStatus,
+        pauseStatus: task.isPaused ? 'Paused' : 'Not Paused',
+      );
+      if (created.error != null || created.subtaskId == null) {
+        return created.error ?? 'Could not create the sub-task.';
+      }
+      final subtaskId = created.subtaskId!;
+      final workflowError = await _copySubtaskWorkflow(
+        subtaskId: subtaskId,
+        submission: task.submission,
+        completionDate: task.completionDate,
+        updaterStaffLookupKey: updaterStaffLookupKey,
+      );
+      if (workflowError != null) {
+        await markSubtaskDeleted(subtaskId: subtaskId);
+        return workflowError;
+      }
+      await _retargetStoredAttachments(
+        fromType: 'task',
+        fromId: task.id,
+        toType: 'subtask',
+        toId: subtaskId,
+      );
+      await _retargetInlineEntity(
+        fromType: 'task_description',
+        fromId: task.id,
+        toType: 'subtask_description',
+        toId: subtaskId,
+      );
+      final removed = await _markTaskRowDeleted(task.id);
+      if (removed != null) return removed;
+    }
+    return null;
+  }
+
+  /// Turns sub-tasks into tasks under the same project or sub-project as
+  /// their parent task. The original sub-task row is marked Deleted.
+  static Future<String?> promoteSubtasksToTasks({
+    required List<SingularSubtask> subtasks,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    if (subtasks.isEmpty) return 'Choose a sub-task.';
+    for (final subtask in subtasks) {
+      final parent = await PostgrestClient.instance
+          .from('task')
+          .select('project_id,subproject_id')
+          .eq('id', subtask.taskId)
+          .maybeSingle();
+      final projectId = parent?['project_id']?.toString();
+      final subprojectId = parent?['subproject_id']?.toString();
+      final slots = await assigneeSlotsForTask(subtask.assigneeIds);
+      final created = await insertTaskTableRow(
+        taskName: subtask.subtaskName,
+        assignees: slots,
+        priority: priorityToDisplayName(subtask.priority),
+        complexity: subtask.complexity,
+        startDate: subtask.startDate,
+        dueDate: subtask.dueDate,
+        description: subtask.description,
+        status: _keptWorkStatus(subtask.status),
+        commencementStatus: subtask.commencementStatus,
+        creatorStaffLookupKey:
+            subtask.createByStaffId ?? updaterStaffLookupKey,
+        picStaffLookupKey: subtask.pic,
+        changeDueReason: subtask.changeDueReason,
+        commencementNote: subtask.commencementNote,
+        projectId: projectId,
+        subprojectId: subprojectId,
+      );
+      if (created.error != null || created.taskId == null) {
+        return created.error ?? 'Could not create the task.';
+      }
+      final taskId = created.taskId!;
+      if (subtask.isPaused) {
+        final pauseErr = await updateSingularTaskRow(
+          taskId: taskId,
+          updatePauseStatus: true,
+          pauseStatus: 'Paused',
+          updateByStaffLookupKey: updaterStaffLookupKey,
+        );
+        if (pauseErr != null) {
+          await _markTaskRowDeleted(taskId);
+          return pauseErr;
+        }
+      }
+      final workflowError = await _copyTaskWorkflow(
+        taskId: taskId,
+        submission: subtask.submission,
+        completionDate: subtask.completionDate,
+        updaterStaffLookupKey: updaterStaffLookupKey,
+      );
+      if (workflowError != null) {
+        await _markTaskRowDeleted(taskId);
+        return workflowError;
+      }
+      await _retargetStoredAttachments(
+        fromType: 'subtask',
+        fromId: subtask.id,
+        toType: 'task',
+        toId: taskId,
+      );
+      await _retargetInlineEntity(
+        fromType: 'subtask_description',
+        fromId: subtask.id,
+        toType: 'task_description',
+        toId: taskId,
+      );
+      final removed = await markSubtaskDeleted(
+        subtaskId: subtask.id,
+        updaterStaffLookupKey: updaterStaffLookupKey,
+      );
+      if (removed != null) return removed;
+      invalidateSubtasksCacheForTask(subtask.taskId);
+    }
+    return null;
+  }
+
+  /// Moves tasks onto a project, or onto a sub-project. Sub-tasks stay on the task.
+  static Future<String?> moveTasksUnder({
+    required List<Task> tasks,
+    String? projectId,
+    String? subprojectId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    if (tasks.isEmpty) return 'Choose a task.';
+    final subId = subprojectId?.trim() ?? '';
+    var parentProjectId = projectId?.trim() ?? '';
+    if (subId.isNotEmpty) {
+      final row = await PostgrestClient.instance
+          .from('subproject')
+          .select('project_id')
+          .eq('id', subId)
+          .maybeSingle();
+      parentProjectId = row?['project_id']?.toString().trim() ?? '';
+      if (parentProjectId.isEmpty) return 'That sub-project has no project.';
+    }
+    if (parentProjectId.isEmpty) return 'Choose a project or sub-project.';
+    var moved = 0;
+    for (final task in tasks) {
+      final sameProject = (task.projectId ?? '') == parentProjectId;
+      final sameSub = (task.subprojectId ?? '') == subId;
+      if (sameProject && sameSub) continue;
+      final error = await updateSingularTaskRow(
+        taskId: task.id,
+        projectId: parentProjectId,
+        subprojectId: subId.isEmpty ? null : subId,
+        clearSubprojectId: subId.isEmpty,
+        updateByStaffLookupKey: updaterStaffLookupKey,
+      );
+      if (error != null) return error;
+      moved++;
+    }
+    if (moved == 0) {
+      return 'Those tasks are already under that place.';
+    }
+    return null;
+  }
+
+  /// Moves sub-projects onto another project. Their tasks move with them.
+  static Future<String?> moveSubprojectsUnderProject({
+    required List<SubprojectRecord> subprojects,
+    required String parentProjectId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final parentId = parentProjectId.trim();
+    if (parentId.isEmpty) return 'Choose a project.';
+    if (subprojects.isEmpty) return 'Choose a sub-project.';
+    for (final subproject in subprojects) {
+      if (subproject.projectId == parentId) {
+        return '${_workItemName(subproject.name)} is already under that project.';
+      }
+      try {
+        final map = <String, dynamic>{
+          'project_id': parentId,
+          'update_date': HkTime.timestampForDb(),
+        };
+        final lookup = updaterStaffLookupKey?.trim();
+        if (lookup != null && lookup.isNotEmpty) {
+          final staffId = await _staffRowIdForAssigneeKey(lookup);
+          if (staffId != null && staffId.isNotEmpty) {
+            map['update_by'] = staffId;
+          }
+        }
+        await PostgrestClient.instance
+            .from('subproject')
+            .update(map)
+            .eq('id', subproject.id);
+        await PostgrestClient.instance
+            .from('task')
+            .update({'project_id': parentId})
+            .eq('subproject_id', subproject.id);
+      } catch (e) {
+        try {
+          await PostgrestClient.instance
+              .from('subproject')
+              .update({'project_id': subproject.projectId})
+              .eq('id', subproject.id);
+        } catch (_) {}
+        return e.toString();
+      }
+    }
+    return null;
+  }
+
+  /// Moves sub-tasks onto another task.
+  static Future<String?> moveSubtasksUnderTask({
+    required List<SingularSubtask> subtasks,
+    required String parentTaskId,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final parentId = parentTaskId.trim();
+    if (parentId.isEmpty) return 'Choose a task.';
+    if (subtasks.isEmpty) return 'Choose a sub-task.';
+    final lookup = updaterStaffLookupKey?.trim();
+    String? staffId;
+    if (lookup != null && lookup.isNotEmpty) {
+      staffId = await _staffRowIdForAssigneeKey(lookup);
+    }
+    var moved = 0;
+    for (final subtask in subtasks) {
+      if (subtask.taskId == parentId) continue;
+      final map = <String, dynamic>{
+        'task_id': parentId,
+        'update_date': HkTime.timestampForDb(),
+      };
+      if (staffId != null && staffId.isNotEmpty) {
+        map['update_by'] = staffId;
+      }
+      try {
+        await PostgrestClient.instance
+            .from('subtask')
+            .update(map)
+            .eq('id', subtask.id);
+      } catch (e) {
+        return e.toString();
+      }
+      invalidateSubtasksCacheForTask(subtask.taskId);
+      moved++;
+    }
+    if (moved == 0) {
+      return 'Those sub-tasks are already under that task.';
+    }
+    invalidateSubtasksCacheForTask(parentId);
+    return null;
+  }
+
+  static String _clonedTitle(String raw) {
+    final name = raw.trim();
+    final base = name.isEmpty ? '(Unnamed)' : name;
+    if (base.endsWith(' (clone)') || base.endsWith(' (cloned)')) return base;
+    return '$base (cloned)';
+  }
+
+  static String _workItemName(String raw) {
+    final name = raw.trim();
+    return name.isEmpty ? '(Unnamed)' : name;
+  }
+
+  static String _keptWorkStatus(String? raw) {
+    final status = raw?.trim() ?? '';
+    if (status.isEmpty || _isDeletedStatusValue(status)) return 'Incomplete';
+    return status;
+  }
+
+  static Future<bool> _taskHasActiveSubtasks(String taskId) async {
+    final id = taskId.trim();
+    if (id.isEmpty) return false;
+    final res = await PostgrestClient.instance
+        .from('subtask')
+        .select('id,status')
+        .eq('task_id', id);
+    for (final raw in (res as List)) {
+      final status = (raw as Map)['status']?.toString();
+      if (!_isDeletedStatusValue(status)) return true;
+    }
+    return false;
+  }
+
+  static Future<String?> _markTaskRowDeleted(String taskId) async {
+    try {
+      await PostgrestClient.instance.from('task').update({
+        'status': 'Deleted',
+        'update_date': HkTime.timestampForDb(),
+      }).eq('id', taskId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<String?> _copySubtaskWorkflow({
+    required String subtaskId,
+    String? submission,
+    DateTime? completionDate,
+    String? updaterStaffLookupKey,
+  }) async {
+    final submissionText = submission?.trim() ?? '';
+    if (submissionText.isEmpty && completionDate == null) return null;
+    return updateSubtaskRow(
+      subtaskId: subtaskId,
+      submission: submissionText.isEmpty ? null : submissionText,
+      completionDateAt: completionDate,
+      updaterStaffLookupKey: updaterStaffLookupKey,
+    );
+  }
+
+  static Future<String?> _copyTaskWorkflow({
+    required String taskId,
+    String? submission,
+    DateTime? completionDate,
+    String? updaterStaffLookupKey,
+  }) async {
+    final submissionText = submission?.trim() ?? '';
+    if (submissionText.isEmpty && completionDate == null) return null;
+    return updateSingularTaskRow(
+      taskId: taskId,
+      submission: submissionText.isEmpty ? null : submissionText,
+      completionDateAt: completionDate,
+      updateByStaffLookupKey: updaterStaffLookupKey,
+    );
+  }
+
+  static Future<void> _retargetInlineEntity({
+    required String fromType,
+    required String fromId,
+    required String toType,
+    required String toId,
+  }) async {
+    try {
+      await PostgrestClient.instance
+          .from('inline_attachment')
+          .update({'entity_type': toType, 'entity_id': toId})
+          .eq('entity_type', fromType)
+          .eq('entity_id', fromId);
+    } catch (e) {
+      debugPrint('_retargetInlineEntity $fromType: $e');
+    }
   }
 
   static Future<void> _retargetStoredAttachments({

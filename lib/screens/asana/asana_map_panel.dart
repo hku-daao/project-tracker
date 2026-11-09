@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,17 +15,23 @@ import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../priority.dart';
 import '../../services/asana_filter_cookie_storage.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_blocking_loading_overlay.dart';
 import 'asana_date_range_picker.dart';
+import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_filter.dart';
+import 'asana_status_aura.dart';
 import 'asana_task_filter.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
-/// Read-only project -> task -> sub-task map for office work visualization.
+part 'asana_map_structure.dart';
+
+/// Project, sub-project, task, and sub-task map.
 class AsanaMapPanel extends StatefulWidget {
   const AsanaMapPanel({
     super.key,
@@ -35,6 +42,7 @@ class AsanaMapPanel extends StatefulWidget {
     this.onOpenSubproject,
     this.onOpenTask,
     this.onOpenSubtask,
+    this.onStructureChanged,
   });
 
   final AsanaLandingPalette palette;
@@ -44,12 +52,15 @@ class AsanaMapPanel extends StatefulWidget {
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
+  final VoidCallback? onStructureChanged;
 
   @override
   State<AsanaMapPanel> createState() => _AsanaMapPanelState();
 }
 
-class _AsanaMapPanelState extends State<AsanaMapPanel> {
+class _AsanaMapPanelState extends State<AsanaMapPanel>
+    with _MapStructureActions {
+  @override
   final Map<String, List<SingularSubtask>> _subtasksByTask = {};
   final Set<String> _expandedProjectIds = {};
   final Set<String> _expandedTaskIds = {};
@@ -1286,6 +1297,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
       pinClear: true,
       clearLabel: 'Clear All',
       alignClearWithControls: true,
+      besideCreate: _mapSelectionButtons(state),
       filterChildren: [
         AsanaFilterDropdown(
           title: 'Project Creator',
@@ -2078,7 +2090,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
               children: [
                 Expanded(
                   child: Text(
-                    'Project, Sub-project, Task and Sub-task Map',
+                    'Project Map',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -2111,6 +2123,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
             onClearAll: _clearMapFilters,
             pinClear: true,
             clearLabel: 'Clear All',
+            besideCreate: _mapSelectionButtons(state),
             filterChildren: [
               AsanaFilterDropdown(
                 title: 'Project Creator Team',
@@ -2579,7 +2592,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                 : _simpleMapFilters(state),
           ),
           Expanded(
-            child: AsanaPanelListSurface(
+            child: _mapSelectionScope(
+              child: AsanaPanelListSurface(
               palette: widget.palette,
               clipBehavior: Clip.none,
               child: nodes.isEmpty && standaloneTasks.isEmpty
@@ -2634,6 +2648,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel> {
                         },
                       ),
                     ),
+              ),
             ),
           ),
         ],
@@ -3422,10 +3437,10 @@ class _GenericTreeDiagram extends StatelessWidget {
                 for (final item in placed)
                   if (item.node.type != _DiagramNodeType.levelSpacer)
                     Positioned(
-                      left: item.x - boxWidth / 2,
+                      left: item.x - boxWidth / 2 - _mapCheckboxOutsetLeft,
                       top: item.y,
-                      width: boxWidth,
-                      height: item.height,
+                      width: boxWidth + _mapCheckboxOutsetLeft,
+                      height: item.height + _mapCheckboxOutsetBottom,
                       child: _DiagramBox(
                         item: item,
                         palette: palette,
@@ -3435,17 +3450,19 @@ class _GenericTreeDiagram extends StatelessWidget {
               ],
             ),
           );
-          return ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {
-                PointerDeviceKind.touch,
-                PointerDeviceKind.mouse,
-                PointerDeviceKind.trackpad,
-              },
-            ),
-            child: _InitialHorizontalScrollView(
-              initialOffset: initialScrollOffset,
-              child: tree,
+          return AsanaStatusAuraClock(
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.trackpad,
+                },
+              ),
+              child: _InitialHorizontalScrollView(
+                initialOffset: initialScrollOffset,
+                child: tree,
+              ),
             ),
           );
         },
@@ -3816,6 +3833,123 @@ class _GenericTreeDiagram extends StatelessWidget {
   }
 }
 
+/// Phone map: a 0.2 second press checks the block. A press that moves far
+/// enough to scroll does not check. The map scroll would otherwise take the
+/// press, so this listens on the pointer instead of [InkWell.onLongPress].
+/// A short tap still opens the block.
+const _kMobileCheckHold = Duration(milliseconds: 200);
+class _MapHoldToCheck extends StatefulWidget {
+  const _MapHoldToCheck({
+    required this.enabled,
+    required this.onCheck,
+    required this.child,
+  });
+
+  final bool enabled;
+  final VoidCallback onCheck;
+  final Widget child;
+
+  static bool takeTap(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<_MapHoldScope>();
+    return scope?.takeTap() ?? false;
+  }
+
+  @override
+  State<_MapHoldToCheck> createState() => _MapHoldToCheckState();
+}
+
+class _MapHoldScope extends InheritedWidget {
+  const _MapHoldScope({required this.takeTap, required super.child});
+
+  final bool Function() takeTap;
+
+  @override
+  bool updateShouldNotify(covariant _MapHoldScope oldWidget) => false;
+}
+
+class _MapHoldToCheckState extends State<_MapHoldToCheck> {
+  Timer? _timer;
+  int? _pointer;
+  Offset? _origin;
+  bool _swallowTap = false;
+
+  bool _takeTap() {
+    if (!_swallowTap) return false;
+    _swallowTap = false;
+    return true;
+  }
+
+  void _stopTimer() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void _resetPointer() {
+    _stopTimer();
+    _pointer = null;
+    _origin = null;
+  }
+
+  void _check() {
+    if (!mounted || !widget.enabled) return;
+    _swallowTap = true;
+    widget.onCheck();
+  }
+
+  void _down(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse &&
+        event.buttons != kPrimaryButton) {
+      return;
+    }
+    _swallowTap = false;
+    _pointer = event.pointer;
+    _origin = event.position;
+    _stopTimer();
+    _timer = Timer(_kMobileCheckHold, () {
+      _timer = null;
+      _check();
+    });
+  }
+
+  void _move(PointerMoveEvent event) {
+    if (event.pointer != _pointer) return;
+    final origin = _origin;
+    if (origin == null) return;
+    if ((event.position - origin).distance > kTouchSlop) _resetPointer();
+  }
+
+  void _up(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    _resetPointer();
+  }
+
+  void _cancel(PointerCancelEvent event) {
+    if (event.pointer != _pointer) return;
+    _resetPointer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _MapHoldScope(
+      takeTap: _takeTap,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: widget.enabled ? _down : null,
+        onPointerMove: widget.enabled ? _move : null,
+        onPointerUp: widget.enabled ? _up : null,
+        onPointerCancel: widget.enabled ? _cancel : null,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class _DiagramBox extends StatelessWidget {
   const _DiagramBox({
     required this.item,
@@ -3830,17 +3964,28 @@ class _DiagramBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final selection = _MapSelectionScope.maybeOf(context);
+    final selected =
+        selection?.isSelected(item.node.type, item.node.id) ?? false;
     final style = _DiagramBoxStyle.forType(item.node.type, palette);
     final canExpand = item.node.canExpand;
     final textTheme = theme.textTheme;
     final padV = sideExpand
         ? _GenericTreeDiagram._mobileBoxPadV
         : _GenericTreeDiagram._desktopBoxPadV;
-    final content = InkWell(
-      onTap: item.node.onTap,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(8, padV, 8, padV),
-        child: Column(
+    final canLongCheck = sideExpand &&
+        selection != null &&
+        selection.showCheckbox(item.node.type, item.node.id) &&
+        !selection.isLocked(item.node.id);
+    final content = Builder(
+      builder: (context) => InkWell(
+        onTap: () {
+          if (_MapHoldToCheck.takeTap(context)) return;
+          item.node.onTap();
+        },
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(8, padV, 8, padV),
+          child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3879,6 +4024,7 @@ class _DiagramBox extends StatelessWidget {
               ).copyWith(color: style.text),
             ),
           ],
+          ),
         ),
       ),
     );
@@ -3892,14 +4038,19 @@ class _DiagramBox extends StatelessWidget {
     Widget toggleBar({required bool vertical}) {
       return Material(
         color: style.toggleBackground,
-        child: InkWell(
-          onTap: item.node.onToggleExpand,
-          child: SizedBox(
+        child: Builder(
+          builder: (context) => InkWell(
+            onTap: () {
+              if (_MapHoldToCheck.takeTap(context)) return;
+              item.node.onToggleExpand?.call();
+            },
+            child: SizedBox(
             width: vertical
                 ? _ProjectTreeDiagram._toggleHeight
                 : double.infinity,
             height: vertical ? null : _ProjectTreeDiagram._toggleHeight,
             child: Icon(toggleIcon, size: 20, color: style.text),
+            ),
           ),
         ),
       );
@@ -3909,26 +4060,38 @@ class _DiagramBox extends StatelessWidget {
         item.node.type == _DiagramNodeType.task ||
         item.node.type == _DiagramNodeType.subtask;
     final statusLabel = _mapStatusTooltip(item.node);
-    Widget inner = sideExpand
-        ? Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: content),
-              if (canExpand) toggleBar(vertical: true),
-            ],
-          )
-        : Column(
-            children: [
-              Expanded(child: content),
-              if (canExpand) toggleBar(vertical: false),
-            ],
-          );
+    final auraKind = showStatusBadge ? asanaStatusAuraKind(statusLabel) : null;
+    Widget inner = _MapHoldToCheck(
+      enabled: canLongCheck,
+      onCheck: () {
+        final current = selection;
+        if (current == null) return;
+        current.onChanged(item.node.type, item.node.id, !selected);
+      },
+      child: sideExpand
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: content),
+                if (canExpand) toggleBar(vertical: true),
+              ],
+            )
+          : Column(
+              children: [
+                Expanded(child: content),
+                if (canExpand) toggleBar(vertical: false),
+              ],
+            ),
+    );
     final box = Material(
       color: Colors.transparent,
       child: Ink(
         decoration: BoxDecoration(
           color: style.background,
-          border: Border.all(color: style.border, width: 1),
+          border: Border.all(
+            color: selected ? palette.accent : style.border,
+            width: selected ? 2.5 : 1,
+          ),
           borderRadius: BorderRadius.circular(8),
           boxShadow: const [
             BoxShadow(
@@ -3944,16 +4107,33 @@ class _DiagramBox extends StatelessWidget {
         ),
       ),
     );
-    const letterHeight = 24.0;
-    const letterTop = -20.0 + letterHeight * 0.25;
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        box,
+        if (auraKind != null)
+          Positioned(
+            left: _mapCheckboxOutsetLeft - asanaStatusAuraPadFor(auraKind),
+            top: -asanaStatusAuraPadFor(auraKind),
+            right: -asanaStatusAuraPadFor(auraKind),
+            bottom: _mapCheckboxOutsetBottom - asanaStatusAuraPadFor(auraKind),
+            child: IgnorePointer(
+              child: AsanaStatusAura(
+                kind: auraKind,
+                pad: asanaStatusAuraPadFor(auraKind),
+              ),
+            ),
+          ),
         Positioned(
-          top: letterTop,
-          left: -6,
-          height: letterHeight,
+          left: _mapCheckboxOutsetLeft,
+          top: 0,
+          right: 0,
+          bottom: _mapCheckboxOutsetBottom,
+          child: box,
+        ),
+        Positioned(
+          top: _mapLetterTop,
+          left: _mapCheckboxOutsetLeft - 6,
+          height: _mapLetterHeight,
           child: _MapThemeBadge(
             palette: palette,
             fill: _mapLevelBadgeColor(palette, item.node.type),
@@ -3979,11 +4159,40 @@ class _DiagramBox extends StatelessWidget {
             ),
           ),
         ),
+        if (selection != null &&
+            selection.showCheckbox(item.node.type, item.node.id))
+          Positioned(
+            left: 0,
+            bottom: 0,
+            width: _mapLetterHeight + _mapCheckboxHitPad,
+            height: _mapLetterHeight + _mapCheckboxHitPad,
+            child: sideExpand
+                ? _MapBlockCheckboxMark(
+                    selected: selected,
+                    locked: selection.isLocked(item.node.id),
+                    forceVisible: selection.pick != _MapStructurePick.none,
+                    onUncheck: () => selection.onChanged(
+                      item.node.type,
+                      item.node.id,
+                      false,
+                    ),
+                  )
+                : _MapBlockCheckboxHit(
+                    selected: selected,
+                    locked: selection.isLocked(item.node.id),
+                    forceVisible: selection.pick != _MapStructurePick.none,
+                    onTap: () => selection.onChanged(
+                      item.node.type,
+                      item.node.id,
+                      !selected,
+                    ),
+                  ),
+          ),
         if (showStatusBadge)
           Positioned(
-            top: letterTop,
+            top: _mapLetterTop,
             right: -6,
-            height: letterHeight,
+            height: _mapLetterHeight,
             child: _MapThemeBadge(
               palette: palette,
               fill: _mapStatusBadgeColor(palette, statusLabel),
@@ -4006,6 +4215,120 @@ class _DiagramBox extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+const _mapLetterHeight = 24.0;
+const _mapLetterTop = -20.0 + _mapLetterHeight * 0.25;
+const _mapCheckboxHitPad = 8.0;
+const _mapCheckboxOutsetLeft = 6.0 + _mapCheckboxHitPad;
+const _mapCheckboxOutsetBottom = -_mapLetterTop + _mapCheckboxHitPad;
+class _MapBlockCheckboxMark extends StatelessWidget {
+  const _MapBlockCheckboxMark({
+    required this.selected,
+    required this.locked,
+    required this.forceVisible,
+    required this.onUncheck,
+  });
+
+  final bool selected;
+  final bool locked;
+  final bool forceVisible;
+  final VoidCallback onUncheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = selected || locked || forceVisible;
+    final canUncheck = selected && !locked;
+    return IgnorePointer(
+      ignoring: !canUncheck,
+      child: Opacity(
+        opacity: visible ? (locked ? 0.45 : 1) : 0,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: canUncheck ? onUncheck : null,
+          child: Align(
+            alignment: Alignment.topRight,
+            child: _MapBlockCheckbox(selected: selected),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapBlockCheckboxHit extends StatefulWidget {
+  const _MapBlockCheckboxHit({
+    required this.selected,
+    required this.locked,
+    required this.forceVisible,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final bool locked;
+  final bool forceVisible;
+  final VoidCallback onTap;
+
+  @override
+  State<_MapBlockCheckboxHit> createState() => _MapBlockCheckboxHitState();
+}
+
+class _MapBlockCheckboxHitState extends State<_MapBlockCheckboxHit> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible =
+        widget.selected ||
+        widget.locked ||
+        widget.forceVisible ||
+        _hovering;
+    return MouseRegion(
+      onEnter: widget.locked
+          ? null
+          : (_) => setState(() => _hovering = true),
+      onExit: widget.locked
+          ? null
+          : (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.locked ? null : widget.onTap,
+        child: Opacity(
+          opacity: visible ? (widget.locked ? 0.45 : 1) : 0,
+          child: Align(
+            alignment: Alignment.topRight,
+            child: _MapBlockCheckbox(selected: widget.selected),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapBlockCheckbox extends StatelessWidget {
+  const _MapBlockCheckbox({this.selected = false});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _mapLetterHeight,
+      height: _mapLetterHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.black, width: 1.6),
+        ),
+        child: selected
+            ? const Center(
+                child: Icon(Icons.check, size: 16, color: Colors.black),
+              )
+            : null,
+      ),
     );
   }
 }

@@ -7,6 +7,7 @@ import '../../app_state.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../services/attachment_upload_service.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../../utils/file_drop_region.dart';
@@ -1266,6 +1267,20 @@ class _AsanaCreateProjectDetailPanelState
         }
         final p = await DatabaseService.fetchProjectById(newId);
         if (p != null) state.upsertProject(p);
+        await sendHierarchyEventEmail(
+          kind: 'project',
+          event: 'assigned',
+          id: newId,
+        );
+        final createdCommentId = draftCommentId;
+        if (createdCommentId != null && createdCommentId.isNotEmpty) {
+          await sendHierarchyEventEmail(
+            kind: 'project',
+            event: 'comment-added',
+            id: newId,
+            commentId: createdCommentId,
+          );
+        }
         widget.onCreated?.call(newId);
       }
       if (mounted) widget.onClose();

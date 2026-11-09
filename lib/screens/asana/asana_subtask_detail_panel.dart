@@ -1598,6 +1598,11 @@ class _AsanaSubtaskDetailPanelState extends State<AsanaSubtaskDetailPanel> {
     return DateUtils.dateOnly(value);
   }
 
+  bool _timelineMatchesSaved(SingularSubtask s) {
+    return _dateOnly(_startDate) == _dateOnly(s.startDate) &&
+        _dateOnly(_dueDate) == _dateOnly(s.dueDate);
+  }
+
   Future<bool> _validateParentTaskTimeline() {
     return _validateParentTaskTimelineFor(start: _startDate, due: _dueDate);
   }
@@ -2584,8 +2589,9 @@ Due: ${_date(p.endDate)}
   >
   _savePendingSubtaskEditsForWorkflowEmail(
     AppState state,
-    SingularSubtask s,
-  ) async {
+    SingularSubtask s, {
+    bool allowStoredTimeline = false,
+  }) async {
     final newName = _nameController.text.trim();
     if (newName.isEmpty) {
       AsanaBlockingLoadingOverlay.hide();
@@ -2657,7 +2663,11 @@ Due: ${_date(p.endDate)}
       );
       return null;
     }
-    if (canEditDetails && !await _validateParentTaskTimeline()) {
+    final skipStoredTimeline =
+        allowStoredTimeline && _timelineMatchesSaved(s);
+    if (canEditDetails &&
+        !skipStoredTimeline &&
+        !await _validateParentTaskTimeline()) {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
       return null;
@@ -3180,6 +3190,7 @@ Due: ${_date(p.endDate)}
       final composite = await _savePendingSubtaskEditsForWorkflowEmail(
         state,
         s,
+        allowStoredTimeline: true,
       );
       if (composite == null) return;
       final isCreator = _isCreator(state);

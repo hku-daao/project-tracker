@@ -492,6 +492,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   bool _adminViewAsLoading = false;
 
   String _selectedNav = 'Home';
+  String? _linkedDiscussionThreadId;
   String _themeId = AsanaLandingPalette.asana.id;
   bool? _sidebarOpenOverride;
   double? _lastScreenWidth;
@@ -500,10 +501,17 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   int _detailRefreshToken = 0;
   int _listRefreshGeneration = 0;
 
-  static const List<String> _navItems = [
-    'Home',
-    'All Tasks & Sub-tasks',
-    'Tasks',
+  static const String _navAllWork = 'All Works';
+
+  static const List<String> _navItemsBeforeWork = ['Home'];
+
+  static const List<String> _workNavItems = ['Tasks', _navAllWork];
+
+  /// Space outside Tasks / All Works so those rows sit as far from Work and
+  /// List as List sits from Map.
+  static const double _kPrimaryToSecondaryGap = 8;
+
+  static const List<String> _navItemsAfterWork = [
     'Projects',
     'Map',
     'Discussion',
@@ -746,12 +754,12 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     final state = context.watch<AppState>();
     final adminViewMode = state.adminViewMode;
     final showPerformanceNav = state.showPerformanceNav;
-    if (_selectedNav == 'Tasks' || _selectedNav == 'All Tasks & Sub-tasks') {
+    if (_selectedNav == 'Tasks' || _selectedNav == _navAllWork) {
       return AsanaTasksPanel(
         key: ValueKey(_selectedNav),
         palette: palette,
         searchQuery: searchQuery,
-        flatTasksAndSubtasks: _selectedNav == 'All Tasks & Sub-tasks',
+        flatTasksAndSubtasks: _selectedNav == _navAllWork,
         refreshToken: _detailRefreshToken,
         onOpenTask: (id) => _openRootDetail(AsanaDetailSelection.task(id)),
         onOpenSubtask: (id) =>
@@ -800,6 +808,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
             projectId: projectId,
           ),
         ),
+        onStructureChanged: _handleProjectChanged,
       );
     }
     if (_selectedNav == 'Archived') {
@@ -831,6 +840,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         palette: palette,
         searchQuery: searchQuery,
         refreshToken: _detailRefreshToken,
+        initialThreadId: _linkedDiscussionThreadId,
+        onSelectedThreadChanged: _onDiscussionThreadChanged,
         onCreatePost: adminViewMode
             ? null
             : () => _openRootDetail(
@@ -870,7 +881,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
   }
 
   bool get _searchAppliesToSelectedNav {
-    return _selectedNav == 'All Tasks & Sub-tasks' ||
+    return _selectedNav == _navAllWork ||
         _selectedNav == 'Tasks' ||
         _selectedNav == 'Projects' ||
         _selectedNav == 'Map';
@@ -905,11 +916,21 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
 
   void _syncWebLocationToDetailStack() {
     if (!kIsWeb) return;
-    if (_detailStack.isEmpty) {
+    final top = _detailStack.isEmpty ? null : _detailStack.last;
+    final topIsWorkItem = top is AsanaSubtaskDetailSelection ||
+        top is AsanaTaskDetailSelection ||
+        top is AsanaProjectDetailSelection;
+    if (!topIsWorkItem && _selectedNav == 'Discussion') {
+      final threadId = _linkedDiscussionThreadId?.trim() ?? '';
+      if (threadId.isNotEmpty) {
+        syncWebLocationForDiscussion(threadId);
+        return;
+      }
+    }
+    if (top == null) {
       syncWebLocationForAsanaDesign();
       return;
     }
-    final top = _detailStack.last;
     switch (top) {
       case AsanaSubtaskDetailSelection(:final subtaskId):
         syncWebLocationForSubtaskDetail(subtaskId);
@@ -919,6 +940,21 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         syncWebLocationForProjectDetail(projectId);
       default:
         syncWebLocationForAsanaDesign();
+    }
+  }
+
+  void _onDiscussionThreadChanged(String? threadId) {
+    final next = threadId?.trim();
+    final normalized = (next == null || next.isEmpty) ? null : next;
+    if (_linkedDiscussionThreadId == normalized) {
+      if (kIsWeb && _selectedNav == 'Discussion') {
+        _syncWebLocationToDetailStack();
+      }
+      return;
+    }
+    setState(() => _linkedDiscussionThreadId = normalized);
+    if (kIsWeb && _selectedNav == 'Discussion') {
+      _syncWebLocationToDetailStack();
     }
   }
 
@@ -1139,7 +1175,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       case 'default':
         _selectedNav = 'Tasks';
       case 'all':
-        _selectedNav = 'All Tasks & Sub-tasks';
+        _selectedNav = _navAllWork;
       default:
         break;
     }
@@ -1149,7 +1185,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     final subtaskId = readSubtaskIdFromUrlOrSession();
     if (subtaskId != null && subtaskId.isNotEmpty) {
       setState(() {
-        _selectedNav = 'All Tasks & Sub-tasks';
+        _selectedNav = _navAllWork;
         _detailStack
           ..clear()
           ..add(AsanaDetailSelection.subtask(subtaskId));
@@ -1174,6 +1210,15 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
           ..clear()
           ..add(AsanaDetailSelection.project(projectId));
       });
+      return;
+    }
+    final discussionId = readDiscussionIdFromUrlOrSession();
+    if (discussionId != null && discussionId.isNotEmpty) {
+      setState(() {
+        _selectedNav = 'Discussion';
+        _linkedDiscussionThreadId = discussionId;
+        _detailStack.clear();
+      });
     }
   }
 
@@ -1185,7 +1230,42 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     super.dispose();
   }
 
+  void _selectSidebarNav(String label) {
+    if (_selectedNav != label) {
+      _showNavigationLoadingUntilNextFrame();
+    }
+    setState(() {
+      _selectedNav = label;
+      if (label != 'Discussion') {
+        _linkedDiscussionThreadId = null;
+      }
+      _detailStack.clear();
+      if (MediaQuery.sizeOf(context).width < _kSidebarAutoHideWidth) {
+        _sidebarOpenOverride = false;
+      }
+    });
+    // Drop ?task= / session deep-link so refresh does not reopen the slide.
+    _syncWebLocationToDetailStack();
+  }
+
+  String _navButtonLabel(String id) => id == 'Projects' ? 'List' : id;
+
+  Widget _sidebarNavTile(
+    AsanaLandingPalette palette,
+    String id, {
+    bool compact = false,
+  }) {
+    return _SidebarNavTile(
+      label: _navButtonLabel(id),
+      palette: palette,
+      selected: _selectedNav == id,
+      compact: compact,
+      onTap: () => _selectSidebarNav(id),
+    );
+  }
+
   Widget _buildSidebarBody(AsanaLandingPalette palette) {
+    final state = context.watch<AppState>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1193,54 +1273,35 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             children: [
-              for (final label in [
-                ..._navItems,
-                if (context.watch<AppState>().showPeopleNav) 'People',
-              ])
-                _SidebarNavTile(
-                  label: label,
-                  palette: palette,
-                  selected: _selectedNav == label,
-                  onTap: () {
-                    if (_selectedNav != label) {
-                      _showNavigationLoadingUntilNextFrame();
-                    }
-                    setState(() {
-                      _selectedNav = label;
-                      _detailStack.clear();
-                      if (MediaQuery.sizeOf(context).width <
-                          _kSidebarAutoHideWidth) {
-                        _sidebarOpenOverride = false;
-                      }
-                    });
-                    // Drop ?task= / session deep-link so refresh does not reopen the slide.
-                    _syncWebLocationToDetailStack();
-                  },
+              for (final label in _navItemsBeforeWork)
+                _sidebarNavTile(palette, label),
+              _SidebarSectionLabel(label: 'Work', palette: palette),
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: 12,
+                  top: _kPrimaryToSecondaryGap,
+                  bottom: _kPrimaryToSecondaryGap,
                 ),
-              if (context.watch<AppState>().showPerformanceNav)
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final label in _workNavItems)
+                      _sidebarNavTile(palette, label, compact: true),
+                  ],
+                ),
+              ),
+              for (final label in [
+                ..._navItemsAfterWork,
+                if (state.showPeopleNav) 'People',
+              ])
+                _sidebarNavTile(palette, label),
+              if (state.showPerformanceNav)
                 for (final label in const [
                   'Group Performance',
                   'Individual Performance',
                 ])
-                  _SidebarNavTile(
-                    label: label,
-                    palette: palette,
-                    selected: _selectedNav == label,
-                    onTap: () {
-                      if (_selectedNav != label) {
-                        _showNavigationLoadingUntilNextFrame();
-                      }
-                      setState(() {
-                        _selectedNav = label;
-                        _detailStack.clear();
-                        if (MediaQuery.sizeOf(context).width <
-                            _kSidebarAutoHideWidth) {
-                          _sidebarOpenOverride = false;
-                        }
-                      });
-                      _syncWebLocationToDetailStack();
-                    },
-                  ),
+                  _sidebarNavTile(palette, label),
               _ThemeSidebarExpandable(
                 palette: palette,
                 expanded: _themeMenuExpanded,
@@ -1752,6 +1813,39 @@ class _ThemeSidebarExpandable extends StatelessWidget {
   }
 }
 
+class _SidebarSectionLabel extends StatelessWidget {
+  const _SidebarSectionLabel({required this.label, required this.palette});
+
+  final String label;
+  final AsanaLandingPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: SizedBox(
+        height: _SidebarNavTile.primaryHeight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              label,
+              style: asanaTextStyle(
+                Theme.of(context).textTheme.bodyMedium,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: palette.onSidebar,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SidebarNavTile extends StatelessWidget {
   const _SidebarNavTile({
     required this.label,
@@ -1761,6 +1855,7 @@ class _SidebarNavTile extends StatelessWidget {
     this.trailing,
     this.leading,
     this.densePadding = false,
+    this.compact = false,
   });
 
   final String label;
@@ -1770,14 +1865,19 @@ class _SidebarNavTile extends StatelessWidget {
   final Widget? trailing;
   final Widget? leading;
   final bool densePadding;
+  final bool compact;
 
-  static const double _kTileHeight = 48;
+  static const double primaryHeight = 48;
+  static const double _kTileHeight = primaryHeight;
   static const double _kTileHeightDense = 44;
+  static const double _kTileHeightCompact = 36;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tileHeight = densePadding ? _kTileHeightDense : _kTileHeight;
+    final tileHeight = compact
+        ? _kTileHeightCompact
+        : (densePadding ? _kTileHeightDense : _kTileHeight);
     final textColor = selected
         ? (palette.levelBadges != null
               ? (palette.selectedNav.computeLuminance() > 0.55
@@ -1794,7 +1894,7 @@ class _SidebarNavTile extends StatelessWidget {
     );
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: EdgeInsets.symmetric(vertical: compact ? 0 : 2),
       child: Material(
         color: selected ? palette.selectedNav : Colors.transparent,
         borderRadius: BorderRadius.circular(8),

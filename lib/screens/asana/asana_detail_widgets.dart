@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -948,6 +949,45 @@ class AsanaTaskDetailActionStyles {
   }
 }
 
+const String _kDialogBoldOpen = '\uE000';
+const String _kDialogBoldClose = '\uE001';
+
+/// Marks a project, sub-project, task, or sub-task name so dialog text draws it bold.
+String asanaDialogBold(String name) => '$_kDialogBoldOpen$name$_kDialogBoldClose';
+
+List<InlineSpan> asanaDialogSpans(String text, TextStyle base) {
+  final bold = base.copyWith(fontWeight: FontWeight.w700);
+  final spans = <InlineSpan>[];
+  var index = 0;
+  while (index < text.length) {
+    final start = text.indexOf(_kDialogBoldOpen, index);
+    if (start < 0) {
+      spans.add(TextSpan(text: text.substring(index), style: base));
+      break;
+    }
+    if (start > index) {
+      spans.add(TextSpan(text: text.substring(index, start), style: base));
+    }
+    final end = text.indexOf(_kDialogBoldClose, start + 1);
+    if (end < 0) {
+      spans.add(TextSpan(text: text.substring(start + 1), style: bold));
+      break;
+    }
+    spans.add(TextSpan(text: text.substring(start + 1, end), style: bold));
+    index = end + 1;
+  }
+  if (spans.isEmpty) {
+    spans.add(TextSpan(text: '', style: base));
+  }
+  return spans;
+}
+
+Widget asanaDialogRichText(String text, TextStyle base) {
+  return SelectableText.rich(
+    TextSpan(children: asanaDialogSpans(text, base)),
+  );
+}
+
 /// Asana-style custom dialog for confirmations.
 Future<bool?> showAsanaConfirmDialog({
   required BuildContext context,
@@ -956,7 +996,12 @@ Future<bool?> showAsanaConfirmDialog({
   required String confirmText,
   bool isDestructive = false,
   required AsanaLandingPalette palette,
+  List<String> scrollLines = const [],
 }) {
+  // The loading overlay is a root overlay, so it sits above this dialog.
+  // Remove it first; otherwise the dialog cannot be read or dismissed and
+  // the caller that is awaiting it never hides the overlay.
+  AsanaBlockingLoadingOverlay.hideAll();
   return showDialog<bool>(
     context: context,
     builder: (ctx) {
@@ -985,16 +1030,48 @@ Future<bool?> showAsanaConfirmDialog({
                 ),
               ),
               const SizedBox(height: 12),
-              SelectableText(
+              asanaDialogRichText(
                 content,
-                style: asanaTextStyle(
+                asanaTextStyle(
                   theme.textTheme.bodyMedium,
                   fontSize: 14,
                   fontWeight: FontWeight.w400,
                   color: kAsanaTextSecondary,
                   height: 1.4,
-                ),
+                )!,
               ),
+              if (scrollLines.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(ctx).copyWith(
+                    scrollbars: false,
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                      PointerDeviceKind.stylus,
+                    },
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: scrollLines.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 6),
+                      itemBuilder: (_, index) => Text(
+                        scrollLines[index],
+                        style: asanaTextStyle(
+                          theme.textTheme.bodyMedium,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: kAsanaTextPrimary,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -1058,6 +1135,7 @@ Future<bool> confirmHierarchyCascadeIfNeeded({
     confirmText: hierarchyCascadeConfirmText(action),
     isDestructive: action == HierarchyCascadeAction.delete,
     palette: palette,
+    scrollLines: counts.itemNames,
   );
   return ok == true;
 }

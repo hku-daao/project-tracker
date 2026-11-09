@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../models/forum.dart';
 import '../../services/attachment_upload_service.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../services/llm_service.dart';
 import '../../utils/attachment_file_pick.dart';
@@ -55,12 +56,16 @@ class AsanaDiscussionPanel extends StatefulWidget {
     required this.palette,
     required this.searchQuery,
     this.refreshToken = 0,
+    this.initialThreadId,
+    this.onSelectedThreadChanged,
     this.onCreatePost,
   });
 
   final AsanaLandingPalette palette;
   final String searchQuery;
   final int refreshToken;
+  final String? initialThreadId;
+  final ValueChanged<String?>? onSelectedThreadChanged;
   final VoidCallback? onCreatePost;
 
   @override
@@ -87,6 +92,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
   final _replyController = TextEditingController();
   final _replyAiPromptController = TextEditingController();
   String? _selectedThreadId;
+  String? _publishedThreadId;
   String? _replyingToPostId;
   Set<String> _categoryFilters = {};
   Set<String> _statusFilters = {};
@@ -204,11 +210,11 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       );
       if (!mounted) return;
       final visibleThreads = _filteredThreadsFrom(threads, state);
-      final selected = preferFirst
+      final requested = preferFirst
           ? null
-          : (selectThreadId ?? _selectedThreadId);
-      final selectedThreadId = visibleThreads.any((t) => t.id == selected)
-          ? selected
+          : (selectThreadId ?? _selectedThreadId ?? widget.initialThreadId);
+      final selectedThreadId = visibleThreads.any((t) => t.id == requested)
+          ? requested
           : (visibleThreads.isNotEmpty ? visibleThreads.first.id : null);
       setState(() {
         _threads = threads;
@@ -218,6 +224,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       if (_selectedThreadId != null) {
         await _loadPosts(_selectedThreadId!);
       }
+      _publishSelectedThread();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -573,6 +580,15 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
     });
     _cancelReply();
     await _loadPosts(thread.id);
+    _publishSelectedThread();
+  }
+
+  void _publishSelectedThread() {
+    final id = _selectedThreadId?.trim();
+    final normalized = (id == null || id.isEmpty) ? null : id;
+    if (normalized == _publishedThreadId) return;
+    _publishedThreadId = normalized;
+    widget.onSelectedThreadChanged?.call(normalized);
   }
 
   void _closeMobileThreadDetail() {
@@ -947,8 +963,9 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       if (!mounted) return;
       if (inlineErr != null) {
         await _showError(inlineErr);
-        return;
       }
+      await sendDiscussionReplyEmail(replyId);
+      if (inlineErr != null) return;
     }
     _cancelReply();
     await _loadThreads(selectThreadId: parent.threadId);
@@ -1197,6 +1214,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
         _postInlineImages = {};
       });
     }
+    _publishSelectedThread();
   }
 
   Future<void> _showError(String message) async {

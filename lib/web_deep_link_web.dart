@@ -4,6 +4,7 @@ const _kSubtaskKey = 'pt_deeplink_subtask';
 const _kTaskKey = 'pt_deeplink_task';
 const _kViewKey = 'pt_deeplink_view';
 const _kProjectKey = 'pt_deeplink_project';
+const _kDiscussionKey = 'pt_deeplink_discussion';
 
 String? _paramFromFragment(String fragment, String key) {
   if (fragment.isEmpty) return null;
@@ -49,9 +50,11 @@ void captureWebDeepLinkForSession({bool clearStaleWhenUrlEmpty = true}) {
   final task = ids.$2;
   final view = _paramFromLocation('view');
   final project = _paramFromLocation('project');
+  final discussion = _paramFromLocation('discussion');
   final hasSub = sub != null && sub.isNotEmpty;
   final hasTask = task != null && task.isNotEmpty;
   final hasProject = project != null && project.isNotEmpty;
+  final hasDiscussion = discussion != null && discussion.isNotEmpty;
   final hasView = view != null && view.isNotEmpty;
   if (hasSub || hasTask) {
     if (hasSub) {
@@ -66,6 +69,10 @@ void captureWebDeepLinkForSession({bool clearStaleWhenUrlEmpty = true}) {
     html.window.sessionStorage[_kProjectKey] = project;
     return;
   }
+  if (hasDiscussion) {
+    html.window.sessionStorage[_kDiscussionKey] = discussion;
+    return;
+  }
   if (hasView) {
     html.window.sessionStorage[_kViewKey] = view;
     return;
@@ -75,6 +82,7 @@ void captureWebDeepLinkForSession({bool clearStaleWhenUrlEmpty = true}) {
     html.window.sessionStorage.remove(_kTaskKey);
     html.window.sessionStorage.remove(_kViewKey);
     html.window.sessionStorage.remove(_kProjectKey);
+    html.window.sessionStorage.remove(_kDiscussionKey);
   }
 }
 
@@ -122,6 +130,15 @@ String? readProjectIdFromUrlOrSession() {
   final fromUrl = _paramFromLocation('project');
   if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
   final s = html.window.sessionStorage[_kProjectKey]?.trim();
+  if (s != null && s.isNotEmpty) return s;
+  return null;
+}
+
+/// `discussion` query / session — opens that topic in Discussion.
+String? readDiscussionIdFromUrlOrSession() {
+  final fromUrl = _paramFromLocation('discussion');
+  if (fromUrl != null && fromUrl.isNotEmpty) return fromUrl;
+  final s = html.window.sessionStorage[_kDiscussionKey]?.trim();
   if (s != null && s.isNotEmpty) return s;
   return null;
 }
@@ -194,13 +211,18 @@ void syncWebLocationForTaskDetail(String taskId) {
     q.remove('subtask');
     q.remove('view');
     q.remove('project');
+    q.remove('discussion');
   });
 }
 
 /// Clears task id from URL/session (e.g. when leaving task detail for home).
 void clearWebTaskDetailFromLocation() {
   html.window.sessionStorage.remove(_kTaskKey);
-  _replaceQueryParams((q) => q.remove('task'));
+  html.window.sessionStorage.remove(_kDiscussionKey);
+  _replaceQueryParams((q) {
+    q.remove('task');
+    q.remove('discussion');
+  });
 }
 
 /// Keeps `?subtask=` so refresh stays on the sub-task slide.
@@ -216,6 +238,7 @@ void syncWebLocationForSubtaskDetail(String subtaskId) {
     q.remove('task');
     q.remove('view');
     q.remove('project');
+    q.remove('discussion');
   });
 }
 
@@ -242,12 +265,35 @@ void syncWebLocationForProjectDetail(String projectId) {
     q.remove('task');
     q.remove('subtask');
     q.remove('view');
+    q.remove('discussion');
   });
 }
 
 void clearWebProjectDetailFromLocation() {
   html.window.sessionStorage.remove(_kProjectKey);
-  _replaceQueryParams((q) => q.remove('project'));
+  html.window.sessionStorage.remove(_kDiscussionKey);
+  _replaceQueryParams((q) {
+    q.remove('project');
+    q.remove('discussion');
+  });
+}
+
+/// Keeps `?discussion=` so refresh reopens that topic and its posts.
+void syncWebLocationForDiscussion(String threadId) {
+  final id = threadId.trim();
+  if (id.isEmpty) return;
+  html.window.sessionStorage[_kDiscussionKey] = id;
+  html.window.sessionStorage.remove(_kTaskKey);
+  html.window.sessionStorage.remove(_kSubtaskKey);
+  html.window.sessionStorage.remove(_kProjectKey);
+  html.window.sessionStorage.remove(_kViewKey);
+  _replaceQueryParams((q) {
+    q['discussion'] = id;
+    q.remove('task');
+    q.remove('subtask');
+    q.remove('project');
+    q.remove('view');
+  });
 }
 
 /// Legacy original home URL — now opens the Asana shell.
@@ -262,12 +308,14 @@ void syncWebLocationForAsanaDesign() {
   html.window.sessionStorage.remove(_kTaskKey);
   html.window.sessionStorage.remove(_kSubtaskKey);
   html.window.sessionStorage.remove(_kProjectKey);
+  html.window.sessionStorage.remove(_kDiscussionKey);
   html.window.sessionStorage[_kViewKey] = 'asana';
   _replaceQueryParams((q) {
     q['view'] = 'asana';
     q.remove('task');
     q.remove('subtask');
     q.remove('project');
+    q.remove('discussion');
   });
 }
 
@@ -281,12 +329,14 @@ void syncWebLocationForProjectDashboard() {
   html.window.sessionStorage.remove(_kTaskKey);
   html.window.sessionStorage.remove(_kSubtaskKey);
   html.window.sessionStorage.remove(_kProjectKey);
+  html.window.sessionStorage.remove(_kDiscussionKey);
   html.window.sessionStorage[_kViewKey] = 'project';
   _replaceQueryParams((q) {
     q['view'] = 'project';
     q.remove('task');
     q.remove('subtask');
     q.remove('project');
+    q.remove('discussion');
   });
 }
 
@@ -296,11 +346,13 @@ void syncWebLocationForLanding() {
   html.window.sessionStorage.remove(_kSubtaskKey);
   html.window.sessionStorage.remove(_kViewKey);
   html.window.sessionStorage.remove(_kProjectKey);
+  html.window.sessionStorage.remove(_kDiscussionKey);
   _replaceQueryParams((q) {
     q.remove('task');
     q.remove('subtask');
     q.remove('project');
     q.remove('view');
+    q.remove('discussion');
   });
 }
 

@@ -8,6 +8,8 @@ String? readTaskIdFromUrlOrSession() => null;
 
 String? readProjectIdFromUrlOrSession() => null;
 
+String? readDiscussionIdFromUrlOrSession() => null;
+
 String? readDashboardViewFromUrlOrSession() => null;
 
 void consumeSubtaskDeepLink() {}
@@ -27,6 +29,8 @@ void clearWebSubtaskDetailFromLocation({String? parentTaskId}) {}
 void syncWebLocationForProjectDetail(String projectId) {}
 
 void clearWebProjectDetailFromLocation() {}
+
+void syncWebLocationForDiscussion(String threadId) {}
 
 void syncWebLocationForDefaultHome() {}
 

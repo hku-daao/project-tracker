@@ -10,6 +10,7 @@ import '../../models/staff_for_assignment.dart';
 import '../../models/subproject_record.dart';
 import '../../models/task.dart';
 import '../../services/attachment_upload_service.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../../utils/attachment_url_launch.dart';
@@ -113,7 +114,12 @@ class _AsanaSubprojectDetailPanelState
   final _descController = TextEditingController();
   final _commentController = TextEditingController();
   final List<_SubprojectAttachmentDraft> _attachments = [];
+  final Map<String, String> _savedFileAttachmentLabelsById = {};
+  final Map<String, String> _savedUrlAttachmentLabelsById = {};
   final List<ProjectCommentRowDisplay> _comments = [];
+  final Map<String, TextEditingController> _postedCommentControllers = {};
+  final Map<String, String> _postedCommentSavedText = {};
+  String? _savingPostedCommentId;
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   final Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
   final List<_SubprojectInlineImageDraft> _pendingInlineImageAdds = [];
@@ -185,6 +191,9 @@ class _AsanaSubprojectDetailPanelState
     _nameController.dispose();
     _descController.dispose();
     _commentController.dispose();
+    for (final controller in _postedCommentControllers.values) {
+      controller.dispose();
+    }
     for (final attachment in _attachments) {
       attachment.dispose();
     }
@@ -270,6 +279,12 @@ class _AsanaSubprojectDetailPanelState
     if (id == null || id.isEmpty) return;
     final list = await DatabaseService.fetchSubprojectComments(id);
     if (mounted) {
+      final keep = list.map((comment) => comment.id).toSet();
+      for (final id in _postedCommentControllers.keys.toList()) {
+        if (keep.contains(id)) continue;
+        _postedCommentControllers.remove(id)?.dispose();
+        _postedCommentSavedText.remove(id);
+      }
       setState(() {
         _comments
           ..clear()
@@ -356,6 +371,7 @@ class _AsanaSubprojectDetailPanelState
             ),
           );
         }
+        _rememberSavedAttachmentLabels();
       });
     } catch (_) {}
   }
@@ -836,6 +852,282 @@ class _AsanaSubprojectDetailPanelState
     return null;
   }
 
+  bool _isOwnComment(ProjectCommentRowDisplay comment) =>
+      !context.read<AppState>().adminViewMode &&
+      !comment.isDeleted &&
+      (comment.createByStaffId?.trim().toLowerCase() ?? '') ==
+          (_myStaffUuid?.trim().toLowerCase() ?? '') &&
+      (_myStaffUuid?.trim().isNotEmpty ?? false);
+
+  DateTime? _commentDisplayTimestamp(ProjectCommentRowDisplay comment) {
+    final created = comment.createTimestampUtc;
+    final updated = comment.updateTimestampUtc;
+    if (updated != null && created != null && updated.isAfter(created)) {
+      return updated;
+    }
+    return created ?? updated;
+  }
+
+  String _formatCommentPostedTs(DateTime? stored) {
+    if (stored == null) return '';
+    return HkTime.formatInstantAsHk(stored, 'yyyy-MM-dd HH:mm');
+  }
+
+  Future<void> _savePostedCommentOnBlur(ProjectCommentRowDisplay comment) async {
+    if (_savingPostedCommentId == comment.id) return;
+    final ctrl = _postedCommentControllers[comment.id];
+    if (ctrl == null) return;
+    final newBody = stripInlineImageMarkers(ctrl.text);
+    final saved = stripInlineImageMarkers(
+      _postedCommentSavedText[comment.id] ?? comment.description,
+    );
+    if (newBody == saved) return;
+    if (newBody.isEmpty) {
+      ctrl.text = saved;
+      await _showInfo('Comment required', 'Comment cannot be empty.');
+      return;
+    }
+    final state = context.read<AppState>();
+    if (state.adminViewMode) {
+      await _showInfo('Admin View', 'Admin View is read-only.');
+      return;
+    }
+    _savingPostedCommentId = comment.id;
+    final err = await DatabaseService.updateSubprojectCommentRow(
+      commentId: comment.id,
+      description: newBody,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    _savingPostedCommentId = null;
+    if (!mounted) return;
+    if (err != null) {
+      ctrl.text = saved;
+      await _showInfo('Could not update comment', err);
+      return;
+    }
+    _postedCommentSavedText[comment.id] = newBody;
+    final subprojectId = widget.subprojectId?.trim();
+    if (subprojectId != null && subprojectId.isNotEmpty) {
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: 'comment-edited',
+        id: subprojectId,
+        commentId: comment.id,
+        changes: [
+          {'field': 'comment', 'oldValue': saved, 'newValue': newBody},
+        ],
+        previousAssigneeIds: _row?.assigneeStaffUuids,
+      );
+    }
+    await _loadComments();
+  }
+
+  Future<bool> _saveDirtyPostedComments(AppState state) async {
+    if (state.adminViewMode) return true;
+    for (final comment in _comments) {
+      if (!_isOwnComment(comment)) continue;
+      final ctrl = _postedCommentControllers[comment.id];
+      if (ctrl == null) continue;
+      final newBody = stripInlineImageMarkers(ctrl.text);
+      final saved = stripInlineImageMarkers(
+        _postedCommentSavedText[comment.id] ?? comment.description,
+      );
+      if (newBody == saved) continue;
+      if (newBody.isEmpty) {
+        ctrl.text = saved;
+        await _showInfo('Comment required', 'Comment cannot be empty.');
+        return false;
+      }
+      _savingPostedCommentId = comment.id;
+      final err = await DatabaseService.updateSubprojectCommentRow(
+        commentId: comment.id,
+        description: newBody,
+        updaterStaffLookupKey: state.userStaffAppId,
+      );
+      _savingPostedCommentId = null;
+      if (!mounted) return false;
+      if (err != null) {
+        ctrl.text = saved;
+        await _showInfo('Could not update comment', err);
+        return false;
+      }
+      _postedCommentSavedText[comment.id] = newBody;
+      final subprojectId = widget.subprojectId?.trim();
+      if (subprojectId != null && subprojectId.isNotEmpty) {
+        await sendHierarchyEventEmail(
+          kind: 'subproject',
+          event: 'comment-edited',
+          id: subprojectId,
+          commentId: comment.id,
+          changes: [
+            {'field': 'comment', 'oldValue': saved, 'newValue': newBody},
+          ],
+          previousAssigneeIds: _row?.assigneeStaffUuids,
+        );
+      }
+    }
+    return true;
+  }
+
+  Future<void> _deletePostedComment(ProjectCommentRowDisplay comment) async {
+    if (!_isOwnComment(comment) || _saving) return;
+    final ok = await showAsanaConfirmDialog(
+      context: context,
+      title: 'Remove comment',
+      content: 'Remove this comment?',
+      confirmText: 'Remove',
+      isDestructive: true,
+      palette: widget.palette,
+    );
+    if (ok != true || !mounted) return;
+    final state = context.read<AppState>();
+    final err = await DatabaseService.softDeleteSubprojectCommentRow(
+      commentId: comment.id,
+      updaterStaffLookupKey: state.userStaffAppId,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      await _showInfo('Could not remove comment', err);
+      return;
+    }
+    _postedCommentControllers.remove(comment.id)?.dispose();
+    _postedCommentSavedText.remove(comment.id);
+    await _loadComments();
+  }
+
+  Widget _buildCommentDisplayTile(ProjectCommentRowDisplay comment) {
+    if (_isOwnComment(comment) &&
+        !_postedCommentControllers.containsKey(comment.id)) {
+      final cleaned = stripInlineImageMarkers(comment.description);
+      _postedCommentControllers[comment.id] = TextEditingController(
+        text: cleaned,
+      );
+      _postedCommentSavedText[comment.id] = cleaned;
+    }
+    final deleted = comment.isDeleted;
+    final canEdit = _isOwnComment(comment);
+    final postedAt = _commentDisplayTimestamp(comment);
+    final edited =
+        comment.updateTimestampUtc != null &&
+        comment.createTimestampUtc != null &&
+        comment.updateTimestampUtc!.isAfter(comment.createTimestampUtc!);
+    final body = canEdit
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Focus(
+                onFocusChange: (hasFocus) {
+                  if (!hasFocus) _savePostedCommentOnBlur(comment);
+                },
+                child: AsanaFileDropRegion(
+                  enabled: !_saving,
+                  imagesOnly: true,
+                  onFiles: (files, rejected) => _stageInlineImage(
+                    entityType: 'subproject_comment',
+                    entityId: comment.id,
+                    files: files,
+                    rejectedNonImages: rejected,
+                  ),
+                  child: AsanaHoverTextField(
+                    controller: _postedCommentControllers[comment.id]!,
+                    canEdit: true,
+                    readOnly: _saving || _savingPostedCommentId == comment.id,
+                    maxLines: 8,
+                    minLines: 2,
+                    style: asanaDetailMultilineValueStyle(context),
+                  ),
+                ),
+              ),
+              InlineImageToolbar(
+                enabled: !_saving,
+                onAdd: () => _stageInlineImage(
+                  entityType: 'subproject_comment',
+                  entityId: comment.id,
+                ),
+              ),
+              InlineImagePreviewList(
+                images: _inlinePreviewItems(
+                  entityType: 'subproject_comment',
+                  entityId: comment.id,
+                  saved: _commentInlineImages[comment.id] ?? const [],
+                ),
+                onRemove: _removeInlineImagePreview,
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () => _deletePostedComment(comment),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Remove'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFC62828),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SelectableText(
+                stripInlineImageMarkers(comment.description),
+                style: asanaDetailMultilineValueStyle(context).copyWith(
+                  color: deleted ? kAsanaTextSecondary : kAsanaTextPrimary,
+                ),
+              ),
+              InlineImagePreviewList(
+                images: _inlinePreviewItems(
+                  entityType: 'subproject_comment',
+                  entityId: comment.id,
+                  saved: _commentInlineImages[comment.id] ?? const [],
+                ),
+              ),
+            ],
+          );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(comment.displayStaffName, style: asanaDetailLabelStyle(context)),
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            decoration: BoxDecoration(
+              color: deleted ? const Color(0xFFF9FAFB) : Colors.white,
+              border: Border.all(color: const Color(0xFFEDEAE9)),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                body,
+                if (postedAt != null) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '${edited ? 'Edited' : 'Posted'} ${_formatCommentPostedTs(postedAt)}',
+                      style: asanaDetailLabelStyle(
+                        context,
+                      ).copyWith(fontSize: 11),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _insertDraftComment(String subprojectId, AppState state) async {
     final text = stripInlineImageMarkers(_commentController.text);
     final hasImages = _pendingInlineImageAdds.any(
@@ -861,6 +1153,13 @@ class _AsanaSubprojectDetailPanelState
       return null;
     }
     _commentController.clear();
+    await sendHierarchyEventEmail(
+      kind: 'subproject',
+      event: 'comment-added',
+      id: subprojectId,
+      commentId: commentId,
+      previousAssigneeIds: _row?.assigneeStaffUuids,
+    );
     return commentId;
   }
 
@@ -1149,6 +1448,11 @@ class _AsanaSubprojectDetailPanelState
       }
       state.applySubprojects(await DatabaseService.fetchAllSubprojects());
       _subprojectAi?.clearAllSuggestions();
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: 'assigned',
+        id: newId,
+      );
       widget.onCreated?.call(newId);
       widget.onChanged?.call();
     } finally {
@@ -1157,12 +1461,138 @@ class _AsanaSubprojectDetailPanelState
     }
   }
 
+  void _rememberSavedAttachmentLabels() {
+    _savedFileAttachmentLabelsById.clear();
+    _savedUrlAttachmentLabelsById.clear();
+    for (final draft in _attachments) {
+      final id = draft.id?.trim();
+      if (id == null || id.isEmpty) continue;
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      if (_draftShowsAsWebsiteLink(draft)) {
+        _savedUrlAttachmentLabelsById[id] = label;
+      } else {
+        _savedFileAttachmentLabelsById[id] = label;
+      }
+    }
+  }
+
+  String _attachmentEmailLabel(_SubprojectAttachmentDraft draft) {
+    final desc = draft.descController.text.trim();
+    if (desc.isNotEmpty) return desc;
+    final pending = draft.pendingFilename?.trim();
+    if (pending != null && pending.isNotEmpty) return pending;
+    return draft.urlController.text.trim();
+  }
+
+  String _ymd(DateTime? value) {
+    if (value == null) return '';
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+
+  String _namesFor(AppState state, Iterable<String> ids) {
+    return ids
+        .map((id) => _labelForAssigneeId(id, state))
+        .where((name) => name.trim().isNotEmpty)
+        .join(', ');
+  }
+
+  void _addEmailChange(
+    List<Map<String, String>> changes,
+    String field,
+    String oldValue,
+    String newValue,
+  ) {
+    if (oldValue.trim() == newValue.trim()) return;
+    changes.add({'field': field, 'oldValue': oldValue, 'newValue': newValue});
+  }
+
+  List<Map<String, String>> _changesForEmail(AppState state, SubprojectRecord row) {
+    final changes = <Map<String, String>>[];
+    final newStatus = _draftStatus == 'Paused' ? row.status : _draftStatus;
+    final oldStatus = row.isPaused ? 'Paused' : row.status;
+    final shownNewStatus = row.isPaused ? 'Paused' : newStatus;
+    _addEmailChange(changes, 'subprojectName', row.name, _nameController.text.trim());
+    _addEmailChange(
+      changes,
+      'description',
+      stripInlineImageMarkers(row.description),
+      stripInlineImageMarkers(_descController.text),
+    );
+    _addEmailChange(
+      changes,
+      'assignees',
+      row.assigneeStaffDisplayNames.where((name) => name.trim().isNotEmpty).join(', '),
+      _namesFor(state, _effectiveAssigneeIdsForSave()),
+    );
+    _addEmailChange(
+      changes,
+      'pic',
+      row.picStaffDisplayNames.where((name) => name.trim().isNotEmpty).join(', '),
+      _namesFor(state, _picAssigneeIds),
+    );
+    _addEmailChange(changes, 'status', oldStatus, shownNewStatus);
+    _addEmailChange(changes, 'startDate', _ymd(row.startDate), _ymd(_startDate));
+    _addEmailChange(changes, 'endDate', _ymd(row.endDate), _ymd(_endDate));
+    final currentFiles = <String, String>{};
+    final currentUrls = <String, String>{};
+    final addedFiles = <String>[];
+    final addedUrls = <String>[];
+    for (final draft in _attachments) {
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      final id = draft.id?.trim();
+      if (_draftShowsAsWebsiteLink(draft)) {
+        if (id == null || id.isEmpty) {
+          addedUrls.add('Added $label');
+        } else {
+          currentUrls[id] = label;
+        }
+      } else if (id == null || id.isEmpty) {
+        addedFiles.add('Added $label');
+      } else {
+        currentFiles[id] = label;
+      }
+    }
+    final removedFiles = [
+      for (final entry in _savedFileAttachmentLabelsById.entries)
+        if (!currentFiles.containsKey(entry.key) && entry.value.isNotEmpty)
+          'Removed ${entry.value}',
+    ];
+    final removedUrls = [
+      for (final entry in _savedUrlAttachmentLabelsById.entries)
+        if (!currentUrls.containsKey(entry.key) && entry.value.isNotEmpty)
+          'Removed ${entry.value}',
+    ];
+    if (addedFiles.isNotEmpty || removedFiles.isNotEmpty) {
+      changes.add({
+        'field': 'files',
+        'oldValue': removedFiles.join('; '),
+        'newValue': addedFiles.join('; '),
+      });
+    }
+    if (addedUrls.isNotEmpty || removedUrls.isNotEmpty) {
+      changes.add({
+        'field': 'urls',
+        'oldValue': removedUrls.join('; '),
+        'newValue': addedUrls.join('; '),
+      });
+    }
+    return changes;
+  }
+
   Future<void> _save(AppState state) async {
     final id = widget.subprojectId?.trim();
     if (id == null || id.isEmpty) return;
     if (!await _validate(state)) return;
     final becomingCompleted =
         _draftStatus == 'Completed' && _row?.isCompleted != true;
+    final changesForEmail = _row == null
+        ? <Map<String, String>>[]
+        : _changesForEmail(state, _row!);
     if (becomingCompleted &&
         !await _confirmSubprojectCascade(id, HierarchyCascadeAction.complete)) {
       return;
@@ -1204,6 +1634,7 @@ class _AsanaSubprojectDetailPanelState
           await _showInfo('Sub-project saved, attachments failed', attachErr);
         }
       }
+      if (!await _saveDirtyPostedComments(state)) return;
       final commentId = await _insertDraftComment(id, state);
       final hasDraftComment = _pendingInlineImageAdds.any(
         (draft) =>
@@ -1227,6 +1658,17 @@ class _AsanaSubprojectDetailPanelState
       await _loadComments();
       _subprojectAi?.clearAllSuggestions();
       widget.onChanged?.call();
+      final emailChanges = [
+        for (final change in changesForEmail)
+          if (!(becomingCompleted && change['field'] == 'status')) change,
+      ];
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: becomingCompleted ? 'completed' : 'updated',
+        id: id,
+        changes: emailChanges,
+        previousAssigneeIds: _row?.assigneeStaffUuids,
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -1280,6 +1722,12 @@ class _AsanaSubprojectDetailPanelState
       await _loadExisting();
       _subprojectAi?.clearAllSuggestions();
       widget.onChanged?.call();
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: paused ? 'paused' : 'resumed',
+        id: id,
+        previousAssigneeIds: _row?.assigneeStaffUuids,
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) setState(() => _saving = false);
@@ -1305,7 +1753,13 @@ class _AsanaSubprojectDetailPanelState
         : await showAsanaConfirmDialog(
             context: context,
             title: 'Remove sub-project',
-            content: 'Remove "${_nameController.text.trim()}"?',
+            content: () {
+              final name = _nameController.text.trim();
+              final shown = name.isEmpty
+                  ? 'this sub-project'
+                  : asanaDialogBold(name);
+              return 'Remove "$shown"?';
+            }(),
             confirmText: 'Remove',
             isDestructive: true,
             palette: widget.palette,
@@ -1322,6 +1776,12 @@ class _AsanaSubprojectDetailPanelState
         await _showInfo('Could not remove sub-project', err);
         return;
       }
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: 'deleted',
+        id: id,
+        previousAssigneeIds: _row?.assigneeStaffUuids,
+      );
       state.applySubprojects(await DatabaseService.fetchAllSubprojects());
       widget.onChanged?.call();
       widget.onClose();
@@ -1353,6 +1813,12 @@ class _AsanaSubprojectDetailPanelState
         await _showInfo('Could not restore sub-project', err);
         return;
       }
+      await sendHierarchyEventEmail(
+        kind: 'subproject',
+        event: 'restored',
+        id: id,
+        previousAssigneeIds: _row?.assigneeStaffUuids,
+      );
       final cascadeErr =
           await DatabaseService.markTasksAndSubtasksRestoredForSubproject(
             subprojectId: id,
@@ -2013,32 +2479,7 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (final comment in _comments)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                comment.displayStaffName,
-                                style: asanaDetailLabelStyle(context),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                stripInlineImageMarkers(comment.description),
-                                style: asanaDetailMultilineValueStyle(context),
-                              ),
-                              InlineImagePreviewList(
-                                images: _inlinePreviewItems(
-                                  entityType: 'subproject_comment',
-                                  entityId: comment.id,
-                                  saved:
-                                      _commentInlineImages[comment.id] ??
-                                      const [],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        _buildCommentDisplayTile(comment),
                       if (canEdit) ...[
                         AsanaFileDropRegion(
                           enabled: !_saving,
@@ -2056,7 +2497,6 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
                             maxLines: 5,
                             minLines: 2,
                             style: asanaDetailMultilineValueStyle(context),
-                            hintText: 'Add a comment',
                           ),
                         ),
                         InlineImageToolbar(

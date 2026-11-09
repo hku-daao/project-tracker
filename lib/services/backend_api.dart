@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../config/dev_auth_context.dart';
 
 /// Client for the Railway backend API.
 class BackendApi {
@@ -184,6 +185,65 @@ class BackendApi {
     }
   }
 
+  /// Project or sub-project event email (`POST /api/notify/hierarchy-event`).
+  Future<String?> notifyHierarchyEvent({
+    required String idToken,
+    required String kind,
+    required String event,
+    required String id,
+    List<Map<String, String>>? changes,
+    List<String>? previousAssigneeIds,
+    String? commentId,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'kind': kind,
+        'event': event,
+        'id': id,
+      };
+      if (changes != null && changes.isNotEmpty) payload['changes'] = changes;
+      final comment = commentId?.trim();
+      if (comment != null && comment.isNotEmpty) payload['commentId'] = comment;
+      final previous = _cleanStaffKeys(previousAssigneeIds);
+      if (previous.isNotEmpty) payload['previousAssigneeIds'] = previous;
+      final response = await http
+          .post(
+            url('/api/notify/hierarchy-event'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 60));
+      return _notifyResponseError(response);
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Reply or follow-up email (`POST /api/notify/discussion-reply`).
+  Future<String?> notifyDiscussionReply({
+    required String idToken,
+    required String postId,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            url('/api/notify/discussion-reply'),
+            headers: {
+              'Authorization': 'Bearer $idToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'postId': postId}),
+          )
+          .timeout(const Duration(seconds: 45));
+      return _notifyResponseError(response);
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Emails Ken LEE after a new discussion thread is created (`POST /api/notify/discussion-posted`).
   /// Replies must not call this.
   Future<String?> notifyDiscussionPosted({
@@ -203,41 +263,6 @@ class BackendApi {
           )
           .timeout(const Duration(seconds: 45));
       return _notifyResponseError(response);
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  /// Emails project assignees after project detail columns change (`POST /api/notify/project-updated`).
-  ///
-  /// [changes]: `{ 'field': 'projectName'|'description'|'assignees'|'pic'|'status'|'startDate'|'endDate', 'value': '...' }`.
-  Future<String?> notifyProjectUpdated({
-    required String idToken,
-    required String projectId,
-    List<Map<String, String>>? changes,
-  }) async {
-    try {
-      final payload = <String, dynamic>{'projectId': projectId};
-      if (changes != null && changes.isNotEmpty) {
-        payload['changes'] = changes;
-      }
-      final response = await http
-          .post(
-            url('/api/notify/project-updated'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 60));
-      if (response.statusCode == 200) return null;
-      try {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        return j['error']?.toString() ?? 'HTTP ${response.statusCode}';
-      } catch (_) {
-        return 'HTTP ${response.statusCode}';
-      }
     } catch (e) {
       return e.toString();
     }
@@ -883,5 +908,51 @@ class BackendApi {
     } catch (e) {
       return (data: null, error: e.toString());
     }
+  }
+}
+
+Future<void> sendHierarchyEventEmail({
+  required String kind,
+  required String event,
+  required String id,
+  List<Map<String, String>>? changes,
+  List<String>? previousAssigneeIds,
+  String? commentId,
+}) async {
+  final target = id.trim();
+  if (target.isEmpty) return;
+  try {
+    final token = await activeUserIdToken();
+    if (token == null || token.isEmpty) return;
+    final err = await BackendApi().notifyHierarchyEvent(
+      idToken: token,
+      kind: kind,
+      event: event,
+      id: target,
+      changes: changes,
+      previousAssigneeIds: previousAssigneeIds,
+      commentId: commentId,
+    );
+    if (err != null) {
+      debugPrint('hierarchy email $kind $event: $err');
+    }
+  } catch (e) {
+    debugPrint('hierarchy email $kind $event: $e');
+  }
+}
+
+Future<void> sendDiscussionReplyEmail(String postId) async {
+  final id = postId.trim();
+  if (id.isEmpty) return;
+  try {
+    final token = await activeUserIdToken();
+    if (token == null || token.isEmpty) return;
+    final err = await BackendApi().notifyDiscussionReply(
+      idToken: token,
+      postId: id,
+    );
+    if (err != null) debugPrint('discussion reply email: $err');
+  } catch (e) {
+    debugPrint('discussion reply email: $e');
   }
 }

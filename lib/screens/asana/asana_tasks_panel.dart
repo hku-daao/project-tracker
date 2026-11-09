@@ -351,7 +351,7 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                _scopeSectionTitle(),
+                widget.flatTasksAndSubtasks ? 'All Works' : 'Tasks',
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontSize: compactTitle ? 14 : 18,
                   fontWeight: FontWeight.w600,
@@ -734,22 +734,6 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     if (_filters.scopes.contains('created')) labels.add('Created by me');
     if (labels.isNotEmpty) return labels.join(', ');
     return '${_filters.scopes.length} selected';
-  }
-
-  String _scopeSectionTitle() {
-    final prefix = widget.flatTasksAndSubtasks ? 'Tasks/Sub-tasks' : 'Tasks';
-    if (_filters.scopes.isEmpty || _filters.scopes.contains('all')) {
-      return '$prefix created by or assigned to my team';
-    }
-    if (_filters.scopes.length == 1) {
-      if (_filters.scopes.contains('assigned')) return '$prefix assigned to me';
-      if (_filters.scopes.contains('created')) return '$prefix created by me';
-    }
-    if (_filters.scopes.contains('assigned') &&
-        _filters.scopes.contains('created')) {
-      return '$prefix created by or assigned to me';
-    }
-    return '$prefix (Multiple scopes)';
   }
 
   String _statusLabel() {

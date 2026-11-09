@@ -5,14 +5,13 @@ import 'package:provider/provider.dart';
 
 import '../../app_state.dart';
 import '../../commencement_status.dart';
-import '../../config/dev_auth_context.dart';
 import '../../config/postgrest_config.dart';
 import '../../models/project_record.dart';
 import '../../models/singular_comment.dart';
 import '../../models/staff_for_assignment.dart';
 import '../../models/task.dart';
-import '../../services/backend_api.dart';
 import '../../services/attachment_upload_service.dart';
+import '../../services/backend_api.dart';
 import '../../services/database_service.dart';
 import '../../utils/attachment_file_pick.dart';
 import '../../utils/file_drop_region.dart';
@@ -125,6 +124,8 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
   final Map<String, String> _postedCommentSavedText = {};
   String? _savingPostedCommentId;
   final List<_ProjectAttachmentDraft> _attachments = [];
+  final Map<String, String> _savedFileAttachmentLabelsById = {};
+  final Map<String, String> _savedUrlAttachmentLabelsById = {};
   List<InlineAttachmentRow> _descriptionInlineImages = [];
   Map<String, List<InlineAttachmentRow>> _commentInlineImages = {};
   final List<_ProjectInlineImageDraft> _pendingInlineImageAdds = [];
@@ -343,6 +344,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             ),
           );
         }
+        _rememberSavedAttachmentLabels();
       });
     } catch (_) {}
   }
@@ -531,84 +533,6 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         .map((id) => (id: id, name: _labelForAssigneeId(id, state)))
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
-  }
-
-  void _showEmailWarning(String label, String error) {
-    debugPrint('$label: $error');
-    if (!mounted) return;
-    _showInfo(label, error);
-  }
-
-  Future<void> _notifyEmail(
-    String label,
-    Future<String?> Function(String idToken) send,
-  ) async {
-    try {
-      final token = await activeUserIdToken();
-      if (token == null) {
-        _showEmailWarning(label, 'sign-in token missing');
-        return;
-      }
-      final err = await send(token);
-      if (err != null) _showEmailWarning(label, err);
-    } catch (e) {
-      _showEmailWarning(label, e.toString());
-    }
-  }
-
-  void _addChange(
-    List<Map<String, String>> changes,
-    String field,
-    String oldValue,
-    String newValue,
-  ) {
-    if (oldValue.trim() == newValue.trim()) return;
-    changes.add({'field': field, 'value': newValue});
-  }
-
-  String _namesFor(AppState state, Iterable<String> ids) {
-    return ids.map((id) => _labelForAssigneeId(id, state)).join(', ');
-  }
-
-  List<Map<String, String>> _projectChangesForEmail(
-    AppState state,
-    ProjectRecord p,
-  ) {
-    final changes = <Map<String, String>>[];
-    _addChange(changes, 'projectName', p.name, _nameController.text.trim());
-    _addChange(
-      changes,
-      'description',
-      p.description,
-      _descController.text.trim(),
-    );
-    final effectiveAssigneeIds = _effectiveAssigneeIdsForSave();
-    _addChange(
-      changes,
-      'assignees',
-      AsanaProjectFilter.assigneesLine(p, state),
-      _namesFor(state, effectiveAssigneeIds),
-    );
-    _addChange(
-      changes,
-      'pic',
-      AsanaProjectFilter.picLine(p, state),
-      _namesFor(state, _picAssigneeIds),
-    );
-    _addChange(changes, 'status', p.status, _effectiveStatus(p));
-    _addChange(
-      changes,
-      'startDate',
-      _formatDate(p.startDate),
-      _formatDate(_startDate),
-    );
-    _addChange(
-      changes,
-      'endDate',
-      _formatDate(p.endDate),
-      _formatDate(_endDate),
-    );
-    return changes;
   }
 
   void _publishAssigneeSnapshot() {
@@ -1089,6 +1013,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       await _loadProject();
       await _loadProjectTasks();
       widget.onChanged?.call();
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: paused ? 'paused' : 'resumed',
+        id: widget.projectId,
+        previousAssigneeIds: p.assigneeStaffUuids,
+      );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
       if (mounted) _setSaving(false);
@@ -1114,7 +1044,7 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
             context: context,
             title: 'Delete project',
             content:
-                'Delete "${_project?.name ?? 'this project'}"? It will be moved to the Deleted status.',
+                'Delete "${asanaDialogBold((_project?.name.trim().isNotEmpty ?? false) ? _project!.name.trim() : 'this project')}"? It will be moved to the Deleted status.',
             confirmText: 'Delete',
             isDestructive: true,
             palette: widget.palette,
@@ -1144,6 +1074,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: 'deleted',
+        id: widget.projectId,
+        previousAssigneeIds: _project?.assigneeStaffUuids,
+      );
       final cascadeErr =
           await DatabaseService.markTasksAndSubtasksDeletedForProject(
             projectId: widget.projectId,
@@ -1193,6 +1129,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: 'restored',
+        id: widget.projectId,
+        previousAssigneeIds: p.assigneeStaffUuids,
+      );
       final cascadeErr = await DatabaseService.markHierarchyRestoredForProject(
         projectId: widget.projectId,
         updateByStaffLookupKey: state.userStaffAppId,
@@ -1242,6 +1184,12 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: 'completed',
+        id: widget.projectId,
+        previousAssigneeIds: p.assigneeStaffUuids,
+      );
       await _applyProjectsAndSubprojects(state);
       await _loadProject();
       await _syncChildTasksAfterComplete(state);
@@ -1906,6 +1854,16 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       return;
     }
     _postedCommentSavedText[comment.id] = newBody;
+    await sendHierarchyEventEmail(
+      kind: 'project',
+      event: 'comment-edited',
+      id: widget.projectId,
+      commentId: comment.id,
+      changes: [
+        {'field': 'comment', 'oldValue': saved, 'newValue': newBody},
+      ],
+      previousAssigneeIds: _project?.assigneeStaffUuids,
+    );
     await _loadComments();
   }
 
@@ -1939,6 +1897,16 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         return false;
       }
       _postedCommentSavedText[comment.id] = newBody;
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: 'comment-edited',
+        id: widget.projectId,
+        commentId: comment.id,
+        changes: [
+          {'field': 'comment', 'oldValue': saved, 'newValue': newBody},
+        ],
+        previousAssigneeIds: _project?.assigneeStaffUuids,
+      );
     }
     return true;
   }
@@ -1969,6 +1937,13 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       return null;
     }
     _commentController.clear();
+    await sendHierarchyEventEmail(
+      kind: 'project',
+      event: 'comment-added',
+      id: widget.projectId,
+      commentId: commentId,
+      previousAssigneeIds: _project?.assigneeStaffUuids,
+    );
     return commentId;
   }
 
@@ -2440,6 +2415,136 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
     );
   }
 
+  void _rememberSavedAttachmentLabels() {
+    _savedFileAttachmentLabelsById.clear();
+    _savedUrlAttachmentLabelsById.clear();
+    for (final draft in _attachments) {
+      final id = draft.id?.trim();
+      if (id == null || id.isEmpty) continue;
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      if (_draftShowsAsWebsiteLink(draft)) {
+        _savedUrlAttachmentLabelsById[id] = label;
+      } else {
+        _savedFileAttachmentLabelsById[id] = label;
+      }
+    }
+  }
+
+  String _attachmentEmailLabel(_ProjectAttachmentDraft draft) {
+    final desc = draft.descController.text.trim();
+    if (desc.isNotEmpty) return desc;
+    final pending = draft.pendingFilename?.trim();
+    if (pending != null && pending.isNotEmpty) return pending;
+    return draft.urlController.text.trim();
+  }
+
+  String _ymd(DateTime? value) {
+    if (value == null) return '';
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+
+  String _namesFor(AppState state, Iterable<String> ids) {
+    return ids
+        .map((id) => _labelForAssigneeId(id, state))
+        .where((name) => name.trim().isNotEmpty)
+        .join(', ');
+  }
+
+  void _addEmailChange(
+    List<Map<String, String>> changes,
+    String field,
+    String oldValue,
+    String newValue,
+  ) {
+    if (oldValue.trim() == newValue.trim()) return;
+    changes.add({'field': field, 'oldValue': oldValue, 'newValue': newValue});
+  }
+
+  List<Map<String, String>> _projectChangesForEmail(
+    AppState state,
+    ProjectRecord p,
+    List<String> assigneeIds,
+  ) {
+    final changes = <Map<String, String>>[];
+    _addEmailChange(changes, 'projectName', p.name, _nameController.text.trim());
+    _addEmailChange(
+      changes,
+      'description',
+      stripInlineImageMarkers(p.description),
+      stripInlineImageMarkers(_descController.text),
+    );
+    _addEmailChange(
+      changes,
+      'assignees',
+      p.assigneeStaffDisplayNames.where((name) => name.trim().isNotEmpty).join(', '),
+      _namesFor(state, assigneeIds),
+    );
+    _addEmailChange(
+      changes,
+      'pic',
+      p.picStaffDisplayNames.where((name) => name.trim().isNotEmpty).join(', '),
+      _namesFor(state, _picAssigneeIds),
+    );
+    _addEmailChange(changes, 'status', p.status, _effectiveStatus(p));
+    _addEmailChange(changes, 'startDate', _ymd(p.startDate), _ymd(_startDate));
+    _addEmailChange(changes, 'endDate', _ymd(p.endDate), _ymd(_endDate));
+    _appendAttachmentChangesForEmail(changes);
+    return changes;
+  }
+
+  void _appendAttachmentChangesForEmail(List<Map<String, String>> changes) {
+    final currentFilesById = <String, String>{};
+    final currentUrlsById = <String, String>{};
+    final addedFiles = <String>[];
+    final addedUrls = <String>[];
+    for (final draft in _attachments) {
+      final label = _attachmentEmailLabel(draft);
+      if (label.isEmpty) continue;
+      final id = draft.id?.trim();
+      if (_draftShowsAsWebsiteLink(draft)) {
+        if (id == null || id.isEmpty) {
+          addedUrls.add('Added $label');
+        } else {
+          currentUrlsById[id] = label;
+        }
+      } else if (id == null || id.isEmpty) {
+        addedFiles.add('Added $label');
+      } else {
+        currentFilesById[id] = label;
+      }
+    }
+    final removedFiles = <String>[];
+    for (final entry in _savedFileAttachmentLabelsById.entries) {
+      if (!currentFilesById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedFiles.add('Removed ${entry.value}');
+      }
+    }
+    final removedUrls = <String>[];
+    for (final entry in _savedUrlAttachmentLabelsById.entries) {
+      if (!currentUrlsById.containsKey(entry.key) && entry.value.isNotEmpty) {
+        removedUrls.add('Removed ${entry.value}');
+      }
+    }
+    if (addedFiles.isNotEmpty || removedFiles.isNotEmpty) {
+      changes.add({
+        'field': 'files',
+        'oldValue': removedFiles.join('; '),
+        'newValue': addedFiles.join('; '),
+      });
+    }
+    if (addedUrls.isNotEmpty || removedUrls.isNotEmpty) {
+      changes.add({
+        'field': 'urls',
+        'oldValue': removedUrls.join('; '),
+        'newValue': addedUrls.join('; '),
+      });
+    }
+  }
+
   Future<void> _save(AppState state, ProjectRecord p) async {
     if (await _blockAdminReadOnlyWrite()) return;
     if (!_canManageProject(p)) return;
@@ -2521,6 +2626,11 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       return;
     }
     final status = _effectiveStatus(p);
+    final changesForEmail = _projectChangesForEmail(
+      state,
+      p,
+      effectiveAssigneeIds,
+    );
     if (status == 'Completed' && !_milestonesAllowComplete()) {
       await _showMilestonesRequiredForComplete();
       return;
@@ -2552,7 +2662,6 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
         );
         return;
       }
-      final changesForEmail = _projectChangesForEmail(state, p);
       final err = await DatabaseService.updateProjectRow(
         projectId: widget.projectId,
         name: name,
@@ -2615,15 +2724,21 @@ class _AsanaProjectDetailPanelState extends State<AsanaProjectDetailPanel> {
       await _loadProjectDescriptionInlineImages();
       _projectAi?.clearAllSuggestions();
       widget.onChanged?.call();
-      AsanaBlockingLoadingOverlay.hide();
-      if (mounted) _setSaving(false);
-      await _notifyEmail(
-        'Project update email',
-        (token) => BackendApi().notifyProjectUpdated(
-          idToken: token,
-          projectId: widget.projectId,
-          changes: changesForEmail,
-        ),
+      final emailChanges = [
+        for (final change in changesForEmail)
+          if (!(status == 'Completed' &&
+                  !alreadyCompleted &&
+                  change['field'] == 'status'))
+            change,
+      ];
+      await sendHierarchyEventEmail(
+        kind: 'project',
+        event: status == 'Completed' && !alreadyCompleted
+            ? 'completed'
+            : 'updated',
+        id: widget.projectId,
+        changes: emailChanges,
+        previousAssigneeIds: p.assigneeStaffUuids,
       );
     } finally {
       AsanaBlockingLoadingOverlay.hide();
