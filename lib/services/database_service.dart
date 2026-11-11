@@ -6891,6 +6891,32 @@ class DatabaseService {
     }
   }
 
+  static Future<String?> updateForumThreadStatus({
+    required String threadId,
+    required String status,
+    String? updaterStaffLookupKey,
+  }) async {
+    if (!_enabled) return 'Database not configured';
+    final id = threadId.trim();
+    final next = status.trim();
+    const allowed = {'Open', 'Resolved', 'Closed'};
+    if (id.isEmpty) return 'Discussion is required.';
+    if (!allowed.contains(next)) return 'Choose Open, Resolved, or Closed.';
+    try {
+      final staffId = await _staffRowIdForAssigneeKey(
+        updaterStaffLookupKey ?? '',
+      );
+      await PostgrestClient.instance.from('forum_thread').update({
+        'status': next,
+        'updated_by': staffId,
+        'updated_at': HkTime.timestampForDb(),
+      }).eq('id', id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   static Future<String?> updateForumPost({
     required String postId,
     required String threadId,

@@ -120,6 +120,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
       setState(() => _filters.applyCookieJson(cookieData));
     }
     _filters.overdueOptions.clear();
+    _filters.createDateStart = null;
+    _filters.createDateEnd = null;
     if (!mounted) return;
     setState(() => _filtersReady = true);
     _rebuildTaskList();
@@ -202,7 +204,8 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
           'prefetchedSubs=$prefetchedSubs displayTasks=${tasks.length} '
           'flatRows=${flatRows.length} (tasks=$flatTaskRows subs=$flatSubRows) '
           'scoped=${state.tasksLoadedWithVisibilityScope} '
-          'statuses=${_filters.statuses} submissions=${_filters.submissions}',
+          'statuses=${_filters.statuses} submissions=${_filters.submissions} '
+          'due=${_filters.dueChoiceEngaged ? _filters.dueChoices.join(",") : "all"}',
         );
       }
 
@@ -417,13 +420,9 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
                 onPressed: _showPicMenu,
               ),
               AsanaFilterDropdown(
-                title: 'Due Date',
-                value: _dueDateLabel(),
-                buttonWidth: asanaDueDateFilterButtonWidth(
-                  _filters.createDateStart,
-                  _filters.createDateEnd,
-                ),
-                onPressed: _showDueDateRangePicker,
+                title: 'Due',
+                value: _dueLabel(),
+                onPressed: _showDueMenu,
               ),
               AsanaFilterDropdown(
                 title: 'Sort',
@@ -788,10 +787,23 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
   String _picLabel(AppState state) =>
       _staffFilterLabel(state, _filters.picStaffIds);
 
-  String _dueDateLabel() => asanaDueDateRangeFilterLabel(
-    _filters.createDateStart,
-    _filters.createDateEnd,
-  );
+  String _dueLabel() {
+    if (!_filters.dueChoiceEngaged) return 'All';
+    const labels = {
+      AsanaTaskFilterState.dueOverdue: 'Overdue',
+      AsanaTaskFilterState.dueToday: 'Due today',
+      AsanaTaskFilterState.dueLater: 'Due later',
+    };
+    const order = [
+      AsanaTaskFilterState.dueOverdue,
+      AsanaTaskFilterState.dueToday,
+      AsanaTaskFilterState.dueLater,
+    ];
+    return order
+        .where(_filters.dueChoices.contains)
+        .map((key) => labels[key]!)
+        .join(', ');
+  }
 
   List<AsanaFilterCheckboxOption> _staffOptions(
     AppState state,
@@ -875,38 +887,31 @@ class _AsanaTasksPanelState extends State<AsanaTasksPanel> {
     }
   }
 
-  Future<void> _showDueDateRangePicker(BuildContext buttonContext) async {
-    final all = await showMenu<bool>(
-      context: buttonContext,
-      position: _menuPosition(buttonContext),
-      initialValue: !_filters.createDateEngaged,
-      color: Theme.of(buttonContext).colorScheme.surface,
-      surfaceTintColor: Colors.transparent,
-      items: const [
-        PopupMenuItem(value: true, child: Text('All')),
-        PopupMenuItem(value: false, child: Text('Choose date range')),
-      ],
-    );
-    if (all == null) return;
-    if (all) {
-      setState(() {
-        _filters.createDateStart = null;
-        _filters.createDateEnd = null;
-      });
-      _onFiltersChanged();
-      return;
-    }
-    final picked = await showAsanaAnchoredDateRangePicker(
+  Future<void> _showDueMenu(BuildContext buttonContext) async {
+    const allKey = '__all__';
+    final selection = await showAsanaCheckboxFilterPanel(
       anchorContext: buttonContext,
-      start: _filters.createDateStart,
-      end: _filters.createDateEnd,
+      options: const [
+        AsanaFilterCheckboxOption(key: allKey, label: 'All', isAll: true),
+        AsanaFilterCheckboxOption(
+          key: AsanaTaskFilterState.dueOverdue,
+          label: 'Overdue',
+        ),
+        AsanaFilterCheckboxOption(
+          key: AsanaTaskFilterState.dueToday,
+          label: 'Due today',
+        ),
+        AsanaFilterCheckboxOption(
+          key: AsanaTaskFilterState.dueLater,
+          label: 'Due later',
+        ),
+      ],
+      initialSelection: _filters.dueChoices,
     );
-    if (picked == null) return;
-    setState(() {
-      _filters.createDateStart = asanaDateOnlyFromPicker(picked.start);
-      _filters.createDateEnd = asanaDateOnlyFromPicker(picked.end);
-    });
-    _onFiltersChanged();
+    if (selection != null) {
+      setState(() => _filters.dueChoices = selection);
+      _onFiltersChanged();
+    }
   }
 
   Future<void> _showCreatorMenu(BuildContext buttonContext) async {

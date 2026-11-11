@@ -742,7 +742,29 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       onRemoveReplyInlineImage: _removeDraftReplyInlineImage,
       onAskReplyAi: _askReplyAi,
       onSubmitReply: (post) => _submitReply(state, post),
+      canChangeStatus: state.superAdminActsAsPic,
+      onChangeStatus: (thread, status) =>
+          _changeThreadStatus(state, thread, status),
     );
+  }
+
+  Future<void> _changeThreadStatus(
+    AppState state,
+    ForumThread thread,
+    String status,
+  ) async {
+    if (thread.status == status) return;
+    final error = await DatabaseService.updateForumThreadStatus(
+      threadId: thread.id,
+      status: status,
+      updaterStaffLookupKey: state.effectiveStaffAppId,
+    );
+    if (!mounted) return;
+    if (error != null) {
+      await _showError(error);
+      return;
+    }
+    await _loadThreads(selectThreadId: thread.id);
   }
 
   void _cancelReply() {
@@ -2631,6 +2653,61 @@ class _ThreadList extends StatelessWidget {
   }
 }
 
+class _ThreadStatusControl extends StatefulWidget {
+  const _ThreadStatusControl({
+    required this.status,
+    required this.canChange,
+    required this.onChanged,
+  });
+
+  final String status;
+  final bool canChange;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_ThreadStatusControl> createState() => _ThreadStatusControlState();
+}
+
+class _ThreadStatusControlState extends State<_ThreadStatusControl> {
+  final _link = LayerLink();
+
+  Future<void> _pick() async {
+    const options = [
+      AsanaAnchoredOption(value: 'Open', label: 'Open'),
+      AsanaAnchoredOption(value: 'Resolved', label: 'Resolved'),
+      AsanaAnchoredOption(value: 'Closed', label: 'Closed'),
+    ];
+    final choice = await showAsanaAnchoredOptionMenu<String>(
+      anchorLink: _link,
+      anchorContext: context,
+      options: options,
+    );
+    if (choice == null || choice == widget.status || !mounted) return;
+    widget.onChanged(choice);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = AsanaSubmissionChip(
+      submission: widget.status,
+      displayLabel: widget.status,
+      fontSize: 11,
+    );
+    if (!widget.canChange) return chip;
+    return CompositedTransformTarget(
+      link: _link,
+      child: Tooltip(
+        message: 'Change status',
+        child: InkWell(
+          onTap: _pick,
+          borderRadius: BorderRadius.circular(999),
+          child: chip,
+        ),
+      ),
+    );
+  }
+}
+
 class _ThreadDetail extends StatelessWidget {
   const _ThreadDetail({
     required this.palette,
@@ -2661,6 +2738,8 @@ class _ThreadDetail extends StatelessWidget {
     required this.onRemoveReplyInlineImage,
     required this.onAskReplyAi,
     required this.onSubmitReply,
+    required this.canChangeStatus,
+    required this.onChangeStatus,
   });
 
   final AsanaLandingPalette palette;
@@ -2695,6 +2774,8 @@ class _ThreadDetail extends StatelessWidget {
   final void Function(InlineImagePreviewItem image) onRemoveReplyInlineImage;
   final Future<void> Function(ForumPost post) onAskReplyAi;
   final Future<void> Function(ForumPost post) onSubmitReply;
+  final bool canChangeStatus;
+  final void Function(ForumThread thread, String status) onChangeStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -2731,7 +2812,7 @@ class _ThreadDetail extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      SelectableText(
                         t.title,
                         style: asanaTextStyle(
                           Theme.of(context).textTheme.headlineSmall,
@@ -2756,10 +2837,10 @@ class _ThreadDetail extends StatelessWidget {
                             displayLabel: t.category,
                             fontSize: 11,
                           ),
-                          AsanaSubmissionChip(
-                            submission: t.status,
-                            displayLabel: t.status,
-                            fontSize: 11,
+                          _ThreadStatusControl(
+                            status: t.status,
+                            canChange: canChangeStatus,
+                            onChanged: (status) => onChangeStatus(t, status),
                           ),
                           if (t.locked)
                             const AsanaSubmissionChip(
@@ -3441,42 +3522,45 @@ class _PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authorMeta = authorMetaForKey(post.createdBy);
+    final author = _AuthorDateLine(
+      name: post.createdByName ?? 'Unknown',
+      meta: authorMeta,
+      date: _date(post.createdAt),
+    );
     return Padding(
       padding: EdgeInsets.only(left: indent, bottom: 12),
-      child: InkWell(
-        onTap: canEdit ? () => onEdit(post) : null,
-        borderRadius: BorderRadius.circular(12),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: post.depth == 0 ? Colors.white : const Color(0xFFF8F9FA),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: _AuthorDateLine(
-                        name: post.createdByName ?? 'Unknown',
-                        meta: authorMeta,
-                        date: _date(post.createdAt),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  post.content,
-                  style: asanaTextStyle(
-                    Theme.of(context).textTheme.bodyMedium,
-                    height: 1.45,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: post.depth == 0 ? Colors.white : const Color(0xFFF8F9FA),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: canEdit
+                        ? InkWell(
+                            onTap: () => onEdit(post),
+                            child: author,
+                          )
+                        : author,
                   ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                post.content,
+                style: asanaTextStyle(
+                  Theme.of(context).textTheme.bodyMedium,
+                  height: 1.45,
                 ),
+              ),
                 InlineImageContentStrip(
                   images: [
                     for (final row in inlineImages)
@@ -3504,7 +3588,6 @@ class _PostCard extends StatelessWidget {
             ),
           ),
         ),
-      ),
     );
   }
 }

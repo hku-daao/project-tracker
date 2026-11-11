@@ -27,6 +27,7 @@ import 'asana_blocking_loading_overlay.dart';
 import 'asana_detail_widgets.dart';
 import 'asana_filter_widgets.dart';
 import 'asana_project_detail_panel.dart';
+import 'asana_project_filter.dart';
 import 'asana_subproject_ai_assistant.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
@@ -2222,6 +2223,15 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
     final canEdit =
         !adminReadOnly && (_createMode ? canCreate : (isCreator || isPic));
     final parentProject = state.projectById(widget.projectId);
+    final creatorLabel = () {
+      final row = _row;
+      if (row != null) {
+        return AsanaProjectFilter.subprojectCreatorLine(row, state);
+      }
+      final id = state.userStaffAppId?.trim();
+      if (id == null || id.isEmpty) return '';
+      return state.assigneeById(id)?.name.trim() ?? id;
+    }();
     final canResume =
         !adminReadOnly &&
         !_createMode &&
@@ -2309,6 +2319,10 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
                       text: parentProject.name.trim(),
                     ),
                   ),
+                AsanaDetailTwoColumnRow(
+                  label: 'Creator',
+                  child: AsanaDetailPlainValue(text: creatorLabel),
+                ),
                 AsanaDetailTwoColumnRow(
                   label: 'Assignees',
                   child: KeyedSubtree(

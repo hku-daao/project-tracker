@@ -137,6 +137,8 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     if (cookieData != null) {
       _filters.applyCookieJson(cookieData);
     }
+    _filters.createDateStart = null;
+    _filters.createDateEnd = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _rebuildList();
     });
@@ -1649,15 +1651,6 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
                 onPressed: _showPicMenu,
               ),
               AsanaFilterDropdown(
-                title: 'Due Date',
-                value: _dueDateLabel(),
-                buttonWidth: asanaDueDateFilterButtonWidth(
-                  _filters.createDateStart,
-                  _filters.createDateEnd,
-                ),
-                onPressed: _showDueDateRangePicker,
-              ),
-              AsanaFilterDropdown(
                 title: 'Sort',
                 value: _sortLabel(),
                 buttonWidth: 136,
@@ -1932,11 +1925,6 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   String _picLabel(AppState state) =>
       _staffFilterLabel(state, _filters.picStaffIds);
 
-  String _dueDateLabel() => asanaDueDateRangeFilterLabel(
-    _filters.createDateStart,
-    _filters.createDateEnd,
-  );
-
   List<AsanaFilterCheckboxOption> _staffOptions(
     AppState state,
     Iterable<String?> ids,
@@ -2007,41 +1995,6 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     for (final id in _visiblePicIds()) {
       yield state.teamIdForStaffKey(id);
     }
-  }
-
-  Future<void> _showDueDateRangePicker(BuildContext buttonContext) async {
-    final all = await showMenu<bool>(
-      context: buttonContext,
-      position: _menuPosition(buttonContext),
-      initialValue: !_filters.createDateEngaged,
-      color: Theme.of(buttonContext).colorScheme.surface,
-      surfaceTintColor: Colors.transparent,
-      items: const [
-        PopupMenuItem(value: true, child: Text('All')),
-        PopupMenuItem(value: false, child: Text('Choose date range')),
-      ],
-    );
-    if (all == null) return;
-    if (!mounted || !buttonContext.mounted) return;
-    if (all) {
-      setState(() {
-        _filters.createDateStart = null;
-        _filters.createDateEnd = null;
-      });
-      _rebuildList();
-      return;
-    }
-    final picked = await showAsanaAnchoredDateRangePicker(
-      anchorContext: buttonContext,
-      start: _filters.createDateStart,
-      end: _filters.createDateEnd,
-    );
-    if (picked == null) return;
-    setState(() {
-      _filters.createDateStart = asanaDateOnlyFromPicker(picked.start);
-      _filters.createDateEnd = asanaDateOnlyFromPicker(picked.end);
-    });
-    _rebuildList();
   }
 
   Future<void> _showCreatorMenu(BuildContext buttonContext) async {

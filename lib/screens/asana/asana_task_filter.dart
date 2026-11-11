@@ -3,7 +3,9 @@ import '../../app_state.dart';
 import '../../models/singular_subtask.dart';
 import '../../models/task.dart';
 import '../../services/landing_task_filters_storage.dart';
+import '../../utils/hk_time.dart';
 import '../../widgets/task_list_card.dart';
+import 'asana_due_badge.dart';
 
 /// One row in **All tasks & sub-tasks** (flattened task or sub-task).
 class AsanaFlatRow {
@@ -32,6 +34,17 @@ class AsanaTaskFilterState {
   DateTime? createDateStart;
   DateTime? createDateEnd;
   Set<String> overdueOptions = {};
+
+  /// Empty = all due dates. Otherwise any of [dueOverdue], [dueToday],
+  /// [dueLater]. A row with no visible due date matches All only.
+  Set<String> dueChoices = {};
+  static const dueOverdue = 'overdue';
+  static const dueToday = 'today';
+  static const dueLater = 'later';
+  bool get dueChoiceEngaged =>
+      dueChoices.contains(dueOverdue) ||
+      dueChoices.contains(dueToday) ||
+      dueChoices.contains(dueLater);
 
   /// `due` | `created` | `updated` | `name`
   String sortKey = 'created';
@@ -62,6 +75,7 @@ class AsanaTaskFilterState {
     'sortKey': sortKey,
     'sortAscending': sortAscending,
     'overdueOptions': overdueOptions.toList(),
+    'dueChoice': dueChoices.toList(),
     'creatorStaffIds': creatorStaffIds,
     'picStaffIds': picStaffIds,
     'assigneeStaffIds': assigneeStaffIds,
@@ -77,6 +91,7 @@ class AsanaTaskFilterState {
       data['commencementStatuses'],
     ).difference({'all', '__all__'}).map(normalizeCommencementStatus).toSet();
     overdueOptions = _stringSet(data['overdueOptions']);
+    dueChoices = _dueChoiceSet(data['dueChoice']);
     createDateStart = _dateFromMs(data['createDateStart']);
     createDateEnd = _dateFromMs(data['createDateEnd']);
     creatorStaffIds = _stringList(data['creatorStaffIds']);
@@ -92,6 +107,18 @@ class AsanaTaskFilterState {
       sortKey = rawSortKey!;
     }
     sortAscending = data['sortAscending'] as bool? ?? sortAscending;
+  }
+
+  static Set<String> _dueChoiceSet(Object? value) {
+    final raw = <String>{};
+    if (value is String) {
+      raw.add(value);
+    } else if (value is List) {
+      for (final e in value) {
+        if (e != null) raw.add(e.toString());
+      }
+    }
+    return raw.intersection({dueOverdue, dueToday, dueLater});
   }
 
   static Set<String> _stringSet(Object? value) => {
@@ -116,6 +143,7 @@ class AsanaTaskFilterState {
     submissions = {submissionPending};
     commencementStatuses.clear();
     overdueOptions.clear();
+    dueChoices.clear();
     sortKey = 'created';
     sortAscending = false;
     assigneeStaffIds = [];
@@ -160,6 +188,7 @@ class AsanaTaskFilterState {
       }
     }
     overdueOptions.clear();
+    dueChoices.clear();
     if (data.filterOverdueOnly) overdueOptions.add('overdue');
     createDateStart = data.filterCreateDateStartMs != null
         ? DateTime.fromMillisecondsSinceEpoch(data.filterCreateDateStartMs!)
@@ -615,23 +644,76 @@ class AsanaTaskFilter {
     return true;
   }
 
+  static DateTime? _visibleDue(Task t, SingularSubtask? sub) {
+    if (sub == null) {
+      return visibleScheduleDate(t.endDate, t.commencementStatus);
+    }
+    return visibleScheduleDate(sub.dueDate, sub.commencementStatus);
+  }
+
+  /// All matches every row. Overdue and Due today match the label on the
+  /// due-date column: Incomplete, not Submitted, and the visible due date is
+  /// before today or today. Due later is a visible due date after today.
+  /// Several choices match a row that fits any one of them.
+  /// No visible due date matches All only.
+  static bool _dueChoiceMatches(
+    AppState state,
+    Task t,
+    SingularSubtask? sub,
+    DateTime? due,
+    AsanaTaskFilterState filters,
+  ) {
+    if (!filters.dueChoiceEngaged) return true;
+    final wantOverdue = filters.dueChoices.contains(
+      AsanaTaskFilterState.dueOverdue,
+    );
+    final wantToday = filters.dueChoices.contains(
+      AsanaTaskFilterState.dueToday,
+    );
+    final wantLater = filters.dueChoices.contains(
+      AsanaTaskFilterState.dueLater,
+    );
+    if (wantOverdue || wantToday) {
+      final status = sub == null
+          ? taskDisplayStatus(state, t)
+          : subtaskDisplayStatus(state, t, sub);
+      final submission = sub == null ? t.submission : sub.submission;
+      final label = asanaTaskViewDueLabel(
+        due: due,
+        status: status,
+        submission: submission,
+      );
+      if (wantOverdue && label == 'Overdue') return true;
+      if (wantToday && label == 'Due today') return true;
+    }
+    if (wantLater && due != null) {
+      final today = HkTime.todayDateOnlyHk();
+      final day = DateTime(due.year, due.month, due.day);
+      return day.isAfter(today);
+    }
+    return false;
+  }
+
   static bool _rowPassesDueDate(
+    AppState state,
     Task t,
     SingularSubtask? sub,
     AsanaTaskFilterState filters,
   ) {
+    final due = _visibleDue(t, sub);
+    if (!_dueChoiceMatches(state, t, sub, due, filters)) return false;
     if (!filters.createDateEngaged) return true;
-    final DateTime? due = sub == null ? t.endDate : sub.dueDate;
     if (due == null) return false;
     return _calendarDayInDueRange(_dateOnly(due), filters);
   }
 
   static bool _rowPassesDueDateSubtask(
+    AppState state,
     Task t,
     SingularSubtask s,
     AsanaTaskFilterState filters,
   ) {
-    return _rowPassesDueDate(t, s, filters);
+    return _rowPassesDueDate(state, t, s, filters);
   }
 
   /// Phase 1: scope, status, submission, role menus, overdue â€” no create-date (customized flat).
@@ -892,12 +974,19 @@ class AsanaTaskFilter {
           .where((s) => !s.isDeleted)
           .toList();
       final subsDeleted = subsRoleFiltered.where((s) => s.isDeleted).toList();
+      bool subtaskKeepsParent(SingularSubtask s) {
+        if (!_subtaskPassesStatusChips(state, t, s, filters)) return false;
+        if (_shouldOmitSubtaskRow(t, s, filters)) return false;
+        if (!_rowPassesCommencement(t, s, filters)) return false;
+        return _rowPassesDueDateSubtask(state, t, s, filters);
+      }
+
       if (filters.overdueOptions.contains('overdue')) {
         if (taskPassesRole && taskPassesCommencement && t.overdue == 'Yes') {
           if (!searchActive) {
-            if (_rowPassesDueDate(t, null, filters)) out.add(t);
+            if (_rowPassesDueDate(state, t, null, filters)) out.add(t);
           } else if (taskSearchMatches(state, t, tokens) &&
-              _rowPassesDueDate(t, null, filters)) {
+              _rowPassesDueDate(state, t, null, filters)) {
             out.add(t);
           }
         } else {
@@ -905,13 +994,13 @@ class AsanaTaskFilter {
           for (final s in subsNonDeleted) {
             if (s.overdue != 'Yes') continue;
             if (!searchActive) {
-              if (_rowPassesDueDateSubtask(t, s, filters)) {
+              if (_rowPassesDueDateSubtask(state, t, s, filters)) {
                 wantParent = true;
                 break;
               }
             } else {
               if (!subtaskSearchMatches(state, s, tokens)) continue;
-              if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+              if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
               wantParent = true;
               break;
             }
@@ -920,13 +1009,13 @@ class AsanaTaskFilter {
             for (final s in subsDeleted) {
               if (s.overdue != 'Yes') continue;
               if (!searchActive) {
-                if (_rowPassesDueDateSubtask(t, s, filters)) {
+                if (_rowPassesDueDateSubtask(state, t, s, filters)) {
                   wantParent = true;
                   break;
                 }
               } else {
                 if (!subtaskSearchMatches(state, s, tokens)) continue;
-                if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+                if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
                 wantParent = true;
                 break;
               }
@@ -941,16 +1030,12 @@ class AsanaTaskFilter {
         continue;
       }
       if (!searchActive) {
-        final subsInRange = subsNonDeleted
-            .where((s) => _rowPassesDueDateSubtask(t, s, filters))
-            .toList();
-        final subsDeletedInRange = subsDeleted
-            .where((s) => _rowPassesDueDateSubtask(t, s, filters))
-            .toList();
+        final subsInRange = subsNonDeleted.where(subtaskKeepsParent).toList();
+        final subsDeletedInRange = subsDeleted.where(subtaskKeepsParent).toList();
         final taskInRange =
             taskPassesRole &&
             taskPassesCommencement &&
-            _rowPassesDueDate(t, null, filters);
+            _rowPassesDueDate(state, t, null, filters);
         if (!taskInRange && subsInRange.isEmpty && subsDeletedInRange.isEmpty) {
           continue;
         }
@@ -969,7 +1054,8 @@ class AsanaTaskFilter {
       final taskTextMatch =
           taskPassesRole &&
           taskPassesCommencement &&
-          taskSearchMatches(state, t, tokens);
+          taskSearchMatches(state, t, tokens) &&
+          _rowPassesDueDate(state, t, null, filters);
       if (taskTextMatch) {
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(t);
@@ -979,14 +1065,14 @@ class AsanaTaskFilter {
       var anySub = false;
       for (final s in subsNonDeleted) {
         if (!subtaskSearchMatches(state, s, tokens)) continue;
-        if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+        if (!subtaskKeepsParent(s)) continue;
         anySub = true;
         break;
       }
       if (!anySub) {
         for (final s in subsDeleted) {
           if (!subtaskSearchMatches(state, s, tokens)) continue;
-          if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+          if (!subtaskKeepsParent(s)) continue;
           anySub = true;
           break;
         }
@@ -1003,7 +1089,8 @@ class AsanaTaskFilter {
         activeTasks.isNotEmpty &&
         !searchActive &&
         !filters.overdueOptions.contains('overdue') &&
-        !filters.createDateEngaged) {
+        !filters.createDateEngaged &&
+        !filters.dueChoiceEngaged) {
       out.addAll(
         activeTasks.where(
           (t) =>
@@ -1084,6 +1171,7 @@ class AsanaTaskFilter {
       void addTaskIfAllowed() {
         if (!taskOnParent) return;
         if (!_rowPassesCommencement(t, null, filters)) return;
+        if (!_rowPassesDueDate(state, t, null, filters)) return;
         if (!_hideIncompleteParentWhenCompletedOnly(t, filters)) {
           out.add(AsanaFlatRow.task(t));
         }
@@ -1096,10 +1184,10 @@ class AsanaTaskFilter {
           if (!_rowPassesCommencement(t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
           if (!searchActive) {
-            if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+            if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
           } else {
             if (!subtaskSearchMatches(state, s, tokens)) continue;
-            if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+            if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
           }
           out.add(AsanaFlatRow.subtask(t, s));
         }
@@ -1108,9 +1196,9 @@ class AsanaTaskFilter {
       if (filters.overdueOptions.contains('overdue')) {
         if (taskPassesRole && t.overdue == 'Yes') {
           if (!searchActive) {
-            if (_rowPassesDueDate(t, null, filters)) addTaskIfAllowed();
+            if (_rowPassesDueDate(state, t, null, filters)) addTaskIfAllowed();
           } else if (taskSearchMatches(state, t, tokens) &&
-              _rowPassesDueDate(t, null, filters)) {
+              _rowPassesDueDate(state, t, null, filters)) {
             addTaskIfAllowed();
           }
         }
@@ -1123,19 +1211,21 @@ class AsanaTaskFilter {
 
       if (!searchActive) {
         final subsInRange = subsNonDeleted
-            .where((s) => _rowPassesDueDateSubtask(t, s, filters))
+            .where((s) => _rowPassesDueDateSubtask(state, t, s, filters))
             .where((s) => !_shouldOmitSubtaskRow(t, s, filters))
             .toList();
         final subsDeletedInRange = subsDeleted
-            .where((s) => _rowPassesDueDateSubtask(t, s, filters))
+            .where((s) => _rowPassesDueDateSubtask(state, t, s, filters))
             .where((s) => !_shouldOmitSubtaskRow(t, s, filters))
             .toList();
         final taskInRange =
-            taskPassesRole && _rowPassesDueDate(t, null, filters);
+            taskPassesRole && _rowPassesDueDate(state, t, null, filters);
         if (!taskInRange && subsInRange.isEmpty && subsDeletedInRange.isEmpty) {
           continue;
         }
-        final showParent = filters.createDateEngaged
+        final narrowDue =
+            filters.createDateEngaged || filters.dueChoiceEngaged;
+        final showParent = narrowDue
             ? taskInRange
             : (taskInRange ||
                   subsInRange.isNotEmpty ||
@@ -1158,7 +1248,7 @@ class AsanaTaskFilter {
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
-        if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+        if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
       }
@@ -1167,7 +1257,7 @@ class AsanaTaskFilter {
         if (!_rowPassesRoleFilters(state, t, s, filters)) continue;
         if (!_rowPassesCommencement(t, s, filters)) continue;
         if (!subtaskSearchMatches(state, s, tokens)) continue;
-        if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+        if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
         if (_shouldOmitSubtaskRow(t, s, filters)) continue;
         out.add(AsanaFlatRow.subtask(t, s));
       }
@@ -1235,7 +1325,8 @@ class AsanaTaskFilter {
         activeTasks.isNotEmpty &&
         !searchActive &&
         !filters.overdueOptions.contains('overdue') &&
-        !filters.createDateEngaged) {
+        !filters.createDateEngaged &&
+        !filters.dueChoiceEngaged) {
       for (final t in activeTasks) {
         if (!t.isSingularTableRow) continue;
         if (_hideIncompleteParentWhenCompletedOnly(t, filters)) continue;
@@ -1252,7 +1343,7 @@ class AsanaTaskFilter {
           if (!_rowPassesCommencement(t, s, filters)) continue;
           if (!_subtaskPassesStatusChips(state, t, s, filters)) continue;
           if (_shouldOmitSubtaskRow(t, s, filters)) continue;
-          if (!_rowPassesDueDateSubtask(t, s, filters)) continue;
+          if (!_rowPassesDueDateSubtask(state, t, s, filters)) continue;
           out.add(AsanaFlatRow.subtask(t, s));
         }
       }
@@ -1332,8 +1423,9 @@ class AsanaTaskFilter {
     if (parentTask != null) {
       it = it.where((s) => _rowPassesCommencement(parentTask, s, filters));
     }
-    if (filters.createDateEngaged && parentTask != null) {
-      it = it.where((s) => _rowPassesDueDateSubtask(parentTask, s, filters));
+    if ((filters.createDateEngaged || filters.dueChoiceEngaged) &&
+        parentTask != null) {
+      it = it.where((s) => _rowPassesDueDateSubtask(state, parentTask, s, filters));
     }
     final out = it.toList();
     int statusRank(SingularSubtask s) {
@@ -1396,10 +1488,10 @@ class AsanaTaskFilter {
       if (filters.overdueOptions.contains('overdue') && s.overdue != 'Yes')
         return false;
       if (!searchActive) {
-        return _rowPassesDueDateSubtask(task, s, filters);
+        return _rowPassesDueDateSubtask(state, task, s, filters);
       }
       if (!subtaskSearchMatches(state, s, tokens)) return false;
-      return _rowPassesDueDateSubtask(task, s, filters);
+      return _rowPassesDueDateSubtask(state, task, s, filters);
     }
 
     final out = <SingularSubtask>[
