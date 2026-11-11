@@ -2086,6 +2086,7 @@ Current forum draft:
                       controller: _titleController,
                       canEdit: true,
                       readOnly: widget.saving,
+                      showOutline: false,
                       maxLines: 3,
                       minLines: 1,
                       hintText: 'Please fill in discussion topic',
@@ -2110,7 +2111,7 @@ Current forum draft:
                             controller: _contentController,
                             canEdit: true,
                             readOnly: widget.saving,
-                            showOutline: true,
+                            showOutline: false,
                             maxLines: 12,
                             minLines: 6,
                             hintText:
@@ -3563,14 +3564,7 @@ class _PostCard extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(
-                    child: canEdit
-                        ? InkWell(
-                            onTap: () => onEdit(post),
-                            child: author,
-                          )
-                        : author,
-                  ),
+                  Expanded(child: author),
                 ],
               ),
               const SizedBox(height: 8),
@@ -3595,11 +3589,13 @@ class _PostCard extends StatelessWidget {
                     likeCount: post.likeCount,
                     replyCount: replyCount,
                     canReply: !locked,
+                    canEdit: canEdit,
                     canRemove: canEdit,
                     onLike: () => onToggleLike(post),
                     onShowLikedBy: post.likeCount > 0
                         ? (anchorContext) => onShowLikedBy(post, anchorContext)
                         : null,
+                    onEdit: () => onEdit(post),
                     onRemove: () => onRemove(post),
                     onReply: () => onReply(post),
                   ),
@@ -3618,9 +3614,11 @@ class _PostActionRow extends StatelessWidget {
     required this.likeCount,
     required this.replyCount,
     required this.canReply,
+    required this.canEdit,
     required this.canRemove,
     required this.onLike,
     required this.onShowLikedBy,
+    required this.onEdit,
     required this.onRemove,
     required this.onReply,
   });
@@ -3629,9 +3627,11 @@ class _PostActionRow extends StatelessWidget {
   final int likeCount;
   final int? replyCount;
   final bool canReply;
+  final bool canEdit;
   final bool canRemove;
   final VoidCallback onLike;
   final void Function(BuildContext anchorContext)? onShowLikedBy;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
   final VoidCallback onReply;
 
@@ -3656,6 +3656,16 @@ class _PostActionRow extends StatelessWidget {
           color: muted,
           onPressed: canReply ? onReply : null,
         ),
+        if (canEdit) ...[
+          const SizedBox(width: 10),
+          _PostIconAction(
+            tooltip: 'Edit',
+            icon: Icons.edit_outlined,
+            count: null,
+            color: muted,
+            onPressed: onEdit,
+          ),
+        ],
         if (canRemove) ...[
           const SizedBox(width: 10),
           _PostIconAction(
