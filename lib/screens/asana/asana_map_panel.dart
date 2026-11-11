@@ -71,6 +71,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   final Set<String> _projectPicIds = {};
   final Set<String> _simpleProjectCreatorIds = {};
   final Set<String> _simpleProjectPicIds = {};
+  final Set<String> _simpleSubprojectCreatorIds = {};
+  final Set<String> _simpleSubprojectPicIds = {};
   final Set<String> _projectStatuses = {};
   final Set<String> _subprojectCreatorTeamIds = {};
   final Set<String> _subprojectCreatorIds = {};
@@ -149,6 +151,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   Map<String, dynamic> _toCookieJson() => {
     'projectCreatorIds': _simpleProjectCreatorIds.toList(),
     'projectPicIds': _simpleProjectPicIds.toList(),
+    'reportSubprojectCreatorIds': _simpleSubprojectCreatorIds.toList(),
+    'reportSubprojectPicIds': _simpleSubprojectPicIds.toList(),
     'displayMode': switch (_displayMode) {
       _MapDisplayMode.all => 'all',
       _MapDisplayMode.progress => 'progress',
@@ -163,6 +167,14 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   void _applyCookieJson(Map<String, dynamic> data) {
     _replaceStringSet(_simpleProjectCreatorIds, data['projectCreatorIds']);
     _replaceStringSet(_simpleProjectPicIds, data['projectPicIds']);
+    _replaceStringSet(
+      _simpleSubprojectCreatorIds,
+      data['reportSubprojectCreatorIds'],
+    );
+    _replaceStringSet(
+      _simpleSubprojectPicIds,
+      data['reportSubprojectPicIds'],
+    );
     _reportCompletedPastDays = _reportDayCount(data['reportCompletedPastDays']);
     _reportDueAheadDays = _reportDayCount(data['reportDueAheadDays']);
     final reportShowEmpty = data['reportShowProjectsWithoutTasks'];
@@ -228,6 +240,10 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
   void _copySimpleProjectPeopleToLive() {
     _copySet(_projectCreatorIds, _simpleProjectCreatorIds);
     _copySet(_projectPicIds, _simpleProjectPicIds);
+    if (_displayMode == _MapDisplayMode.progress) {
+      _copySet(_subprojectCreatorIds, _simpleSubprojectCreatorIds);
+      _copySet(_subprojectPicIds, _simpleSubprojectPicIds);
+    }
   }
 
   void _copySavedAdvancedToLive() {
@@ -390,8 +406,17 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
 
     final query = widget.searchQuery.trim().toLowerCase();
     final nodes = <_ProjectMapNode>[];
+    final reportPeople = _reportPeopleFilterActive;
     for (final project in projects) {
-      if (_hasProjectFilters && !_passesProjectFilters(state, project)) {
+      final projectPeopleHit = _projectPeopleMatch(project);
+      if (reportPeople) {
+        if (_reportProjectPeopleEngaged &&
+            !_reportSubprojectPeopleEngaged &&
+            !projectPeopleHit) {
+          continue;
+        }
+      } else if (_hasProjectFilters &&
+          !_passesProjectFilters(state, project)) {
         continue;
       }
       final visibleSps = <SubprojectRecord>[];
@@ -400,13 +425,23 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
         project.id,
       )) {
         if (sp.isDeleted || sp.isPaused) continue;
-        if (_hasSubprojectFilters &&
+        if (reportPeople) {
+          final projectSideAdmitsAll =
+              _reportProjectPeopleEngaged && projectPeopleHit;
+          if (!projectSideAdmitsAll &&
+              _reportSubprojectPeopleEngaged &&
+              !_subprojectPeopleMatch(sp)) {
+            continue;
+          }
+        } else if (_hasSubprojectFilters &&
             !_passesSubprojectFilters(state, project, sp)) {
           continue;
         }
         visibleSps.add(sp);
       }
       final visibleSpIds = {for (final sp in visibleSps) sp.id};
+      final projectSideAdmitsAll =
+          reportPeople && _reportProjectPeopleEngaged && projectPeopleHit;
 
       final tasks = tasksByProject[project.id] ?? const <Task>[];
       final taskNodes = <_TaskMapNode>[];
@@ -420,6 +455,11 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
         final linkedSp = state.subprojectById(task.subprojectId);
         final activeSp = linkedSp != null && linkedSp.isActive ? linkedSp : null;
         if (activeSp != null && !visibleSpIds.contains(activeSp.id)) {
+          continue;
+        }
+        if (reportPeople &&
+            !projectSideAdmitsAll &&
+            (activeSp == null || !visibleSpIds.contains(activeSp.id))) {
           continue;
         }
         final subtaskNodes = <SingularSubtask>[];
@@ -446,6 +486,9 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
         );
         return !hasTasks && !_showProjectsWithoutTasks;
       });
+      if (reportPeople && !projectSideAdmitsAll && visibleSps.isEmpty) {
+        continue;
+      }
       if (taskNodes.isEmpty &&
           visibleSps.isEmpty &&
           !_showProjectsWithoutTasks) {
@@ -516,6 +559,32 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
     }
     nodes.sort((a, b) => _compareTaskNodes(state, a, b));
     return nodes;
+  }
+
+  bool get _reportProjectPeopleEngaged =>
+      _projectCreatorIds.isNotEmpty || _projectPicIds.isNotEmpty;
+
+  bool get _reportSubprojectPeopleEngaged =>
+      _subprojectCreatorIds.isNotEmpty || _subprojectPicIds.isNotEmpty;
+
+  bool get _reportPeopleFilterActive =>
+      _displayMode == _MapDisplayMode.progress &&
+      (_reportProjectPeopleEngaged || _reportSubprojectPeopleEngaged);
+
+  bool _projectPeopleMatch(ProjectRecord project) {
+    return _passesStaffFilter(
+          [project.createByStaffUuid],
+          _projectCreatorIds,
+        ) &&
+        _passesStaffFilter(project.picStaffUuids, _projectPicIds);
+  }
+
+  bool _subprojectPeopleMatch(SubprojectRecord subproject) {
+    return _passesStaffFilter(
+          [subproject.createByStaffUuid],
+          _subprojectCreatorIds,
+        ) &&
+        _passesStaffFilter(subproject.picStaffUuids, _subprojectPicIds);
   }
 
   bool get _hasProjectFilters =>
@@ -1247,6 +1316,8 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
         case _MapDisplayMode.progress:
           _simpleProjectCreatorIds.clear();
           _simpleProjectPicIds.clear();
+          _simpleSubprojectCreatorIds.clear();
+          _simpleSubprojectPicIds.clear();
           _reportCompletedPastDays = 14;
           _reportDueAheadDays = 14;
           _reportShowProjectsWithoutTasks = true;
@@ -1340,6 +1411,46 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
           ),
         ),
         if (_displayMode == _MapDisplayMode.progress) ...[
+          AsanaFilterDropdown(
+            title: 'Sub-project Creator',
+            value: _filterLabel(_simpleSubprojectCreatorIds, (id) {
+              final names = _subprojectCreatorDisplayNames(state);
+              return names[id] ?? _staffName(state, id);
+            }),
+            buttonWidth: 160,
+            onPressed: (anchor) => _showFilterMenu(
+              anchorContext: anchor,
+              options: _staffOptions(
+                state,
+                _subprojectCreatorKeys(state),
+                displayNames: _subprojectCreatorDisplayNames(state),
+              ),
+              selected: _simpleSubprojectCreatorIds,
+              apply: (value) => _simpleSubprojectCreatorIds
+                ..clear()
+                ..addAll(value),
+            ),
+          ),
+          AsanaFilterDropdown(
+            title: 'Sub-project PIC',
+            value: _filterLabel(_simpleSubprojectPicIds, (id) {
+              final names = _subprojectPicDisplayNames(state);
+              return names[id] ?? _staffName(state, id);
+            }),
+            buttonWidth: 160,
+            onPressed: (anchor) => _showFilterMenu(
+              anchorContext: anchor,
+              options: _staffOptions(
+                state,
+                _subprojectPicKeys(state),
+                displayNames: _subprojectPicDisplayNames(state),
+              ),
+              selected: _simpleSubprojectPicIds,
+              apply: (value) => _simpleSubprojectPicIds
+                ..clear()
+                ..addAll(value),
+            ),
+          ),
           _reportDayDropdown(
             title: 'Completed in past',
             days: _reportCompletedPastDays,
@@ -1827,6 +1938,21 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
       if (status == 'deleted' || status == 'delete') continue;
       yield project.isPaused ? 'Paused' : project.status;
     }
+  }
+
+  Map<String, String> _subprojectCreatorDisplayNames(AppState state) {
+    final names = <String, String>{};
+    for (final row in state.subprojects) {
+      if (!row.isActive) continue;
+      if (!AsanaProjectFilter.subprojectVisible(state, row)) continue;
+      final id = row.createByStaffUuid?.trim();
+      if (id == null || id.isEmpty) continue;
+      final display = row.createByDisplayName?.trim();
+      names[id] = display != null && display.isNotEmpty
+          ? display
+          : _staffName(state, id);
+    }
+    return names;
   }
 
   Iterable<String?> _subprojectCreatorKeys(AppState state) sync* {

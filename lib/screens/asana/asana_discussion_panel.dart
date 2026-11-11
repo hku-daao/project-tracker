@@ -22,7 +22,6 @@ import 'asana_detail_widgets.dart'
         AsanaDetailSlideScaffold,
         AsanaDetailTwoColumnRow,
         AsanaHoverTextField,
-        AsanaHoverTapValue,
         showAsanaInfoDialog,
         asanaDetailLabelStyle,
         asanaDetailMultilineValueStyle,
@@ -2137,12 +2136,22 @@ Current forum draft:
                       child: Builder(
                         builder: (anchorContext) => CompositedTransformTarget(
                           link: _categoryAnchorLink,
-                          child: AsanaHoverTapValue(
-                            value: _category,
-                            canEdit: !widget.saving,
-                            onTap: widget.saving
-                                ? null
-                                : (_) => _pickCategory(anchorContext),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: MouseRegion(
+                              cursor: widget.saving
+                                  ? SystemMouseCursors.basic
+                                  : SystemMouseCursors.click,
+                              child: GestureDetector(
+                                onTap: widget.saving
+                                    ? null
+                                    : () => _pickCategory(anchorContext),
+                                child: AsanaDiscussionCategoryChip(
+                                  label: _category,
+                                  fontSize: kAsanaTableChipFontSize,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -2153,12 +2162,22 @@ Current forum draft:
                       child: Builder(
                         builder: (anchorContext) => CompositedTransformTarget(
                           link: _statusAnchorLink,
-                          child: AsanaHoverTapValue(
-                            value: _threadStatus,
-                            canEdit: !widget.saving,
-                            onTap: widget.saving
-                                ? null
-                                : (_) => _pickStatus(anchorContext),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: MouseRegion(
+                              cursor: widget.saving
+                                  ? SystemMouseCursors.basic
+                                  : SystemMouseCursors.click,
+                              child: GestureDetector(
+                                onTap: widget.saving
+                                    ? null
+                                    : () => _pickStatus(anchorContext),
+                                child: AsanaDiscussionStatusChip(
+                                  status: _threadStatus,
+                                  fontSize: kAsanaTableChipFontSize,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -2606,14 +2625,23 @@ class _ThreadList extends StatelessWidget {
                       return ListTile(
                         selected: selected,
                         selectedTileColor: selectedColor,
-                        title: Text(
-                          t.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: asanaTextStyle(
-                            Theme.of(context).textTheme.bodyMedium,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        title: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                t.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: asanaTextStyle(
+                                  Theme.of(context).textTheme.bodyMedium,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            AsanaDiscussionStatusChip(status: t.status),
+                          ],
                         ),
                         subtitle: Row(
                           children: [
@@ -2688,11 +2716,7 @@ class _ThreadStatusControlState extends State<_ThreadStatusControl> {
 
   @override
   Widget build(BuildContext context) {
-    final chip = AsanaSubmissionChip(
-      submission: widget.status,
-      displayLabel: widget.status,
-      fontSize: 11,
-    );
+    final chip = AsanaDiscussionStatusChip(status: widget.status);
     if (!widget.canChange) return chip;
     return CompositedTransformTarget(
       link: _link,
@@ -2832,11 +2856,7 @@ class _ThreadDetail extends StatelessWidget {
                             meta: authorMetaForKey(t.createdBy),
                             date: _date(t.createdAt),
                           ),
-                          AsanaSubmissionChip(
-                            submission: t.category,
-                            displayLabel: t.category,
-                            fontSize: 11,
-                          ),
+                          AsanaDiscussionCategoryChip(label: t.category),
                           _ThreadStatusControl(
                             status: t.status,
                             canChange: canChangeStatus,

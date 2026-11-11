@@ -316,3 +316,97 @@ class AsanaSubmissionChip extends StatelessWidget {
     );
   }
 }
+
+/// Purple label for a discussion category.
+class AsanaDiscussionCategoryChip extends StatelessWidget {
+  const AsanaDiscussionCategoryChip({
+    super.key,
+    required this.label,
+    this.fontSize = 11,
+  });
+
+  final String label;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = label.trim().isEmpty ? 'General' : label.trim();
+    return _AsanaDiscussionPill(
+      label: text,
+      background: const Color(0xFF5E35B1),
+      foreground: Colors.white,
+      fontSize: fontSize,
+    );
+  }
+}
+
+/// Colored label for a discussion status: Open, Resolved, or Closed.
+class AsanaDiscussionStatusChip extends StatelessWidget {
+  const AsanaDiscussionStatusChip({
+    super.key,
+    required this.status,
+    this.fontSize = 11,
+  });
+
+  final String status;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final key = status.trim().toLowerCase();
+    final (Color background, Color foreground) = switch (key) {
+      'resolved' => (const Color(0xFF2E7D32), Colors.white),
+      'closed' => (const Color(0xFF546E7A), Colors.white),
+      _ => (const Color(0xFF1565C0), Colors.white),
+    };
+    final text = status.trim().isEmpty ? 'Open' : status.trim();
+    return _AsanaDiscussionPill(
+      label: text,
+      background: background,
+      foreground: foreground,
+      fontSize: fontSize,
+    );
+  }
+}
+
+class _AsanaDiscussionPill extends StatelessWidget {
+  const _AsanaDiscussionPill({
+    required this.label,
+    required this.background,
+    required this.foreground,
+    required this.fontSize,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final slideSize = fontSize >= kAsanaTableChipFontSize;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: slideSize ? 4 : 3,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: asanaTextStyle(
+          Theme.of(context).textTheme.bodyMedium,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w600,
+          color: foreground,
+          height: 1.2,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+      ),
+    );
+  }
+}

@@ -385,10 +385,14 @@ class AsanaHoverTapValue extends StatefulWidget {
     this.softWrap = false,
     this.overflow = TextOverflow.ellipsis,
     this.shrinkToContent = true,
+    this.valueWidget,
   });
 
   final String value;
   final bool canEdit;
+
+  /// Shown in place of the plain [value] text. The field stays tappable.
+  final Widget? valueWidget;
 
   /// Receives this field's [BuildContext] (for anchored overlays).
   final void Function(BuildContext fieldContext)? onTap;
@@ -444,17 +448,18 @@ class _AsanaHoverTapValueState extends State<AsanaHoverTapValue> {
                 children: [
                   Padding(
                     padding: EdgeInsets.only(right: showClear ? 14 : 0),
-                    child: Text(
-                      display,
-                      style: asanaDetailValueStyle(context).copyWith(
-                        color: hasValue
-                            ? kAsanaTextPrimary
-                            : kAsanaTextSecondary,
-                      ),
-                      maxLines: widget.maxLines,
-                      softWrap: widget.softWrap,
-                      overflow: widget.overflow,
-                    ),
+                    child: widget.valueWidget ??
+                        Text(
+                          display,
+                          style: asanaDetailValueStyle(context).copyWith(
+                            color: hasValue
+                                ? kAsanaTextPrimary
+                                : kAsanaTextSecondary,
+                          ),
+                          maxLines: widget.maxLines,
+                          softWrap: widget.softWrap,
+                          overflow: widget.overflow,
+                        ),
                   ),
                   if (showClear)
                     Positioned(

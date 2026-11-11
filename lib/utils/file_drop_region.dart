@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../navigator_keys.dart';
 import 'file_drop_binding_stub.dart'
     if (dart.library.html) 'file_drop_binding_web.dart'
     as binding;
@@ -37,12 +38,17 @@ class _AsanaFileDropRegionState extends State<AsanaFileDropRegion> {
       enabled: () => widget.enabled,
       imagesOnly: widget.imagesOnly,
       contains: _contains,
+      acceptsPaste: widget.imagesOnly ? _focusInside : null,
       onHover: (hovering) {
         if (!mounted || _hovering == hovering) return;
         setState(() => _hovering = hovering);
       },
       onDrop: (files, rejected) {
         if (!mounted || !widget.enabled) return;
+        if (rejected < 0) {
+          _explainFilePathPaste();
+          return;
+        }
         widget.onFiles(files, rejected);
       },
     );
@@ -59,6 +65,56 @@ class _AsanaFileDropRegionState extends State<AsanaFileDropRegion> {
     if (box == null || !box.hasSize || !box.attached) return false;
     final rect = box.localToGlobal(Offset.zero) & box.size;
     return rect.contains(globalPoint);
+  }
+
+  bool _focusInside() {
+    if (!widget.enabled || !widget.imagesOnly) return false;
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) return false;
+    final region = _key.currentContext;
+    if (region is Element) {
+      var inside = false;
+      focusContext.visitAncestorElements((ancestor) {
+        if (identical(ancestor, region)) {
+          inside = true;
+          return false;
+        }
+        return true;
+      });
+      if (inside) return true;
+    }
+    final focusedBox = focusContext.findRenderObject();
+    if (focusedBox is RenderBox &&
+        focusedBox.hasSize &&
+        focusedBox.attached) {
+      final center = focusedBox.localToGlobal(
+        focusedBox.size.center(Offset.zero),
+      );
+      if (_contains(center)) return true;
+    }
+    return false;
+  }
+
+  void _explainFilePathPaste() {
+    final navigator = rootNavigatorKey.currentState;
+    final context = navigator?.overlay?.context;
+    if (context == null) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Image not pasted'),
+        content: const Text(
+          'Drag the image onto this box, or use Add inline image. '
+          'A paste works when the picture itself is on the clipboard.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

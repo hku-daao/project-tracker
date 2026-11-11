@@ -131,7 +131,7 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
         buttons.add(_mapStructureButton('Detach Project', _detachSelectedProjects));
       }
       if (selected.every(
-            (subproject) => _viewerIsSubprojectPic(state, subproject),
+            (subproject) => _viewerCanStructureSubproject(state, subproject),
           ) &&
           _hasSubprojectMoveDestination(state, selected)) {
         buttons.add(
@@ -144,26 +144,29 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
     final subtasks = _selectedSubtasks();
     if (tasks == null || subtasks == null) return const [];
     if (taskOn && subtaskOn) {
-      final canClone = tasks.every((task) => _viewerCreatedTask(state, task)) &&
-          subtasks.every((subtask) => _viewerCreatedSubtask(state, subtask));
+      final canClone =
+          tasks.every((task) => _viewerCanStructureTask(state, task)) &&
+          subtasks.every(
+            (subtask) => _viewerCanStructureSubtask(state, subtask),
+          );
       if (!canClone) return const [];
       return [_mapStructureButton('Clone', _cloneSelectedWork)];
     }
     if (taskOn) {
       final buttons = <Widget>[];
-      if (tasks.every((task) => _viewerCreatedTask(state, task))) {
+      if (tasks.every((task) => _viewerCanStructureTask(state, task))) {
         buttons.add(_mapStructureButton('Clone', _cloneSelectedWork));
       }
       if (tasks.every(
             (task) =>
-                _viewerIsTaskPic(state, task) &&
+                _viewerCanStructureTask(state, task) &&
                 !_mapTaskDeleted(task) &&
                 !_taskHasKnownSubtasks(task.id),
           ) &&
           _hasOtherTaskParent(state, _selectedTaskIds)) {
         buttons.add(_mapStructureButton('Make Subtask', _beginMakeSubtask));
       }
-      if (tasks.every((task) => _viewerIsTaskPic(state, task)) &&
+      if (tasks.every((task) => _viewerCanStructureTask(state, task)) &&
           _hasTaskMoveDestination(state, tasks)) {
         buttons.add(_mapStructureButton('Move Task', _beginMoveTasks));
       }
@@ -172,16 +175,20 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
     if (subtaskOn) {
       final buttons = <Widget>[];
       if (subtasks.every(
-        (subtask) => _viewerCreatedSubtask(state, subtask) && !subtask.isDeleted,
+        (subtask) =>
+            _viewerCanStructureSubtask(state, subtask) && !subtask.isDeleted,
       )) {
         buttons.add(_mapStructureButton('Clone', _cloneSelectedWork));
       }
       if (subtasks.every(
-        (subtask) => _viewerIsSubtaskPic(state, subtask) && !subtask.isDeleted,
+        (subtask) =>
+            _viewerCanStructureSubtask(state, subtask) && !subtask.isDeleted,
       )) {
         buttons.add(_mapStructureButton('Detach Task', _detachSelectedTasks));
         if (_hasSubtaskMoveDestination(state, subtasks)) {
-          buttons.add(_mapStructureButton('Move Subtask', _beginMoveSubtasks));
+          buttons.add(
+            _mapStructureButton('Move Subtask', _beginMoveSubtasks),
+          );
         }
       }
       return buttons;
@@ -369,15 +376,36 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
     return subproject.picStaffUuids.any((id) => _staffHit(state, id));
   }
 
+  bool _viewerCreatedProject(AppState state, ProjectRecord project) {
+    return _staffHit(state, project.createByStaffUuid);
+  }
+
+  bool _viewerCreatedSubproject(AppState state, SubprojectRecord subproject) {
+    return _staffHit(state, subproject.createByStaffUuid);
+  }
+
+  bool _viewerCanStructureProject(AppState state, ProjectRecord project) {
+    return _viewerIsProjectPic(state, project) ||
+        _viewerCreatedProject(state, project);
+  }
+
+  bool _viewerCanStructureSubproject(
+    AppState state,
+    SubprojectRecord subproject,
+  ) {
+    return _viewerIsSubprojectPic(state, subproject) ||
+        _viewerCreatedSubproject(state, subproject);
+  }
+
   bool _canMakeSubproject(AppState state, ProjectRecord project) {
     if (_mapProjectIsDeleted(project) || project.hasMilestone) return false;
-    if (!_viewerIsProjectPic(state, project)) return false;
+    if (!_viewerCanStructureProject(state, project)) return false;
     return state.subprojectsForProject(project.id).isEmpty;
   }
 
   bool _canDetachProject(AppState state, SubprojectRecord subproject) {
     if (subproject.isDeleted) return false;
-    return _viewerIsSubprojectPic(state, subproject);
+    return _viewerCanStructureSubproject(state, subproject);
   }
 
   bool _viewerIsTaskPic(AppState state, Task task) {
@@ -396,6 +424,15 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
 
   bool _viewerCreatedSubtask(AppState state, SingularSubtask subtask) {
     return _staffHit(state, subtask.createByStaffId);
+  }
+
+  bool _viewerCanStructureTask(AppState state, Task task) {
+    return _viewerIsTaskPic(state, task) || _viewerCreatedTask(state, task);
+  }
+
+  bool _viewerCanStructureSubtask(AppState state, SingularSubtask subtask) {
+    return _viewerIsSubtaskPic(state, subtask) ||
+        _viewerCreatedSubtask(state, subtask);
   }
 
   bool _taskHasKnownSubtasks(String taskId) {

@@ -18,6 +18,7 @@ import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_task_ai_assistant.dart';
 import 'asana_theme.dart';
+import 'asana_value_chips.dart';
 
 class _ForumInlineImageDraft {
   _ForumInlineImageDraft({
@@ -491,6 +492,7 @@ Current forum draft:
             controller: _titleController,
             canEdit: true,
             readOnly: _saving,
+            showOutline: false,
             maxLines: 3,
             minLines: 1,
             hintText: 'Please fill in discussion topic',
@@ -513,7 +515,7 @@ Current forum draft:
                     controller: _contentController,
                     canEdit: true,
                     readOnly: _saving,
-                    showOutline: true,
+                    showOutline: false,
                     maxLines: 12,
                     minLines: 6,
                     hintText:
@@ -540,11 +542,22 @@ Current forum draft:
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _categoryAnchorLink,
-                child: AsanaHoverTapValue(
-                  value: _category,
-                  canEdit: !_saving,
-                  emptyPlaceholder: 'Select category',
-                  onTap: _saving ? null : (_) => _pickCategory(anchorContext),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: MouseRegion(
+                    cursor: _saving
+                        ? SystemMouseCursors.basic
+                        : SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: _saving
+                          ? null
+                          : () => _pickCategory(anchorContext),
+                      child: AsanaDiscussionCategoryChip(
+                        label: _category,
+                        fontSize: kAsanaTableChipFontSize,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -554,11 +567,20 @@ Current forum draft:
             child: Builder(
               builder: (anchorContext) => CompositedTransformTarget(
                 link: _statusAnchorLink,
-                child: AsanaHoverTapValue(
-                  value: _status,
-                  canEdit: !_saving,
-                  emptyPlaceholder: 'Select status',
-                  onTap: _saving ? null : (_) => _pickStatus(anchorContext),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: MouseRegion(
+                    cursor: _saving
+                        ? SystemMouseCursors.basic
+                        : SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: _saving ? null : () => _pickStatus(anchorContext),
+                      child: AsanaDiscussionStatusChip(
+                        status: _status,
+                        fontSize: kAsanaTableChipFontSize,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

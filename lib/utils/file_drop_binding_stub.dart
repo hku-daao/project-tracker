@@ -17,6 +17,7 @@ FileDropBindingHandle bindFileDrop({
   required void Function(bool hovering) onHover,
   required void Function(List<PickedFileBytes> files, int rejectedNonImages)
   onDrop,
+  bool Function()? acceptsPaste,
 }) {
   return _NoopFileDropBinding();
 }

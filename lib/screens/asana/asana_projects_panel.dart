@@ -567,15 +567,36 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     return subproject.picStaffUuids.any((id) => _staffHit(state, id));
   }
 
+  bool _viewerCreatedProject(AppState state, ProjectRecord project) {
+    return _staffHit(state, project.createByStaffUuid);
+  }
+
+  bool _viewerCreatedSubproject(AppState state, SubprojectRecord subproject) {
+    return _staffHit(state, subproject.createByStaffUuid);
+  }
+
+  bool _viewerCanStructureProject(AppState state, ProjectRecord project) {
+    return _viewerIsProjectPic(state, project) ||
+        _viewerCreatedProject(state, project);
+  }
+
+  bool _viewerCanStructureSubproject(
+    AppState state,
+    SubprojectRecord subproject,
+  ) {
+    return _viewerIsSubprojectPic(state, subproject) ||
+        _viewerCreatedSubproject(state, subproject);
+  }
+
   bool _canMakeSubproject(AppState state, ProjectRecord project) {
     if (_projectIsDeleted(project) || project.hasMilestone) return false;
-    if (!_viewerIsProjectPic(state, project)) return false;
+    if (!_viewerCanStructureProject(state, project)) return false;
     return state.subprojectsForProject(project.id).isEmpty;
   }
 
   bool _canDetachProject(AppState state, SubprojectRecord subproject) {
     if (subproject.isDeleted) return false;
-    return _viewerIsSubprojectPic(state, subproject);
+    return _viewerCanStructureSubproject(state, subproject);
   }
 
   bool _viewerIsTaskPic(AppState state, Task task) {
@@ -594,6 +615,15 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
 
   bool _viewerCreatedSubtask(AppState state, SingularSubtask subtask) {
     return _staffHit(state, subtask.createByStaffId);
+  }
+
+  bool _viewerCanStructureTask(AppState state, Task task) {
+    return _viewerIsTaskPic(state, task) || _viewerCreatedTask(state, task);
+  }
+
+  bool _viewerCanStructureSubtask(AppState state, SingularSubtask subtask) {
+    return _viewerIsSubtaskPic(state, subtask) ||
+        _viewerCreatedSubtask(state, subtask);
   }
 
   bool _taskHasKnownSubtasks(String taskId) {
@@ -798,7 +828,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         buttons.add(_structureButton('Detach Project', _detachSelectedProjects));
       }
       if (selected.every(
-            (subproject) => _viewerIsSubprojectPic(state, subproject),
+            (subproject) => _viewerCanStructureSubproject(state, subproject),
           ) &&
           _hasSubprojectMoveDestination(state, selected)) {
         buttons.add(
@@ -811,26 +841,29 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     final subtasks = _selectedSubtasks();
     if (tasks == null || subtasks == null) return const [];
     if (taskOn && subtaskOn) {
-      final canClone = tasks.every((task) => _viewerCreatedTask(state, task)) &&
-          subtasks.every((subtask) => _viewerCreatedSubtask(state, subtask));
+      final canClone =
+          tasks.every((task) => _viewerCanStructureTask(state, task)) &&
+          subtasks.every(
+            (subtask) => _viewerCanStructureSubtask(state, subtask),
+          );
       if (!canClone) return const [];
       return [_structureButton('Clone', _cloneSelectedWork)];
     }
     if (taskOn) {
       final buttons = <Widget>[];
-      if (tasks.every((task) => _viewerCreatedTask(state, task))) {
+      if (tasks.every((task) => _viewerCanStructureTask(state, task))) {
         buttons.add(_structureButton('Clone', _cloneSelectedWork));
       }
       if (tasks.every(
             (task) =>
-                _viewerIsTaskPic(state, task) &&
+                _viewerCanStructureTask(state, task) &&
                 !_taskDeleted(task) &&
                 !_taskHasKnownSubtasks(task.id),
           ) &&
           _hasOtherTaskParent(state, _selectedTaskIds)) {
         buttons.add(_structureButton('Make Subtask', _beginMakeSubtask));
       }
-      if (tasks.every((task) => _viewerIsTaskPic(state, task)) &&
+      if (tasks.every((task) => _viewerCanStructureTask(state, task)) &&
           _hasTaskMoveDestination(state, tasks)) {
         buttons.add(_structureButton('Move Task', _beginMoveTasks));
       }
@@ -839,12 +872,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     if (subtaskOn) {
       final buttons = <Widget>[];
       if (subtasks.every(
-        (subtask) => _viewerCreatedSubtask(state, subtask) && !subtask.isDeleted,
+        (subtask) =>
+            _viewerCanStructureSubtask(state, subtask) && !subtask.isDeleted,
       )) {
         buttons.add(_structureButton('Clone', _cloneSelectedWork));
       }
       if (subtasks.every(
-        (subtask) => _viewerIsSubtaskPic(state, subtask) && !subtask.isDeleted,
+        (subtask) =>
+            _viewerCanStructureSubtask(state, subtask) && !subtask.isDeleted,
       )) {
         buttons.add(_structureButton('Detach Task', _detachSelectedTasks));
         if (_hasSubtaskMoveDestination(state, subtasks)) {

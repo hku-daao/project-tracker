@@ -255,7 +255,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Move',
                         body:
-                            'Move keeps the item and puts it under a different parent. You need to be the PIC. Check the item first, then press Move Task, Move Subproject, or Move Subtask, and choose the new parent. Cancel leaves this step. Each picture is one button, before and after.',
+                            'Move keeps the item and puts it under a different parent. You need to be the PIC or the creator. Check the item first, then press Move Task, Move Subproject, or Move Subtask, and choose the new parent. Cancel leaves this step. Each picture is one button, before and after.',
                         figure: _MoveExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
@@ -264,7 +264,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Make',
                         body:
-                            'Make turns the selected item into a child of another item. You need to be the PIC. Check the item first.\n\nMake Subproject turns a project into a sub-project under another project. That project cannot already have milestones or sub-projects. Its tasks move with it. After Make Subproject, check the project that will be the parent.\n\nMake Subtask turns a task into a sub-task under another task. That task cannot already have sub-tasks. After Make Subtask, check the task that will be the parent.\n\nCancel leaves this step. Each picture is one button, before and after.',
+                            'Make turns the selected item into a child of another item. You need to be the PIC or the creator. Check the item first.\n\nMake Subproject turns a project into a sub-project under another project. That project cannot already have milestones or sub-projects. Its tasks move with it. After Make Subproject, check the project that will be the parent.\n\nMake Subtask turns a task into a sub-task under another task. That task cannot already have sub-tasks. After Make Subtask, check the task that will be the parent.\n\nCancel leaves this step. Each picture is one button, before and after.',
                         figure: _MakeExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
@@ -273,7 +273,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Detach',
                         body:
-                            'Detach lifts the item out of its parent so it stands on its own. You need to be the PIC. Check the item first, then press Detach Project or Detach Task. Detach Project turns a sub-project into a project. Detach Task turns a sub-task into a task. Each picture is one button, before and after.',
+                            'Detach lifts the item out of its parent so it stands on its own. You need to be the PIC or the creator. Check the item first, then press Detach Project or Detach Task. Detach Project turns a sub-project into a project. Detach Task turns a sub-task into a task. Each picture is one button, before and after.',
                         figure: _DetachExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
@@ -282,7 +282,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Clone',
                         body:
-                            'Clone copies an item you created. The original stays. The copy is a new item, and its name ends with " (cloned)". Check a task, a sub-task, or both if you created each one, then press Clone. Each picture is one case of the Clone button, before and after.',
+                            'Clone copies a task or sub-task when you are its PIC or its creator. The original stays. The copy is a new item, and its name ends with " (cloned)". Check a task, a sub-task, or both when you are the PIC or the creator of each one, then press Clone. Each picture is one case of the Clone button, before and after.',
                         figure: _CloneExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
