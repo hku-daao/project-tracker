@@ -13,6 +13,7 @@ import '../../utils/attachment_file_pick.dart';
 import '../../utils/file_drop_region.dart';
 import '../../utils/hk_time.dart';
 import '../asana_landing_screen.dart';
+import 'asana_spell_check.dart';
 import 'asana_detail_widgets.dart'
     show
         AsanaTaskDetailActionStyles,
@@ -27,7 +28,8 @@ import 'asana_detail_widgets.dart'
         asanaDetailMultilineValueStyle,
         asanaDetailTitleStyle,
         asanaDetailValueStyle,
-        showAsanaConfirmDialog;
+        showAsanaConfirmDialog,
+        asanaDialogScroll;
 import 'asana_filter_widgets.dart';
 import 'asana_inline_image_widgets.dart';
 import 'asana_task_ai_assistant.dart' show AsanaTaskAiColors;
@@ -460,6 +462,7 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: widget.palette.panelBackground,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
           side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
@@ -467,6 +470,9 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
         elevation: 12,
         child: Container(
           width: 440,
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height - 48,
+          ),
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -477,51 +483,50 @@ class _AsanaDiscussionPanelState extends State<AsanaDiscussionPanel> {
               if (sorted.isEmpty)
                 Text('No likes yet.', style: bodyStyle)
               else
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 320),
-                  child: ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(ctx).copyWith(
-                      scrollbars: false,
-                    ),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: sorted.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final user = sorted[index];
-                        final you =
-                            viewerStaffId != null &&
-                            user.staffId.toLowerCase() == viewerStaffId;
-                        return Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 14,
-                              backgroundColor: widget.palette.accent.withValues(
-                                alpha: 0.12,
-                              ),
-                              foregroundColor: widget.palette.accent,
-                              child: Text(
-                                _initialsForName(user.displayName),
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
+                asanaDialogScroll(
+                  context: ctx,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var index = 0; index < sorted.length; index++) ...[
+                        if (index > 0) const SizedBox(height: 10),
+                        Builder(
+                          builder: (context) {
+                            final user = sorted[index];
+                            final you =
+                                viewerStaffId != null &&
+                                user.staffId.toLowerCase() == viewerStaffId;
+                            return Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: widget.palette.accent
+                                      .withValues(alpha: 0.12),
+                                  foregroundColor: widget.palette.accent,
+                                  child: Text(
+                                    _initialsForName(user.displayName),
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                you
-                                    ? '${user.displayName} (You)'
-                                    : user.displayName,
-                                overflow: TextOverflow.ellipsis,
-                                style: nameStyle,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    you
+                                        ? '${user.displayName} (You)'
+                                        : user.displayName,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: nameStyle,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               const SizedBox(height: 24),
@@ -3181,10 +3186,15 @@ class _ReplySlideComposerState extends State<_ReplySlideComposer> {
                       files: files,
                       rejectedNonImages: rejected,
                     ),
-                    child: TextField(
+                    child: AsanaSpellCheckBinding(
                       controller: widget.controller,
+                      enabled: true,
+                      interactive: !widget.saving,
+                      builder: (controller, onSpellTap) => TextField(
+                      controller: controller,
                       autofocus: true,
                       readOnly: widget.saving,
+                      onTap: onSpellTap,
                       minLines: 3,
                       maxLines: 8,
                       decoration: InputDecoration(
@@ -3211,6 +3221,7 @@ class _ReplySlideComposerState extends State<_ReplySlideComposer> {
                           ),
                         ),
                       ),
+                    ),
                     ),
                   ),
                   InlineImageToolbar(

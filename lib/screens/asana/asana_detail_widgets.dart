@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../asana_landing_screen.dart';
 import '../../utils/hierarchy_cascade.dart';
 import 'asana_blocking_loading_overlay.dart';
+import 'asana_spell_check.dart';
 import 'asana_theme.dart';
 import 'asana_value_chips.dart';
 
@@ -276,6 +277,7 @@ class AsanaHoverTextField extends StatefulWidget {
     this.inputFormatters,
     this.onChanged,
     this.expands = false,
+    this.spellCheck = true,
   });
 
   final TextEditingController controller;
@@ -289,6 +291,9 @@ class AsanaHoverTextField extends StatefulWidget {
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
   final bool expands;
+
+  /// Red underline and click-to-apply spelling suggestions.
+  final bool spellCheck;
 
   /// Always show a visible border (create-task slide).
   final bool showOutline;
@@ -337,30 +342,39 @@ class _AsanaHoverTextFieldState extends State<AsanaHoverTextField> {
           horizontal: showBorder ? 8 : 0,
           vertical: showBorder ? 6 : 2,
         ),
-        child: TextField(
+        child: AsanaSpellCheckBinding(
           controller: widget.controller,
-          readOnly: widget.readOnly || !widget.canEdit,
-          onTap: widget.readOnly
-              ? null
-              : () => AsanaBlockingLoadingOverlay.hideAll(),
-          enableInteractiveSelection: true,
-          keyboardType: widget.keyboardType,
-          inputFormatters: widget.inputFormatters,
-          onChanged: widget.onChanged,
-          expands: widget.expands,
-          maxLines: widget.expands ? null : widget.maxLines,
-          minLines: widget.expands ? null : widget.minLines,
-          style: baseStyle,
-          scrollPadding: EdgeInsets.zero,
-          decoration: InputDecoration(
-            isDense: true,
-            border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-            hintText: widget.hintText,
-            hintStyle: asanaTextStyle(
-              Theme.of(context).textTheme.bodyMedium,
-              fontSize: 14,
-              color: kAsanaTextSecondary,
+          enabled: widget.spellCheck,
+          interactive: !widget.readOnly,
+          onTextReplaced: widget.onChanged,
+          builder: (controller, onSpellTap) => TextField(
+            controller: controller,
+            readOnly: widget.readOnly || !widget.canEdit,
+            onTap: widget.readOnly
+                ? null
+                : () {
+                    AsanaBlockingLoadingOverlay.hideAll();
+                    onSpellTap?.call();
+                  },
+            enableInteractiveSelection: true,
+            keyboardType: widget.keyboardType,
+            inputFormatters: widget.inputFormatters,
+            onChanged: widget.onChanged,
+            expands: widget.expands,
+            maxLines: widget.expands ? null : widget.maxLines,
+            minLines: widget.expands ? null : widget.minLines,
+            style: baseStyle,
+            scrollPadding: EdgeInsets.zero,
+            decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+              hintText: widget.hintText,
+              hintStyle: asanaTextStyle(
+                Theme.of(context).textTheme.bodyMedium,
+                fontSize: 14,
+                color: kAsanaTextSecondary,
+              ),
             ),
           ),
         ),
@@ -960,6 +974,42 @@ const String _kDialogBoldClose = '\uE001';
 /// Marks a project, sub-project, task, or sub-task name so dialog text draws it bold.
 String asanaDialogBold(String name) => '$_kDialogBoldOpen$name$_kDialogBoldClose';
 
+/// Removes the bold markers added by [asanaDialogBold].
+String asanaDialogUnbold(String marked) {
+  return marked
+      .replaceAll(_kDialogBoldOpen, '')
+      .replaceAll(_kDialogBoldClose, '');
+}
+
+/// Vertical list area for a dialog. The scrollbar stays hidden.
+/// A short list stays short. A long list scrolls and leaves room for the buttons.
+Widget asanaDialogScroll({
+  required BuildContext context,
+  required Widget child,
+}) {
+  final dialogMax = MediaQuery.sizeOf(context).height - 48;
+  final bodyMax = (dialogMax - 196).clamp(96.0, 520.0);
+  return ScrollConfiguration(
+    behavior: ScrollConfiguration.of(context).copyWith(
+      scrollbars: false,
+      dragDevices: {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      },
+    ),
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: bodyMax),
+      child: ListView(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        children: [child],
+      ),
+    ),
+  );
+}
+
 List<InlineSpan> asanaDialogSpans(String text, TextStyle base) {
   final bold = base.copyWith(fontWeight: FontWeight.w700);
   final spans = <InlineSpan>[];
@@ -999,6 +1049,7 @@ Future<bool?> showAsanaConfirmDialog({
   required String title,
   required String content,
   required String confirmText,
+  String cancelText = 'Cancel',
   bool isDestructive = false,
   required AsanaLandingPalette palette,
   List<String> scrollLines = const [],
@@ -1011,112 +1062,106 @@ Future<bool?> showAsanaConfirmDialog({
     context: context,
     builder: (ctx) {
       final theme = Theme.of(ctx);
+      final dialogMax = MediaQuery.sizeOf(ctx).height - 48;
+      final lineStyle = asanaTextStyle(
+        theme.textTheme.bodyMedium,
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        color: kAsanaTextPrimary,
+        height: 1.4,
+      );
       return Dialog(
         backgroundColor: palette.panelBackground,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
           side: BorderSide(color: const Color(0xFFEDEAE9), width: 1),
         ),
         elevation: 12,
-        child: Container(
-          width: 400,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SelectableText(
-                title,
-                style: asanaTextStyle(
-                  theme.textTheme.titleMedium,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: kAsanaTextPrimary,
-                ),
-              ),
-              const SizedBox(height: 12),
-              asanaDialogRichText(
-                content,
-                asanaTextStyle(
-                  theme.textTheme.bodyMedium,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: kAsanaTextSecondary,
-                  height: 1.4,
-                )!,
-              ),
-              if (scrollLines.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(ctx).copyWith(
-                    scrollbars: false,
-                    dragDevices: {
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.trackpad,
-                      PointerDeviceKind.stylus,
-                    },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 440, maxHeight: dialogMax),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: asanaTextStyle(
+                    theme.textTheme.titleMedium,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: kAsanaTextPrimary,
                   ),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 240),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: scrollLines.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 6),
-                      itemBuilder: (_, index) => Text(
-                        scrollLines[index],
-                        style: asanaTextStyle(
+                ),
+                const SizedBox(height: 12),
+                asanaDialogScroll(
+                  context: ctx,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      asanaDialogRichText(
+                        content,
+                        asanaTextStyle(
                           theme.textTheme.bodyMedium,
                           fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: kAsanaTextPrimary,
+                          fontWeight: FontWeight.w400,
+                          color: kAsanaTextSecondary,
                           height: 1.4,
-                        ),
+                        )!,
                       ),
-                    ),
+                      if (scrollLines.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        for (var i = 0; i < scrollLines.length; i++) ...[
+                          if (i > 0) const SizedBox(height: 6),
+                          Text(scrollLines[i], style: lineStyle),
+                        ],
+                      ],
+                    ],
                   ),
                 ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kAsanaTextPrimary,
+                        side: const BorderSide(color: Color(0xFFEDEAE9)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(cancelText),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: isDestructive
+                            ? const Color(0xFFC62828)
+                            : palette.accent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(confirmText),
+                    ),
+                  ],
+                ),
               ],
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  OutlinedButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kAsanaTextPrimary,
-                      side: const BorderSide(color: Color(0xFFEDEAE9)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 12),
-                  FilledButton(
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: isDestructive
-                          ? const Color(0xFFC62828)
-                          : palette.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                    child: Text(confirmText),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       );

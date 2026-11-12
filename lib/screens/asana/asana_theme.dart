@@ -5,6 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 const Color kAsanaTextPrimary = Color(0xFF2D2E2F);
 const Color kAsanaTextSecondary = Color(0xFF6D6E6F);
 
+/// Shown on the sign-in card and at the bottom of the left panel.
+const String kAppCreditLine =
+    'Developed by the Institutional Advancement Intelligence Lab';
+
 /// Narrow empty column after each plain-text table cell (before the next column).
 const double kAsanaTextColumnGap = 16;
 

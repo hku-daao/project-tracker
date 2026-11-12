@@ -51,18 +51,25 @@ int asanaMilestoneLeftoverPercent(Iterable<AsanaMilestoneDraft> rows) {
   return (100 - asanaMilestonePercentTotal(rows)).clamp(0, 100);
 }
 
-/// Null when the optional section is off or the visible steps sum to 100%.
+/// A step counts when it has a description or a percent.
+bool asanaMilestoneHasFilledSteps(Iterable<AsanaMilestoneDraft> rows) {
+  for (final row in rows) {
+    if (row.description.isNotEmpty || row.percent > 0) return true;
+  }
+  return false;
+}
+
+/// Null when milestones are off, none are filled, or the filled steps sum to 100%.
+///
+/// An empty list is a milestone-free project, not an error.
 String? asanaMilestonePercentError({
   required bool enabled,
   required List<AsanaMilestoneDraft> rows,
 }) {
-  if (!enabled) return null;
+  if (!enabled || !asanaMilestoneHasFilledSteps(rows)) return null;
   final filled = rows
       .where((row) => row.description.isNotEmpty || row.percent > 0)
       .toList();
-  if (filled.isEmpty) {
-    return 'Add at least one milestone, and make the percentages add up to 100%.';
-  }
   final total = asanaMilestonePercentTotal(rows);
   if (total != 100) {
     return 'Milestone percentages must add up to 100%. Current total is $total%.';
@@ -422,11 +429,10 @@ bool asanaMilestonesAllAchieved({
   required bool enabled,
   required List<AsanaMilestoneDraft> rows,
 }) {
-  if (!enabled) return true;
+  if (!enabled || !asanaMilestoneHasFilledSteps(rows)) return true;
   final filled = rows
       .where((row) => row.description.isNotEmpty || row.percent > 0)
       .toList();
-  if (filled.isEmpty) return false;
   return filled.every((row) => row.achieved);
 }
 
@@ -501,7 +507,8 @@ class AsanaProjectMilestoneSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!enabled && !canEdit) return const SizedBox.shrink();
     final total = asanaMilestonePercentTotal(rows);
-    final showTotalWarning = enabled && total != 100;
+    final showTotalWarning =
+        enabled && asanaMilestoneHasFilledSteps(rows) && total != 100;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -760,6 +767,7 @@ class _MilestoneRow extends StatelessWidget {
             showOutline: true,
             maxLines: 1,
             hintText: '0',
+            spellCheck: false,
             keyboardType: TextInputType.number,
             inputFormatters: [
               FilteringTextInputFormatter.digitsOnly,

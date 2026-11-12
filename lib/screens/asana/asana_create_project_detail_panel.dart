@@ -432,6 +432,11 @@ class _AsanaCreateProjectDetailPanelState
     setState(() {
       _milestoneDrafts.remove(row);
       row.dispose();
+      if (!asanaMilestoneHasFilledSteps(_milestoneDrafts)) {
+        disposeAsanaMilestoneDrafts(_milestoneDrafts);
+        _milestoneDrafts.clear();
+        _hasMilestone = false;
+      }
     });
   }
 
@@ -1141,6 +1146,9 @@ class _AsanaCreateProjectDetailPanelState
         palette: widget.palette,
       );
       return;
+    }
+    if (!asanaMilestoneHasFilledSteps(_milestoneDrafts)) {
+      _hasMilestone = false;
     }
     final milestoneError = asanaMilestonePercentError(
       enabled: _hasMilestone,

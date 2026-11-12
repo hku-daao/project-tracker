@@ -9,6 +9,7 @@ import '../config/dev_auth_context.dart';
 import '../config/postgrest_config.dart';
 import '../models/staff_for_assignment.dart';
 import '../services/asana_filter_cookie_storage.dart';
+import '../services/english_spell_checker.dart';
 import '../services/backend_api.dart';
 import '../services/database_service.dart';
 import '../services/sso_auth_service.dart';
@@ -1097,6 +1098,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
         _syncWebLocationToDetailStack();
       }
       _loadStaffNav();
+      EnglishSpellChecker.ensureLoaded();
     });
   }
 
@@ -1317,6 +1319,18 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                 }),
               ),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Text(
+            kAppCreditLine,
+            style: asanaTextStyle(
+              Theme.of(context).textTheme.bodySmall,
+              fontSize: 11,
+              height: 1.3,
+              color: palette.onSidebarMuted,
+            ),
           ),
         ),
         _SidebarUserAvatar(

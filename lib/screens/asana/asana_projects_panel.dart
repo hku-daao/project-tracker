@@ -966,87 +966,16 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     required String content,
     required String confirmText,
     String cancelText = 'Cancel',
+    List<String> scrollLines = const [],
   }) {
-    return showDialog<bool>(
+    return showAsanaConfirmDialog(
       context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return Dialog(
-          backgroundColor: widget.palette.panelBackground,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
-          ),
-          elevation: 12,
-          child: Container(
-            width: 400,
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  title,
-                  style: asanaTextStyle(
-                    theme.textTheme.titleMedium,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: kAsanaTextPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                asanaDialogRichText(
-                  content,
-                  asanaTextStyle(
-                    theme.textTheme.bodyMedium,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: kAsanaTextSecondary,
-                    height: 1.4,
-                  )!,
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(ctx).pop(false),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: kAsanaTextPrimary,
-                        side: const BorderSide(color: Color(0xFFEDEAE9)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: Text(cancelText),
-                    ),
-                    const SizedBox(width: 12),
-                    FilledButton(
-                      onPressed: () => Navigator.of(ctx).pop(true),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: widget.palette.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: Text(confirmText),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      title: title,
+      content: content,
+      confirmText: confirmText,
+      cancelText: cancelText,
+      palette: widget.palette,
+      scrollLines: scrollLines,
     );
   }
 
@@ -1118,7 +1047,13 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Make Subproject',
       content: sources.length == 1
           ? 'Move $sourceNames under $parentName?'
-          : 'Move these projects under $parentName?\n$sourceNames',
+          : 'Move these projects under $parentName?',
+      scrollLines: sources.length == 1
+          ? const <String>[]
+          : [
+              for (final item in sources)
+                asanaDialogUnbold(_projectLabel(item)),
+            ],
       confirmText: 'Yes',
       cancelText: 'No',
     );
@@ -1155,7 +1090,13 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Detach Project',
       content: selected.length == 1
           ? '$names will leave its parent and become its own project. Its tasks move with it.'
-          : 'These sub-projects will leave their parents and become their own projects. Their tasks move with them:\n$names',
+          : 'These sub-projects will leave their parents and become their own projects. Their tasks move with them.',
+      scrollLines: selected.length == 1
+          ? const <String>[]
+          : [
+              for (final item in selected)
+                asanaDialogUnbold(_subprojectLabel(item)),
+            ],
       confirmText: 'Confirm',
       cancelText: 'Cancel',
     );
@@ -1267,7 +1208,12 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Make Subtask',
       content: sources.length == 1
           ? 'Move $sourceNames under $parentName as a sub-task?'
-          : 'Move these tasks under $parentName as sub-tasks?\n$sourceNames',
+          : 'Move these tasks under $parentName as sub-tasks?',
+      scrollLines: sources.length == 1
+          ? const <String>[]
+          : [
+              for (final item in sources) asanaDialogUnbold(_taskLabel(item)),
+            ],
       confirmText: 'Yes',
       cancelText: 'No',
     );
@@ -1299,7 +1245,13 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Detach Task',
       content: subtasks.length == 1
           ? '$names will leave its parent task and become its own task under the same project.'
-          : 'These sub-tasks will leave their parent tasks and become their own tasks under the same project:\n$names',
+          : 'These sub-tasks will leave their parent tasks and become their own tasks under the same project.',
+      scrollLines: subtasks.length == 1
+          ? const <String>[]
+          : [
+              for (final item in subtasks)
+                asanaDialogUnbold(_subtaskLabel(item)),
+            ],
       confirmText: 'Confirm',
       cancelText: 'Cancel',
     );
@@ -1376,7 +1328,12 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Move Task',
       content: sources.length == 1
           ? 'Move $sourceNames under $destination?'
-          : 'Move these tasks under $destination?\n$sourceNames',
+          : 'Move these tasks under $destination?',
+      scrollLines: sources.length == 1
+          ? const <String>[]
+          : [
+              for (final item in sources) asanaDialogUnbold(_taskLabel(item)),
+            ],
       confirmText: 'Yes',
       cancelText: 'No',
     );
@@ -1459,7 +1416,13 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Move Subproject',
       content: sources.length == 1
           ? 'Move $sourceNames under $parentName?'
-          : 'Move these sub-projects under $parentName?\n$sourceNames',
+          : 'Move these sub-projects under $parentName?',
+      scrollLines: sources.length == 1
+          ? const <String>[]
+          : [
+              for (final item in sources)
+                asanaDialogUnbold(_subprojectLabel(item)),
+            ],
       confirmText: 'Yes',
       cancelText: 'No',
     );
@@ -1560,7 +1523,13 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       title: 'Move Subtask',
       content: sources.length == 1
           ? 'Move $sourceNames under $parentName?'
-          : 'Move these sub-tasks under $parentName?\n$sourceNames',
+          : 'Move these sub-tasks under $parentName?',
+      scrollLines: sources.length == 1
+          ? const <String>[]
+          : [
+              for (final item in sources)
+                asanaDialogUnbold(_subtaskLabel(item)),
+            ],
       confirmText: 'Yes',
       cancelText: 'No',
     );

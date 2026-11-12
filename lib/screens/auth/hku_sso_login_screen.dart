@@ -95,6 +95,16 @@ class _HkuSsoLoginScreenState extends State<HkuSsoLoginScreen> {
                               : const Text('Sign in with HKU'),
                         ),
                       ),
+                      const SizedBox(height: 16),
+                      Text(
+                        kAppCreditLine,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: kAsanaTextSecondary,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
                     ],
                   ),
                 ),

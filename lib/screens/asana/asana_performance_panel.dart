@@ -1116,6 +1116,7 @@ class _PerformanceInfoButton extends StatelessWidget {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: palette.panelBackground,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
           side: const BorderSide(color: Color(0xFFEDEAE9), width: 1),
@@ -1123,6 +1124,9 @@ class _PerformanceInfoButton extends StatelessWidget {
         elevation: 12,
         child: Container(
           width: 420,
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height - 48,
+          ),
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1150,7 +1154,9 @@ class _PerformanceInfoButton extends StatelessWidget {
               ),
               if (tableRows.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                Table(
+                asanaDialogScroll(
+                  context: ctx,
+                  child: Table(
                   border: TableBorder.all(color: const Color(0xFFE5E7EB)),
                   columnWidths: const {
                     0: FlexColumnWidth(1),
@@ -1187,6 +1193,7 @@ class _PerformanceInfoButton extends StatelessWidget {
                         ],
                       ),
                   ],
+                  ),
                 ),
               ],
               const SizedBox(height: 24),
