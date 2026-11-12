@@ -52,7 +52,7 @@ class AsanaMapPanel extends StatefulWidget {
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final void Function(String taskId)? onOpenTask;
   final void Function(String subtaskId)? onOpenSubtask;
-  final VoidCallback? onStructureChanged;
+  final Future<void> Function()? onStructureChanged;
 
   @override
   State<AsanaMapPanel> createState() => _AsanaMapPanelState();
@@ -340,6 +340,7 @@ class _AsanaMapPanelState extends State<AsanaMapPanel>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshToken != widget.refreshToken ||
         oldWidget.searchQuery != widget.searchQuery) {
+      _subtasksByTask.clear();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _refreshSubtasks();
       });

@@ -67,6 +67,11 @@ class _MapSelectionScope extends InheritedWidget {
 mixin _MapStructureActions on State<AsanaMapPanel> {
   Map<String, List<SingularSubtask>> get _subtasksByTask;
 
+  Future<void> _refreshAfterStructureChange() async {
+    if (mounted) setState(_subtasksByTask.clear);
+    await widget.onStructureChanged?.call();
+  }
+
   final Set<String> _selectedProjectIds = {};
   final Set<String> _selectedSubprojectIds = {};
   final Set<String> _selectedTaskIds = {};
@@ -797,10 +802,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       parentProjectId: parentId,
       updaterStaffLookupKey: state.effectiveStaffAppId,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -835,10 +844,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       subprojects: selected,
       updaterStaffLookupKey: state.effectiveStaffAppId,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not detach', content: error);
     }
@@ -863,10 +876,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
         creatorStaffLookupKey: _structureActorKey,
       );
     }
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not clone', content: error);
     }
@@ -942,10 +959,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       parentTaskId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -975,10 +996,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       subtasks: subtasks,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not detach', content: error);
     }
@@ -1066,10 +1091,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       subprojectId: subprojectId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1151,8 +1180,10 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       parentProjectId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
-    AsanaBlockingLoadingOverlay.hide();
-    if (!mounted) return;
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
     if (error == null) {
       final newProjectName = parent.name.trim();
       for (final source in sources) {
@@ -1174,7 +1205,9 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       }
     }
     _clearMapSelection();
-    widget.onStructureChanged?.call();
+    await _refreshAfterStructureChange();
+    AsanaBlockingLoadingOverlay.hide();
+    if (!mounted) return;
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1258,10 +1291,14 @@ mixin _MapStructureActions on State<AsanaMapPanel> {
       parentTaskId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearMapSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearMapSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }

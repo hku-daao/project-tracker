@@ -1048,8 +1048,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     setState(() => _detailRefreshToken++);
   }
 
-  void _handleProjectChanged() {
-    unawaited(_refreshListsAfterDetailChange());
+  Future<void> _handleProjectChanged() {
+    return _refreshListsAfterDetailChange();
   }
 
   void _handleSubprojectCreated(String projectId, String subprojectId) {

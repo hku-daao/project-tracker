@@ -95,7 +95,7 @@ class AsanaProjectsPanel extends StatefulWidget {
   final void Function(String subtaskId)? onOpenSubtask;
   final void Function(String subprojectId, String projectId)? onOpenSubproject;
   final VoidCallback? onCreateProject;
-  final VoidCallback? onStructureChanged;
+  final Future<void> Function()? onStructureChanged;
 
   @override
   State<AsanaProjectsPanel> createState() => _AsanaProjectsPanelState();
@@ -152,6 +152,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     }
     if (oldWidget.refreshToken != widget.refreshToken) {
       _progressIdsKey = null;
+      _subtasksByTask.clear();
       _rebuildList();
       _refreshExpandedSubtasks();
     }
@@ -221,6 +222,11 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     } finally {
       AsanaBlockingLoadingOverlay.hide();
     }
+  }
+
+  Future<void> _refreshAfterStructureChange() async {
+    if (mounted) setState(_subtasksByTask.clear);
+    await widget.onStructureChanged?.call();
   }
 
   Map<String, List<Task>> _tasksByProject(AppState state) {
@@ -1068,10 +1074,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       parentProjectId: parentId,
       updaterStaffLookupKey: state.effectiveStaffAppId,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1106,10 +1116,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       subprojects: selected,
       updaterStaffLookupKey: state.effectiveStaffAppId,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not detach', content: error);
     }
@@ -1149,10 +1163,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
         creatorStaffLookupKey: _structureActorKey,
       );
     }
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not clone', content: error);
     }
@@ -1228,10 +1246,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       parentTaskId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1261,10 +1283,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       subtasks: subtasks,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not detach', content: error);
     }
@@ -1352,10 +1378,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       subprojectId: subprojectId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1437,8 +1467,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       parentProjectId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
-    AsanaBlockingLoadingOverlay.hide();
-    if (!mounted) return;
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
     if (error == null) {
       final newProjectName = parent.name.trim();
       for (final source in sources) {
@@ -1460,7 +1492,9 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       }
     }
     _clearStructureSelection();
-    widget.onStructureChanged?.call();
+    await _refreshAfterStructureChange();
+    AsanaBlockingLoadingOverlay.hide();
+    if (!mounted) return;
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -1544,10 +1578,14 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
       parentTaskId: parentId,
       updaterStaffLookupKey: _structureActorKey,
     );
+    if (!mounted) {
+      AsanaBlockingLoadingOverlay.hide();
+      return;
+    }
+    _clearStructureSelection();
+    await _refreshAfterStructureChange();
     AsanaBlockingLoadingOverlay.hide();
     if (!mounted) return;
-    _clearStructureSelection();
-    widget.onStructureChanged?.call();
     if (error != null) {
       await _showStructureInfoDialog(title: 'Could not move', content: error);
     }
@@ -2010,7 +2048,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     );
     if (selection != null) {
       setState(() => _filters.creatorStaffIds = selection.toList());
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
@@ -2023,7 +2061,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     );
     if (selection != null) {
       setState(() => _filters.creatorTeamIds = selection.toList());
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
@@ -2036,7 +2074,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     );
     if (selection != null) {
       setState(() => _filters.picStaffIds = selection.toList());
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
@@ -2049,7 +2087,7 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
     );
     if (selection != null) {
       setState(() => _filters.picTeamIds = selection.toList());
-      _rebuildList();
+      _onFiltersChanged();
     }
   }
 
