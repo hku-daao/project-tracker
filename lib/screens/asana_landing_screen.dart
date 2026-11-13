@@ -25,6 +25,7 @@ import 'asana/asana_detail_slide_panel.dart';
 import 'asana/asana_detail_widgets.dart';
 import 'asana/asana_discussion_panel.dart';
 import 'asana/asana_guidance_panel.dart';
+import 'asana/asana_poc_panel.dart';
 import 'asana/asana_home_panel.dart';
 import 'asana/asana_map_panel.dart';
 import 'asana/asana_performance_panel.dart';
@@ -635,6 +636,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
       setState(() => _selectedNav = 'Home');
     } else if (!state.showPeopleNav && _selectedNav == 'People') {
       setState(() => _selectedNav = 'Home');
+    } else if (_selectedNav == 'POC') {
+      setState(() => _selectedNav = 'Home');
     }
     await _reloadForAdminViewAsChange(
       visibility: visibility,
@@ -852,6 +855,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     }
     if (_selectedNav == 'Guidance') {
       return AsanaGuidancePanel(palette: palette);
+    }
+    if (_selectedNav == 'POC' && _pocNavAllowed(state)) {
+      return AsanaPocPanel(palette: palette);
     }
     if (_selectedNav == 'People' && state.showPeopleNav) {
       return AsanaStaffAdminPanel(
@@ -1145,7 +1151,8 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     if (!open) {
       setState(() {
         if (_selectedNav == 'Group Performance' ||
-            _selectedNav == 'Individual Performance') {
+            _selectedNav == 'Individual Performance' ||
+            _selectedNav == 'POC') {
           _selectedNav = 'Home';
         }
       });
@@ -1250,6 +1257,9 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
     _syncWebLocationToDetailStack();
   }
 
+  bool _pocNavAllowed(AppState state) =>
+      state.superAdminToolsOpen && !state.adminDebugViewAsActive;
+
   String _navButtonLabel(String id) => id == 'Projects' ? 'List' : id;
 
   Widget _sidebarNavTile(
@@ -1298,6 +1308,7 @@ class _AsanaLandingScreenState extends State<AsanaLandingScreen> {
                 if (state.showPeopleNav) 'People',
               ])
                 _sidebarNavTile(palette, label),
+              if (_pocNavAllowed(state)) _sidebarNavTile(palette, 'POC'),
               if (state.showPerformanceNav)
                 for (final label in const [
                   'Group Performance',

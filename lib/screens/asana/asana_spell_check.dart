@@ -166,7 +166,8 @@ class _AsanaSpellCheckBindingState extends State<AsanaSpellCheckBinding> {
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     final overlayBox = overlay?.context.findRenderObject() as RenderBox?;
     if (overlayBox == null || !overlayBox.hasSize) return;
-    final local = overlayBox.globalToLocal(global);
+    final anchor = _menuAnchor(global, hit);
+    final local = overlayBox.globalToLocal(anchor);
     final position = RelativeRect.fromRect(
       Rect.fromLTWH(local.dx, local.dy, 0, 0),
       Offset.zero & overlayBox.size,
@@ -220,6 +221,28 @@ class _AsanaSpellCheckBindingState extends State<AsanaSpellCheckBinding> {
     final replacement = choice.text;
     if (replacement == null || replacement.isEmpty) return;
     _apply(hit, replacement);
+  }
+
+  /// Places the menu under the misspelled word so the word stays visible.
+  Offset _menuAnchor(Offset global, SpellMiss hit) {
+    final editable = _findEditable();
+    if (editable != null && editable.attached && editable.hasSize) {
+      try {
+        final boxes = editable.getBoxesForSelection(
+          TextSelection(baseOffset: hit.start, extentOffset: hit.end),
+        );
+        if (boxes.isNotEmpty) {
+          var left = boxes.first.left;
+          var bottom = boxes.first.bottom;
+          for (final box in boxes) {
+            if (box.left < left) left = box.left;
+            if (box.bottom > bottom) bottom = box.bottom;
+          }
+          return editable.localToGlobal(Offset(left, bottom + 8));
+        }
+      } catch (_) {}
+    }
+    return global + const Offset(0, 22);
   }
 
   SpellMiss? _hitAtPoint(Offset global) {

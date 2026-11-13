@@ -704,6 +704,42 @@ Do not use JSON or markdown headings. Write short paragraphs.
     return (await _chatCompletionContent(body)).trim();
   }
 
+  /// A short work bibliography from files the reader supplied, plus an optional note.
+  static Future<String> summarizeWorkBibliography({
+    required String materials,
+    String? readerNote,
+  }) async {
+    if (!isConfigured) {
+      throw StateError(_missingConfigMessage);
+    }
+    const system = '''
+You write a short work bibliography of one person at the University of Hong Kong.
+Use only the materials and the reader's note. Do not invent posts, papers, roles, dates, or employers.
+Write plain prose: who this person is in their HKU work, what they do, and the main activities or writings the materials support.
+If the materials name several people, write about the person the note points to. If the note names no one, write about the person the materials are most about.
+If the materials are too thin, say so in one sentence and summarize only what is actually there.
+No markdown headings. A few short paragraphs.
+''';
+    final note = readerNote?.trim() ?? '';
+    final user = StringBuffer()
+      ..writeln(
+        note.isEmpty
+            ? 'Reader note: (none)'
+            : 'Reader note:\n$note',
+      )
+      ..writeln()
+      ..writeln(materials.trim());
+    final body = jsonEncode({
+      'model': _effectiveModel,
+      'messages': [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user.toString()},
+      ],
+      'temperature': 0.3,
+    });
+    return (await _chatCompletionContent(body)).trim();
+  }
+
   static Future<Map<String, dynamic>> _chatCompletionJsonObject(
     String body,
   ) async {
