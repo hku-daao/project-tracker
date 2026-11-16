@@ -808,20 +808,26 @@ class _GuideBlock extends StatelessWidget {
     final auraKind = letter == 'T' || letter == 'ST'
         ? asanaStatusAuraKind(badge ?? '')
         : null;
-    final auraPad = auraKind == null ? 0.0 : asanaStatusAuraPadFor(auraKind);
+    final auraOutset = auraKind == null
+        ? null
+        : asanaStatusAuraOutsetFor(auraKind);
     return SizedBox(
       width: width,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          if (auraKind != null)
+          if (auraOutset != null)
             Positioned(
-              left: -auraPad,
-              top: -auraPad,
-              right: -auraPad,
-              bottom: -auraPad,
+              left: -auraOutset.x,
+              top: -auraOutset.y,
+              right: -auraOutset.x,
+              bottom: -auraOutset.y,
               child: IgnorePointer(
-                child: AsanaStatusAura(kind: auraKind, pad: auraPad),
+                child: AsanaStatusAura(
+                  kind: auraKind!,
+                  padX: auraOutset.x,
+                  padY: auraOutset.y,
+                ),
               ),
             ),
           Container(
@@ -963,7 +969,7 @@ class _IntroductionFigure extends StatelessWidget {
       fit: BoxFit.scaleDown,
       alignment: Alignment.center,
       child: Padding(
-        padding: const EdgeInsets.all(asanaStatusCompletedAuraPad),
+        padding: const EdgeInsets.all(asanaStatusAuraPad),
         child: _GuideElbowTree(
           palette: palette,
           parent: block('P', 'Orientation week', 'Project'),
@@ -1008,7 +1014,7 @@ class _TaskFigure extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(asanaStatusAuraPad),
+        padding: const EdgeInsets.all(asanaStatusEffectMargin),
         child: _GuideBlock(
           palette: palette,
           letter: 'T',

@@ -713,22 +713,34 @@ Do not use JSON or markdown headings. Write short paragraphs.
       throw StateError(_missingConfigMessage);
     }
     const system = '''
-You write a short work bibliography of one person at the University of Hong Kong.
-Use only the materials and the reader's note. Do not invent posts, papers, roles, dates, or employers.
-Write plain prose: who this person is in their HKU work, what they do, and the main activities or writings the materials support.
-If the materials name several people, write about the person the note points to. If the note names no one, write about the person the materials are most about.
-If the materials are too thin, say so in one sentence and summarize only what is actually there.
-No markdown headings. A few short paragraphs.
+You write a work bibliography of one person at the University of Hong Kong.
+The source notes are private. Read them only to learn who the person is and what their HKU work is. The bibliography is about that person, never about the notes.
+
+Write as a standing account of the person:
+- Open with the person's name and role at HKU, when the notes show a role. Example shape: "Ken Lee is Associate Director of AI at the University of Hong Kong."
+- Then what this person has done at HKU: initiatives, projects, and responsibilities already under way or completed.
+- Then what this person is going to do at HKU: work that is planned, proposed, or still ahead.
+- Use the person's full name. Write in the third person.
+
+Rules:
+- Do not mention files, emails, messages, uploads, materials, documents, sources, or a reader. Do not say "the notes show", "the materials point to", "based on", or "according to".
+- Do not summarize one message at a time. Fold the work into the person's record.
+- Use only what the notes support. Do not invent titles, dates, papers, or employers.
+- If several people appear, write about the person named in the reader's hint. If there is no hint, write about the person the notes are most about.
+- If the role or the forward work is not in the notes, leave that part out. Do not apologize or explain what is missing.
+- Plain prose. No markdown headings, no bullet list. A few short paragraphs.
 ''';
     final note = readerNote?.trim() ?? '';
     final user = StringBuffer()
       ..writeln(
-        note.isEmpty
-            ? 'Reader note: (none)'
-            : 'Reader note:\n$note',
+        'Private hint about who this bibliography is for. Do not quote this hint:\n'
+        '${note.isEmpty ? '(none)' : note}',
       )
       ..writeln()
-      ..writeln(materials.trim());
+      ..writeln(
+        'Private source notes. Do not mention these notes in the bibliography:\n'
+        '${materials.trim()}',
+      );
     final body = jsonEncode({
       'model': _effectiveModel,
       'messages': [

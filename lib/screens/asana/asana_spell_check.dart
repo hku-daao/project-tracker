@@ -168,9 +168,14 @@ class _AsanaSpellCheckBindingState extends State<AsanaSpellCheckBinding> {
     if (overlayBox == null || !overlayBox.hasSize) return;
     final anchor = _menuAnchor(global, hit);
     final local = overlayBox.globalToLocal(anchor);
-    final position = RelativeRect.fromRect(
-      Rect.fromLTWH(local.dx, local.dy, 0, 0),
-      Offset.zero & overlayBox.size,
+    final labels = <String>[
+      if (suggestions.isEmpty) 'No suggestions' else ...suggestions,
+      'Ignore',
+    ];
+    final position = _menuPosition(
+      local: local,
+      menuWidth: _estimateMenuWidth(labels),
+      overlaySize: overlayBox.size,
     );
     _menuOpen = true;
     _SpellChoice? choice;
@@ -223,7 +228,7 @@ class _AsanaSpellCheckBindingState extends State<AsanaSpellCheckBinding> {
     _apply(hit, replacement);
   }
 
-  /// Places the menu under the misspelled word so the word stays visible.
+  /// Keeps the menu under the word. Horizontal placement is the click.
   Offset _menuAnchor(Offset global, SpellMiss hit) {
     final editable = _findEditable();
     if (editable != null && editable.attached && editable.hasSize) {
@@ -232,17 +237,55 @@ class _AsanaSpellCheckBindingState extends State<AsanaSpellCheckBinding> {
           TextSelection(baseOffset: hit.start, extentOffset: hit.end),
         );
         if (boxes.isNotEmpty) {
-          var left = boxes.first.left;
           var bottom = boxes.first.bottom;
           for (final box in boxes) {
-            if (box.left < left) left = box.left;
             if (box.bottom > bottom) bottom = box.bottom;
           }
-          return editable.localToGlobal(Offset(left, bottom + 8));
+          final y = editable.localToGlobal(Offset(0, bottom + 8)).dy;
+          return Offset(global.dx, y);
         }
       } catch (_) {}
     }
-    return global + const Offset(0, 22);
+    return Offset(global.dx, global.dy + 22);
+  }
+
+  /// [showMenu] pins a menu edge to the anchor. Shift that anchor so the
+  /// menu's horizontal center lands on the click.
+  RelativeRect _menuPosition({
+    required Offset local,
+    required double menuWidth,
+    required Size overlaySize,
+  }) {
+    var anchorX = local.dx - menuWidth / 2;
+    if (anchorX > overlaySize.width - anchorX) {
+      anchorX = local.dx + menuWidth / 2;
+    }
+    return RelativeRect.fromRect(
+      Rect.fromLTWH(anchorX, local.dy, 0, 0),
+      Offset.zero & overlaySize,
+    );
+  }
+
+  double _estimateMenuWidth(List<String> labels) {
+    final style = asanaTextStyle(
+      Theme.of(context).textTheme.bodyMedium,
+      fontSize: 16,
+      color: kAsanaTextPrimary,
+    );
+    var widest = 0.0;
+    for (final label in labels) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+      if (painter.width > widest) widest = painter.width;
+      painter.dispose();
+    }
+    const itemPadding = 24.0;
+    const step = 56.0;
+    final stepped = ((widest + itemPadding) / step).ceil() * step;
+    return stepped.clamp(112.0, 280.0);
   }
 
   SpellMiss? _hitAtPoint(Offset global) {

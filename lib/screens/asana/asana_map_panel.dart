@@ -3502,6 +3502,7 @@ class _GenericTreeDiagram extends StatelessWidget {
             textScaler: textScaler,
             boxWidth: boxWidth,
           );
+          if (!mobile) _equalizeRowHeights(root);
           _syncSpacerHeights(root);
           _measure(root, horizontal: mobile);
           const desktopPadding = _ProjectTreeDiagram._padding;
@@ -3621,6 +3622,31 @@ class _GenericTreeDiagram extends StatelessWidget {
         textScaler: textScaler,
         boxWidth: boxWidth,
       );
+    }
+  }
+
+  /// Shorter blocks in a horizontal row grow downward to the tallest block.
+  void _equalizeRowHeights(_DiagramNode root) {
+    final rows = <int, List<_DiagramNode>>{};
+    void walk(_DiagramNode node, int depth) {
+      if (node.type != _DiagramNodeType.levelSpacer) {
+        (rows[depth] ??= <_DiagramNode>[]).add(node);
+      }
+      for (final child in node.children) {
+        walk(child, depth + 1);
+      }
+    }
+
+    walk(root, 0);
+    for (final nodes in rows.values) {
+      if (nodes.length < 2) continue;
+      var maxHeight = 0.0;
+      for (final node in nodes) {
+        if (node.boxHeight > maxHeight) maxHeight = node.boxHeight;
+      }
+      for (final node in nodes) {
+        if (node.boxHeight < maxHeight) node.boxHeight = maxHeight;
+      }
     }
   }
 
@@ -4113,7 +4139,7 @@ class _DiagramBox extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.fromLTRB(8, padV, 8, padV),
           child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
@@ -4234,19 +4260,23 @@ class _DiagramBox extends StatelessWidget {
         ),
       ),
     );
+    final auraOutset = auraKind == null
+        ? null
+        : asanaStatusAuraOutsetFor(auraKind);
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        if (auraKind != null)
+        if (auraOutset != null)
           Positioned(
-            left: _mapCheckboxOutsetLeft - asanaStatusAuraPadFor(auraKind),
-            top: -asanaStatusAuraPadFor(auraKind),
-            right: -asanaStatusAuraPadFor(auraKind),
-            bottom: _mapCheckboxOutsetBottom - asanaStatusAuraPadFor(auraKind),
+            left: _mapCheckboxOutsetLeft - auraOutset.x,
+            top: -auraOutset.y,
+            right: -auraOutset.x,
+            bottom: _mapCheckboxOutsetBottom - auraOutset.y,
             child: IgnorePointer(
               child: AsanaStatusAura(
-                kind: auraKind,
-                pad: asanaStatusAuraPadFor(auraKind),
+                kind: auraKind!,
+                padX: auraOutset.x,
+                padY: auraOutset.y,
               ),
             ),
           ),
