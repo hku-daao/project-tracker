@@ -570,7 +570,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
 
   bool _viewerIsSubprojectPic(AppState state, SubprojectRecord subproject) {
     if (state.superAdminActsAsPic) return true;
-    return subproject.picStaffUuids.any((id) => _staffHit(state, id));
+    if (subproject.picStaffUuids.any((id) => _staffHit(state, id))) return true;
+    final project = state.projectById(subproject.projectId);
+    if (project == null) return false;
+    return project.picStaffUuids.any((id) => _staffHit(state, id));
   }
 
   bool _viewerCreatedProject(AppState state, ProjectRecord project) {
@@ -578,7 +581,10 @@ class _AsanaProjectsPanelState extends State<AsanaProjectsPanel> {
   }
 
   bool _viewerCreatedSubproject(AppState state, SubprojectRecord subproject) {
-    return _staffHit(state, subproject.createByStaffUuid);
+    if (_staffHit(state, subproject.createByStaffUuid)) return true;
+    final project = state.projectById(subproject.projectId);
+    if (project == null) return false;
+    return _viewerCreatedProject(state, project);
   }
 
   bool _viewerCanStructureProject(AppState state, ProjectRecord project) {

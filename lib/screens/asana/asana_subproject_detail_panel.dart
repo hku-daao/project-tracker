@@ -2195,34 +2195,30 @@ PIC: ${pics.isEmpty ? '(none)' : pics}
     final adminReadOnly = state.adminViewMode;
     final creator = _row?.createByStaffUuid?.trim();
     final me = _myStaffUuid?.trim();
-    final creatorKey = creator?.toLowerCase() ?? '';
-    final isCreator =
-        creatorKey.isNotEmpty &&
-        ((me != null && me.isNotEmpty && me.toLowerCase() == creatorKey) ||
-            (state.effectiveStaffUuid ?? '').trim().toLowerCase() ==
-                creatorKey ||
-            (state.effectiveStaffAppId ?? '').trim().toLowerCase() ==
-                creatorKey);
-    final canCreate = _createMode && _isParentProjectMember(state);
-    final meUuid =
-        (_myStaffUuid ?? state.effectiveStaffUuid ?? state.userStaffId)
-            ?.trim() ??
-        '';
-    final meApp =
-        (state.effectiveStaffAppId ?? state.userStaffAppId)?.trim() ?? '';
-    bool staffHit(String? raw) {
-      final v = raw?.trim() ?? '';
-      if (v.isEmpty) return false;
-      return (meUuid.isNotEmpty && v == meUuid) ||
-          (meApp.isNotEmpty && v == meApp);
+    final parentProject = state.projectById(widget.projectId);
+    bool sameStaff(String? raw) {
+      final key = raw?.trim().toLowerCase() ?? '';
+      if (key.isEmpty) return false;
+      final mine = <String>[
+        if (me != null && me.trim().isNotEmpty) me.trim().toLowerCase(),
+        if ((state.effectiveStaffUuid ?? '').trim().isNotEmpty)
+          state.effectiveStaffUuid!.trim().toLowerCase(),
+        if ((state.effectiveStaffAppId ?? '').trim().isNotEmpty)
+          state.effectiveStaffAppId!.trim().toLowerCase(),
+        if ((state.userStaffAppId ?? '').trim().isNotEmpty)
+          state.userStaffAppId!.trim().toLowerCase(),
+      ];
+      return mine.contains(key);
     }
 
-    final isPic =
-        state.superAdminActsAsPic ||
-        (_row?.picStaffUuids.any(staffHit) ?? false);
+    final isCreator = sameStaff(creator) ||
+        (parentProject != null && sameStaff(parentProject.createByStaffUuid));
+    final canCreate = _createMode && _isParentProjectMember(state);
+    final isPic = state.superAdminActsAsPic ||
+        (_row?.picStaffUuids.any(sameStaff) ?? false) ||
+        (parentProject?.picStaffUuids.any(sameStaff) ?? false);
     final canEdit =
         !adminReadOnly && (_createMode ? canCreate : (isCreator || isPic));
-    final parentProject = state.projectById(widget.projectId);
     final creatorLabel = () {
       final row = _row;
       if (row != null) {

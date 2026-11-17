@@ -255,7 +255,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Move',
                         body:
-                            'Move keeps the item and puts it under a different parent. You need to be the PIC or the creator. Check the item first, then press Move Task, Move Subproject, or Move Subtask, and choose the new parent. Cancel leaves this step. Each picture is one button, before and after.',
+                            'Move keeps the item and puts it under a different parent. You need to be the PIC or the creator. On a sub-project, the creator of its project has the sub-project creator\'s rights, and a PIC of its project has the sub-project PIC\'s rights. Check the item first, then press Move Task, Move Subproject, or Move Subtask, and choose the new parent. Cancel leaves this step. Each picture is one button, before and after.',
                         figure: _MoveExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
@@ -273,7 +273,7 @@ class _AsanaGuidancePanelState extends State<AsanaGuidancePanel> {
                         palette: palette,
                         title: 'Detach',
                         body:
-                            'Detach lifts the item out of its parent so it stands on its own. You need to be the PIC or the creator. Check the item first, then press Detach Project or Detach Task. Detach Project turns a sub-project into a project. Detach Task turns a sub-task into a task. Each picture is one button, before and after.',
+                            'Detach lifts the item out of its parent so it stands on its own. You need to be the PIC or the creator. On a sub-project, the creator of its project has the sub-project creator\'s rights, and a PIC of its project has the sub-project PIC\'s rights. Check the item first, then press Detach Project or Detach Task. Detach Project turns a sub-project into a project. Detach Task turns a sub-task into a task. Each picture is one button, before and after.',
                         figure: _DetachExamples(palette: palette),
                       ),
                       const SizedBox(height: 16),
